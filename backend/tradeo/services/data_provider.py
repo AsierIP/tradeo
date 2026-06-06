@@ -19,7 +19,7 @@ class MarketDataProvider(Protocol):
 
 @dataclass
 class YFinanceProvider:
-    allow_synthetic_fallback: bool = True
+    allow_synthetic_fallback: bool = False
 
     def fetch_ohlcv(self, symbol: str, period: str = "2y", interval: str = "1d") -> pd.DataFrame:
         try:
@@ -30,6 +30,7 @@ class YFinanceProvider:
         except Exception as exc:  # noqa: BLE001
             logger.warning("market data fetch failed for {}: {}", symbol, exc)
             if self.allow_synthetic_fallback:
+                logger.warning("using synthetic fallback market data for {}", symbol)
                 return seeded_synthetic_ohlcv(symbol)
             raise
 
