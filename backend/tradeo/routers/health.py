@@ -4,6 +4,7 @@ from fastapi import APIRouter
 
 from tradeo.core.config import get_settings
 from tradeo.db.session import SessionLocal
+from tradeo.services.ibkr_data_provider import inspect_ibkr_connection
 from tradeo.services.watchdog import SystemWatchdog
 
 router = APIRouter(tags=["health"])
@@ -32,3 +33,8 @@ def deep_health() -> dict[str, object]:
         **health(),
         "watchdog": status,
     }
+
+
+@router.get("/health/ibkr")
+def ibkr_health() -> dict[str, object]:
+    return inspect_ibkr_connection()

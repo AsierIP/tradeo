@@ -100,16 +100,36 @@ Una variante de estrategia solo puede pasar a candidata de laboratorio si cumple
 
 ## Integración con Interactive Brokers
 
-La v0 incluye un adaptador `IBKRBroker` para órdenes bracket de acciones, pero queda bloqueado por defecto. Mantén estos valores en local/paper hasta tener métricas suficientes y aprobación explícita:
+La v0 puede usar IBKR para datos reales mediante TWS o IB Gateway. No guarda credenciales de IBKR: TWS/Gateway debe estar abierto y con API socket habilitada. En TWS: `Global Configuration` -> `API` -> `Settings` -> activar `Enable ActiveX and Socket Clients`.
+
+Puertos habituales:
+
+- TWS paper: `7497`
+- TWS live: `7496`
+- IB Gateway paper: `4002`
+- IB Gateway live: `4001`
+
+Configuración inicial recomendada:
 
 ```bash
 TRADEO_TRADING_MODE=paper
+TRADEO_MARKET_DATA_PROVIDER=ibkr
+TRADEO_ALLOW_SYNTHETIC_MARKET_DATA=false
 TRADEO_LIVE_TRADING_ENABLED=false
-TRADEO_LIVE_TRADING_CONFIRMATION_VALUE=I_ACCEPT_LIVE_MARKET_RISK
+TRADEO_LIVE_TRADING_CONFIRMATION_VALUE=
+TRADEO_IBKR_HOST=host.docker.internal
+TRADEO_IBKR_PORT=7497
+TRADEO_IBKR_CLIENT_ID=17
 TRADEO_IBKR_READONLY=true
 ```
 
-Para la fase inicial, usa IBKR Paper Trading o el broker simulado interno.
+Comprueba la conexión con:
+
+```bash
+curl http://localhost:8000/api/health/ibkr
+```
+
+El adaptador `IBKRBroker` para órdenes bracket de acciones existe, pero queda bloqueado por defecto. Para la fase inicial usa IBKR Paper Trading o el broker simulado interno. Live requiere `TRADEO_TRADING_MODE=live`, `TRADEO_LIVE_TRADING_ENABLED=true`, frase de confirmación exacta, `TRADEO_IBKR_READONLY=false`, kill switch apagado y aprobación humana por señal.
 
 ## Integración con supervisor API
 
