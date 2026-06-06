@@ -1,0 +1,293 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from hashlib import blake2b
+from typing import Iterable
+
+import numpy as np
+from sklearn.cluster import MiniBatchKMeans
+from sklearn.preprocessing import StandardScaler
+
+from tradeo.research.reward_risk_analyzer import RewardRiskAnalyzer
+from tradeo.research.types import ClusterCandidate, Side, WindowSample
+
+
+@dataclass(slots=True)
+class ClusterResearchEngine:
+    """Cluster unlabeled chart windows, then measure what happened next."""
+
+    min_cluster_size: int = 60
+    max_clusters_per_window: int = 12
+    random_state: int = 42
+    target_r: float = 4.0
+    out_of_sample_pct: float = 0.25
+    rr_levels: list[float] | None = None
+    min_samples: int = 100
+
+    def discover(self, samples: list[WindowSample]) -> list[ClusterCandidate]:
+        candidates: list[ClusterCandidate] = []
+        for window_size in sorted({sample.window_size for sample in samples}):
+            window_samples = [sample for sample in samples if sample.window_size == window_size]
+            candidates.extend(self._cluster_window_size(window_size, window_samples))
+        return sorted(candidates, key=lambda c: c.score, reverse=True)
+
+    def _cluster_window_size(self, window_size: int, samples: list[WindowSample]) -> list[ClusterCandidate]:
+        if len(samples) < max(self.min_cluster_size * 2, 20):
+            return []
+        matrix = np.vstack([s.vector for s in samples])
+        scaler = StandardScaler()
+        matrix_scaled = scaler.fit_transform(matrix)
+        n_clusters = min(self.max_clusters_per_window, max(2, len(samples) // self.min_cluster_size))
+        model = MiniBatchKMeans(
+            n_clusters=n_clusters,
+            random_state=self.random_state,
+            n_init=10,
+            batch_size=min(2048, max(128, len(samples))),
+        )
+        labels = model.fit_predict(matrix_scaled)
+        candidates: list[ClusterCandidate] = []
+        for cluster_id in sorted(set(labels.tolist())):
+            idxs = np.flatnonzero(labels == cluster_id)
+            if len(idxs) < max(10, self.min_cluster_size // 2):
+                continue
+            cluster_samples = [samples[int(i)] for i in idxs]
+            cluster_vectors = matrix_scaled[idxs]
+            centroid_scaled = model.cluster_centers_[cluster_id]
+            long_metrics = self._metrics_for_side(cluster_samples, "long")
+            short_metrics = self._metrics_for_side(cluster_samples, "short")
+            side: Side = "long" if self._side_score(long_metrics) >= self._side_score(short_metrics) else "short"
+            metrics = long_metrics if side == "long" else short_metrics
+            metrics["opposite_side"] = short_metrics if side == "long" else long_metrics
+            metrics["cluster_density"] = round(float(len(idxs) / len(samples)), 5)
+            metrics["window_size"] = window_size
+            metrics["side"] = side
+            metrics["target_r"] = self.target_r
+            metrics["embedding_length"] = int(matrix.shape[1])
+            metrics["scaler_mean"] = np.nan_to_num(scaler.mean_, nan=0, posinf=0, neginf=0).round(6).tolist()
+            metrics["scaler_scale"] = np.nan_to_num(scaler.scale_, nan=1, posinf=1, neginf=1).round(6).tolist()
+            score = self._candidate_score(metrics)
+            feature_summary = self._feature_summary(cluster_samples)
+            centroid = np.nan_to_num(centroid_scaled, nan=0, posinf=0, neginf=0).round(6).tolist()
+            key = self._pattern_key(window_size, cluster_id, side, centroid)
+            name = f"DISCOVERED_{side.upper()}_W{window_size}_C{cluster_id:02d}_{key[-8:].upper()}"
+            examples = self._examples(cluster_samples, cluster_vectors, centroid_scaled, side)
+            candidates.append(
+                ClusterCandidate(
+                    pattern_key=key,
+                    name=name,
+                    side=side,
+                    timeframe=cluster_samples[0].timeframe if cluster_samples else "1d",
+                    window_size=window_size,
+                    cluster_id=int(cluster_id),
+                    centroid=centroid,
+                    sample_count=len(cluster_samples),
+                    symbol_count=len({s.symbol for s in cluster_samples}),
+                    year_count=len({s.year for s in cluster_samples}),
+                    score=round(score, 5),
+                    validation_passed=False,
+                    validation_reasons=[],
+                    metrics=metrics,
+                    feature_summary=feature_summary,
+                    examples=examples,
+                )
+            )
+        return candidates
+
+    def _metrics_for_side(self, samples: list[WindowSample], side: Side) -> dict[str, object]:
+        rr_levels = self.rr_levels or [1.5, 2.0, 2.5, 3.0, 4.0, 5.0]
+        rr_analysis = RewardRiskAnalyzer(rr_levels=rr_levels, min_samples=self.min_samples).analyze(samples, side)
+        best_rr = float(rr_analysis.get("best_rr", self.target_r))
+        rr_metrics = rr_analysis.get("rr_metrics", {})
+        best_rr_metrics = rr_metrics.get(f"{best_rr:g}", {}) if isinstance(rr_metrics, dict) else {}
+        outcomes = np.asarray(
+            [RewardRiskAnalyzer._simulate_sample(s, side, best_rr)[0] for s in samples],
+            dtype=float,
+        )
+        mfe = np.asarray([s.outcome.mfe_for(side) for s in samples], dtype=float)
+        mae = np.asarray([s.outcome.mae_for(side) for s in samples], dtype=float)
+        hits = np.asarray([RewardRiskAnalyzer._simulate_sample(s, side, 4.0)[0] >= 4.0 for s in samples], dtype=bool)
+        wins = outcomes[outcomes > 0]
+        losses = outcomes[outcomes < 0]
+        profit_factor = float(wins.sum() / abs(losses.sum())) if len(losses) else float(wins.sum() or 0.0)
+        by_year = self._group_expectancy(samples, outcomes, key="year")
+        by_symbol = self._group_expectancy(samples, outcomes, key="symbol")
+        split = self._split_samples(samples)
+        in_sample = split[0]
+        out_of_sample = split[1]
+        oos = self._split_metrics(out_of_sample, side, best_rr)
+        in_sample_metrics = self._split_metrics(in_sample, side, best_rr)
+        stability_year = self._positive_group_fraction(by_year)
+        stability_symbol = self._positive_group_fraction(by_symbol)
+        diversity_score = min(1.0, len(by_symbol) / 20.0) * 0.55 + min(1.0, len(by_year) / 4.0) * 0.45
+        stability_score = 0.40 * stability_year + 0.35 * stability_symbol + 0.25 * diversity_score
+        avg_mae = float(np.mean(mae)) if len(mae) else 0.0
+        avg_mfe = float(np.mean(mfe)) if len(mfe) else 0.0
+        return {
+            "sample_count": len(samples),
+            "symbol_count": len({s.symbol for s in samples}),
+            "year_count": len({s.year for s in samples}),
+            "expectancy_r": round(float(np.mean(outcomes)), 5) if len(outcomes) else 0.0,
+            "median_r": round(float(np.median(outcomes)), 5) if len(outcomes) else 0.0,
+            "win_rate": round(float(np.mean(outcomes > 0)), 5) if len(outcomes) else 0.0,
+            "hit_4r_rate": round(float(np.mean(hits)), 5) if len(hits) else 0.0,
+            "profit_factor": round(profit_factor, 5),
+            "avg_mfe_r": round(avg_mfe, 5),
+            "avg_mae_r": round(avg_mae, 5),
+            "mfe_mae_ratio": round(float(avg_mfe / max(avg_mae, 1e-9)), 5),
+            "reward_risk_estimate": round(float(np.quantile(mfe, 0.60) / max(np.quantile(mae, 0.60), 1e-9)), 5)
+            if len(mfe) and len(mae)
+            else 0.0,
+            "rr_levels": rr_levels,
+            "rr_metrics": rr_metrics,
+            "rr_metrics_json": rr_metrics,
+            "best_rr": round(float(best_rr), 5),
+            "best_tested_rr": round(float(rr_analysis.get("best_tested_rr", best_rr)), 5),
+            "best_expectancy_r": round(float(rr_analysis.get("best_expectancy_r", 0.0)), 5),
+            "best_profit_factor": round(float(rr_analysis.get("best_profit_factor", 0.0)), 5),
+            "best_win_rate": round(float(rr_analysis.get("best_win_rate", 0.0)), 5),
+            "best_max_drawdown_r": round(float(rr_analysis.get("best_max_drawdown_r", 0.0)), 5),
+            "best_edge_score": round(float(rr_analysis.get("best_score", 0.0)), 5),
+            "target_hit_rate": float(best_rr_metrics.get("target_hit_rate", 0.0)) if isinstance(best_rr_metrics, dict) else 0.0,
+            "stop_hit_rate": float(best_rr_metrics.get("stop_hit_rate", 0.0)) if isinstance(best_rr_metrics, dict) else 0.0,
+            "max_drawdown_r": float(best_rr_metrics.get("max_drawdown_r", 0.0)) if isinstance(best_rr_metrics, dict) else 0.0,
+            "in_sample_expectancy_r": in_sample_metrics["expectancy_r"],
+            "in_sample_profit_factor": in_sample_metrics["profit_factor"],
+            "out_of_sample_expectancy_r": oos["expectancy_r"],
+            "out_of_sample_profit_factor": oos["profit_factor"],
+            "out_of_sample_win_rate": oos["win_rate"],
+            "out_of_sample_max_drawdown_r": oos["max_drawdown_r"],
+            "out_of_sample_sample_count": oos["sample_count"],
+            "stability_year": round(stability_year, 5),
+            "stability_symbol": round(stability_symbol, 5),
+            "stability_score": round(float(stability_score), 5),
+            "by_year_expectancy": by_year,
+            "top_symbols_expectancy": dict(list(by_symbol.items())[:25]),
+        }
+
+    def _split_samples(self, samples: list[WindowSample]) -> tuple[list[WindowSample], list[WindowSample]]:
+        ordered = sorted(samples, key=lambda s: s.end)
+        if len(ordered) < 8:
+            return ordered, []
+        split = int(len(ordered) * (1.0 - self.out_of_sample_pct))
+        return ordered[: max(1, split)], ordered[max(1, split) :]
+
+    @staticmethod
+    def _split_metrics(samples: list[WindowSample], side: Side, rr: float) -> dict[str, float | int]:
+        outcomes = np.asarray([RewardRiskAnalyzer._simulate_sample(s, side, rr)[0] for s in samples], dtype=float)
+        if len(outcomes) == 0:
+            return {"sample_count": 0, "expectancy_r": 0.0, "profit_factor": 0.0, "win_rate": 0.0, "max_drawdown_r": 0.0}
+        wins = outcomes[outcomes > 0]
+        losses = outcomes[outcomes < 0]
+        pf = float(wins.sum() / abs(losses.sum())) if len(losses) else float(wins.sum() or 0.0)
+        return {
+            "sample_count": int(len(outcomes)),
+            "expectancy_r": round(float(np.mean(outcomes)), 5),
+            "profit_factor": round(pf, 5),
+            "win_rate": round(float(np.mean(outcomes > 0)), 5),
+            "max_drawdown_r": round(RewardRiskAnalyzer._max_drawdown(outcomes), 5),
+        }
+
+    @staticmethod
+    def _group_expectancy(samples: list[WindowSample], outcomes: np.ndarray, key: str) -> dict[str, float]:
+        buckets: dict[str, list[float]] = {}
+        for sample, outcome in zip(samples, outcomes, strict=True):
+            value = str(getattr(sample, key))
+            buckets.setdefault(value, []).append(float(outcome))
+        items = sorted(
+            ((k, round(float(np.mean(v)), 5)) for k, v in buckets.items()),
+            key=lambda item: (item[1], item[0]),
+            reverse=True,
+        )
+        return dict(items)
+
+    @staticmethod
+    def _positive_group_fraction(group_metrics: dict[str, float]) -> float:
+        if not group_metrics:
+            return 0.0
+        return float(sum(1 for v in group_metrics.values() if v > 0) / len(group_metrics))
+
+    @staticmethod
+    def _side_score(metrics: dict[str, object]) -> float:
+        expectancy = float(metrics.get("expectancy_r", 0.0))
+        pf = min(float(metrics.get("profit_factor", 0.0)), 8.0)
+        hit_rate = float(metrics.get("target_hit_rate", metrics.get("hit_4r_rate", 0.0)))
+        stability = float(metrics.get("stability_score", 0.0))
+        return expectancy * 2.0 + pf * 0.15 + hit_rate * 1.5 + stability * 0.7
+
+    @staticmethod
+    def _candidate_score(metrics: dict[str, object]) -> float:
+        expectancy = max(0.0, float(metrics.get("expectancy_r", 0.0)))
+        pf = min(float(metrics.get("profit_factor", 0.0)), 8.0) / 8.0
+        hit = float(metrics.get("target_hit_rate", metrics.get("hit_4r_rate", 0.0)))
+        stability = float(metrics.get("stability_score", 0.0))
+        oos = max(0.0, float(metrics.get("out_of_sample_expectancy_r", 0.0)))
+        rr = min(float(metrics.get("best_rr", metrics.get("reward_risk_estimate", 0.0))), 8.0) / 8.0
+        return expectancy * 0.32 + pf * 0.18 + hit * 0.16 + stability * 0.16 + oos * 0.12 + rr * 0.06
+
+    @staticmethod
+    def _feature_summary(samples: list[WindowSample]) -> dict[str, object]:
+        if not samples:
+            return {}
+        keys = sorted({key for s in samples for key in s.features})
+        summary: dict[str, object] = {}
+        for key in keys:
+            values = np.asarray([s.features.get(key, 0.0) for s in samples], dtype=float)
+            summary[key] = {
+                "mean": round(float(np.mean(values)), 6),
+                "median": round(float(np.median(values)), 6),
+                "p25": round(float(np.quantile(values, 0.25)), 6),
+                "p75": round(float(np.quantile(values, 0.75)), 6),
+            }
+        return summary
+
+    def _examples(
+        self,
+        samples: list[WindowSample],
+        vectors_scaled: np.ndarray,
+        centroid_scaled: np.ndarray,
+        side: Side,
+    ) -> list[dict[str, object]]:
+        distances = np.linalg.norm(vectors_scaled - centroid_scaled, axis=1)
+        outcomes = np.asarray([s.outcome.outcome_for(side) for s in samples], dtype=float)
+        selected: list[tuple[int, str]] = []
+        for idx in np.argsort(distances)[:4]:
+            selected.append((int(idx), "typical"))
+        for idx in np.argsort(outcomes)[-4:][::-1]:
+            selected.append((int(idx), "winner"))
+        for idx in np.argsort(outcomes)[:3]:
+            selected.append((int(idx), "loser"))
+        seen: set[int] = set()
+        examples: list[dict[str, object]] = []
+        for idx, kind in selected:
+            if idx in seen:
+                continue
+            seen.add(idx)
+            sample = samples[idx]
+            similarity = float(1.0 / (1.0 + distances[idx]))
+            examples.append(
+                {
+                    "symbol": sample.symbol,
+                    "timeframe": sample.timeframe,
+                    "window_start": sample.start,
+                    "window_end": sample.end,
+                    "forward_end": sample.outcome.forward_end,
+                    "entry_price": round(sample.outcome.entry_price, 4),
+                    "risk_proxy": round(sample.outcome.risk_proxy, 4),
+                    "outcome_r": round(sample.outcome.outcome_for(side), 4),
+                    "mfe_r": round(sample.outcome.mfe_for(side), 4),
+                    "mae_r": round(sample.outcome.mae_for(side), 4),
+                    "similarity": round(similarity, 6),
+                    "kind": kind,
+                    "chart": sample.chart,
+                    "features": {k: round(float(v), 6) for k, v in sample.features.items()},
+                }
+            )
+        return examples
+
+    @staticmethod
+    def _pattern_key(window_size: int, cluster_id: int, side: str, centroid: Iterable[float]) -> str:
+        digest = blake2b(digest_size=10)
+        digest.update(f"w={window_size}|c={cluster_id}|s={side}|".encode())
+        arr = np.asarray(list(centroid), dtype=np.float32)
+        digest.update(np.round(arr, 3).tobytes())
+        return f"novel_{side}_w{window_size}_{digest.hexdigest()}"

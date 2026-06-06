@@ -1,0 +1,45 @@
+[project]
+name = "tradeo-backend"
+version = "0.1.0"
+description = "Tradeo automated pattern research, paper trading and supervised execution backend"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi>=0.115.0",
+  "uvicorn[standard]>=0.30.0",
+  "pydantic>=2.7.0",
+  "pydantic-settings>=2.4.0",
+  "sqlalchemy>=2.0.0",
+  "psycopg[binary]>=3.2.0",
+  "pandas>=2.2.0",
+  "numpy>=1.26.0",
+  "yfinance>=0.2.40",
+  "matplotlib>=3.8.0",
+  "scikit-learn>=1.5.0",
+  "python-dotenv>=1.0.1",
+  "openai>=1.90.0",
+  "ib-insync>=0.9.86",
+  "apscheduler>=3.10.4",
+  "loguru>=0.7.2",
+  "orjson>=3.10.0",
+  "python-multipart>=0.0.9",
+  "redis>=5.0.0",
+  "tenacity>=8.5.0"
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.2.0", "ruff>=0.5.0", "mypy>=1.10.0"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["tradeo"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tradeo/tests"]

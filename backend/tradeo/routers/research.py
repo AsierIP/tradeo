@@ -1,0 +1,162 @@
+from __future__ import annotations
+
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy.orm import Session, selectinload
+
+from tradeo.agents.pattern_discovery_lab_agent import PatternDiscoveryLabAgent
+from tradeo.core.security import require_admin
+from tradeo.db.models import DiscoveredPattern, DiscoveredPatternExample, DiscoveredPatternMatch, DiscoveredPatternMetric, DiscoveryRun
+from tradeo.db.session import get_db
+from tradeo.research.novel_pattern_matcher import NovelPatternMatcher
+from tradeo.research.novel_pattern_registry import NovelPatternRegistry
+from tradeo.schemas import (
+    DiscoveredPatternDetailOut,
+    DiscoveredPatternExampleOut,
+    DiscoveredPatternMetricOut,
+    DiscoveredPatternOut,
+    DiscoveryRunOut,
+    DiscoveryRunRequest,
+    DiscoveryRunResponse,
+    NovelPatternMatchOut,
+    NovelPatternMatchRequest,
+    NovelPatternMatchResponse,
+)
+
+router = APIRouter(prefix="/research", tags=["research"])
+
+
+@router.post("/run-discovery", response_model=DiscoveryRunResponse)
+def run_discovery(
+    request: DiscoveryRunRequest,
+    _: str = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> DiscoveryRunResponse:
+    return PatternDiscoveryLabAgent().run(request, db)
+
+
+@router.get("/discovered-patterns", response_model=list[DiscoveredPatternOut])
+def list_discovered_patterns(
+    status: str | None = None,
+    limit: int = Query(default=100, ge=1, le=500),
+    _: str = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> list[DiscoveredPattern]:
+    return NovelPatternRegistry.list_patterns(db, limit=limit, status=status)
+
+
+@router.get("/discovered-patterns/{pattern_id}", response_model=DiscoveredPatternDetailOut)
+def get_discovered_pattern(
+    pattern_id: int,
+    _: str = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> DiscoveredPattern:
+    pattern = (
+        db.query(DiscoveredPattern)
+        .options(selectinload(DiscoveredPattern.examples), selectinload(DiscoveredPattern.metric_snapshots))
+        .filter(DiscoveredPattern.id == pattern_id)
+        .one_or_none()
+    )
+    if not pattern:
+        raise HTTPException(404, "discovered pattern not found")
+    return pattern
+
+
+@router.get("/discovered-patterns/{pattern_id}/examples", response_model=list[DiscoveredPatternExampleOut])
+def get_discovered_pattern_examples(
+    pattern_id: int,
+    _: str = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> list[DiscoveredPatternExample]:
+    pattern = db.get(DiscoveredPattern, pattern_id)
+    if not pattern:
+        raise HTTPException(404, "discovered pattern not found")
+    return (
+        db.query(DiscoveredPatternExample)
+        .filter(DiscoveredPatternExample.pattern_id == pattern_id)
+        .order_by(DiscoveredPatternExample.kind.asc(), DiscoveredPatternExample.similarity.desc())
+        .all()
+    )
+
+
+@router.get("/discovered-patterns/{pattern_id}/metrics", response_model=list[DiscoveredPatternMetricOut])
+def get_discovered_pattern_metrics(
+    pattern_id: int,
+    _: str = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> list[DiscoveredPatternMetric]:
+    pattern = db.get(DiscoveredPattern, pattern_id)
+    if not pattern:
+        raise HTTPException(404, "discovered pattern not found")
+    return (
+        db.query(DiscoveredPatternMetric)
+        .filter(DiscoveredPatternMetric.pattern_id == pattern_id)
+        .order_by(DiscoveredPatternMetric.as_of.desc())
+        .limit(100)
+        .all()
+    )
+
+
+@router.get("/discovered-patterns/{pattern_id}/rr-metrics")
+def get_discovered_pattern_rr_metrics(
+    pattern_id: int,
+    _: str = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    pattern = db.get(DiscoveredPattern, pattern_id)
+    if not pattern:
+        raise HTTPException(404, "discovered pattern not found")
+    return {
+        "id": pattern.id,
+        "name": pattern.name,
+        "status": pattern.status.value if hasattr(pattern.status, "value") else str(pattern.status),
+        "best_rr": pattern.best_rr,
+        "best_expectancy_r": pattern.best_expectancy_r,
+        "best_profit_factor": pattern.best_profit_factor,
+        "best_win_rate": pattern.best_win_rate,
+        "best_max_drawdown_r": pattern.best_max_drawdown_r,
+        "preferred_rr_passed": pattern.preferred_rr_passed,
+        "premium_rr_passed": pattern.premium_rr_passed,
+        "promotion_reason": pattern.promotion_reason,
+        "rejection_reasons": pattern.rejection_reasons_json,
+        "rr_metrics": pattern.rr_metrics_json,
+    }
+
+
+@router.post("/match-current", response_model=NovelPatternMatchResponse)
+def match_current_patterns(
+    request: NovelPatternMatchRequest,
+    _: str = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> NovelPatternMatchResponse:
+    result = NovelPatternMatcher().match_current(
+        db=db,
+        symbols=request.symbols,
+        limit=request.limit,
+        max_patterns=request.max_patterns,
+        similarity_threshold=request.similarity_threshold,
+        store=request.store,
+    )
+    return NovelPatternMatchResponse(**result)
+
+
+@router.get("/current-matches", response_model=list[NovelPatternMatchOut])
+def list_current_matches(
+    limit: int = Query(default=100, ge=1, le=500),
+    _: str = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> list[DiscoveredPatternMatch]:
+    return (
+        db.query(DiscoveredPatternMatch)
+        .order_by(DiscoveredPatternMatch.matched_at.desc(), DiscoveredPatternMatch.score.desc())
+        .limit(limit)
+        .all()
+    )
+
+
+@router.get("/runs", response_model=list[DiscoveryRunOut])
+def list_discovery_runs(
+    limit: int = Query(default=50, ge=1, le=200),
+    _: str = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> list[DiscoveryRun]:
+    return db.query(DiscoveryRun).order_by(DiscoveryRun.started_at.desc()).limit(limit).all()

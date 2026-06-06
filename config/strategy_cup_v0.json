@@ -1,0 +1,25 @@
+{
+  "name": "cup_v0",
+  "pattern": "mid_small_cap_cup_breakout",
+  "description": "Technical cup/base breakout detector for USA mid/small-cap equities. Paper-first; 4R minimum target.",
+  "target_r_multiple": 4.0,
+  "min_bars": 45,
+  "max_bars": 210,
+  "min_depth": 0.10,
+  "max_depth": 0.42,
+  "rim_tolerance": 0.12,
+  "max_handle_depth": 0.18,
+  "breakout_buffer": 0.002,
+  "min_breakout_volume_ratio": 1.12,
+  "min_confidence": 0.68,
+  "min_composite_score": 0.70,
+  "max_holding_bars": 30,
+  "promotion_gate": {
+    "min_historical_trades": 40,
+    "min_profit_factor": 1.8,
+    "min_expectancy_r": 0.25,
+    "max_drawdown_pct": 12.0,
+    "paper_trading_required": true,
+    "human_approval_required_for_live": true
+  }
+}

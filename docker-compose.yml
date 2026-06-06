@@ -1,0 +1,84 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: tradeo-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: tradeo
+      POSTGRES_PASSWORD: tradeo
+      POSTGRES_DB: tradeo
+    volumes:
+      - tradeo_postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tradeo -d tradeo"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: tradeo-redis
+    restart: unless-stopped
+    volumes:
+      - tradeo_redis:/data
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: tradeo-backend
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    volumes:
+      - ./reports:/app/reports
+      - ./data:/app/data:ro
+      - ./config:/app/config:ro
+      - ./artifacts:/app/artifacts
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  worker:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: tradeo-worker
+    restart: unless-stopped
+    command: ["python", "-m", "tradeo.tasks.worker"]
+    env_file: .env
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    volumes:
+      - ./reports:/app/reports
+      - ./data:/app/data:ro
+      - ./config:/app/config:ro
+      - ./artifacts:/app/artifacts
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    container_name: tradeo-frontend
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      TRADEO_API_INTERNAL_URL: http://backend:8000/api
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+
+volumes:
+  tradeo_postgres:
+  tradeo_redis:
