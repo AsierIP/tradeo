@@ -9,4 +9,4 @@ def get_market_data_provider() -> MarketDataProvider:
     settings = get_settings()
     if settings.market_data_provider.lower() == "ibkr":
         return IBKRHistoricalDataProvider(settings=settings)
-    return YFinanceProvider()
+    return YFinanceProvider(allow_synthetic_fallback=settings.allow_synthetic_market_data)
