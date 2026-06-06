@@ -17,6 +17,7 @@ from tradeo.schemas import ScanRequest
 from tradeo.services.reports import ReportService
 from tradeo.services.scanner import MarketScanner
 from tradeo.services.self_improvement import SelfImprovementEngine
+from tradeo.services.watchdog import SystemWatchdog
 
 
 def scan_job() -> None:
@@ -121,6 +122,20 @@ def novel_match_job() -> None:
         db.close()
 
 
+def watchdog_job() -> None:
+    db = SessionLocal()
+    try:
+        result = SystemWatchdog().repair(db)
+        if result.get("repaired"):
+            logger.warning("watchdog result: {}", result)
+        else:
+            logger.debug("watchdog ok: {}", result)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("watchdog job failed: {}", exc)
+    finally:
+        db.close()
+
+
 def main() -> None:
     settings = get_settings()
     init_db()
@@ -131,6 +146,16 @@ def main() -> None:
         db.close()
     scheduler = BackgroundScheduler(timezone="UTC")
     if settings.scheduler_enabled:
+        if settings.watchdog_enabled:
+            watchdog_job()
+            scheduler.add_job(
+                watchdog_job,
+                "interval",
+                minutes=settings.watchdog_interval_minutes,
+                id="system_watchdog",
+                max_instances=1,
+                coalesce=True,
+            )
         scheduler.add_job(scan_job, "interval", minutes=settings.scheduler_scan_minutes, id="market_scan")
         scheduler.add_job(
             report_job,

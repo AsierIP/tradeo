@@ -43,6 +43,11 @@ services:
       - ./artifacts:/app/artifacts
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8000/api/health >/dev/null"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 
   worker:
     build:
@@ -64,6 +69,11 @@ services:
       - ./artifacts:/app/artifacts
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c 'import os; os.kill(1, 0)'"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 
   frontend:
     build:
