@@ -54,6 +54,7 @@ class Settings(BaseSettings):
     allow_margin: bool = False
 
     market_data_provider: str = "yfinance"
+    allow_synthetic_market_data: bool = False
     universe_file: str = "/app/data/universe_us_mid_small.csv"
     strategy_config_file: str = "/app/config/strategy_cup_v0.json"
     reports_dir: str = "/app/reports"
