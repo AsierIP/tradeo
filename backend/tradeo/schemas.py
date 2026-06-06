@@ -148,6 +148,7 @@ class ScanResponse(BaseModel):
     candidates: int
     stored_signals: int
     rejected: int
+    data_errors: int = 0
     decisions: list[SupervisorDecision]
 
 

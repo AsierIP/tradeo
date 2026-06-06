@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from sqlalchemy.orm import Session
+from loguru import logger
 
+from tradeo.db.models import AuditLog
 from tradeo.core.config import get_settings
 from tradeo.schemas import ScanRequest, ScanResponse, SupervisorDecision
 from tradeo.services.data_provider import MarketDataProvider, pick_symbols
@@ -26,8 +28,24 @@ class MarketScanner:
         decisions: list[SupervisorDecision] = []
         stored = 0
         rejected = 0
+        data_errors = 0
         for symbol in symbols:
-            df = self.provider.fetch_ohlcv(symbol, period=period, interval=interval)
+            try:
+                df = self.provider.fetch_ohlcv(symbol, period=period, interval=interval)
+            except Exception as exc:  # noqa: BLE001
+                data_errors += 1
+                logger.warning("skipping {} after market data error: {}", symbol, exc)
+                if store:
+                    db.add(
+                        AuditLog(
+                            actor="scanner",
+                            action="market_data_error",
+                            entity_type="symbol",
+                            entity_id=symbol,
+                            details_json={"error": str(exc), "period": period, "interval": interval},
+                        )
+                    )
+                continue
             candidate = self.detector.detect(symbol, df, timeframe=interval)
             if candidate is None:
                 continue
@@ -45,4 +63,5 @@ class MarketScanner:
             stored_signals=stored,
             rejected=rejected,
             decisions=decisions,
+            data_errors=data_errors,
         )
