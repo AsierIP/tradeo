@@ -117,6 +117,11 @@ class Settings(BaseSettings):
     scheduler_scan_minutes: int = 15
     scheduler_report_hour_utc: int = 22
 
+    watchdog_enabled: bool = True
+    watchdog_interval_minutes: int = 5
+    watchdog_stale_discovery_minutes: int = 30
+    watchdog_close_stale_discovery_runs: bool = True
+
     @field_validator("risk_per_trade_pct", "daily_loss_limit_pct", "monthly_loss_limit_pct")
     @classmethod
     def pct_bounds(cls, value: float) -> float:
