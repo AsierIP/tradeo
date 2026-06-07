@@ -6,6 +6,7 @@ import csv
 import json
 import sys
 from collections import Counter
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +27,13 @@ def main() -> int:
     parser.add_argument("package", type=Path)
     parser.add_argument("--min-paper-trades-for-promotion", type=int, default=30)
     parser.add_argument("--max-duplicate-event-share", type=float, default=0.0)
+    parser.add_argument("--json-output", type=Path, default=None)
+    parser.add_argument("--markdown-output", type=Path, default=None)
+    parser.add_argument(
+        "--allow-blocked-exit-zero",
+        action="store_true",
+        help="Write BLOCKED status but exit 0. Use this for scheduled audits that must not stop the worker.",
+    )
     args = parser.parse_args()
 
     try:
@@ -38,8 +46,16 @@ def main() -> int:
             "metrics": read_csv(args.package / "metrics_by_pattern.csv"),
         }
     except FileNotFoundError as exc:
+        result = result_payload(
+            package=args.package,
+            status="invalid",
+            blockers=[f"missing required file: {exc.filename}"],
+            summary={"director_gate": "invalid"},
+        )
+        write_outputs(result, args.json_output, args.markdown_output)
         print("DIRECTOR GATE INVALID")
-        print(f"- missing required file: {exc.filename}")
+        for blocker in result["blockers"]:
+            print(f"- {blocker}")
         return 1
 
     blockers, summary = evaluate(
@@ -47,13 +63,16 @@ def main() -> int:
         min_paper_trades_for_promotion=args.min_paper_trades_for_promotion,
         max_duplicate_event_share=args.max_duplicate_event_share,
     )
+    status = "blocked" if blockers else "passed"
+    result = result_payload(package=args.package, status=status, blockers=blockers, summary=summary)
+    write_outputs(result, args.json_output, args.markdown_output)
 
     if blockers:
         print("DIRECTOR GATE BLOCKED")
         for blocker in blockers:
             print(f"- {blocker}")
         print(json.dumps(summary, indent=2, ensure_ascii=False))
-        return 2
+        return 0 if args.allow_blocked_exit_zero else 2
 
     print("DIRECTOR GATE PASSED")
     print(json.dumps(summary, indent=2, ensure_ascii=False))
@@ -176,6 +195,41 @@ def evaluate(
         "director_gate": "blocked" if blockers else "passed",
     }
     return blockers, summary
+
+
+def result_payload(package: Path, status: str, blockers: list[str], summary: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "package": str(package),
+        "status": status,
+        "blockers": blockers,
+        "summary": summary,
+    }
+
+
+def write_outputs(result: dict[str, Any], json_output: Path | None, markdown_output: Path | None) -> None:
+    if json_output:
+        json_output.parent.mkdir(parents=True, exist_ok=True)
+        json_output.write_text(json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8")
+    if markdown_output:
+        markdown_output.parent.mkdir(parents=True, exist_ok=True)
+        lines = [
+            "# Director Gate Result",
+            "",
+            f"- Created at: `{result['created_at']}`",
+            f"- Package: `{result['package']}`",
+            f"- Status: `{result['status']}`",
+            "",
+            "## Blockers",
+            "",
+        ]
+        blockers = result.get("blockers") or []
+        if blockers:
+            lines.extend(f"- {blocker}" for blocker in blockers)
+        else:
+            lines.append("- None")
+        lines.extend(["", "## Summary", "", "```json", json.dumps(result.get("summary", {}), indent=2, ensure_ascii=False), "```", ""])
+        markdown_output.write_text("\n".join(lines), encoding="utf-8")
 
 
 def as_int(value: str | None) -> int:
