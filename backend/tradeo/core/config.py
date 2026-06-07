@@ -54,6 +54,7 @@ class Settings(BaseSettings):
     allow_margin: bool = False
 
     market_data_provider: str = "yfinance"
+    allow_synthetic_market_data: bool = False
     universe_file: str = "/app/data/universe_us_mid_small.csv"
     strategy_config_file: str = "/app/config/strategy_cup_v0.json"
     reports_dir: str = "/app/reports"
@@ -112,6 +113,15 @@ class Settings(BaseSettings):
     ibkr_client_id: int = 17
     ibkr_account: str | None = None
     ibkr_readonly: bool = True
+    ibkr_connect_timeout_seconds: float = 8.0
+    ibkr_order_timeout_seconds: float = 20.0
+    ibkr_max_order_value_usd: float = 1500.0
+    ibkr_allow_market_orders: bool = False
+    ibkr_allowed_symbols: str = ""
+
+    @property
+    def ibkr_allowed_symbol_set(self) -> set[str]:
+        return {s.strip().upper() for s in self.ibkr_allowed_symbols.split(",") if s.strip()}
 
     scheduler_enabled: bool = True
     scheduler_scan_minutes: int = 15
