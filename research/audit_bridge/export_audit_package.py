@@ -298,8 +298,9 @@ def main() -> int:
     write_csv(package / "metrics_by_ticker.csv", METRICS_BY_TICKER_COLUMNS, metrics_ticker_rows)
     write_csv(package / "metrics_by_period.csv", METRICS_BY_PERIOD_COLUMNS, metrics_period_rows)
 
-    write_manifest(package, context, patterns, event_rows, experiment_rows)
     write_audit_request(package, context, patterns, pattern_catalog_rows, metrics_pattern_rows, experiment_rows, event_rows)
+    write_audit_summary_for_chatgpt(package, pattern_catalog_rows, event_rows, experiment_rows, metrics_pattern_rows, metrics_ticker_rows, metrics_period_rows)
+    write_manifest(package, context, patterns, event_rows, experiment_rows)
     write_code_references(package, patterns)
     write_config_snapshot(package / "config_snapshot", context)
     write_supporting_docs(package, context, patterns, event_rows, experiment_rows)
@@ -779,6 +780,7 @@ def write_manifest(
         "orders_anonymized": True,
         "files": [
             {"path": "AUDIT_REQUEST.md", "description": "Human-readable request and pattern summary"},
+            {"path": "AUDIT_SUMMARY_FOR_CHATGPT.md", "description": "Computed audit summary, rankings, concentration checks, and preliminary Claw recommendations"},
             {"path": "manifest.json", "description": "Machine-readable package metadata"},
             {"path": "pattern_catalog.csv", "description": "One row per detected pattern"},
             {"path": "pattern_events.csv", "description": "One row per exported independent/representative pattern occurrence"},
@@ -1134,6 +1136,305 @@ python3 research/audit_bridge/validate_audit_package.py research/audit_bridge/re
 
 Ver `file_hashes.sha256`.
 """, encoding="utf-8")
+
+
+def write_audit_summary_for_chatgpt(
+    package: Path,
+    pattern_rows: list[dict[str, Any]],
+    event_rows: list[dict[str, Any]],
+    experiment_rows: list[dict[str, Any]],
+    metrics_rows: list[dict[str, Any]],
+    metrics_ticker_rows: list[dict[str, Any]],
+    metrics_period_rows: list[dict[str, Any]],
+) -> None:
+    catalog_by_pattern = {row["pattern_id"]: row for row in pattern_rows}
+    sample_counts = sorted(to_int(row.get("independent_sample_count")) for row in metrics_rows)
+    sample_counts = [value for value in sample_counts if value is not None]
+    total_patterns = len(pattern_rows)
+
+    events_by_pattern: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in event_rows:
+        events_by_pattern[str(row.get("pattern_id", ""))].append(row)
+
+    summary_rows = [
+        ("total patterns", total_patterns),
+        ("min independent_sample_count", sample_counts[0] if sample_counts else ""),
+        ("p25", percentile(sample_counts, 0.25)),
+        ("median", percentile(sample_counts, 0.50)),
+        ("p75", percentile(sample_counts, 0.75)),
+        ("p90", percentile(sample_counts, 0.90)),
+        ("max", sample_counts[-1] if sample_counts else ""),
+        ("patterns >= 30 samples", count_ge(sample_counts, 30)),
+        ("patterns >= 50 samples", count_ge(sample_counts, 50)),
+        ("patterns >= 100 samples", count_ge(sample_counts, 100)),
+        ("patterns >= 300 samples", count_ge(sample_counts, 300)),
+        ("patterns >= 500 samples", count_ge(sample_counts, 500)),
+    ]
+
+    top_by_samples = sorted(
+        metrics_rows,
+        key=lambda row: (to_int(row.get("independent_sample_count")) or 0, to_int(row.get("sample_count")) or 0),
+        reverse=True,
+    )[:30]
+
+    pnl_rows = [
+        row for row in metrics_rows
+        if (to_int(row.get("trade_count")) or 0) > 0 and to_float(row.get("net_pnl")) is not None
+    ]
+    top_by_pnl = sorted(pnl_rows, key=lambda row: to_float(row.get("net_pnl")) or 0.0, reverse=True)[:30]
+
+    pnl_best_trade = [
+        row for row in pnl_rows
+        if materially_depends_on(row.get("net_pnl"), row.get("pnl_without_best_trade"))
+    ]
+    pnl_top5 = [
+        row for row in pnl_rows
+        if materially_depends_on(row.get("net_pnl"), row.get("pnl_without_top_5_trades"))
+    ]
+    few_tickers = [row for row in metrics_rows if (to_int(row.get("ticker_count")) or 0) < 5]
+    few_days = [
+        {"pattern_id": pid, "days": len(unique_event_days(rows))}
+        for pid, rows in events_by_pattern.items()
+        if len(unique_event_days(rows)) < 5
+    ]
+    single_regime = [
+        {"pattern_id": pid, "regime": next(iter(regimes)) if regimes else ""}
+        for pid, rows in events_by_pattern.items()
+        for regimes in [{str(row.get("market_regime", "")).strip() for row in rows if str(row.get("market_regime", "")).strip()}]
+        if len(regimes) == 1
+    ]
+
+    duplicate_groups: dict[str, int] = defaultdict(int)
+    for row in event_rows:
+        group = str(row.get("duplicate_group_id", "")).strip()
+        if group:
+            duplicate_groups[group] += 1
+    possible_duplicates = sum(count - 1 for count in duplicate_groups.values() if count > 1)
+    non_independent = sum(1 for row in event_rows if str(row.get("is_independent_sample", "")).lower() != "true")
+    timestamps_without_timezone = count_timestamps_without_timezone(pattern_rows, event_rows, experiment_rows, metrics_rows, metrics_ticker_rows, metrics_period_rows)
+    leakage_features = leakage_feature_rows(event_rows)
+    uses_future = [row for row in pattern_rows if str(row.get("uses_future_data", "")).lower() == "true"]
+    duplicate_variants = count_duplicate_variants(experiment_rows)
+    missing_exit = [row for row in pattern_rows if not str(row.get("exit_rule_plaintext", "")).strip()]
+    missing_entry = [row for row in pattern_rows if not str(row.get("entry_rule_plaintext", "")).strip()]
+
+    candidates_for_audit = [
+        row for row in top_by_samples
+        if (to_int(row.get("independent_sample_count")) or 0) >= 100 and (to_int(row.get("ticker_count")) or 0) >= 8
+    ][:30]
+    needs_more_samples = [row for row in metrics_rows if (to_int(row.get("independent_sample_count")) or 0) < 100]
+    freeze_until_more_data = [row for row in metrics_rows if (to_int(row.get("trade_count")) or 0) == 0]
+    discard_candidates = [
+        row for row in metrics_rows
+        if (to_int(row.get("independent_sample_count")) or 0) < 30 or (to_int(row.get("ticker_count")) or 0) < 5
+    ]
+
+    lines = [
+        "# Audit Summary For ChatGPT",
+        "",
+        "Generated from the package CSV exports. This is a lab-audit and candidate-ranking aid only.",
+        "",
+        "**Validation stance:** no pattern is approved for operation in this package. Paper/live execution validation is unavailable because `paper_trades.csv` and `ib_fills.csv` have zero rows.",
+        "",
+        "## A. Sample Distribution By Pattern",
+        "",
+        "| metric | value |",
+        "|---|---:|",
+    ]
+    lines.extend(f"| {label} | {value} |" for label, value in summary_rows)
+
+    lines.extend([
+        "",
+        "## B. Top 30 Patterns By Independent Sample Count",
+        "",
+        "| pattern_id | pattern_name | independent_sample_count | event_count | ticker_count | first_seen | last_seen | net_pnl_estimado | profit_factor | max_drawdown | status |",
+        "|---|---|---:|---:|---:|---|---|---:|---:|---:|---|",
+    ])
+    for row in top_by_samples:
+        catalog = catalog_by_pattern.get(row["pattern_id"], {})
+        lines.append(
+            f"| {md(row['pattern_id'])} | {md(catalog.get('pattern_name', ''))} | {cell(row.get('independent_sample_count'))} | {cell(row.get('sample_count'))} | {cell(row.get('ticker_count'))} | {cell(row.get('first_seen'))} | {cell(row.get('last_seen'))} | {cell(row.get('net_pnl'))} | {cell(row.get('profit_factor'))} | {cell(row.get('max_drawdown'))} | {md(catalog.get('status', ''))} |"
+        )
+
+    lines.extend([
+        "",
+        "## C. Top 30 Patterns By Estimated Net PnL",
+        "",
+    ])
+    if top_by_pnl:
+        lines.extend([
+            "| pattern_id | pattern_name | independent_sample_count | trade_count | ticker_count | net_pnl | profit_factor | max_drawdown | pnl_without_best_trade | pnl_without_top_5_trades | status |",
+            "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---|",
+        ])
+        for row in top_by_pnl:
+            catalog = catalog_by_pattern.get(row["pattern_id"], {})
+            lines.append(
+                f"| {md(row['pattern_id'])} | {md(catalog.get('pattern_name', ''))} | {cell(row.get('independent_sample_count'))} | {cell(row.get('trade_count'))} | {cell(row.get('ticker_count'))} | {cell(row.get('net_pnl'))} | {cell(row.get('profit_factor'))} | {cell(row.get('max_drawdown'))} | {cell(row.get('pnl_without_best_trade'))} | {cell(row.get('pnl_without_top_5_trades'))} | {md(catalog.get('status', ''))} |"
+            )
+    else:
+        lines.append("No available `net_pnl` values. Current package has zero paper trades/fills, so PnL ranking is not actionable.")
+
+    lines.extend([
+        "",
+        "## D. Concentration",
+        "",
+        "| check | count | notes |",
+        "|---|---:|---|",
+        f"| patterns whose PnL depends on best trade | {len(pnl_best_trade)} | Requires non-empty PnL fields. |",
+        f"| patterns whose PnL depends on top 5 trades | {len(pnl_top5)} | Requires non-empty PnL fields. |",
+        f"| patterns concentrated in fewer than 5 tickers | {len(few_tickers)} | Based on `metrics_by_pattern.ticker_count`. |",
+        f"| patterns concentrated in fewer than 5 days | {len(few_days)} | Based on unique event dates in `pattern_events.csv`. |",
+        f"| patterns concentrated in one market regime | {len(single_regime)} | Current export mostly uses `not_persisted`; regime audit is limited. |",
+        "",
+        "## E. Automatically Detected Risks",
+        "",
+        "| risk | count | notes |",
+        "|---|---:|---|",
+        f"| possible duplicated event rows | {possible_duplicates} | Counted from repeated `duplicate_group_id`. |",
+        f"| signals not marked independent | {non_independent} | Any `is_independent_sample` value other than `true`. |",
+        f"| timestamps without timezone | {timestamps_without_timezone} | Checked exported timestamp-like fields. |",
+        f"| features with possible leakage keywords | {len(leakage_features)} | Keywords: future, forward, outcome, target, label, mfe, mae. Review manually. |",
+        f"| patterns with uses_future_data = true | {len(uses_future)} | Must be zero unless explicitly justified. |",
+        f"| duplicated or nearly duplicated variants | {duplicate_variants} | Exact duplicate `(pattern_id, parameters_json)` pairs. |",
+        f"| patterns without clear exit rule | {len(missing_exit)} | Empty `exit_rule_plaintext`. |",
+        f"| patterns without clear entry rule | {len(missing_entry)} | Empty `entry_rule_plaintext`. |",
+        "",
+        "## F. Preliminary Claw Recommendation",
+        "",
+        "| bucket | count | recommendation |",
+        "|---|---:|---|",
+        f"| candidates_for_audit | {len(candidates_for_audit)} | Review first for lab quality and statistical robustness; do not approve for operation. |",
+        f"| needs_more_samples | {len(needs_more_samples)} | Gather more independent samples before statistical claims. |",
+        f"| likely_duplicates | {possible_duplicates + duplicate_variants} | Deduplicate or explain before ranking. |",
+        f"| freeze_until_more_data | {len(freeze_until_more_data)} | No paper trades yet; execution validation unavailable. |",
+        f"| discard_candidates | {len(discard_candidates)} | Low sample or low ticker diversity; keep rejected unless new evidence appears. |",
+        "",
+        "### First Candidates For Audit",
+        "",
+        "| pattern_id | pattern_name | independent_sample_count | ticker_count | status |",
+        "|---|---|---:|---:|---|",
+    ])
+    for row in candidates_for_audit[:30]:
+        catalog = catalog_by_pattern.get(row["pattern_id"], {})
+        lines.append(
+            f"| {md(row['pattern_id'])} | {md(catalog.get('pattern_name', ''))} | {cell(row.get('independent_sample_count'))} | {cell(row.get('ticker_count'))} | {md(catalog.get('status', ''))} |"
+        )
+
+    lines.extend([
+        "",
+        "### Bottom-Line Instruction",
+        "",
+        "Do not approve any pattern from this package. Use it to audit the research lab, detect data/logic issues, and rank candidates for future paper validation.",
+        "",
+    ])
+    (package / "AUDIT_SUMMARY_FOR_CHATGPT.md").write_text("\n".join(lines), encoding="utf-8")
+
+
+def to_int(value: Any) -> int | None:
+    try:
+        text = str(value).strip()
+        if not text:
+            return None
+        return int(float(text))
+    except (TypeError, ValueError):
+        return None
+
+
+def to_float(value: Any) -> float | None:
+    try:
+        text = str(value).strip()
+        if not text:
+            return None
+        return float(text)
+    except (TypeError, ValueError):
+        return None
+
+
+def percentile(values: list[int], q: float) -> str:
+    if not values:
+        return ""
+    if len(values) == 1:
+        return str(values[0])
+    pos = (len(values) - 1) * q
+    lo = int(pos)
+    hi = min(lo + 1, len(values) - 1)
+    weight = pos - lo
+    return f"{values[lo] * (1 - weight) + values[hi] * weight:.2f}"
+
+
+def count_ge(values: list[int], threshold: int) -> int:
+    return sum(1 for value in values if value >= threshold)
+
+
+def cell(value: Any) -> str:
+    text = str(value if value is not None else "").strip()
+    return md(text) if text else ""
+
+
+def materially_depends_on(total_value: Any, reduced_value: Any) -> bool:
+    total = to_float(total_value)
+    reduced = to_float(reduced_value)
+    if total is None or reduced is None or abs(total) < 1e-9:
+        return False
+    return abs(total - reduced) / abs(total) >= 0.5
+
+
+def unique_event_days(rows: list[dict[str, Any]]) -> set[str]:
+    days = set()
+    for row in rows:
+        timestamp = str(row.get("market_timestamp") or row.get("detected_at") or "").strip()
+        if len(timestamp) >= 10:
+            days.add(timestamp[:10])
+    return days
+
+
+def count_timestamps_without_timezone(*row_groups: list[dict[str, Any]]) -> int:
+    timestamp_columns = {
+        "created_at",
+        "first_seen",
+        "last_seen",
+        "detected_at",
+        "market_timestamp",
+        "bar_open_time",
+        "bar_close_time",
+        "tested_at",
+        "dataset_start",
+        "dataset_end",
+        "in_sample_start",
+        "in_sample_end",
+        "out_of_sample_start",
+        "out_of_sample_end",
+        "paper_live_start",
+        "paper_live_end",
+        "period_start",
+        "period_end",
+    }
+    count = 0
+    for rows in row_groups:
+        for row in rows:
+            for key, value in row.items():
+                if key not in timestamp_columns:
+                    continue
+                text = str(value).strip()
+                if text and not re.search(r"(?:Z|[+-]\d\d:\d\d)$", text):
+                    count += 1
+    return count
+
+
+def leakage_feature_rows(event_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    pattern = re.compile(r"\b(future|forward|outcome|target|label|mfe|mae)\b", re.I)
+    return [row for row in event_rows if pattern.search(str(row.get("features_used_json", "")))]
+
+
+def count_duplicate_variants(experiment_rows: list[dict[str, Any]]) -> int:
+    seen: set[tuple[str, str]] = set()
+    duplicates = 0
+    for row in experiment_rows:
+        key = (str(row.get("pattern_id", "")), str(row.get("parameters_json", "")))
+        if key in seen:
+            duplicates += 1
+        seen.add(key)
+    return duplicates
 
 
 def write_hashes(package: Path) -> None:

@@ -22,6 +22,10 @@
       "description": "Human-readable request and pattern summary"
     },
     {
+      "path": "AUDIT_SUMMARY_FOR_CHATGPT.md",
+      "description": "Computed audit summary, rankings, concentration checks, and preliminary Claw recommendations"
+    },
+    {
       "path": "manifest.json",
       "description": "Machine-readable package metadata"
     },

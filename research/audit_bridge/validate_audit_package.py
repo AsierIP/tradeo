@@ -20,6 +20,7 @@ REQUIRED_BRIDGE_FILES = [
 
 REQUIRED_FILES = [
     "AUDIT_REQUEST.md",
+    "AUDIT_SUMMARY_FOR_CHATGPT.md",
     "manifest.json",
     "pattern_catalog.csv",
     "pattern_events.csv",
