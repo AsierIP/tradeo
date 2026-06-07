@@ -1,0 +1,8 @@
+services:
+  backend:
+    volumes:
+      - ./research:/app/research:ro
+
+  worker:
+    volumes:
+      - ./research:/app/research:ro
