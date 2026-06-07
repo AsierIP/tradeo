@@ -57,7 +57,7 @@ class IBKRHistoricalDataProvider:
             self.settings.ibkr_host,
             self.settings.ibkr_port,
             clientId=self.settings.ibkr_client_id,
-            timeout=10,
+            timeout=float(getattr(self.settings, "ibkr_connect_timeout_seconds", 8.0)),
         )
         try:
             contract = Stock(symbol.upper(), "SMART", "USD")
@@ -85,22 +85,26 @@ class IBKRHistoricalDataProvider:
 
 
 def inspect_ibkr_connection(settings: Settings | None = None) -> dict[str, Any]:
-    """Read-only connectivity check for TWS/IB Gateway."""
+    """Read-only connectivity check for TWS/IB Gateway.
+
+    This function is safe for public health endpoints: it confirms connectivity but does not
+    return balances or managed account identifiers. Use the admin-only IBKR account endpoint
+    for detailed account state.
+    """
     settings = settings or get_settings()
     _ensure_event_loop()
     from ib_insync import IB
 
     ib = IB()
     try:
-        ib.connect(settings.ibkr_host, settings.ibkr_port, clientId=settings.ibkr_client_id, timeout=8)
+        ib.connect(
+            settings.ibkr_host,
+            settings.ibkr_port,
+            clientId=settings.ibkr_client_id,
+            timeout=float(getattr(settings, "ibkr_connect_timeout_seconds", 8.0)),
+        )
         server_time = ib.reqCurrentTime()
         managed_accounts = ib.managedAccounts()
-        selected_account = settings.ibkr_account or (managed_accounts[0] if managed_accounts else None)
-        summary: dict[str, str] = {}
-        if selected_account:
-            for item in ib.accountSummary(selected_account):
-                if item.tag in {"NetLiquidation", "TotalCashValue", "BuyingPower", "AvailableFunds"}:
-                    summary[item.tag] = f"{item.value} {item.currency}".strip()
         return {
             "ok": True,
             "host": settings.ibkr_host,
@@ -112,7 +116,7 @@ def inspect_ibkr_connection(settings: Settings | None = None) -> dict[str, Any]:
             "server_time": server_time.isoformat(),
             "managed_accounts_count": len(managed_accounts),
             "selected_account_configured": bool(settings.ibkr_account),
-            "account_summary": summary,
+            "account_summary_included": False,
         }
     except Exception as exc:  # noqa: BLE001
         return {
