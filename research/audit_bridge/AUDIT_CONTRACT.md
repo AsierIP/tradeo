@@ -39,6 +39,7 @@ research/audit_bridge/
   README.md
   AUDIT_CONTRACT.md
   validate_audit_package.py
+  requirements.txt
   export_audit_package.py
   requests/<audit_id>/
     AUDIT_REQUEST.md

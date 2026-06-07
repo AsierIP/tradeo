@@ -1,0 +1,2 @@
+# No third-party Python packages are required.
+# Use Python 3.11+; the audit bridge scripts use only the standard library.

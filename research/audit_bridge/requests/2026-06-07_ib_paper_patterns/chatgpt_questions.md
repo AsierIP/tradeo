@@ -1,6 +1,6 @@
 # ChatGPT Questions
 
-1. ¿Los 4 patrones están definidos de forma objetiva y reproducible?
+1. ¿Los patrones exportados estan definidos de forma objetiva y reproducible?
 2. ¿Hay riesgo de lookahead bias?
 3. ¿Hay riesgo de survivorship bias?
 4. ¿Las muestras son realmente independientes?

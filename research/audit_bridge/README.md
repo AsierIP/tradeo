@@ -21,10 +21,11 @@ El `audit_id` debe ser estable y legible, por ejemplo:
 Flujo recomendado:
 
 1. Crear una rama dedicada, nunca trabajar directo sobre `main`.
-2. Regenerar los CSV y documentos con `export_audit_package.py` o un exportador equivalente documentado.
-3. Ejecutar `validate_audit_package.py`.
-4. Revisar que no haya datos sensibles.
-5. Commit del paquete completo o, si es demasiado grande, commit de muestra representativa, manifest con hashes e instrucciones exactas de regeneracion.
+2. Instalar dependencias del puente si hiciera falta: `python3 -m pip install -r research/audit_bridge/requirements.txt`.
+3. Regenerar los CSV y documentos con `export_audit_package.py` o un exportador equivalente documentado.
+4. Ejecutar `validate_audit_package.py`.
+5. Revisar que no haya datos sensibles.
+6. Commit del paquete completo o, si es demasiado grande, commit de muestra representativa, manifest con hashes e instrucciones exactas de regeneracion.
 
 ## Datos obligatorios
 

@@ -11,6 +11,13 @@ from pathlib import Path
 from typing import Any
 
 
+REQUIRED_BRIDGE_FILES = [
+    "README.md",
+    "AUDIT_CONTRACT.md",
+    "validate_audit_package.py",
+    "requirements.txt",
+]
+
 REQUIRED_FILES = [
     "AUDIT_REQUEST.md",
     "manifest.json",
@@ -126,6 +133,11 @@ def main() -> int:
     args = parser.parse_args()
     package = args.package
     errors: list[str] = []
+    bridge_root = package.parent.parent
+
+    for rel in REQUIRED_BRIDGE_FILES:
+        if not (bridge_root / rel).exists():
+            errors.append(f"missing required bridge file: {rel}")
 
     for rel in REQUIRED_FILES:
         if not (package / rel).exists():
