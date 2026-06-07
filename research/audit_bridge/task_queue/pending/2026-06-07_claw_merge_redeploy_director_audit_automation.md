@@ -18,7 +18,7 @@ Resolve conflicts, merge the Director audit automation PR, update the local depl
 
 ## Context
 
-This PR adds the automated Director audit runner, machine-readable Director gate outputs, an internal daily auditor skill, and standing periodic task definitions. The goal is to move from manual audit discipline to repeatable daily/weekly audit operations.
+This PR adds the automated Director audit runner, machine-readable Director gate outputs, an internal daily auditor skill, standing periodic task definitions, and a Docker Compose audit overlay that mounts `./research` into backend/worker containers.
 
 ## Actions
 
@@ -44,11 +44,11 @@ This PR adds the automated Director audit runner, machine-readable Director gate
    git checkout main
    git pull --ff-only origin main
    ```
-6. Rebuild and redeploy:
+6. Rebuild and redeploy with the audit overlay:
    ```bash
-   docker compose build --no-cache backend worker frontend
-   docker compose up -d --remove-orphans
-   docker compose ps
+   docker compose -f docker-compose.yml -f docker-compose.audit.yml build --no-cache backend worker frontend
+   docker compose -f docker-compose.yml -f docker-compose.audit.yml up -d --remove-orphans
+   docker compose -f docker-compose.yml -f docker-compose.audit.yml ps
    ```
 7. Smoke-test services:
    ```bash
@@ -58,14 +58,14 @@ This PR adds the automated Director audit runner, machine-readable Director gate
    ```
 8. Run one audit manually after redeploy:
    ```bash
-   docker compose exec worker python research/audit_bridge/run_director_audit.py --cadence daily
+   docker compose -f docker-compose.yml -f docker-compose.audit.yml exec worker python research/audit_bridge/run_director_audit.py --cadence daily
    ```
 
 ## Acceptance criteria
 
 - PR is merged or explicitly blocked with reason.
 - Local `main` contains the merged changes.
-- Docker services are rebuilt and running.
+- Docker services are rebuilt and running with `./research:/app/research:ro` mounted.
 - Manual Director audit run produces:
   - `director_gate_result.json`
   - `director_gate_result.md`
