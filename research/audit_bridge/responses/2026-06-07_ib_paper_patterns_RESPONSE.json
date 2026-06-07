@@ -1,0 +1,76 @@
+{
+  "audit_id": "2026-06-07_ib_paper_patterns",
+  "verdict": "NEEDS_PROCESS_IMPROVEMENT",
+  "director_score": 30,
+  "confidence": "medium",
+  "promotion_decision": "repeat_with_fixes",
+  "pattern_approval": "none",
+  "blocking_issues": [
+    "zero paper trades",
+    "zero IB fills",
+    "no realized cost/slippage/spread validation",
+    "sample counts not fully reconstructable from exported event ledger",
+    "no explicit OOS/walk-forward proof",
+    "market regime and sector not persisted",
+    "multiple-testing adjustment missing for 1737 variants",
+    "PR scope metadata mismatch"
+  ],
+  "positive_evidence": [
+    "audit package includes manifest/configs/hashes/references",
+    "297 patterns and 1737 variants were exported",
+    "known limitations are documented",
+    "Researcher explicitly says no pattern is approved"
+  ],
+  "negative_evidence": [
+    "paper_trades.csv has zero rows",
+    "ib_fills.csv has zero rows",
+    "spread, slippage and bid/ask are not persisted",
+    "regime/sector are not persisted",
+    "representative examples are not a full raw event ledger"
+  ],
+  "required_next_actions": [
+    {
+      "priority": "P0",
+      "owner": "Claw/Codex",
+      "action": "Run and maintain Director approval gate script.",
+      "expected_output": "director_gate.py returns non-zero when promotion is blocked.",
+      "acceptance_criteria": "Current 2026-06-07 package is schema-valid but Director-gate-blocked due to zero trades/fills and missing OOS/regime evidence."
+    },
+    {
+      "priority": "P0",
+      "owner": "Claw/Codex",
+      "action": "Export complete immutable event ledger.",
+      "expected_output": "pattern_events.csv rows reconstruct sample_count and independent_sample_count with source ids and timestamp cutoffs.",
+      "acceptance_criteria": "For every pattern, independent_sample_count equals verified independent event rows or is explicitly marked as upstream_count with source hash."
+    },
+    {
+      "priority": "P0",
+      "owner": "Claw/Codex",
+      "action": "Demote/block promotion statuses without paper trades/fills.",
+      "expected_output": "No paper_candidate/premium_candidate status in packages with zero trades or fills.",
+      "acceptance_criteria": "Validator or Director gate blocks promoted statuses below the configured minimum paper trades/fills."
+    },
+    {
+      "priority": "P1",
+      "owner": "Claw/Codex",
+      "action": "Add OOS, ticker holdout, period holdout, bootstrap, permutation and multiple-testing metrics.",
+      "expected_output": "Additional columns/files for OOS robustness and adjusted statistical evidence.",
+      "acceptance_criteria": "Top candidates survive net-cost OOS with adjusted evidence, not just in-sample R metrics."
+    },
+    {
+      "priority": "P1",
+      "owner": "Claw/Codex",
+      "action": "Persist market regime, sector and execution-cost inputs.",
+      "expected_output": "metrics_by_regime.csv plus bid/ask/spread/slippage fields where available.",
+      "acceptance_criteria": "Director can audit concentration and execution realism before any promotion."
+    }
+  ],
+  "process_improvements": [
+    "separate schema validation from Director promotion eligibility through director_gate.py",
+    "separate upstream sample_count from exported_event_count and verified independent sample count",
+    "block paper/premium statuses without paper trades/fills",
+    "prevent unauthenticated health endpoint account balance exposure",
+    "require PR scope to match actual changed files"
+  ],
+  "created_at": "2026-06-07T17:55:52Z"
+}
