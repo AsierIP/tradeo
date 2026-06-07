@@ -1,0 +1,42 @@
+name: Director audit bridge
+
+on:
+  pull_request:
+    paths:
+      - "research/audit_bridge/**"
+      - ".github/workflows/director-audit.yml"
+  schedule:
+    - cron: "35 21 * * *"
+  workflow_dispatch:
+
+jobs:
+  audit-bridge:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run audit package validator on known package
+        run: |
+          python research/audit_bridge/validate_audit_package.py research/audit_bridge/requests/2026-06-07_ib_paper_patterns
+
+      - name: Run Director gate on known package
+        run: |
+          set +e
+          python research/audit_bridge/director_gate.py \
+            research/audit_bridge/requests/2026-06-07_ib_paper_patterns \
+            --json-output research/audit_bridge/requests/2026-06-07_ib_paper_patterns/director_gate_result.ci.json \
+            --markdown-output research/audit_bridge/requests/2026-06-07_ib_paper_patterns/director_gate_result.ci.md
+          code=$?
+          if [ "$code" = "1" ]; then
+            echo "Director gate invalid: schema/files are broken"
+            exit 1
+          fi
+          if [ "$code" = "2" ]; then
+            echo "Director gate blocked as expected for the current zero-trade package"
+            exit 0
+          fi
+          exit "$code"
