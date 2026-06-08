@@ -4,11 +4,11 @@ from tradeo.research.cluster_research_engine import ClusterResearchEngine
 from tradeo.research.types import ClusterCandidate
 from tradeo.research.validation_gate import ValidationGate
 from tradeo.research.window_sampler import WindowSampler
-from tradeo.services.technical_indicators import seeded_synthetic_ohlcv
+from tradeo.tests.fixtures import fixture_ohlcv
 
 
 def test_window_sampler_generates_forward_labeled_samples() -> None:
-    df = seeded_synthetic_ohlcv("LABX", bars=320)
+    df = fixture_ohlcv("LABX", bars=320)
     samples = WindowSampler().sample(
         symbol="LABX",
         df=df,
@@ -27,7 +27,7 @@ def test_window_sampler_generates_forward_labeled_samples() -> None:
 
 
 def test_cluster_engine_returns_candidates_or_empty_without_crashing() -> None:
-    df = seeded_synthetic_ohlcv("LABY", bars=500)
+    df = fixture_ohlcv("LABY", bars=500)
     samples = WindowSampler().sample(
         symbol="LABY",
         df=df,
@@ -48,7 +48,7 @@ def test_cluster_engine_returns_candidates_or_empty_without_crashing() -> None:
 
 
 def test_validation_gate_rejects_underpowered_candidate() -> None:
-    df = seeded_synthetic_ohlcv("LABZ", bars=320)
+    df = fixture_ohlcv("LABZ", bars=320)
     samples = WindowSampler().sample(
         symbol="LABZ",
         df=df,

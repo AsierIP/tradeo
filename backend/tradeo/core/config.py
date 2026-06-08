@@ -53,7 +53,7 @@ class Settings(BaseSettings):
     allow_options: bool = False
     allow_margin: bool = False
 
-    market_data_provider: str = "yfinance"
+    market_data_provider: str = "ibkr"
     allow_synthetic_market_data: bool = False
     universe_file: str = "/app/data/universe_us_mid_small.csv"
     strategy_config_file: str = "/app/config/strategy_cup_v0.json"
@@ -131,6 +131,20 @@ class Settings(BaseSettings):
     watchdog_interval_minutes: int = 5
     watchdog_stale_discovery_minutes: int = 30
     watchdog_close_stale_discovery_runs: bool = True
+
+    @field_validator("market_data_provider")
+    @classmethod
+    def only_ibkr_market_data(cls, value: str) -> str:
+        if value.lower() != "ibkr":
+            raise ValueError("Tradeo only permits IBKR market data; non-IBKR providers are disabled")
+        return "ibkr"
+
+    @field_validator("allow_synthetic_market_data")
+    @classmethod
+    def synthetic_market_data_disabled(cls, value: bool) -> bool:
+        if value:
+            raise ValueError("Synthetic market data is forbidden")
+        return False
 
     @field_validator("risk_per_trade_pct", "daily_loss_limit_pct", "monthly_loss_limit_pct")
     @classmethod

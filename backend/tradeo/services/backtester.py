@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 
 from tradeo.schemas import BacktestMetrics, PatternCandidate
-from tradeo.services.data_provider import MarketDataProvider, YFinanceProvider
+from tradeo.services.data_provider import MarketDataProvider
 from tradeo.services.pattern_detector import CupPatternDetector
 from tradeo.services.technical_indicators import max_drawdown_pct
 
@@ -34,7 +34,11 @@ class Backtester:
         starting_equity: float = 3000.0,
         risk_per_trade_pct: float = 0.01,
     ) -> None:
-        self.provider = provider or YFinanceProvider()
+        if provider is None:
+            from tradeo.services.provider_factory import get_market_data_provider
+
+            provider = get_market_data_provider()
+        self.provider = provider
         self.detector = detector or CupPatternDetector()
         self.starting_equity = starting_equity
         self.risk_per_trade_pct = risk_per_trade_pct

@@ -4,28 +4,35 @@ import sys
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
-import pandas as pd
 import pytest
 
 from tradeo.core.config import Settings
-from tradeo.services.data_provider import YFinanceProvider
+from tradeo.services.provider_factory import get_market_data_provider
 from tradeo.services.ibkr_data_provider import inspect_ibkr_connection
 
 
-def test_yfinance_provider_does_not_use_synthetic_fallback_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("tradeo.services.data_provider.yf.download", lambda *args, **kwargs: pd.DataFrame())
-
-    with pytest.raises(ValueError, match="empty dataset"):
-        YFinanceProvider().fetch_ohlcv("NARI")
+def test_settings_reject_synthetic_market_data() -> None:
+    with pytest.raises(ValueError, match="Synthetic market data is forbidden"):
+        Settings(allow_synthetic_market_data=True)
 
 
-def test_yfinance_provider_can_use_synthetic_fallback_explicitly(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("tradeo.services.data_provider.yf.download", lambda *args, **kwargs: pd.DataFrame())
+def test_settings_reject_non_ibkr_market_data_provider() -> None:
+    with pytest.raises(ValueError, match="only permits IBKR market data"):
+        Settings(market_data_provider="yfinance")
 
-    df = YFinanceProvider(allow_synthetic_fallback=True).fetch_ohlcv("DEMO")
 
-    assert not df.empty
-    assert {"open", "high", "low", "close", "volume"}.issubset(df.columns)
+def test_market_data_factory_returns_ibkr_provider(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TRADEO_MARKET_DATA_PROVIDER", "ibkr")
+    monkeypatch.setenv("TRADEO_ALLOW_SYNTHETIC_MARKET_DATA", "false")
+    from tradeo.core.config import get_settings
+
+    get_settings.cache_clear()
+    try:
+        provider = get_market_data_provider()
+    finally:
+        get_settings.cache_clear()
+
+    assert provider.__class__.__name__ == "IBKRHistoricalDataProvider"
 
 
 class FakeIB:
