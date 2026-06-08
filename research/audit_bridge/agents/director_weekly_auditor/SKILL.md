@@ -420,3 +420,7 @@ Also include a section titled `Mejoras propuestas para estas Instructions` at th
 ## Final Principle
 
 Prefer quarantining or rejecting a promising pattern over approving a contaminated one. Protect Tradeo from misaligned data, deceptive math, unrealistic backtests, silently wrong code, statistical bias, false correlations, overfitting, leakage, lookahead, and non-reproducible conclusions.
+
+## Post-Report Remediation Pull Request
+
+After creating the weekly audit report, create a separate remediation branch, improve the application so the same blockers should not appear in the next weekly audit, and leave a Pull Request ready for human review. The PR must be scoped to audit findings, include tests or validation evidence when possible, and must not modify live trading configuration or authorize execution.
