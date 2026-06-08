@@ -29,7 +29,7 @@ def max_drawdown_pct(equity_curve: list[float]) -> float:
 
 
 def normalize_ohlcv(df: pd.DataFrame) -> pd.DataFrame:
-    """Normalize provider-specific OHLCV columns to lower-case names."""
+    """Normalize provider-specific OHLCV columns and enforce sane market bars."""
     if df.empty:
         return df
     out = df.copy()
@@ -47,7 +47,45 @@ def normalize_ohlcv(df: pd.DataFrame) -> pd.DataFrame:
         raise ValueError(f"OHLCV data missing required columns: {missing}")
     out = out[required].dropna()
     out = out.astype({"open": float, "high": float, "low": float, "close": float, "volume": float})
+    out = out.sort_index()
+    validate_ohlcv(out)
     return out
+
+
+def validate_ohlcv(df: pd.DataFrame, *, require_timezone: bool = False) -> None:
+    """Raise on OHLCV data errors that can silently create false patterns.
+
+    The validator intentionally focuses on invariants that must hold for every
+    provider before research sampling, clustering or matching. Timezone remains
+    optional here because some historical daily feeds are date-indexed, but audit
+    packages must still document timezone separately.
+    """
+    if df.empty:
+        return
+    required = ["open", "high", "low", "close", "volume"]
+    missing = [column for column in required if column not in df.columns]
+    if missing:
+        raise ValueError(f"OHLCV data missing required columns: {missing}")
+    if df.index.has_duplicates:
+        raise ValueError("OHLCV index contains duplicate timestamps")
+    if not df.index.is_monotonic_increasing:
+        raise ValueError("OHLCV index must be sorted ascending before validation")
+    if require_timezone and isinstance(df.index, pd.DatetimeIndex) and df.index.tz is None:
+        raise ValueError("OHLCV DatetimeIndex must include timezone")
+
+    values = df[required]
+    if not np.isfinite(values.to_numpy(dtype=float)).all():
+        raise ValueError("OHLCV data contains non-finite values")
+    if (values[["open", "high", "low", "close"]] <= 0).any().any():
+        raise ValueError("OHLC prices must be strictly positive")
+    if (values["volume"] < 0).any():
+        raise ValueError("OHLCV volume must be non-negative")
+    if (values["high"] < values["low"]).any():
+        raise ValueError("OHLC high must be greater than or equal to low")
+    if (values["high"] < values[["open", "close"]].max(axis=1)).any():
+        raise ValueError("OHLC high must be greater than or equal to open and close")
+    if (values["low"] > values[["open", "close"]].min(axis=1)).any():
+        raise ValueError("OHLC low must be less than or equal to open and close")
 
 
 def seeded_synthetic_ohlcv(symbol: str, bars: int = 420) -> pd.DataFrame:

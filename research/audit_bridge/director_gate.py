@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-PROMOTION_STATUSES = {
+EXECUTION_PROMOTION_STATUSES = {
     "paper_candidate",
     "premium_candidate",
     "paper_limited_candidate",
@@ -21,11 +21,54 @@ PROMOTION_STATUSES = {
     "production_candidate",
 }
 
+RESEARCH_ONLY_STATUSES = {
+    "lab",
+    "lab_watchlist",
+    "lab_candidate",
+    "rejected",
+    "discard",
+    "freeze",
+    "refine",
+}
+
+REQUIRED_LOOKAHEAD_COLUMNS = {
+    "available_data_cutoff_ts",
+    "decision_ts",
+    "entry_eligible_ts",
+    "label_generated_ts",
+    "source_bar_hash",
+    "split_id",
+}
+
+TRAIN_ONLY_EVIDENCE_COLUMNS = {
+    "fit_scope",
+    "fit_on_train_only",
+    "split_protocol",
+    "purged_embargo_applied",
+    "selection_split",
+}
+
+RESEARCH_METRIC_COLUMNS = {
+    "winrate",
+    "avg_win",
+    "avg_loss",
+    "payoff_ratio",
+    "profit_factor",
+    "expectancy",
+    "max_drawdown",
+    "median_trade",
+}
+
+
+class GateInputsError(RuntimeError):
+    pass
+
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Conservative Director gate for Tradeo audit packages.")
     parser.add_argument("package", type=Path)
     parser.add_argument("--min-paper-trades-for-promotion", type=int, default=30)
+    parser.add_argument("--min-fills-for-promotion", type=int, default=30)
     parser.add_argument("--max-duplicate-event-share", type=float, default=0.0)
     parser.add_argument("--json-output", type=Path, default=None)
     parser.add_argument("--markdown-output", type=Path, default=None)
@@ -37,19 +80,12 @@ def main() -> int:
     args = parser.parse_args()
 
     try:
-        rows = {
-            "catalog": read_csv(args.package / "pattern_catalog.csv"),
-            "events": read_csv(args.package / "pattern_events.csv"),
-            "trades": read_csv(args.package / "paper_trades.csv"),
-            "fills": read_csv(args.package / "ib_fills.csv"),
-            "experiments": read_csv(args.package / "experiment_registry.csv"),
-            "metrics": read_csv(args.package / "metrics_by_pattern.csv"),
-        }
-    except FileNotFoundError as exc:
+        rows = load_rows(args.package)
+    except (FileNotFoundError, GateInputsError) as exc:
         result = result_payload(
             package=args.package,
             status="invalid",
-            blockers=[f"missing required file: {exc.filename}"],
+            blockers=[str(exc)],
             summary={"director_gate": "invalid"},
         )
         write_outputs(result, args.json_output, args.markdown_output)
@@ -61,6 +97,7 @@ def main() -> int:
     blockers, summary = evaluate(
         rows,
         min_paper_trades_for_promotion=args.min_paper_trades_for_promotion,
+        min_fills_for_promotion=args.min_fills_for_promotion,
         max_duplicate_event_share=args.max_duplicate_event_share,
     )
     status = "blocked" if blockers else "passed"
@@ -79,15 +116,31 @@ def main() -> int:
     return 0
 
 
+def load_rows(package: Path) -> dict[str, list[dict[str, str]]]:
+    rows = {
+        "catalog": read_csv(package / "pattern_catalog.csv"),
+        "events": read_csv(package / "pattern_events.csv"),
+        "trades": read_csv(package / "paper_trades.csv"),
+        "fills": read_csv(package / "ib_fills.csv"),
+        "experiments": read_csv(package / "experiment_registry.csv"),
+        "metrics": read_csv(package / "metrics_by_pattern.csv"),
+    }
+    return rows
+
+
 def read_csv(path: Path) -> list[dict[str, str]]:
     with path.open(newline="", encoding="utf-8") as handle:
-        return list(csv.DictReader(handle))
+        reader = csv.DictReader(handle)
+        if reader.fieldnames is None:
+            raise GateInputsError(f"{path.name} has no CSV header")
+        return list(reader)
 
 
 def evaluate(
     rows: dict[str, list[dict[str, str]]],
     *,
     min_paper_trades_for_promotion: int,
+    min_fills_for_promotion: int,
     max_duplicate_event_share: float,
 ) -> tuple[list[str], dict[str, Any]]:
     catalog = rows["catalog"]
@@ -99,22 +152,59 @@ def evaluate(
 
     blockers: list[str] = []
     statuses = {row.get("pattern_id", ""): (row.get("status") or "").strip().lower() for row in catalog}
-    promoted = sorted(pid for pid, status in statuses.items() if status in PROMOTION_STATUSES)
+    promoted = sorted(pid for pid, status in statuses.items() if status in EXECUTION_PROMOTION_STATUSES)
+    unknown_statuses = sorted(
+        {status for status in statuses.values() if status and status not in EXECUTION_PROMOTION_STATUSES | RESEARCH_ONLY_STATUSES}
+    )
 
+    if not catalog:
+        blockers.append("pattern_catalog.csv has zero rows; no pattern inventory is auditable.")
+    if not events:
+        blockers.append("pattern_events.csv has zero rows; sample counts cannot be reconstructed from an event ledger.")
     if not trades:
         blockers.append("paper_trades.csv has zero rows; no pattern can be approved beyond research/watchlist.")
     if not fills:
         blockers.append("ib_fills.csv has zero rows; execution, commission, spread and slippage validation are unavailable.")
+    if unknown_statuses:
+        blockers.append("unknown pattern statuses require explicit Director mapping: " + preview(unknown_statuses))
 
     zero_trade_promotions = []
     for row in metrics:
         pid = row.get("pattern_id", "")
-        if statuses.get(pid) not in PROMOTION_STATUSES:
+        if statuses.get(pid) not in EXECUTION_PROMOTION_STATUSES:
             continue
         if as_int(row.get("trade_count")) < min_paper_trades_for_promotion:
             zero_trade_promotions.append(pid)
     if zero_trade_promotions:
-        blockers.append("promoted statuses require linked paper trades/fills; offenders: " + preview(zero_trade_promotions))
+        blockers.append("promoted statuses require linked paper trades; offenders: " + preview(zero_trade_promotions))
+
+    if promoted and len(fills) < min_fills_for_promotion:
+        blockers.append(
+            f"promoted statuses require at least {min_fills_for_promotion} IB Paper fills; package has {len(fills)}."
+        )
+
+    research_metric_offenders = research_metrics_in_operational_columns(metrics)
+    if research_metric_offenders:
+        blockers.append(
+            "research R metrics are populated in operational metric columns while trade_count is zero; offenders: "
+            + preview(research_metric_offenders)
+        )
+
+    event_columns = set().union(*(row.keys() for row in events)) if events else set()
+    missing_lookahead_columns = sorted(REQUIRED_LOOKAHEAD_COLUMNS - event_columns)
+    if missing_lookahead_columns:
+        blockers.append("event ledger lacks anti-lookahead cutoff columns: " + ", ".join(missing_lookahead_columns))
+
+    close_entry_patterns = [
+        row.get("pattern_id", "")
+        for row in catalog
+        if "close of the final bar" in (row.get("entry_rule_plaintext") or "").lower()
+        or "latest close as signal/entry" in (row.get("entry_rule_plaintext") or "").lower()
+    ]
+    if close_entry_patterns and "entry_eligible_ts" not in event_columns:
+        blockers.append(
+            "same-bar close entry model lacks entry_eligible_ts proof; offenders: " + preview(close_entry_patterns)
+        )
 
     duplicate_counts = Counter(
         (row.get("duplicate_group_id") or "").strip()
@@ -173,7 +263,16 @@ def evaluate(
     if experiments and len(missing_oos) == len(experiments):
         blockers.append("no experiment has explicit out_of_sample_start/out_of_sample_end boundaries.")
 
-    if len(experiments) >= 100 and not has_multiple_testing_columns(experiments):
+    train_only_evidence_missing = False
+    if experiments:
+        experiment_columns = set().union(*(row.keys() for row in experiments))
+        train_only_evidence_missing = not bool(experiment_columns & TRAIN_ONLY_EVIDENCE_COLUMNS)
+        if train_only_evidence_missing:
+            blockers.append(
+                "no train-only fit evidence fields found; cannot prove scaler/clustering/R:R selection avoided OOS contamination."
+            )
+
+    if len(experiments) >= 20 and not has_multiple_testing_columns(experiments):
         blockers.append(
             f"{len(experiments)} experiment variants were exported without multiple-testing adjusted evidence."
         )
@@ -186,15 +285,39 @@ def evaluate(
         "experiments": len(experiments),
         "promoted_patterns": len(promoted),
         "promoted_pattern_ids_preview": promoted[:20],
+        "unknown_statuses": unknown_statuses,
         "duplicate_repeated_rows": duplicate_repeated_rows,
         "duplicate_repeated_row_share": round(duplicate_share, 6),
         "non_independent_event_rows": non_independent_rows,
         "pending_independence_rows": pending_independence_rows,
         "sample_count_mismatch_patterns": len(sample_mismatch_patterns),
         "missing_oos_experiments": len(missing_oos),
+        "missing_lookahead_columns": missing_lookahead_columns,
+        "research_metric_column_offenders": len(research_metric_offenders),
+        "train_only_evidence_missing": train_only_evidence_missing,
         "director_gate": "blocked" if blockers else "passed",
     }
     return blockers, summary
+
+
+def research_metrics_in_operational_columns(metrics: list[dict[str, str]]) -> list[str]:
+    offenders = []
+    for row in metrics:
+        if as_int(row.get("trade_count")) != 0:
+            continue
+        if any(nonzero_or_nonblank(row.get(column)) for column in RESEARCH_METRIC_COLUMNS):
+            offenders.append(row.get("pattern_id", "unknown"))
+    return offenders
+
+
+def nonzero_or_nonblank(value: str | None) -> bool:
+    text = (value or "").strip()
+    if not text:
+        return False
+    try:
+        return float(text) != 0.0
+    except ValueError:
+        return True
 
 
 def result_payload(package: Path, status: str, blockers: list[str], summary: dict[str, Any]) -> dict[str, Any]:

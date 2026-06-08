@@ -11,7 +11,10 @@ class ValidationGate:
     """Hard statistical gate for unknown patterns.
 
     A discovered pattern can be exciting, but it is never tradable merely because
-    the cluster looks good. This gate tries to reject curve-fit artifacts early.
+    the cluster looks good. This gate rejects curve-fit artifacts early and keeps
+    every discovery-stage result below any paper/live promotion state. Paper
+    promotion belongs to the Director gate after auditable paper trades, fills,
+    costs and clean out-of-sample evidence exist.
     """
 
     settings: Settings | None = None
@@ -74,16 +77,19 @@ class ValidationGate:
             warnings.append("posible dependencia de pocos símbolos")
         if candidate.year_count <= 1:
             warnings.append("posible dependencia de un solo régimen temporal")
+        if premium_passed:
+            warnings.append(
+                "premium/paper promotion bloqueada en discovery: requiere Director gate con trades, fills, costes y OOS limpio"
+            )
 
         promotion_status = "rejected"
         if not reasons:
-            if premium_passed and oos_positive and float(metrics.get("stability_score", 0.0)) >= s.discovery_min_stability_score:
-                promotion_status = "paper_candidate"
-            elif premium_passed:
-                promotion_status = "premium_candidate"
-            elif preferred_passed:
+            # Discovery can only create lab-stage states. It must never promote to
+            # paper/live from simulated research R metrics, even when those metrics
+            # look strong. The Director gate owns all execution-stage promotion.
+            if preferred_passed and oos_positive and float(metrics.get("stability_score", 0.0)) >= s.discovery_min_stability_score:
                 promotion_status = "lab_candidate"
-            elif minimum and float(minimum.get("expectancy_r", 0.0)) > 0:
+            elif preferred_passed or (minimum and float(minimum.get("expectancy_r", 0.0)) > 0):
                 promotion_status = "lab_watchlist"
             elif best_expectancy > 0:
                 promotion_status = "lab"
@@ -95,6 +101,7 @@ class ValidationGate:
         candidate.metrics["validation_passed"] = candidate.validation_passed
         candidate.metrics["preferred_rr_passed"] = preferred_passed
         candidate.metrics["premium_rr_passed"] = premium_passed
+        candidate.metrics["execution_promotion_blocked"] = premium_passed or promotion_status in {"lab_candidate", "lab_watchlist", "lab"}
         candidate.metrics["promotion_status"] = promotion_status
         candidate.metrics["promotion_reason"] = self._promotion_reason(promotion_status, best_rr, best_expectancy, best_pf, oos_positive)
         candidate.metrics["rejection_reasons"] = reasons
@@ -130,4 +137,4 @@ class ValidationGate:
         if status == "rejected":
             return "rechazado por filtros estadísticos duros"
         oos = "OOS positivo" if oos_positive else "OOS pendiente/debil"
-        return f"{status}: best_rr={best_rr:g}, expectancy={expectancy:.2f}R, PF={profit_factor:.2f}, {oos}"
+        return f"{status}: best_rr={best_rr:g}, expectancy={expectancy:.2f}R, PF={profit_factor:.2f}, {oos}; paper/live requiere Director gate"
