@@ -423,4 +423,4 @@ Prefer quarantining or rejecting a promising pattern over approving a contaminat
 
 ## Post-Report Remediation Pull Request
 
-After creating the weekly audit report, create a separate remediation branch, improve the application so the same blockers should not appear in the next weekly audit, and leave a Pull Request ready for human review. The PR must be scoped to audit findings, include tests or validation evidence when possible, and must not modify live trading configuration or authorize execution.
+After creating the weekly audit report, create a separate remediation branch, improve the application so the same blockers should not appear in the next weekly audit, and leave a Pull Request ready for human review. The PR must also improve the daily audit flow by updating `research/audit_bridge/agents/internal_daily_auditor/SKILL.md` so new code, checks, and functions are actually used by the daily auditor. The PR must be scoped to audit findings, include tests or validation evidence when possible, and must not modify live trading configuration or authorize execution.
