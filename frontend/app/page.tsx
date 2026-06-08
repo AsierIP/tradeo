@@ -5,8 +5,6 @@ import useSWR from 'swr'
 import {
   Area,
   AreaChart,
-  Bar,
-  BarChart,
   CartesianGrid,
   Line,
   LineChart,
@@ -157,6 +155,39 @@ type ScanResult = {
   rejected: number
 }
 
+type ModuleSignal = Summary['recent_signals'][number]
+type ModuleTrade = Summary['open_trades'][number] & {
+  signal_id?: number | null
+  opened_at: string
+  closed_at: string | null
+  exit_price: number | null
+  pnl_usd: number
+  r_multiple: number
+  broker_order_id?: string | null
+}
+type ModuleOverview = {
+  module: 'laboratory' | 'fox_hunter'
+  signals: ModuleSignal[]
+  trades: ModuleTrade[]
+  pnl_points: Array<{ timestamp: string; total_pnl_usd: number; trade_pnl_usd: number; symbol?: string; status?: string }>
+  stats: {
+    signals: number
+    trades: number
+    open_trades: number
+    closed_trades: number
+    total_pnl_usd: number
+    total_r: number
+    win_rate: number
+  }
+}
+type ModuleStatus = {
+  enabled: boolean
+  auto_submit_paper_orders?: boolean
+  auto_submit_live_orders?: boolean
+  eligible_patterns: number
+  live_armed?: boolean
+}
+
 function StatCard({ label, value, suffix }: { label: string; value: string | number; suffix?: string }) {
   return (
     <section className="card stat">
@@ -189,6 +220,16 @@ function formatRunTime(value?: string | null) {
   return new Date(value).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
 }
 
+function formatMoney(value: number) {
+  const sign = value > 0 ? '+' : ''
+  return `${sign}$${value.toFixed(2)}`
+}
+
+function shortDateTime(value?: string | null) {
+  if (!value) return '-'
+  return new Date(value).toLocaleString('es-ES', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+}
+
 function explainAcceptedPattern(pattern: DiscoveredPattern) {
   const lines = [
     `Lo acepto porque, en las pruebas, su mejor punto esta en ${pattern.best_rr.toFixed(1)}R: por cada 1R que arriesga, intenta sacar ${pattern.best_rr.toFixed(1)}R.`,
@@ -211,10 +252,121 @@ function explainAcceptedPattern(pattern: DiscoveredPattern) {
   return lines.join(' ')
 }
 
+function OperationsModule({
+  title,
+  subtitle,
+  overview,
+  status,
+  onScan,
+  busy
+}: {
+  title: string
+  subtitle: string
+  overview?: ModuleOverview
+  status?: ModuleStatus
+  onScan: () => Promise<void>
+  busy: boolean
+}) {
+  const signals = overview?.signals || []
+  const trades = overview?.trades || []
+  const pnl = overview?.pnl_points?.length ? overview.pnl_points : [{ timestamp: '', total_pnl_usd: 0, trade_pnl_usd: 0 }]
+  const stats = overview?.stats || { signals: 0, trades: 0, open_trades: 0, closed_trades: 0, total_pnl_usd: 0, total_r: 0, win_rate: 0 }
+  const autoSubmit = status?.auto_submit_paper_orders ?? status?.auto_submit_live_orders ?? false
+  return (
+    <section className="card full module-card">
+      <div className="section-head module-head">
+        <div>
+          <div className="module-kicker">{title}</div>
+          <h2>{title}</h2>
+          <p className="muted">{subtitle}</p>
+        </div>
+        <div className="module-actions">
+          <div className="pill"><span className={`dot ${status?.enabled ? '' : 'bad'}`} />{status?.enabled ? 'activo' : 'apagado'}</div>
+          <div className="pill"><span className={`dot ${autoSubmit ? '' : 'warn'}`} />auto órdenes {autoSubmit ? 'on' : 'off'}</div>
+          <button onClick={onScan} disabled={busy}>{busy ? 'Escaneando...' : 'Escanear ahora'}</button>
+        </div>
+      </div>
+
+      <div className="module-stats">
+        <div><strong>{status?.eligible_patterns ?? 0}</strong><span>patrones elegibles</span></div>
+        <div><strong>{stats.signals}</strong><span>señales</span></div>
+        <div><strong>{stats.open_trades}</strong><span>operaciones abiertas</span></div>
+        <div><strong>{formatMoney(stats.total_pnl_usd)}</strong><span>beneficio total</span></div>
+        <div><strong>{(stats.win_rate * 100).toFixed(1)}%</strong><span>win rate cerrado</span></div>
+      </div>
+
+      <div className="module-split">
+        <section className="module-panel">
+          <h3>Beneficio total</h3>
+          <ResponsiveContainer width="100%" height={250}>
+            <AreaChart data={pnl}>
+              <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
+              <XAxis dataKey="timestamp" hide />
+              <YAxis />
+              <Tooltip />
+              <Area type="monotone" dataKey="total_pnl_usd" strokeWidth={2} fillOpacity={0.22} />
+            </AreaChart>
+          </ResponsiveContainer>
+        </section>
+        <section className="module-panel">
+          <h3>Operaciones</h3>
+          <div className="table-scroll compact-scroll">
+            <table>
+              <thead>
+                <tr><th>Símbolo</th><th>Lado</th><th>Qty</th><th>Entrada</th><th>Salida</th><th>PnL</th><th>R</th><th>Estado</th><th>Apertura</th></tr>
+              </thead>
+              <tbody>
+                {trades.map((t) => (
+                  <tr key={t.id}>
+                    <td>{t.symbol}</td>
+                    <td>{t.side}</td>
+                    <td>{t.qty}</td>
+                    <td>{t.entry}</td>
+                    <td>{t.exit_price ?? '-'}</td>
+                    <td className={t.pnl_usd > 0 ? 'positive' : t.pnl_usd < 0 ? 'negative' : ''}>{formatMoney(t.pnl_usd)}</td>
+                    <td>{t.r_multiple.toFixed(2)}R</td>
+                    <td><StatusBadge status={t.status} /></td>
+                    <td>{shortDateTime(t.opened_at)}</td>
+                  </tr>
+                ))}
+                {!trades.length && <tr><td colSpan={9}>Sin operaciones todavía.</td></tr>}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </div>
+
+      <div className="subsection">
+        <h3>Señales y patrones detectados</h3>
+        <div className="table-scroll signal-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Símbolo</th><th>Lado</th><th>Entrada</th><th>Stop</th><th>Target</th><th>R:R</th><th>Conf.</th><th>Qty</th><th>Estado</th>
+              </tr>
+            </thead>
+            <tbody>
+              {signals.map((s) => (
+                <tr key={s.id}>
+                  <td>{s.symbol}</td><td>{s.side}</td><td>{s.entry}</td><td>{s.stop}</td><td>{s.target}</td>
+                  <td>{s.reward_risk}</td><td>{(s.confidence * 100).toFixed(1)}%</td><td>{s.suggested_qty}</td><td><StatusBadge status={s.status} /></td>
+                </tr>
+              ))}
+              {!signals.length && <tr><td colSpan={9}>Sin señales todavía.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  )
+}
+
 export default function Page() {
   const [lastDiscovery, setLastDiscovery] = useState<DiscoveryRunResponse | null>(null)
   const [busyDiscovery, setBusyDiscovery] = useState(false)
   const [busyMatch, setBusyMatch] = useState(false)
+  const [busyLabScan, setBusyLabScan] = useState(false)
+  const [busyFoxScan, setBusyFoxScan] = useState(false)
   const [isScanning, setIsScanning] = useState(false)
   const [selectedPatternId, setSelectedPatternId] = useState<number | null>(null)
   const [scanResult, setScanResult] = useState<ScanResult | null>(null)
@@ -223,6 +375,10 @@ export default function Page() {
   const { data: discoveredPatterns, mutate: mutateResearch } = useSWR<DiscoveredPattern[]>('/research/discovered-patterns?limit=100', fetcher, { refreshInterval: 30000 })
   const { data: currentMatches, mutate: mutateMatches } = useSWR<CurrentNovelMatch[]>('/research/current-matches?limit=80', fetcher, { refreshInterval: 30000 })
   const { data: discoveryRuns, mutate: mutateRuns } = useSWR<DiscoveryRun[]>('/research/runs?limit=25', fetcher, { refreshInterval: 15000 })
+  const { data: labStatus, mutate: mutateLabStatus } = useSWR<ModuleStatus>('/laboratory/status', fetcher, { refreshInterval: 15000 })
+  const { data: foxStatus, mutate: mutateFoxStatus } = useSWR<ModuleStatus>('/fox-hunter/status', fetcher, { refreshInterval: 15000 })
+  const { data: labOverview, mutate: mutateLabOverview } = useSWR<ModuleOverview>('/laboratory/overview', fetcher, { refreshInterval: 15000 })
+  const { data: foxOverview, mutate: mutateFoxOverview } = useSWR<ModuleOverview>('/fox-hunter/overview', fetcher, { refreshInterval: 15000 })
 
   async function runScan() {
     setIsScanning(true)
@@ -281,6 +437,28 @@ export default function Page() {
     }
   }
 
+  async function runLaboratoryScan() {
+    setBusyLabScan(true)
+    try {
+      await postJson('/laboratory/scan', { limit: 80, store_signals: true, execute_orders: false })
+      await mutateLabOverview()
+      await mutateLabStatus()
+    } finally {
+      setBusyLabScan(false)
+    }
+  }
+
+  async function runFoxScan() {
+    setBusyFoxScan(true)
+    try {
+      await postJson('/fox-hunter/scan', { limit: 80, store_signals: true, execute_orders: false })
+      await mutateFoxOverview()
+      await mutateFoxStatus()
+    } finally {
+      setBusyFoxScan(false)
+    }
+  }
+
   const researchRows = useMemo(() => {
     const rows = (discoveredPatterns || []).filter((p) => p.validation_passed)
     return rows.slice(0, 18).map((p) => ({
@@ -323,7 +501,6 @@ export default function Page() {
   if (isLoading || !data) return <main className="main"><p>Cargando Tradeo…</p></main>
 
   const latestEquity = data.equity.length ? data.equity[data.equity.length - 1].equity : data.initial_capital_usd
-  const metricRows = data.pattern_metrics.length ? data.pattern_metrics : [{ pattern: 'mid_small_cap_cup_breakout', total_trades: 0, win_rate: 0, profit_factor: 0, expectancy_r: 0, max_drawdown_pct: 0, avg_r_multiple: 0, strategy_version: 'cup_v0' }]
   const acceptedResearch = (discoveredPatterns || []).filter((p) => p.validation_passed)
   const latestRun = discoveryRuns?.[0]
   const latestCompletedRun = discoveryRuns?.find((run) => run.status === 'completed')
@@ -335,8 +512,7 @@ export default function Page() {
           <div className="kicker">Tradeo · dashboard privado</div>
           <h1>Director de patrones mid/small cap</h1>
           <p className="subtitle">
-            Búsqueda técnica de patrones definidos y laboratorio autónomo para descubrir patrones nuevos desde cero.
-            El laboratorio usa clustering y embeddings locales: cero ventanas crudas enviadas a LLM, solo reportes compactos para supervisión.
+            Tres módulos independientes: Research descubre patrones, Laboratorio los valida con IB Paper y Fox Hunter opera solo patrones en Producción.
           </p>
           <div className="actions">
             <button onClick={runScan} disabled={isScanning}>{isScanning ? 'Escaneando...' : 'Escanear universo'}</button>
@@ -358,42 +534,17 @@ export default function Page() {
 
       <section className="grid">
         <StatCard label="Equity actual" value={`$${latestEquity.toFixed(2)}`} />
-        <StatCard label="Riesgo máximo por operación" value={`$${data.risk_per_trade_usd.toFixed(2)}`} />
-        <StatCard label="R:R mínimo" value={`1:${data.min_reward_risk}`} />
-        <StatCard label="Patrones LAB aceptados" value={acceptedResearch.length} />
+        <StatCard label="Research aceptados" value={acceptedResearch.length} />
+        <StatCard label="Lab señales" value={labOverview?.stats.signals ?? 0} />
+        <StatCard label="Fox operaciones" value={foxOverview?.stats.trades ?? 0} />
 
-        <section className="card chart">
-          <h2>Curva de equity</h2>
-          <ResponsiveContainer width="100%" height={290}>
-            <AreaChart data={data.equity}>
-              <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
-              <XAxis dataKey="timestamp" hide />
-              <YAxis domain={['dataMin - 50', 'dataMax + 50']} />
-              <Tooltip />
-              <Area type="monotone" dataKey="equity" strokeWidth={2} fillOpacity={0.25} />
-            </AreaChart>
-          </ResponsiveContainer>
-        </section>
-
-        <section className="card side">
-          <h2>Rendimiento por patrón definido</h2>
-          <ResponsiveContainer width="100%" height={290}>
-            <BarChart data={metricRows}>
-              <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
-              <XAxis dataKey="pattern" hide />
-              <YAxis />
-              <Tooltip />
-              <Bar dataKey="expectancy_r" />
-            </BarChart>
-          </ResponsiveContainer>
-        </section>
-
-        <section className="card full lab-card">
+        <section className="card full research-card">
           <div className="section-head">
             <div>
-              <h2>Research Lab · patrones descubiertos desde cero</h2>
+              <div className="module-kicker">Research</div>
+              <h2>Research · patrones descubiertos desde cero</h2>
               <p className="muted">
-                Clusters OHLCV no predefinidos. Evalúa 1.5R, 2R, 2.5R, 3R, 4R y 5R; ninguno puede operar dinero real automáticamente.
+                Descubre patrones nuevos con clustering OHLCV. No opera; solo propone patrones para Laboratorio.
               </p>
             </div>
             <div className="mini-stats">
@@ -558,38 +709,23 @@ export default function Page() {
           </div>
         </section>
 
-        <section className="card full">
-          <h2>Señales y patrones definidos detectados</h2>
-          <table>
-            <thead>
-              <tr>
-                <th>Símbolo</th><th>Lado</th><th>Entrada</th><th>Stop</th><th>Target</th><th>R:R</th><th>Conf.</th><th>Qty</th><th>Estado</th>
-              </tr>
-            </thead>
-            <tbody>
-              {data.recent_signals.map((s) => (
-                <tr key={s.id}>
-                  <td>{s.symbol}</td><td>{s.side}</td><td>{s.entry}</td><td>{s.stop}</td><td>{s.target}</td>
-                  <td>{s.reward_risk}</td><td>{(s.confidence * 100).toFixed(1)}%</td><td>{s.suggested_qty}</td><td><StatusBadge status={s.status} /></td>
-                </tr>
-              ))}
-              {!data.recent_signals.length && <tr><td colSpan={9}>Sin señales todavía. Ejecuta un escaneo o deja actuar al worker.</td></tr>}
-            </tbody>
-          </table>
-        </section>
+        <OperationsModule
+          title="Laboratorio"
+          subtitle="Valida patrones aprobados por Research con señales y operaciones IB Paper. Misma estructura que Fox, datos de paper."
+          overview={labOverview}
+          status={labStatus}
+          onScan={runLaboratoryScan}
+          busy={busyLabScan}
+        />
 
-        <section className="card full">
-          <h2>Operaciones abiertas</h2>
-          <table>
-            <thead><tr><th>Símbolo</th><th>Lado</th><th>Qty</th><th>Entrada</th><th>Stop</th><th>Target</th><th>Estado</th></tr></thead>
-            <tbody>
-              {data.open_trades.map((t) => (
-                <tr key={t.id}><td>{t.symbol}</td><td>{t.side}</td><td>{t.qty}</td><td>{t.entry}</td><td>{t.stop}</td><td>{t.target}</td><td>{t.status}</td></tr>
-              ))}
-              {!data.open_trades.length && <tr><td colSpan={7}>No hay operaciones abiertas.</td></tr>}
-            </tbody>
-          </table>
-        </section>
+        <OperationsModule
+          title="Fox Hunter"
+          subtitle="Escanea solo patrones en Producción. Misma estructura que Laboratorio, datos live cuando el sistema esté armado."
+          overview={foxOverview}
+          status={foxStatus}
+          onScan={runFoxScan}
+          busy={busyFoxScan}
+        />
       </section>
     </main>
   )

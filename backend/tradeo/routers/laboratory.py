@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from tradeo.core.security import require_admin
 from tradeo.db.session import get_db
 from tradeo.schemas import PatternEntryScanRequest, PatternEntryScanResponse
+from tradeo.services.module_dashboard import module_overview
 from tradeo.services.pattern_entry_scanner import (
     PatternEntryScanner,
     PatternEntryScannerSafetyError,
@@ -20,6 +21,14 @@ def laboratory_status(
     db: Session = Depends(get_db),
 ) -> dict[str, object]:
     return PatternEntryScanner().status(db)["laboratory"]
+
+
+@router.get("/overview")
+def laboratory_overview(
+    _: str = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    return module_overview(db, "laboratory")
 
 
 @router.post("/scan", response_model=PatternEntryScanResponse)
