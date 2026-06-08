@@ -59,7 +59,8 @@ def _signal_module(signal: Signal) -> str:
         return str(entry_module)
     if signal.strategy_version.startswith("fox_hunter_"):
         return "fox_hunter"
-    if signal.strategy_version.startswith("laboratory_"):
+    purpose = str(metadata.get("purpose") or "")
+    if signal.strategy_version.startswith(("laboratory_", "ibkr_paper_", "ibkr_smoke_")) or purpose.startswith("ibkr_paper_"):
         return "laboratory"
     return "defined"
 
@@ -75,6 +76,11 @@ def _trade_module(trade: Trade) -> str:
     if reason.startswith("fox_hunter"):
         return "fox_hunter"
     if reason.startswith("laboratory"):
+        return "laboratory"
+    execution_mode = str(metadata.get("execution_mode") or "")
+    if execution_mode == "paper":
+        return "laboratory"
+    if metadata.get("ibkr_mode") == "paper":
         return "laboratory"
     return "defined"
 

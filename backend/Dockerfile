@@ -12,6 +12,7 @@ RUN apt-get update \
 
 COPY backend/pyproject.toml /app/pyproject.toml
 COPY backend/tradeo /app/tradeo
+COPY research /research
 RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir -e ".[dev]"
 
