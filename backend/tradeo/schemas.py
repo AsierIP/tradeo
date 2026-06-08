@@ -317,6 +317,7 @@ class NovelPatternMatchRequest(BaseModel):
     limit: int | None = None
     max_patterns: int | None = None
     similarity_threshold: float | None = None
+    module: Literal["laboratory", "fox_hunter"] = "laboratory"
     store: bool = True
 
 
@@ -347,5 +348,33 @@ class NovelPatternMatchResponse(BaseModel):
     symbols_checked: int
     matches: list[dict[str, Any]] = Field(default_factory=list)
     stored_matches: int
+    module: str = "laboratory"
+    similarity_threshold: float
+    generated_at: str
+
+
+class PatternEntryScanRequest(BaseModel):
+    symbols: list[str] | None = None
+    limit: int | None = None
+    max_patterns: int | None = None
+    similarity_threshold: float | None = None
+    store_signals: bool | None = None
+    execute_orders: bool | None = None
+
+
+class PatternEntryScanResponse(BaseModel):
+    module: str
+    patterns_checked: int
+    symbols_checked: int
+    matches_found: int
+    signals_created: int
+    orders_submitted: int
+    skipped_duplicates: int
+    rejected_by_risk: int
+    order_errors: list[dict[str, Any]] = Field(default_factory=list)
+    signal_ids: list[int] = Field(default_factory=list)
+    trade_ids: list[int] = Field(default_factory=list)
+    store_signals: bool
+    execute_orders: bool
     similarity_threshold: float
     generated_at: str

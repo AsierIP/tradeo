@@ -4,7 +4,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, field_validator
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 TradingMode = Literal["research", "paper", "live"]
@@ -103,6 +103,27 @@ class Settings(BaseSettings):
     discovery_match_max_patterns: int = 25
     discovery_match_similarity_threshold: float = 0.45
     discovery_match_max_results: int = 100
+
+    # Laboratory scans validated Research patterns in paper mode. It may create
+    # auditable paper signals continuously, but it never sends IB orders unless
+    # explicitly enabled.
+    laboratory_scanner_enabled: bool = True
+    laboratory_scan_minutes: int = 5
+    laboratory_symbol_limit: int = 80
+    laboratory_max_patterns: int = 25
+    laboratory_similarity_threshold: float = 0.45
+    laboratory_store_signals: bool = True
+    laboratory_auto_submit_paper_orders: bool = False
+
+    # Fox Hunter scans production patterns. Live order submission requires both
+    # this explicit switch and the existing live_armed safety gate.
+    fox_hunter_enabled: bool = False
+    fox_hunter_scan_minutes: int = 1
+    fox_hunter_symbol_limit: int = 80
+    fox_hunter_max_patterns: int = 25
+    fox_hunter_similarity_threshold: float = 0.50
+    fox_hunter_store_signals: bool = True
+    fox_hunter_auto_submit_live_orders: bool = False
 
     openai_api_key: str | None = None
     openai_supervisor_model: str = "gpt-5.5-pro"

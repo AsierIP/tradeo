@@ -156,6 +156,7 @@ class DiscoveredPatternStatus(str, Enum):
     LAB_CANDIDATE = "lab_candidate"
     PREMIUM_CANDIDATE = "premium_candidate"
     PAPER_CANDIDATE = "paper_candidate"
+    PRODUCTION = "production"
     REJECTED = "rejected"
 
 

@@ -1,0 +1,45 @@
+from __future__ import annotations
+
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
+
+from tradeo.core.security import require_admin
+from tradeo.db.session import get_db
+from tradeo.schemas import PatternEntryScanRequest, PatternEntryScanResponse
+from tradeo.services.pattern_entry_scanner import (
+    PatternEntryScanner,
+    PatternEntryScannerSafetyError,
+)
+
+router = APIRouter(prefix="/laboratory", tags=["laboratory"])
+
+
+@router.get("/status")
+def laboratory_status(
+    _: str = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    return PatternEntryScanner().status(db)["laboratory"]
+
+
+@router.post("/scan", response_model=PatternEntryScanResponse)
+def scan_laboratory(
+    request: PatternEntryScanRequest | None = None,
+    _: str = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> PatternEntryScanResponse:
+    request = request or PatternEntryScanRequest()
+    try:
+        result = PatternEntryScanner().scan(
+            db,
+            module="laboratory",
+            symbols=request.symbols,
+            limit=request.limit,
+            max_patterns=request.max_patterns,
+            similarity_threshold=request.similarity_threshold,
+            store_signals=request.store_signals,
+            execute_orders=request.execute_orders,
+        )
+    except PatternEntryScannerSafetyError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return PatternEntryScanResponse(**result)

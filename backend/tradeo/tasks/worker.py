@@ -14,6 +14,10 @@ from tradeo.db.models import DiscoveryRun
 from tradeo.db.session import SessionLocal
 from tradeo.research.novel_pattern_matcher import NovelPatternMatcher
 from tradeo.schemas import ScanRequest
+from tradeo.services.pattern_entry_scanner import (
+    PatternEntryScanner,
+    PatternEntryScannerSafetyError,
+)
 from tradeo.services.reports import ReportService
 from tradeo.services.scanner import MarketScanner
 from tradeo.services.self_improvement import SelfImprovementEngine
@@ -23,7 +27,11 @@ from tradeo.services.watchdog import SystemWatchdog
 def scan_job() -> None:
     db = SessionLocal()
     try:
-        response = MarketScanner().run(ScanRequest(limit=get_settings().scan_limit_default), db=db, store=True)
+        response = MarketScanner().run(
+            ScanRequest(limit=get_settings().scan_limit_default),
+            db=db,
+            store=True,
+        )
         logger.info("scan complete: {}", response.model_dump())
     except Exception as exc:  # noqa: BLE001
         logger.exception("scan job failed: {}", exc)
@@ -83,7 +91,9 @@ def discovery_job() -> None:
         if running:
             logger.info("discovery job skipped: run {} already running", running.id)
             return
-        recent_cutoff = datetime.now(timezone.utc) - timedelta(minutes=max(1, settings.discovery_scan_minutes))
+        recent_cutoff = datetime.now(timezone.utc) - timedelta(
+            minutes=max(1, settings.discovery_scan_minutes)
+        )
         recent = (
             db.query(DiscoveryRun)
             .filter(DiscoveryRun.status == "completed", DiscoveryRun.started_at >= recent_cutoff)
@@ -122,6 +132,40 @@ def novel_match_job() -> None:
         db.close()
 
 
+def laboratory_entry_job() -> None:
+    db = SessionLocal()
+    try:
+        settings = get_settings()
+        if not settings.laboratory_scanner_enabled:
+            logger.info("laboratory entry scanner skipped: laboratory_scanner_enabled=false")
+            return
+        result = PatternEntryScanner(settings=settings).scan(db, module="laboratory")
+        logger.info("laboratory entry scanner result: {}", result)
+    except PatternEntryScannerSafetyError as exc:
+        logger.warning("laboratory entry scanner blocked by safety gate: {}", exc)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("laboratory entry scanner failed: {}", exc)
+    finally:
+        db.close()
+
+
+def fox_hunter_entry_job() -> None:
+    db = SessionLocal()
+    try:
+        settings = get_settings()
+        if not settings.fox_hunter_enabled:
+            logger.info("fox hunter skipped: fox_hunter_enabled=false")
+            return
+        result = PatternEntryScanner(settings=settings).scan(db, module="fox_hunter")
+        logger.info("fox hunter result: {}", result)
+    except PatternEntryScannerSafetyError as exc:
+        logger.warning("fox hunter blocked by safety gate: {}", exc)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("fox hunter failed: {}", exc)
+    finally:
+        db.close()
+
+
 def watchdog_job() -> None:
     db = SessionLocal()
     try:
@@ -156,7 +200,12 @@ def main() -> None:
                 max_instances=1,
                 coalesce=True,
             )
-        scheduler.add_job(scan_job, "interval", minutes=settings.scheduler_scan_minutes, id="market_scan")
+        scheduler.add_job(
+            scan_job,
+            "interval",
+            minutes=settings.scheduler_scan_minutes,
+            id="market_scan",
+        )
         scheduler.add_job(
             report_job,
             CronTrigger(hour=settings.scheduler_report_hour_utc, minute=5, day_of_week="mon-fri"),
@@ -182,6 +231,24 @@ def main() -> None:
                 "interval",
                 minutes=settings.discovery_match_scan_minutes,
                 id="novel_pattern_matcher",
+                max_instances=1,
+                coalesce=True,
+            )
+        if settings.laboratory_scanner_enabled:
+            scheduler.add_job(
+                laboratory_entry_job,
+                "interval",
+                minutes=settings.laboratory_scan_minutes,
+                id="laboratory_entry_scanner",
+                max_instances=1,
+                coalesce=True,
+            )
+        if settings.fox_hunter_enabled:
+            scheduler.add_job(
+                fox_hunter_entry_job,
+                "interval",
+                minutes=settings.fox_hunter_scan_minutes,
+                id="fox_hunter_entry_scanner",
                 max_instances=1,
                 coalesce=True,
             )

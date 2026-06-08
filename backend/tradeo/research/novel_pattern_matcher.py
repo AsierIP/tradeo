@@ -2,14 +2,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 from loguru import logger
 from sqlalchemy.orm import Session
 
 from tradeo.core.config import Settings, get_settings
-from tradeo.db.models import DiscoveredPattern, DiscoveredPatternMatch
+from tradeo.db.models import DiscoveredPattern, DiscoveredPatternMatch, DiscoveredPatternStatus
 from tradeo.research.pattern_embedding_engine import PatternEmbeddingEngine
 from tradeo.services.data_provider import MarketDataProvider, pick_symbols
 from tradeo.services.provider_factory import get_market_data_provider
@@ -18,10 +18,10 @@ from tradeo.services.technical_indicators import atr, normalize_ohlcv
 
 @dataclass(slots=True)
 class NovelPatternMatcher:
-    """Find current charts that look like validated LAB patterns.
+    """Find current charts that look like validated discovered patterns.
 
-    Matches remain in `lab_watchlist`. This is not a trading signal generator; it
-    is the bridge between discovery and later paper-trading validation.
+    This is still not an execution layer. Laboratory/Fox Hunter scanners decide
+    whether a match becomes a signal or an IB order.
     """
 
     provider: MarketDataProvider | None = None
@@ -38,13 +38,16 @@ class NovelPatternMatcher:
         limit: int | None = None,
         max_patterns: int | None = None,
         similarity_threshold: float | None = None,
+        module: Literal["laboratory", "fox_hunter"] = "laboratory",
         store: bool = True,
     ) -> dict[str, Any]:
         settings = self.settings
         assert settings is not None
+        statuses = self._statuses_for_module(module)
         patterns = (
             db.query(DiscoveredPattern)
             .filter(DiscoveredPattern.validation_passed.is_(True))
+            .filter(DiscoveredPattern.status.in_(statuses))
             .order_by(DiscoveredPattern.score.desc())
             .limit(max_patterns or settings.discovery_match_max_patterns)
             .all()
@@ -64,7 +67,11 @@ class NovelPatternMatcher:
             for symbol in symbols:
                 try:
                     df = normalize_ohlcv(
-                        self.provider.fetch_ohlcv(symbol, period=settings.discovery_period, interval=pattern.timeframe)
+                        self.provider.fetch_ohlcv(
+                            symbol,
+                            period=settings.discovery_period,
+                            interval=pattern.timeframe,
+                        )
                     )
                     if len(df) < pattern.window_size + 20:
                         continue
@@ -73,16 +80,36 @@ class NovelPatternMatcher:
                     if len(vector) != len(centroid):
                         continue
                     scaled = (vector - scaler_mean) / np.where(scaler_scale == 0, 1.0, scaler_scale)
-                    normalized_distance = float(np.linalg.norm(scaled - centroid) / max(1.0, np.sqrt(len(centroid))))
+                    normalized_distance = float(
+                        np.linalg.norm(scaled - centroid) / max(1.0, np.sqrt(len(centroid)))
+                    )
                     similarity = float(1.0 / (1.0 + normalized_distance))
                     if similarity < threshold:
                         continue
-                    prices = self._prices(pattern, df)
-                    score = round(similarity * 0.55 + pattern.score * 0.30 + pattern.stability_score * 0.15, 6)
+                    features = dict(features)
+                    features["avg_dollar_volume"] = float(
+                        (df["close"] * df["volume"]).tail(20).mean()
+                    )
+                    reward_risk = float(
+                        pattern.best_rr or settings.unvalidated_pattern_min_reward_risk
+                    )
+                    prices = self._prices(pattern, df, reward_risk=reward_risk)
+                    score = round(
+                        similarity * 0.55 + pattern.score * 0.30 + pattern.stability_score * 0.15,
+                        6,
+                    )
+                    match_status = (
+                        "production_entry_candidate"
+                        if module == "fox_hunter"
+                        else "lab_entry_candidate"
+                    )
                     match = {
+                        "module": module,
                         "pattern_id": pattern.id,
                         "pattern_name": pattern.name,
                         "pattern_key": pattern.pattern_key,
+                        "pattern_status": pattern.status.value,
+                        "pattern_promotion_status": pattern.promotion_status,
                         "symbol": symbol,
                         "timeframe": pattern.timeframe,
                         "side": pattern.side,
@@ -91,12 +118,15 @@ class NovelPatternMatcher:
                         "entry_price": prices["entry_price"],
                         "stop_price": prices["stop_price"],
                         "target_price": prices["target_price"],
-                        "reward_risk": settings.unvalidated_pattern_min_reward_risk,
+                        "reward_risk": reward_risk,
                         "window_end": str(df.index[-1]),
-                        "status": "lab_watchlist",
-                        "notes": "Match de patrón descubierto; requiere paper validation y aprobación antes de uso operativo.",
+                        "status": match_status,
+                        "notes": self._notes_for_module(module),
                         "chart": chart,
                         "metrics": {
+                            "entry_module": module,
+                            "pattern_status": pattern.status.value,
+                            "pattern_promotion_status": pattern.promotion_status,
                             "pattern_score": pattern.score,
                             "pattern_expectancy_r": pattern.expectancy_r,
                             "pattern_profit_factor": pattern.profit_factor,
@@ -106,9 +136,16 @@ class NovelPatternMatcher:
                     }
                     matches.append(match)
                 except Exception as exc:  # noqa: BLE001
-                    logger.warning("novel pattern match failed for {} / {}: {}", pattern.name, symbol, exc)
+                    logger.warning(
+                        "novel pattern match failed for {} / {}: {}",
+                        pattern.name,
+                        symbol,
+                        exc,
+                    )
                     continue
-        matches = sorted(matches, key=lambda m: m["score"], reverse=True)[: settings.discovery_match_max_results]
+        matches = sorted(matches, key=lambda m: m["score"], reverse=True)[
+            : settings.discovery_match_max_results
+        ]
         if store:
             self._store_matches(db, matches)
         return {
@@ -116,9 +153,34 @@ class NovelPatternMatcher:
             "symbols_checked": len(symbols),
             "matches": matches,
             "stored_matches": len(matches) if store else 0,
+            "module": module,
             "similarity_threshold": threshold,
             "generated_at": datetime.now(timezone.utc).isoformat(),
         }
+
+    @staticmethod
+    def _statuses_for_module(module: str) -> list[DiscoveredPatternStatus]:
+        if module == "fox_hunter":
+            return [DiscoveredPatternStatus.PRODUCTION]
+        return [
+            DiscoveredPatternStatus.LAB,
+            DiscoveredPatternStatus.LAB_WATCHLIST,
+            DiscoveredPatternStatus.LAB_CANDIDATE,
+            DiscoveredPatternStatus.PREMIUM_CANDIDATE,
+            DiscoveredPatternStatus.PAPER_CANDIDATE,
+        ]
+
+    @staticmethod
+    def _notes_for_module(module: str) -> str:
+        if module == "fox_hunter":
+            return (
+                "Match de patrón de Producción; requiere live_armed "
+                "y auditoría continua de Director."
+            )
+        return (
+            "Match de patrón de Laboratorio; requiere paper validation "
+            "y auditoría de Director."
+        )
 
     @staticmethod
     def _scaler(pattern: DiscoveredPattern) -> tuple[np.ndarray | None, np.ndarray | None]:
@@ -129,18 +191,16 @@ class NovelPatternMatcher:
             return None, None
         return np.asarray(mean, dtype=float), np.asarray(scale, dtype=float)
 
-    def _prices(self, pattern: DiscoveredPattern, df) -> dict[str, float]:
-        settings = self.settings
-        assert settings is not None
+    def _prices(self, pattern: DiscoveredPattern, df, *, reward_risk: float) -> dict[str, float]:
         entry = float(df["close"].iloc[-1])
         atr_value = float(atr(df, 14).iloc[-1]) if len(df) >= 15 else entry * 0.02
         risk = max(atr_value * 1.5, entry * 0.015, 0.01)
         if pattern.side == "short":
             stop = entry + risk
-            target = entry - settings.unvalidated_pattern_min_reward_risk * risk
+            target = entry - reward_risk * risk
         else:
             stop = entry - risk
-            target = entry + settings.unvalidated_pattern_min_reward_risk * risk
+            target = entry + reward_risk * risk
         return {
             "entry_price": round(entry, 4),
             "stop_price": round(stop, 4),

@@ -1,0 +1,362 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from typing import Any, Literal
+
+from sqlalchemy.orm import Session
+
+from tradeo.core.config import Settings, get_settings
+from tradeo.db.models import AuditLog, Signal, SignalStatus, Trade, TradeStatus
+from tradeo.research.novel_pattern_matcher import NovelPatternMatcher
+from tradeo.schemas import PatternCandidate
+from tradeo.services.ibkr_broker import IBKRBroker
+from tradeo.services.risk_manager import RiskManager
+
+EntryModule = Literal["laboratory", "fox_hunter"]
+
+
+class PatternEntryScannerSafetyError(RuntimeError):
+    """Raised when a scanner tries to cross its allowed execution boundary."""
+
+
+@dataclass(slots=True)
+class PatternEntryScanner:
+    """Operational scanner for validated Research patterns.
+
+    Research discovers patterns. Laboratory validates them with IB paper fills.
+    Fox Hunter only watches production patterns and can route live orders only
+    after the existing live_armed gate is explicitly enabled.
+    """
+
+    settings: Settings | None = None
+    matcher: NovelPatternMatcher | None = None
+
+    def __post_init__(self) -> None:
+        self.settings = self.settings or get_settings()
+        self.matcher = self.matcher or NovelPatternMatcher(settings=self.settings)
+
+    def scan(
+        self,
+        db: Session,
+        *,
+        module: EntryModule,
+        symbols: list[str] | None = None,
+        limit: int | None = None,
+        max_patterns: int | None = None,
+        similarity_threshold: float | None = None,
+        store_signals: bool | None = None,
+        execute_orders: bool | None = None,
+    ) -> dict[str, Any]:
+        settings = self.settings
+        assert settings is not None
+        self._validate_module_execution(module, execute_orders=execute_orders)
+        resolved = self._resolved_options(
+            module,
+            limit=limit,
+            max_patterns=max_patterns,
+            similarity_threshold=similarity_threshold,
+            store_signals=store_signals,
+            execute_orders=execute_orders,
+        )
+        assert self.matcher is not None
+        match_result = self.matcher.match_current(
+            db,
+            symbols=symbols,
+            limit=resolved["limit"],
+            max_patterns=resolved["max_patterns"],
+            similarity_threshold=resolved["similarity_threshold"],
+            module=module,
+            store=True,
+        )
+        signals_created = 0
+        orders_submitted = 0
+        skipped_duplicates = 0
+        rejected_by_risk = 0
+        order_errors: list[dict[str, Any]] = []
+        signal_ids: list[int] = []
+        trade_ids: list[int] = []
+
+        for match in match_result["matches"]:
+            if self._has_active_exposure(db, match):
+                skipped_duplicates += 1
+                continue
+            candidate = self._candidate_from_match(match)
+            risk = RiskManager(settings).validate_candidate(candidate, db)
+            if not risk.approved:
+                rejected_by_risk += 1
+                db.add(
+                    AuditLog(
+                        actor=module,
+                        action="entry_match_rejected_by_risk",
+                        entity_type="discovered_pattern_match",
+                        entity_id=str(match.get("pattern_id", "")),
+                        details_json={"match": match, "risk": risk.model_dump(mode="json")},
+                    )
+                )
+                db.commit()
+                continue
+            if not resolved["store_signals"]:
+                continue
+
+            signal = self._store_signal(
+                db,
+                module=module,
+                match=match,
+                candidate=candidate,
+                risk=risk,
+                execute_orders=bool(resolved["execute_orders"]),
+            )
+            signals_created += 1
+            signal_ids.append(signal.id)
+
+            if not resolved["execute_orders"]:
+                continue
+
+            try:
+                trade = IBKRBroker(settings).submit_signal_bracket(
+                    db,
+                    signal,
+                    reason=self._execution_reason(module),
+                )
+                orders_submitted += 1
+                trade_ids.append(trade.id)
+            except Exception as exc:  # noqa: BLE001
+                order_errors.append(
+                    {"signal_id": signal.id, "symbol": signal.symbol, "error": str(exc)}
+                )
+                db.add(
+                    AuditLog(
+                        actor=module,
+                        action="entry_order_submission_failed",
+                        entity_type="signal",
+                        entity_id=str(signal.id),
+                        details_json={"error": str(exc), "match": match},
+                    )
+                )
+                db.commit()
+
+        return {
+            "module": module,
+            "patterns_checked": match_result["patterns_checked"],
+            "symbols_checked": match_result["symbols_checked"],
+            "matches_found": len(match_result["matches"]),
+            "signals_created": signals_created,
+            "orders_submitted": orders_submitted,
+            "skipped_duplicates": skipped_duplicates,
+            "rejected_by_risk": rejected_by_risk,
+            "order_errors": order_errors,
+            "signal_ids": signal_ids,
+            "trade_ids": trade_ids,
+            "store_signals": resolved["store_signals"],
+            "execute_orders": resolved["execute_orders"],
+            "similarity_threshold": match_result["similarity_threshold"],
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+    def status(self, db: Session) -> dict[str, Any]:
+        from tradeo.db.models import DiscoveredPattern, DiscoveredPatternStatus
+
+        lab_statuses = NovelPatternMatcher._statuses_for_module("laboratory")
+        laboratory_patterns = (
+            db.query(DiscoveredPattern)
+            .filter(DiscoveredPattern.validation_passed.is_(True))
+            .filter(DiscoveredPattern.status.in_(lab_statuses))
+            .count()
+        )
+        production_patterns = (
+            db.query(DiscoveredPattern)
+            .filter(DiscoveredPattern.validation_passed.is_(True))
+            .filter(DiscoveredPattern.status == DiscoveredPatternStatus.PRODUCTION)
+            .count()
+        )
+        settings = self.settings
+        assert settings is not None
+        return {
+            "research": {"purpose": "discover_new_patterns"},
+            "laboratory": {
+                "purpose": "paper_validate_research_patterns",
+                "enabled": settings.laboratory_scanner_enabled,
+                "auto_submit_paper_orders": settings.laboratory_auto_submit_paper_orders,
+                "eligible_patterns": laboratory_patterns,
+            },
+            "fox_hunter": {
+                "purpose": "live_trade_production_patterns",
+                "enabled": settings.fox_hunter_enabled,
+                "auto_submit_live_orders": settings.fox_hunter_auto_submit_live_orders,
+                "eligible_patterns": production_patterns,
+                "live_armed": settings.live_armed,
+            },
+        }
+
+    def _resolved_options(self, module: EntryModule, **overrides: Any) -> dict[str, Any]:
+        settings = self.settings
+        assert settings is not None
+        if module == "fox_hunter":
+            defaults = {
+                "limit": settings.fox_hunter_symbol_limit,
+                "max_patterns": settings.fox_hunter_max_patterns,
+                "similarity_threshold": settings.fox_hunter_similarity_threshold,
+                "store_signals": settings.fox_hunter_store_signals,
+                "execute_orders": settings.fox_hunter_auto_submit_live_orders,
+            }
+        else:
+            defaults = {
+                "limit": settings.laboratory_symbol_limit,
+                "max_patterns": settings.laboratory_max_patterns,
+                "similarity_threshold": settings.laboratory_similarity_threshold,
+                "store_signals": settings.laboratory_store_signals,
+                "execute_orders": settings.laboratory_auto_submit_paper_orders,
+            }
+        return {key: defaults[key] if value is None else value for key, value in overrides.items()}
+
+    def _validate_module_execution(
+        self,
+        module: EntryModule,
+        *,
+        execute_orders: bool | None,
+    ) -> None:
+        settings = self.settings
+        assert settings is not None
+        execute = execute_orders
+        if execute is None:
+            execute = (
+                settings.fox_hunter_auto_submit_live_orders
+                if module == "fox_hunter"
+                else settings.laboratory_auto_submit_paper_orders
+            )
+        if not execute:
+            return
+        if settings.kill_switch_enabled:
+            raise PatternEntryScannerSafetyError("kill switch blocks scanner order execution")
+        if module == "laboratory":
+            if settings.trading_mode != "paper" or settings.live_armed:
+                raise PatternEntryScannerSafetyError(
+                    "Laboratory can only auto-submit orders in paper mode"
+                )
+            if int(settings.ibkr_port) in {7496, 4001}:
+                raise PatternEntryScannerSafetyError("Laboratory refuses live IBKR ports")
+            return
+        if not settings.live_armed:
+            raise PatternEntryScannerSafetyError(
+                "Fox Hunter live execution requires live_armed=true"
+            )
+
+    def _candidate_from_match(self, match: dict[str, Any]) -> PatternCandidate:
+        metrics = match.get("metrics") or {}
+        features = dict(metrics.get("features") or {})
+        return PatternCandidate(
+            symbol=str(match["symbol"]),
+            pattern=str(match["pattern_name"]),
+            side=str(match["side"]),
+            timeframe=str(match["timeframe"]),
+            entry=float(match["entry_price"]),
+            stop=float(match["stop_price"]),
+            target=float(match["target_price"]),
+            reward_risk=float(match["reward_risk"]),
+            confidence=float(match["score"]),
+            rule_score=float(match["similarity"]),
+            ml_score=float(metrics.get("pattern_score", 0.0)),
+            vision_score=float(metrics.get("pattern_stability_score", 0.0)),
+            composite_score=float(match["score"]),
+            features=features,
+            notes=[str(match.get("notes", ""))],
+        )
+
+    @staticmethod
+    def _has_active_exposure(db: Session, match: dict[str, Any]) -> bool:
+        active_signal = (
+            db.query(Signal)
+            .filter(Signal.symbol == str(match["symbol"]))
+            .filter(Signal.pattern == str(match["pattern_name"]))
+            .filter(
+                Signal.status.in_(
+                    [
+                        SignalStatus.WATCHLIST,
+                        SignalStatus.PAPER_APPROVED,
+                        SignalStatus.PENDING_HUMAN_APPROVAL,
+                        SignalStatus.LIVE_APPROVED,
+                    ]
+                )
+            )
+            .first()
+        )
+        if active_signal:
+            return True
+        active_trade = (
+            db.query(Trade)
+            .filter(Trade.symbol == str(match["symbol"]))
+            .filter(Trade.pattern == str(match["pattern_name"]))
+            .filter(Trade.status == TradeStatus.OPEN)
+            .first()
+        )
+        return active_trade is not None
+
+    def _store_signal(
+        self,
+        db: Session,
+        *,
+        module: EntryModule,
+        match: dict[str, Any],
+        candidate: PatternCandidate,
+        risk,
+        execute_orders: bool,
+    ):
+        settings = self.settings
+        assert settings is not None
+        if module == "fox_hunter":
+            status = (
+                SignalStatus.LIVE_APPROVED
+                if settings.live_armed and execute_orders
+                else SignalStatus.PENDING_HUMAN_APPROVAL
+            )
+            human_approved = status == SignalStatus.LIVE_APPROVED
+        else:
+            status = SignalStatus.PAPER_APPROVED
+            human_approved = execute_orders
+        signal = Signal(
+            symbol=candidate.symbol,
+            pattern=candidate.pattern,
+            side=candidate.side,
+            timeframe=candidate.timeframe,
+            entry=candidate.entry,
+            stop=candidate.stop,
+            target=candidate.target,
+            reward_risk=candidate.reward_risk,
+            confidence=candidate.confidence,
+            composite_score=candidate.composite_score,
+            risk_usd=risk.risk_usd,
+            suggested_qty=risk.suggested_qty,
+            strategy_version=f"{module}_pattern_{match['pattern_id']}",
+            status=status,
+            supervisor_notes=str(match.get("notes", "")),
+            human_approved=human_approved,
+            metadata_json={
+                "entry_module": module,
+                "pattern_id": match["pattern_id"],
+                "pattern_key": match["pattern_key"],
+                "pattern_status": match.get("pattern_status"),
+                "pattern_promotion_status": match.get("pattern_promotion_status"),
+                "match": match,
+                "risk": risk.model_dump(mode="json"),
+                "director_audit_required": True,
+            },
+        )
+        db.add(signal)
+        db.add(
+            AuditLog(
+                actor=module,
+                action="entry_signal_created",
+                entity_type="signal",
+                details_json={"signal": signal.metadata_json},
+            )
+        )
+        db.commit()
+        db.refresh(signal)
+        return signal
+
+    @staticmethod
+    def _execution_reason(module: EntryModule) -> str:
+        if module == "fox_hunter":
+            return "fox_hunter production live execution"
+        return "laboratory IBKR paper validation"

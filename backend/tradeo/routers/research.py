@@ -134,6 +134,7 @@ def match_current_patterns(
         limit=request.limit,
         max_patterns=request.max_patterns,
         similarity_threshold=request.similarity_threshold,
+        module=request.module,
         store=request.store,
     )
     return NovelPatternMatchResponse(**result)

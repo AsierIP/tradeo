@@ -8,7 +8,20 @@ from fastapi.middleware.cors import CORSMiddleware
 from tradeo.core.config import get_settings
 from tradeo.db.init_db import init_db, seed_db
 from tradeo.db.session import SessionLocal
-from tradeo.routers import backtests, dashboard, health, ibkr, reports, research, risk, scan, self_improvement, signals
+from tradeo.routers import (
+    backtests,
+    dashboard,
+    fox_hunter,
+    health,
+    ibkr,
+    laboratory,
+    reports,
+    research,
+    risk,
+    scan,
+    self_improvement,
+    signals,
+)
 
 
 @asynccontextmanager
@@ -34,6 +47,8 @@ def create_app() -> FastAPI:
     )
     app.include_router(health.router, prefix=settings.api_prefix)
     app.include_router(ibkr.router, prefix=settings.api_prefix)
+    app.include_router(laboratory.router, prefix=settings.api_prefix)
+    app.include_router(fox_hunter.router, prefix=settings.api_prefix)
     app.include_router(dashboard.router, prefix=settings.api_prefix)
     app.include_router(scan.router, prefix=settings.api_prefix)
     app.include_router(signals.router, prefix=settings.api_prefix)
