@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import random
+import threading
 from dataclasses import dataclass
 from typing import Any
 
@@ -9,6 +10,8 @@ import pandas as pd
 
 from tradeo.core.config import Settings, get_settings
 from tradeo.services.technical_indicators import normalize_ohlcv
+
+_event_loop_state = threading.local()
 
 
 def _duration_from_period(period: str) -> str:
@@ -39,7 +42,11 @@ def _ensure_event_loop() -> None:
     try:
         asyncio.get_running_loop()
     except RuntimeError:
-        asyncio.set_event_loop(asyncio.new_event_loop())
+        loop = getattr(_event_loop_state, "loop", None)
+        if loop is None or loop.is_closed():
+            loop = asyncio.new_event_loop()
+            _event_loop_state.loop = loop
+        asyncio.set_event_loop(loop)
 
 
 def _connect_ibkr(settings: Settings):

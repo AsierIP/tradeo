@@ -117,7 +117,7 @@ class Settings(BaseSettings):
 
     # Fox Hunter scans production patterns. Live order submission requires both
     # this explicit switch and the existing live_armed safety gate.
-    fox_hunter_enabled: bool = False
+    fox_hunter_enabled: bool = True
     fox_hunter_scan_minutes: int = 1
     fox_hunter_symbol_limit: int = 80
     fox_hunter_max_patterns: int = 25
