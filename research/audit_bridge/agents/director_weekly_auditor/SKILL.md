@@ -55,13 +55,17 @@ If an artifact is unavailable, record it clearly.
 
 Follow these steps in order.
 
-### 1. Fix Audit Context
+### 1. Review Internal Daily Auditor Work
+
+Before starting the Director audit, review the weekly packet and recent work produced by `research/audit_bridge/agents/internal_daily_auditor/SKILL.md`: daily audit outputs, repeated blockers, new blockers, candidate patterns escalated for Director review, patterns recommended for freeze/archive, and proposed math/model/code changes. Treat this as the first evidence layer, not as validation; independently verify every claim before accepting it.
+
+### 2. Fix Audit Context
 
 Record exact audit date, time, timezone, repo, branch, commit, recent changes, available result artifacts, analyzed data period, and whether a comparable prior audit exists.
 
 If branch, commit, or artifacts cannot be identified, the maximum overall status is `APROBADO CON RESERVAS`.
 
-### 2. Inventory Full Pipeline
+### 3. Inventory Full Pipeline
 
 Reconstruct the path from raw data to final pattern:
 
@@ -79,7 +83,7 @@ Reconstruct the path from raw data to final pattern:
 
 For each stage identify input, output, responsible code, data format, existing validations, missing validations, and silent-failure risks.
 
-### 3. Audit Data Quality
+### 4. Audit Data Quality
 
 Check ordered timestamps, unexpected duplicates, explicit timezone, correct market calendar, explained temporal gaps, OHLCV consistency, justified extreme returns, split/dividend handling, delistings, survivorship bias, adjusted vs unadjusted data, signal/execution frequency consistency, illegitimate forward fill, revised data used as realtime data, and future events joined into past prices.
 
@@ -87,7 +91,7 @@ Recommended tests: row counts by ticker/date, NaN percentage, gap distribution, 
 
 Data faults that can alter a signal are at least `ALTA`; if leakage is possible, `CRÍTICA`.
 
-### 4. Audit Temporal Alignment
+### 5. Audit Temporal Alignment
 
 For each feature ask when it is known, whether it is available before entry, whether it uses future prices, whether rolling/expanding/ranking accidentally includes execution or future bars, whether `shift` is correct, whether labels are temporally separated, whether global transforms were calculated before split, and whether split precedes contamination-prone transforms.
 
@@ -95,7 +99,7 @@ Search especially for close-to-close same-bar execution, current-bar indicators 
 
 Any reasonable suspicion of lookahead or leakage puts the pattern in quarantine or rejection.
 
-### 5. Formalize Pattern
+### 6. Formalize Pattern
 
 Express each pattern with:
 
@@ -116,7 +120,7 @@ If a pattern cannot be formalized precisely, do not approve it.
 
 Also evaluate whether it has a plausible hypothesis: behavioral inefficiency, microstructure, momentum, reversal, seasonality, volatility, liquidity, event, regime, or compensated risk. Patterns without hypotheses need stricter statistical validation.
 
-### 6. Audit Mathematical Metrics
+### 7. Audit Mathematical Metrics
 
 For each pattern calculate or require:
 
@@ -132,59 +136,59 @@ For each pattern calculate or require:
 
 Treat these as suspicious: high profit factor with few trades, EV only positive before costs, EV driven by one or two trades, high Sharpe with asymmetric distribution, high win rate with severe left tail, single ticker/period concentration, collapse under small slippage, non-executable prices, missing drawdown, unknown number of variants.
 
-### 7. Audit Costs, Slippage, And Execution
+### 8. Audit Costs, Slippage, And Execution
 
 Every pattern must be assessed net of realistic friction: commission, spread, slippage, market impact, latency, liquidity, tradable volume, sizing, short restrictions, borrow fees, overnight fees, gaps, realistic stop/take-profit execution, same-bar stop/take ambiguity, and bar-based vs live execution.
 
 Stress tests: base cost, cost x2, cost x3, adverse slippage, worst plausible fill, entry one bar later, exit one bar later, and reduced liquidity. If it only works with optimistic costs, classify it `C` or `D`.
 
-### 8. Audit Backtest Realism
+### 9. Audit Backtest Realism
 
 Look for same-close signal and entry, impossible same-bar exits, unknown intrabar order, optimistic stop/take handling, costless rebalances, infinite capital, unrealistic capital reuse, missing exposure limits, missing per-ticker/sector/correlation limits, missing liquidity/gap/suspension/delisting controls, and mismatch between signal frequency and execution frequency.
 
 Mandatory questions: does the signal exist before execution, is entry reachable, is exit reachable, is capital realistic, is sizing known before outcome, are impossible trades allowed, are overlapping trades handled correctly, are open trades at the end accounted for, and does the equity curve reflect cash, exposure, and simultaneous operations.
 
-### 9. Audit Out-Of-Sample And Anti-Overfitting
+### 10. Audit Out-Of-Sample And Anti-Overfitting
 
 Verify strict temporal separation, train before validation before test, test not used for design, clean OOS, walk-forward if optimized, purging for overlapping labels, embargo when needed, fixed parameters before test, total experiments/variants, discarded variants, baselines, label permutation, shifted signals, random entries with same exposure, buy-and-hold when relevant, and no-trade baseline.
 
 Lower confidence automatically when the number of variants tried is unknown.
 
-### 10. Audit Robustness
+### 11. Audit Robustness
 
 Recommended perturbations: small threshold changes, indicator window changes, start/end changes, excluding best/worst ticker, best month/year, top 1% and 5% trades, doubling/tripling costs, delayed execution, adverse slippage, segmentation by volatility/trend/liquidity/sector/company size/session.
 
 A robust pattern need not be excellent in every scenario, but it must not collapse under small reasonable changes.
 
-### 11. Audit Data Interrelationships
+### 12. Audit Data Interrelationships
 
 For each join check join key, expected vs actual cardinality, duplicates before/after, row loss, artificial row creation, temporal order, merge direction, tolerance, timezone, whether the joined datum was known at that time, forward/backward fill legitimacy, mixed frequencies/sessions/tickers, recycled symbols, and wrong event dates.
 
 Danger cases: date-only joins, natural calendar instead of market calendar, fiscal date instead of publication date, backward fill from future data, global universe rankings with future data, post-period ticker aggregations, ex-post liquidity filters, and global normalization before split.
 
-### 12. Audit Code
+### 13. Audit Code
 
 Review for long functions, ambiguous names, duplicated logic, hardcodes, magic constants, missing tests/asserts/schema validation/timezone controls/sorting/input-output validation, dangerous implicit indexes, accidental row order dependency, uncontrolled in-place mutation, global state, absent seeds, nondeterminism, bad NaN/inf handling, divide-by-zero, risky rounding/type coercion/float precision, vectorized index misalignment, wrong `shift`/`rolling`/`expanding`/`groupby`, accidental ticker mixing, shallow tests, poor logging, and swallowed exceptions.
 
 Require tests for features, labels, train/test split, simple trade backtest, gap backtest, same-bar stop/take, costs, slippage, sizing, temporal joins, duplicates, unsorted data, NaN, sparse tickers, delisted or terminal-missing tickers, and fixed-seed reproducibility.
 
-### 13. Audit Researcher Process
+### 14. Audit Researcher Process
 
 Ask whether there was an initial hypothesis, which variants were tried, which failed, whether failures were logged, whether success criteria changed, whether bad results were dropped, whether thresholds were tuned after test, how many candidates were generated/reported, whether experiment-config-result traceability exists, whether the winner used a predefined metric, whether cherry-picking risk exists, whether baseline comparison exists, and whether costs/assumptions/limitations were documented.
 
 A good result with opaque process is at most `B` or `C`, never `A`.
 
-### 14. Apply Blocking Criteria
+### 15. Apply Blocking Criteria
 
 Quarantine or reject any pattern with confirmed or likely lookahead/leakage, negative realistic net EV, non-executable prices, dependence on few extreme trades, collapse under moderately higher costs, unjustified concentration in ticker/period, no clean OOS, unknown variant count, missing config traceability, non-reproducible data, duplications that inflate results, suspicious temporal joins, feature/label mixing, split after contaminating transforms, no evidence signal precedes execution, no commissions/spread/slippage, unrealistic liquidity, or aggregate metrics that do not reconcile with trades.
 
-### 15. Candidate-A Approval Criteria
+### 16. Candidate-A Approval Criteria
 
 Only classify a pattern as `A` if it reasonably has: clear hypothesis, traceable data, demonstrated no leakage/lookahead, realistic backtest, costs included, positive net EV, tolerable drawdown, sufficient sample, independence from few trades, OOS survival, no collapse under doubled costs or small parameter changes, reasonable behavior by ticker/period/regime, reproducible config, sufficiently clear code, minimum tests present or clearly defined, and known documented risks.
 
 Even `A` means strong candidate for the next validation phase, not production-ready.
 
-### 16. Severity Scale
+### 17. Severity Scale
 
 Use:
 
@@ -194,24 +198,24 @@ Use:
 - `BAJA`: technical/documentation improvement.
 - `OBSERVACIÓN`: useful comment without immediate impact.
 
-### 17. General Verdict Matrix
+### 18. General Verdict Matrix
 
 - `APROBADO`: no critical/high findings, sufficient robustness, reproducible, net of costs.
 - `APROBADO CON RESERVAS`: no critical findings, but medium doubts or evidence limitations.
 - `EN CUARENTENA`: serious suspicions, missing key evidence, or high risk of methodological artifact.
 - `RECHAZADO`: leakage, lookahead, invalid backtest, negative net EV, grave reproducibility failure, or extreme fragility.
 
-### 18. Special Mathematical Checks
+### 19. Special Mathematical Checks
 
 When enough data exists, evaluate bootstrap of trades, block bootstrap, EV confidence interval, probability net EV <= 0, cost sensitivity, outlier sensitivity of profit factor, parameter stability, in-sample vs OOS degradation, negative streak distribution, approximate ruin risk, simultaneous-trade correlation, temporal loss/gain clustering, autocorrelation, gross/net exposure, tail risk, worst historical scenario, removing best trades, delayed execution, and equivalent random signals.
 
-### 19. Machine Learning Checks
+### 20. Machine Learning Checks
 
 If ML is used, also audit temporal split before preprocessing, realtime feature availability, shifted target, leakage in scaling/imputation/feature selection/dimensionality reduction/class balancing, purging, embargo, financial metrics beyond predictive metrics, calibration, feature-importance stability, feature/label/performance drift, regime robustness, simple-model baseline, trivial-rule baseline, and minimum interpretability.
 
 Never accept accuracy, precision, recall, or F1 as sufficient proof of profitability. The decisive metric is financial, net of costs, and out-of-sample.
 
-### 20. Production Checks
+### 21. Production Checks
 
 If a pattern approaches production, require realtime data availability, latency, API robustness, provider failures, retries, logs, alerts, duplicate-order control, open-position control, broker reconciliation, circuit breakers, daily loss limits, exposure limits, per-ticker/correlation limits, disconnection handling, gap handling, kill switch, paper trading, and drift monitoring.
 
