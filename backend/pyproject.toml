@@ -22,7 +22,8 @@ dependencies = [
   "orjson>=3.10.0",
   "python-multipart>=0.0.9",
   "redis>=5.0.0",
-  "tenacity>=8.5.0"
+  "tenacity>=8.5.0",
+  "tzdata>=2025.2"
 ]
 
 [project.optional-dependencies]

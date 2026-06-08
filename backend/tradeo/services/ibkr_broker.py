@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import random
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
@@ -59,14 +61,27 @@ class IBKRBroker:
         _ensure_event_loop()
         from ib_insync import IB
 
-        ib = IB()
-        ib.connect(
-            self.settings.ibkr_host,
-            self.settings.ibkr_port,
-            clientId=self.settings.ibkr_client_id,
-            timeout=self.connect_timeout,
-        )
-        return ib
+        client_ids = [self.settings.ibkr_client_id]
+        client_ids.extend(random.randint(1000, 9999) for _ in range(3))
+        last_exc: Exception | None = None
+        for client_id in client_ids:
+            ib = IB()
+            try:
+                ib.connect(
+                    self.settings.ibkr_host,
+                    self.settings.ibkr_port,
+                    clientId=client_id,
+                    timeout=self.connect_timeout,
+                )
+                return ib
+            except Exception as exc:  # noqa: BLE001
+                last_exc = exc
+                if ib.isConnected():
+                    ib.disconnect()
+                continue
+        if last_exc:
+            raise last_exc
+        raise IBKRSafetyError("IBKR connection failed")
 
     def status(self) -> dict[str, Any]:
         from ib_insync import util
@@ -150,7 +165,8 @@ class IBKRBroker:
     def open_orders(self) -> list[dict[str, Any]]:
         ib = self._connect()
         try:
-            ib.reqOpenOrders()
+            ib.reqAllOpenOrders()
+            ib.sleep(1.0)
             rows: list[dict[str, Any]] = []
             for trade in ib.openTrades():
                 contract = trade.contract
@@ -170,6 +186,7 @@ class IBKRBroker:
                         "status": status.status,
                         "filled": float(status.filled),
                         "remaining": float(status.remaining),
+                        "parent_order_id": order.parentId,
                     }
                 )
             return rows
@@ -322,7 +339,16 @@ class IBKRBroker:
             for order in bracket:
                 trades.append(ib.placeOrder(contract, order))
                 ib.sleep(0.25)
-            ib.sleep(1.0)
+            deadline = time.monotonic() + self.order_timeout
+            while time.monotonic() < deadline:
+                ib.sleep(0.5)
+                if all(t.orderStatus.permId for t in trades):
+                    break
+            if not all(t.orderStatus.permId for t in trades):
+                for trade_status in trades:
+                    ib.cancelOrder(trade_status.order)
+                ib.sleep(1.0)
+                raise IBKRSafetyError("IBKR did not acknowledge every bracket leg with a permId")
 
             parent_trade = trades[0]
             parent_order = parent_trade.order

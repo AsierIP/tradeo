@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import random
 from dataclasses import dataclass
 from typing import Any
 
@@ -41,6 +42,32 @@ def _ensure_event_loop() -> None:
         asyncio.set_event_loop(asyncio.new_event_loop())
 
 
+def _connect_ibkr(settings: Settings):
+    _ensure_event_loop()
+    from ib_insync import IB
+
+    client_ids = [settings.ibkr_client_id]
+    client_ids.extend(random.randint(1000, 9999) for _ in range(3))
+    last_exc: Exception | None = None
+    for client_id in client_ids:
+        ib = IB()
+        try:
+            ib.connect(
+                settings.ibkr_host,
+                settings.ibkr_port,
+                clientId=client_id,
+                timeout=float(getattr(settings, "ibkr_connect_timeout_seconds", 8.0)),
+            )
+            return ib, client_id
+        except Exception as exc:  # noqa: BLE001
+            last_exc = exc
+            if ib.isConnected():
+                ib.disconnect()
+    if last_exc:
+        raise last_exc
+    raise ConnectionError("IBKR connection failed")
+
+
 @dataclass
 class IBKRHistoricalDataProvider:
     settings: Settings | None = None
@@ -49,16 +76,9 @@ class IBKRHistoricalDataProvider:
         self.settings = self.settings or get_settings()
 
     def fetch_ohlcv(self, symbol: str, period: str = "2y", interval: str = "1d") -> pd.DataFrame:
-        _ensure_event_loop()
-        from ib_insync import IB, Stock, util
+        from ib_insync import Stock, util
 
-        ib = IB()
-        ib.connect(
-            self.settings.ibkr_host,
-            self.settings.ibkr_port,
-            clientId=self.settings.ibkr_client_id,
-            timeout=float(getattr(self.settings, "ibkr_connect_timeout_seconds", 8.0)),
-        )
+        ib, _ = _connect_ibkr(self.settings)
         try:
             contract = Stock(symbol.upper(), "SMART", "USD")
             qualified = ib.qualifyContracts(contract)
@@ -92,24 +112,17 @@ def inspect_ibkr_connection(settings: Settings | None = None) -> dict[str, Any]:
     for detailed account state.
     """
     settings = settings or get_settings()
-    _ensure_event_loop()
-    from ib_insync import IB
 
-    ib = IB()
+    ib = None
     try:
-        ib.connect(
-            settings.ibkr_host,
-            settings.ibkr_port,
-            clientId=settings.ibkr_client_id,
-            timeout=float(getattr(settings, "ibkr_connect_timeout_seconds", 8.0)),
-        )
+        ib, client_id = _connect_ibkr(settings)
         server_time = ib.reqCurrentTime()
         managed_accounts = ib.managedAccounts()
         return {
             "ok": True,
             "host": settings.ibkr_host,
             "port": settings.ibkr_port,
-            "client_id": settings.ibkr_client_id,
+            "client_id": client_id,
             "readonly": settings.ibkr_readonly,
             "trading_mode": settings.trading_mode,
             "live_armed": settings.live_armed,
@@ -130,5 +143,5 @@ def inspect_ibkr_connection(settings: Settings | None = None) -> dict[str, Any]:
             "error": str(exc),
         }
     finally:
-        if ib.isConnected():
+        if ib and ib.isConnected():
             ib.disconnect()
