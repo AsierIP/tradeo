@@ -114,6 +114,7 @@ class Settings(BaseSettings):
     laboratory_similarity_threshold: float = 0.45
     laboratory_store_signals: bool = True
     laboratory_auto_submit_paper_orders: bool = False
+    laboratory_market_hours_only: bool = True
 
     # Fox Hunter scans production patterns. Live order submission requires both
     # this explicit switch and the existing live_armed safety gate.
@@ -124,6 +125,7 @@ class Settings(BaseSettings):
     fox_hunter_similarity_threshold: float = 0.50
     fox_hunter_store_signals: bool = True
     fox_hunter_auto_submit_live_orders: bool = False
+    fox_hunter_market_hours_only: bool = True
 
     openai_api_key: str | None = None
     openai_supervisor_model: str = "gpt-5.5-pro"

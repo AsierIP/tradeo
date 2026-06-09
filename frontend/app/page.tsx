@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import useSWR from 'swr'
 import {
   Area,
@@ -99,26 +99,6 @@ type DiscoveredPattern = {
   created_at: string
 }
 
-type CurrentNovelMatch = {
-  id: number
-  pattern_id: number
-  symbol: string
-  timeframe: string
-  side: string
-  similarity: number
-  score: number
-  entry_price: number
-  stop_price: number
-  target_price: number
-  reward_risk: number
-  matched_at: string
-  window_end: string
-  status: string
-  notes: string
-  chart_json: Record<string, unknown>
-  metrics_json: Record<string, unknown>
-}
-
 type DiscoveryRunResponse = {
   run_id: number
   status: string
@@ -156,6 +136,12 @@ type ScanResult = {
 }
 
 type ModuleSignal = Summary['recent_signals'][number]
+  & {
+    execution_reason_code?: string | null
+    execution_reason?: string | null
+    retryable?: boolean
+    next_action?: string | null
+  }
 type ModuleTrade = Summary['open_trades'][number] & {
   signal_id?: number | null
   opened_at: string
@@ -182,10 +168,22 @@ type ModuleOverview = {
 }
 type ModuleStatus = {
   enabled: boolean
+  operational_ok?: boolean
+  state?: string
+  market_session?: { regular_session_open?: boolean; state?: string; checked_at?: string }
   auto_submit_paper_orders?: boolean
   auto_submit_live_orders?: boolean
   eligible_patterns: number
+  symbols_checked?: number
+  last_symbols_checked?: number
   live_armed?: boolean
+}
+type WebNotice = {
+  visible: boolean
+  level?: 'ok' | 'error'
+  title?: string
+  message?: string
+  updated_at?: string
 }
 
 function StatCard({ label, value, suffix }: { label: string; value: string | number; suffix?: string }) {
@@ -199,7 +197,13 @@ function StatCard({ label, value, suffix }: { label: string; value: string | num
 
 function StatusBadge({ status }: { status: string }) {
   const normalized = status.toLowerCase()
-  const tone = normalized.includes('reject') ? 'bad' : normalized.includes('candidate') ? 'good' : normalized.includes('watch') ? 'warn' : normalized.includes('lab') ? 'warn' : 'good'
+  const tone = normalized.includes('reject') || normalized.includes('cancel') || normalized.includes('closed')
+    ? 'bad'
+    : normalized.includes('executed') || normalized.includes('open') || normalized.includes('candidate')
+      ? 'good'
+      : normalized.includes('watch') || normalized.includes('lab')
+        ? 'warn'
+        : 'good'
   return <span className={`status ${tone}`}>{status}</span>
 }
 
@@ -256,22 +260,19 @@ function OperationsModule({
   title,
   subtitle,
   overview,
-  status,
-  onScan,
-  busy
+  status
 }: {
   title: string
   subtitle: string
   overview?: ModuleOverview
   status?: ModuleStatus
-  onScan: () => Promise<void>
-  busy: boolean
 }) {
   const signals = overview?.signals || []
   const trades = overview?.trades || []
   const pnl = overview?.pnl_points?.length ? overview.pnl_points : [{ timestamp: '', total_pnl_usd: 0, trade_pnl_usd: 0 }]
   const stats = overview?.stats || { signals: 0, trades: 0, open_trades: 0, closed_trades: 0, total_pnl_usd: 0, total_r: 0, win_rate: 0 }
-  const autoSubmit = status?.auto_submit_paper_orders ?? status?.auto_submit_live_orders ?? false
+  const operationalOk = Boolean(status?.operational_ok)
+  const operationalTone = status?.state === 'market_closed' ? 'warn' : operationalOk ? '' : 'bad'
   return (
     <section className="card full module-card">
       <div className="section-head module-head">
@@ -281,14 +282,13 @@ function OperationsModule({
           <p className="muted">{subtitle}</p>
         </div>
         <div className="module-actions">
-          <div className="pill"><span className={`dot ${status?.enabled ? '' : 'bad'}`} />{status?.enabled ? 'activo' : 'apagado'}</div>
-          <div className="pill"><span className={`dot ${autoSubmit ? '' : 'warn'}`} />auto órdenes {autoSubmit ? 'on' : 'off'}</div>
-          <button onClick={onScan} disabled={busy}>{busy ? 'Escaneando...' : 'Escanear ahora'}</button>
+          <div className="pill"><span className={`dot ${operationalTone}`} />{status?.state || 'status'}</div>
         </div>
       </div>
 
       <div className="module-stats">
         <div><strong>{status?.eligible_patterns ?? 0}</strong><span>patrones elegibles</span></div>
+        <div><strong>{status?.symbols_checked ?? 0}</strong><span>acciones contrastadas</span></div>
         <div><strong>{stats.signals}</strong><span>señales</span></div>
         <div><strong>{stats.open_trades}</strong><span>operaciones abiertas</span></div>
         <div><strong>{formatMoney(stats.total_pnl_usd)}</strong><span>beneficio total</span></div>
@@ -342,7 +342,7 @@ function OperationsModule({
           <table>
             <thead>
               <tr>
-                <th>Símbolo</th><th>Lado</th><th>Entrada</th><th>Stop</th><th>Target</th><th>R:R</th><th>Conf.</th><th>Qty</th><th>Estado</th>
+                <th>Símbolo</th><th>Lado</th><th>Entrada</th><th>Stop</th><th>Target</th><th>R:R</th><th>Conf.</th><th>Qty</th><th>Estado</th><th>Motivo</th><th>Acción</th>
               </tr>
             </thead>
             <tbody>
@@ -350,9 +350,11 @@ function OperationsModule({
                 <tr key={s.id}>
                   <td>{s.symbol}</td><td>{s.side}</td><td>{s.entry}</td><td>{s.stop}</td><td>{s.target}</td>
                   <td>{s.reward_risk}</td><td>{(s.confidence * 100).toFixed(1)}%</td><td>{s.suggested_qty}</td><td><StatusBadge status={s.status} /></td>
+                  <td title={s.execution_reason || undefined}>{s.execution_reason_code || '-'}</td>
+                  <td>{s.retryable ? 'retry' : (s.next_action || '-')}</td>
                 </tr>
               ))}
-              {!signals.length && <tr><td colSpan={9}>Sin señales todavía.</td></tr>}
+              {!signals.length && <tr><td colSpan={11}>Sin señales todavía.</td></tr>}
             </tbody>
           </table>
         </div>
@@ -364,21 +366,29 @@ function OperationsModule({
 export default function Page() {
   const [lastDiscovery, setLastDiscovery] = useState<DiscoveryRunResponse | null>(null)
   const [busyDiscovery, setBusyDiscovery] = useState(false)
-  const [busyMatch, setBusyMatch] = useState(false)
-  const [busyLabScan, setBusyLabScan] = useState(false)
-  const [busyFoxScan, setBusyFoxScan] = useState(false)
   const [isScanning, setIsScanning] = useState(false)
   const [selectedPatternId, setSelectedPatternId] = useState<number | null>(null)
   const [scanResult, setScanResult] = useState<ScanResult | null>(null)
   const [scanError, setScanError] = useState<string | null>(null)
+  const [showWebNotice, setShowWebNotice] = useState(false)
   const { data, error, mutate, isLoading } = useSWR<Summary>('/dashboard/summary', fetcher, { refreshInterval: 15000 })
   const { data: discoveredPatterns, mutate: mutateResearch } = useSWR<DiscoveredPattern[]>('/research/discovered-patterns?limit=100', fetcher, { refreshInterval: 30000 })
-  const { data: currentMatches, mutate: mutateMatches } = useSWR<CurrentNovelMatch[]>('/research/current-matches?limit=80', fetcher, { refreshInterval: 30000 })
   const { data: discoveryRuns, mutate: mutateRuns } = useSWR<DiscoveryRun[]>('/research/runs?limit=25', fetcher, { refreshInterval: 15000 })
-  const { data: labStatus, mutate: mutateLabStatus } = useSWR<ModuleStatus>('/laboratory/status', fetcher, { refreshInterval: 15000 })
-  const { data: foxStatus, mutate: mutateFoxStatus } = useSWR<ModuleStatus>('/fox-hunter/status', fetcher, { refreshInterval: 15000 })
-  const { data: labOverview, mutate: mutateLabOverview } = useSWR<ModuleOverview>('/laboratory/overview', fetcher, { refreshInterval: 15000 })
-  const { data: foxOverview, mutate: mutateFoxOverview } = useSWR<ModuleOverview>('/fox-hunter/overview', fetcher, { refreshInterval: 15000 })
+  const { data: labStatus } = useSWR<ModuleStatus>('/laboratory/status', fetcher, { refreshInterval: 5000 })
+  const { data: foxStatus } = useSWR<ModuleStatus>('/fox-hunter/status', fetcher, { refreshInterval: 5000 })
+  const { data: labOverview } = useSWR<ModuleOverview>('/laboratory/overview', fetcher, { refreshInterval: 15000 })
+  const { data: foxOverview } = useSWR<ModuleOverview>('/fox-hunter/overview', fetcher, { refreshInterval: 15000 })
+  const { data: webNotice } = useSWR<WebNotice>('/health/notice', fetcher, { refreshInterval: 10000 })
+
+  useEffect(() => {
+    if (!webNotice?.visible) {
+      setShowWebNotice(false)
+      return
+    }
+    setShowWebNotice(true)
+    const timer = window.setTimeout(() => setShowWebNotice(false), 5000)
+    return () => window.clearTimeout(timer)
+  }, [webNotice?.visible, webNotice?.level, webNotice?.title, webNotice?.message, webNotice?.updated_at])
 
   async function runScan() {
     setIsScanning(true)
@@ -420,42 +430,6 @@ export default function Page() {
       await mutateRuns()
     } finally {
       setBusyDiscovery(false)
-    }
-  }
-
-  async function runCurrentMatch() {
-    setBusyMatch(true)
-    try {
-      await postJson('/research/match-current', {
-        limit: 40,
-        max_patterns: 20,
-        store: true
-      })
-      await mutateMatches()
-    } finally {
-      setBusyMatch(false)
-    }
-  }
-
-  async function runLaboratoryScan() {
-    setBusyLabScan(true)
-    try {
-      await postJson('/laboratory/scan', { limit: 80, store_signals: true, execute_orders: false })
-      await mutateLabOverview()
-      await mutateLabStatus()
-    } finally {
-      setBusyLabScan(false)
-    }
-  }
-
-  async function runFoxScan() {
-    setBusyFoxScan(true)
-    try {
-      await postJson('/fox-hunter/scan', { limit: 80, store_signals: true, execute_orders: false })
-      await mutateFoxOverview()
-      await mutateFoxStatus()
-    } finally {
-      setBusyFoxScan(false)
     }
   }
 
@@ -507,6 +481,12 @@ export default function Page() {
 
   return (
     <main className="main">
+      {webNotice?.visible && showWebNotice && (
+        <aside className={`web-notice ${webNotice.level === 'error' ? 'bad' : 'good'}`}>
+          <div className="web-notice-title">{webNotice.title || 'Tradeo'}</div>
+          <div className="web-notice-message">{webNotice.message}</div>
+        </aside>
+      )}
       <section className="hero">
         <div>
           <div className="kicker">Tradeo · dashboard privado</div>
@@ -519,7 +499,6 @@ export default function Page() {
             <button onClick={runBacktest}>Backtest rápido</button>
             <button onClick={generateReport}>Generar revisión</button>
             <button onClick={runDiscovery} disabled={busyDiscovery}>{busyDiscovery ? 'Descubriendo…' : 'Research Lab'}</button>
-            <button onClick={runCurrentMatch} disabled={busyMatch}>{busyMatch ? 'Comparando…' : 'Matches actuales'}</button>
           </div>
           {scanResult && (
             <p className="scan-notice">
@@ -603,7 +582,7 @@ export default function Page() {
             <table>
               <thead>
                 <tr>
-                  <th>Patrón</th><th>Status</th><th>Best R:R</th><th>Expectancy R</th><th>Profit Factor</th><th>Win Rate</th><th>Max DD R</th><th>OOS Exp.</th><th>Preferred 3R</th><th>Premium 4R</th><th>Muestras</th><th>Símbolos</th><th>Años</th><th>Por qué aceptado</th>
+                  <th>Patrón</th><th>Status</th><th>Best R:R</th><th>Expectancy R</th><th>Profit Factor</th><th>Win Rate</th><th>Max DD R</th><th>OOS Exp.</th><th>Preferred 3R</th><th>Premium 4R</th><th>Muestras</th><th>Símbolos</th><th>Años</th>
                 </tr>
               </thead>
               <tbody>
@@ -622,10 +601,9 @@ export default function Page() {
                     <td>{p.sample_count}</td>
                     <td>{p.symbol_count}</td>
                     <td>{p.year_count}</td>
-                    <td className="reason friendly-reason">{explainAcceptedPattern(p)}</td>
                   </tr>
                 ))}
-                {!discoveredPatternRows.length && <tr><td colSpan={14}>Sin patrones aceptados todavía.</td></tr>}
+                {!discoveredPatternRows.length && <tr><td colSpan={13}>Sin patrones aceptados todavía.</td></tr>}
               </tbody>
             </table>
           </div>
@@ -683,30 +661,6 @@ export default function Page() {
               )}
             </div>
           )}
-          <div className="subsection">
-            <h3>Coincidencias actuales contra patrones LAB</h3>
-            <table>
-              <thead>
-                <tr><th>Símbolo</th><th>Patrón</th><th>Lado</th><th>Similitud</th><th>Score</th><th>Entrada</th><th>Stop</th><th>Target</th><th>Estado</th></tr>
-              </thead>
-              <tbody>
-                {(currentMatches || []).slice(0, 20).map((m) => (
-                  <tr key={m.id}>
-                    <td>{m.symbol}</td>
-                    <td>#{m.pattern_id}</td>
-                    <td>{m.side}</td>
-                    <td>{(m.similarity * 100).toFixed(1)}%</td>
-                    <td>{m.score.toFixed(3)}</td>
-                    <td>{m.entry_price.toFixed(2)}</td>
-                    <td>{m.stop_price.toFixed(2)}</td>
-                    <td>{m.target_price.toFixed(2)}</td>
-                    <td><StatusBadge status={m.status} /></td>
-                  </tr>
-                ))}
-                {!(currentMatches || []).length && <tr><td colSpan={9}>Sin coincidencias actuales todavía. Primero debe existir algún patrón LAB aceptado.</td></tr>}
-              </tbody>
-            </table>
-          </div>
         </section>
 
         <OperationsModule
@@ -714,8 +668,6 @@ export default function Page() {
           subtitle="Valida patrones aprobados por Research con señales y operaciones IB Paper. Misma estructura que Fox, datos de paper."
           overview={labOverview}
           status={labStatus}
-          onScan={runLaboratoryScan}
-          busy={busyLabScan}
         />
 
         <OperationsModule
@@ -723,8 +675,6 @@ export default function Page() {
           subtitle="Escanea solo patrones en Producción. Misma estructura que Laboratorio, datos live cuando el sistema esté armado."
           overview={foxOverview}
           status={foxStatus}
-          onScan={runFoxScan}
-          busy={busyFoxScan}
         />
       </section>
     </main>

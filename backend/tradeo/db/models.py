@@ -154,6 +154,7 @@ class DiscoveredPatternStatus(str, Enum):
     LAB = "lab"
     LAB_WATCHLIST = "lab_watchlist"
     LAB_CANDIDATE = "lab_candidate"
+    DIRECTOR_REVIEW = "director_review"
     PREMIUM_CANDIDATE = "premium_candidate"
     PAPER_CANDIDATE = "paper_candidate"
     PRODUCTION = "production"
