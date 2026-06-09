@@ -11,6 +11,7 @@ This file defines the standing audit cadence for Tradeo. It separates automatic 
 | Every audit export | Claw/Codex or worker | Validate package schema | `python research/audit_bridge/validate_audit_package.py research/audit_bridge/requests/<audit_id>` | Invalid packages block review. |
 | Every audit export | Internal Daily Auditor | Run Director gate | `python research/audit_bridge/director_gate.py research/audit_bridge/requests/<audit_id>` | Gate BLOCKED means no promotion. |
 | Every audit export | Internal Daily Auditor | Write machine-readable result | `director_gate_result.json`, `director_gate_result.md` | Missing result blocks promotion. |
+| Every automated audit | Internal Daily Auditor | Capture Compose runtime snapshot | `docker compose ps --format json` via `run_director_audit.py` | Informational only; do not block on container names. |
 
 ## Daily tasks
 
@@ -71,9 +72,18 @@ Run a Director audit immediately if any of these happens:
 # Full automated run
 python research/audit_bridge/run_director_audit.py --cadence daily
 
+# Full automated run with explicit compose files
+TRADEO_AUDIT_COMPOSE_FILES=docker-compose.yml:docker-compose.audit.yml \
+  python research/audit_bridge/run_director_audit.py --cadence daily
+
 # Weekly Director packet
 python research/audit_bridge/run_director_audit.py --cadence weekly
 
 # Gate an existing package
 python research/audit_bridge/run_director_audit.py --cadence manual --audit-id <audit_id> --skip-export
 ```
+
+`run_director_audit.py` creates the package directory before running checks and
+always writes `director_audit_run.*` plus `internal_auditor_agent_review.*` there
+when the local filesystem is writable. Do not use `docker inspect` with fixed
+container names in cron pre-checks; Compose service names are the stable source.

@@ -1,7 +1,7 @@
 ---
 name: tradeo-internal-daily-auditor
-version: 1.1.0
-last_updated: 2026-06-08
+version: 1.1.1
+last_updated: 2026-06-09
 owner_role: Internal Audit Agent
 model_profile: gpt-5.5-pro / reasoning effort xhigh
 reports_to: ChatGPT Director
@@ -47,6 +47,13 @@ Every daily run must:
 6. Keep all patterns in research if paper trades, fills, OOS, cost, anti-lookahead or train-only-fit evidence is missing.
 7. Never treat schema validation as promotion approval.
 8. Escalate any P0 blocker to the ChatGPT Director packet.
+
+Use `python research/audit_bridge/run_director_audit.py --cadence daily` as the
+preferred local runner. It creates the package directory before checks and writes
+`director_audit_run.*` plus `internal_auditor_agent_review.*` even when export,
+gate or validation fails. Runtime Docker status is informational: use
+`docker compose ps --format json` or the runner snapshot, never `docker inspect`
+against fixed container names.
 
 ## 4. Weekly cadence
 

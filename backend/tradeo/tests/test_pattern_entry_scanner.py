@@ -46,6 +46,11 @@ class StaticProvider:
         return self.df.copy()
 
 
+class NoBarsProvider:
+    def fetch_ohlcv(self, symbol: str, period: str = "2y", interval: str = "1d"):
+        raise ValueError(f"IBKR returned no bars for {symbol}")
+
+
 class StaticMatcher:
     def __init__(self, provider: FixtureProvider, matches: list[dict]) -> None:
         self.provider = provider
@@ -103,6 +108,55 @@ def add_pattern(
     db.commit()
     db.refresh(pattern)
     return pattern
+
+
+def add_shadow_observation(
+    db,
+    *,
+    opened_at: datetime,
+    signal_metadata: dict | None = None,
+    trade_metadata: dict | None = None,
+) -> tuple[Signal, Trade]:
+    signal = Signal(
+        symbol="LABX",
+        pattern="shadow_pattern",
+        side="long",
+        entry=10.0,
+        stop=9.0,
+        target=12.0,
+        reward_risk=2.0,
+        confidence=0.7,
+        composite_score=0.7,
+        risk_usd=10.0,
+        suggested_qty=3,
+        strategy_version="laboratory_pattern_1",
+        status=SignalStatus.PAPER_APPROVED,
+        metadata_json=signal_metadata or {"entry_module": "laboratory", "pattern_id": 1},
+    )
+    db.add(signal)
+    db.flush()
+    metadata = {
+        "execution_mode": LAB_SHADOW_EXECUTION_MODE,
+        "observation_only": True,
+        "no_ibkr_order": True,
+    }
+    metadata.update(trade_metadata or {})
+    trade = Trade(
+        signal_id=signal.id,
+        symbol="LABX",
+        pattern="shadow_pattern",
+        side="long",
+        qty=3,
+        entry=10.0,
+        stop=9.0,
+        target=12.0,
+        status=TradeStatus.OPEN,
+        opened_at=opened_at,
+        metadata_json=metadata,
+    )
+    db.add(trade)
+    db.commit()
+    return signal, trade
 
 
 def match_payload(**overrides):
@@ -440,43 +494,7 @@ def test_current_match_storage_keeps_distinct_entry_variants() -> None:
 def test_lab_shadow_observation_closes_on_target_without_ibkr_order() -> None:
     db = session_factory()
     opened_at = datetime(2026, 1, 2, 14, 30, tzinfo=timezone.utc)
-    signal = Signal(
-        symbol="LABX",
-        pattern="shadow_pattern",
-        side="long",
-        entry=10.0,
-        stop=9.0,
-        target=12.0,
-        reward_risk=2.0,
-        confidence=0.7,
-        composite_score=0.7,
-        risk_usd=10.0,
-        suggested_qty=3,
-        strategy_version="laboratory_pattern_1",
-        status=SignalStatus.PAPER_APPROVED,
-        metadata_json={"entry_module": "laboratory", "pattern_id": 1},
-    )
-    db.add(signal)
-    db.flush()
-    trade = Trade(
-        signal_id=signal.id,
-        symbol="LABX",
-        pattern="shadow_pattern",
-        side="long",
-        qty=3,
-        entry=10.0,
-        stop=9.0,
-        target=12.0,
-        status=TradeStatus.OPEN,
-        opened_at=opened_at,
-        metadata_json={
-            "execution_mode": LAB_SHADOW_EXECUTION_MODE,
-            "observation_only": True,
-            "no_ibkr_order": True,
-        },
-    )
-    db.add(trade)
-    db.commit()
+    _, trade = add_shadow_observation(db, opened_at=opened_at)
     df = pd.DataFrame(
         {
             "open": [10.1, 10.3],
@@ -496,6 +514,86 @@ def test_lab_shadow_observation_closes_on_target_without_ibkr_order() -> None:
     assert trade.exit_price == 12.0
     assert trade.r_multiple == 2.0
     assert trade.pnl_usd == 6.0
+    assert trade.metadata_json["exit_reason"] == "target_hit"
+    assert trade.metadata_json["no_ibkr_order"] is True
+
+
+def test_lab_shadow_observation_records_market_data_unavailable_without_fallback() -> None:
+    db = session_factory()
+    _, trade = add_shadow_observation(
+        db,
+        opened_at=datetime(2026, 1, 2, 14, 30, tzinfo=timezone.utc),
+    )
+
+    result = LabPaperObservationService(settings=Settings(), provider=NoBarsProvider()).close_open_observations(db)
+    db.refresh(trade)
+
+    assert result["closed_observations"] == 0
+    assert result["diagnosed_observations"] == 1
+    assert result["data_errors"][0]["status"] == "market_data_unavailable"
+    assert "IBKR returned no bars" in result["data_errors"][0]["reason"]
+    assert trade.status == TradeStatus.OPEN
+    assert trade.metadata_json["market_data_unavailable"] is True
+    assert trade.metadata_json["shadow_lifecycle"]["last_bar"] is None
+    assert trade.metadata_json["shadow_lifecycle"]["mark_to_market"] is None
+    assert trade.metadata_json["no_ibkr_order"] is True
+
+
+def test_lab_shadow_observation_marks_to_market_from_signal_snapshot_after_no_bars() -> None:
+    db = session_factory()
+    _, trade = add_shadow_observation(
+        db,
+        opened_at=datetime(2026, 1, 2, 14, 30, tzinfo=timezone.utc),
+        signal_metadata={
+            "entry_module": "laboratory",
+            "pattern_id": 1,
+            "signal_snapshot": {
+                "captured_at": "2026-01-02T14:29:00+00:00",
+                "features": {"last_close": 10.75},
+            },
+        },
+    )
+
+    result = LabPaperObservationService(settings=Settings(), provider=NoBarsProvider()).close_open_observations(db)
+    db.refresh(trade)
+
+    lifecycle = trade.metadata_json["shadow_lifecycle"]
+    assert result["closed_observations"] == 0
+    assert result["diagnosed_observations"] == 1
+    assert trade.status == TradeStatus.OPEN
+    assert lifecycle["status"] == "market_data_unavailable"
+    assert lifecycle["fallback_used"] is True
+    assert lifecycle["fallback_source"] == "signal.metadata_json.signal_snapshot.features.last_close"
+    assert lifecycle["mark_to_market"]["price"] == 10.75
+    assert lifecycle["mark_to_market"]["unrealized_pnl"] == 2.25
+    assert lifecycle["mark_to_market"]["entry"] == 10.0
+    assert trade.metadata_json["no_ibkr_order"] is True
+
+
+def test_lab_shadow_observation_closes_from_metadata_bar_after_no_bars() -> None:
+    db = session_factory()
+    _, trade = add_shadow_observation(
+        db,
+        opened_at=datetime(2026, 1, 2, 14, 30, tzinfo=timezone.utc),
+        trade_metadata={
+            "latest_bar": {
+                "timestamp": "2026-01-02T14:35:00+00:00",
+                "open": 10.2,
+                "high": 12.4,
+                "low": 10.1,
+                "close": 12.1,
+                "volume": 1200,
+            },
+        },
+    )
+
+    result = LabPaperObservationService(settings=Settings(), provider=NoBarsProvider()).close_open_observations(db)
+    db.refresh(trade)
+
+    assert result["closed_observations"] == 1
+    assert result["diagnosed_observations"] == 0
+    assert trade.status == TradeStatus.CLOSED
+    assert trade.exit_price == 12.0
     assert trade.metadata_json["exit_reason"] == "target_hit"
     assert trade.metadata_json["no_ibkr_order"] is True
 

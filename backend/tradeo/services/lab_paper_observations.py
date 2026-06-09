@@ -18,6 +18,19 @@ LAB_SHADOW_EXECUTION_MODE = "lab_shadow_observation"
 
 
 @dataclass(slots=True)
+class MarketDataFetch:
+    frame: pd.DataFrame | None
+    error: str | None = None
+
+
+@dataclass(slots=True)
+class FallbackFrame:
+    frame: pd.DataFrame
+    source: str
+    timestamp_source: str
+
+
+@dataclass(slots=True)
 class LabPaperObservationService:
     """Open and evaluate laboratory paper observations without broker orders."""
 
@@ -93,6 +106,8 @@ class LabPaperObservationService:
             "entry_fill_time": now.isoformat(),
             "entry_fill_price": signal.entry,
             "entry_order_type": "shadow_observation",
+            "signal_snapshot": signal_metadata.get("signal_snapshot") or match.get("signal_snapshot"),
+            "match": signal_metadata.get("match") or match,
             "commission": 0.0,
             "estimated_spread_cost": 0.0,
             "estimated_slippage": 0.0,
@@ -143,29 +158,57 @@ class LabPaperObservationService:
         )
         observations = [trade for trade in trades if self._is_lab_shadow_observation(trade)]
         closed_ids: list[int] = []
+        diagnosed_ids: list[int] = []
         data_errors: list[dict[str, str]] = []
-        frame_cache: dict[tuple[str, str], pd.DataFrame | None] = {}
+        frame_cache: dict[tuple[str, str], MarketDataFetch] = {}
         for trade in observations:
             signal = trade.signal
             timeframe = signal.timeframe if signal is not None else "1d"
             key = (trade.symbol.upper(), timeframe)
             if key not in frame_cache:
                 frame_cache[key] = self._fetch_frame(trade.symbol, timeframe)
-            frame = frame_cache[key]
+            fetch = frame_cache[key]
+            frame = fetch.frame
+            fallback: FallbackFrame | None = None
             if frame is None:
-                data_errors.append({"symbol": trade.symbol, "reason": "market_data_unavailable"})
-                continue
+                fallback = self._fallback_frame_from_metadata(trade)
+                if fallback is None:
+                    diagnostic = self._mark_observation_pending(
+                        db,
+                        trade,
+                        frame=None,
+                        reason=fetch.error or "market_data_unavailable",
+                        status="market_data_unavailable",
+                        fallback=None,
+                    )
+                    diagnosed_ids.append(trade.id)
+                    data_errors.append(diagnostic)
+                    continue
+                frame = fallback.frame
             outcome = self._evaluate_trade(trade, frame)
             if outcome is None:
+                diagnostic = self._mark_observation_pending(
+                    db,
+                    trade,
+                    frame=frame,
+                    reason=fetch.error or "awaiting_future_market_bars",
+                    status="market_data_unavailable" if fetch.error else "awaiting_future_market_bars",
+                    fallback=fallback,
+                )
+                diagnosed_ids.append(trade.id)
+                if fetch.error:
+                    data_errors.append(diagnostic)
                 continue
             self._close_trade(db, trade, outcome)
             closed_ids.append(trade.id)
-        if closed_ids:
+        if closed_ids or diagnosed_ids:
             db.commit()
         return {
             "open_observations": len(observations) - len(closed_ids),
             "closed_observations": len(closed_ids),
             "closed_trade_ids": closed_ids,
+            "diagnosed_observations": len(diagnosed_ids),
+            "diagnosed_trade_ids": diagnosed_ids,
             "data_errors": data_errors,
         }
 
@@ -184,13 +227,16 @@ class LabPaperObservationService:
             and bool(metadata.get("no_ibkr_order"))
         )
 
-    def _fetch_frame(self, symbol: str, timeframe: str) -> pd.DataFrame | None:
+    def _fetch_frame(self, symbol: str, timeframe: str) -> MarketDataFetch:
         assert self.provider is not None
         try:
-            return normalize_ohlcv(self.provider.fetch_ohlcv(symbol, period="6mo", interval=timeframe))
+            frame = normalize_ohlcv(self.provider.fetch_ohlcv(symbol, period="6mo", interval=timeframe))
+            if frame.empty:
+                return MarketDataFetch(None, "provider_returned_no_bars")
+            return MarketDataFetch(frame)
         except Exception as exc:  # noqa: BLE001
             logger.warning("lab shadow observation data fetch failed for {} / {}: {}", symbol, timeframe, exc)
-            return None
+            return MarketDataFetch(None, f"provider_fetch_failed: {type(exc).__name__}: {exc}")
 
     def _evaluate_trade(self, trade: Trade, frame: pd.DataFrame) -> dict[str, Any] | None:
         opened_at = self._as_utc(trade.opened_at)
@@ -288,6 +334,207 @@ class LabPaperObservationService:
             )
         )
 
+    def _mark_observation_pending(
+        self,
+        db: Session,
+        trade: Trade,
+        *,
+        frame: pd.DataFrame | None,
+        reason: str,
+        status: str,
+        fallback: FallbackFrame | None,
+    ) -> dict[str, str]:
+        now = datetime.now(timezone.utc)
+        metadata = dict(trade.metadata_json or {})
+        last_bar = self._last_bar_snapshot(frame)
+        mark = self._mark_to_market(trade, last_bar)
+        lifecycle = {
+            "status": status,
+            "reason": reason,
+            "diagnosed_at": now.isoformat(),
+            "fallback_used": fallback is not None,
+            "fallback_source": fallback.source if fallback is not None else None,
+            "fallback_timestamp_source": fallback.timestamp_source if fallback is not None else None,
+            "last_bar": last_bar,
+            "mark_to_market": mark,
+            "no_ibkr_order": True,
+            "paper_only": True,
+        }
+        metadata.update(
+            {
+                "shadow_lifecycle": lifecycle,
+                "last_shadow_lifecycle_status": status,
+                "market_data_unavailable": status == "market_data_unavailable",
+                "market_data_unavailable_reason": reason if status == "market_data_unavailable" else None,
+                "no_ibkr_order": True,
+                "paper_only": True,
+            }
+        )
+        trade.metadata_json = metadata
+        db.add(trade)
+        db.add(
+            AuditLog(
+                actor="laboratory",
+                action=(
+                    "lab_shadow_observation_market_data_unavailable"
+                    if status == "market_data_unavailable"
+                    else "lab_shadow_observation_pending_bars"
+                ),
+                entity_type="trade",
+                entity_id=str(trade.id),
+                details_json={
+                    "trade_id": trade.id,
+                    "symbol": trade.symbol,
+                    "status": status,
+                    "reason": reason,
+                    "fallback_used": fallback is not None,
+                    "fallback_source": fallback.source if fallback is not None else None,
+                    "mark_to_market": mark,
+                    "no_ibkr_order": True,
+                },
+            )
+        )
+        return {
+            "trade_id": str(trade.id),
+            "symbol": trade.symbol,
+            "reason": reason,
+            "status": status,
+            "diagnosed_at": now.isoformat(),
+            "fallback_used": str(fallback is not None).lower(),
+        }
+
+    def _fallback_frame_from_metadata(self, trade: Trade) -> FallbackFrame | None:
+        candidate = self._last_market_bar_candidate(trade)
+        if candidate is None:
+            return None
+        price = self._safe_positive_float(candidate.get("close") or candidate.get("price"))
+        if price is None:
+            return None
+        open_price = self._safe_positive_float(candidate.get("open")) or price
+        high = max(self._safe_positive_float(candidate.get("high")) or price, open_price, price)
+        low = min(self._safe_positive_float(candidate.get("low")) or price, open_price, price)
+        volume = self._safe_non_negative_float(candidate.get("volume")) or 0.0
+        timestamp = self._timestamp_or_opened_at(candidate.get("timestamp"), trade.opened_at)
+        frame = pd.DataFrame(
+            {
+                "open": [open_price],
+                "high": [high],
+                "low": [low],
+                "close": [price],
+                "volume": [volume],
+            },
+            index=pd.DatetimeIndex([timestamp]),
+        )
+        return FallbackFrame(
+            frame=normalize_ohlcv(frame),
+            source=str(candidate.get("source") or "metadata"),
+            timestamp_source=str(candidate.get("timestamp_source") or "opened_at"),
+        )
+
+    def _last_market_bar_candidate(self, trade: Trade) -> dict[str, Any] | None:
+        metadata = trade.metadata_json or {}
+        signal_meta = (trade.signal.metadata_json if trade.signal is not None else {}) or {}
+        sources = [
+            ("trade.metadata_json", metadata),
+            ("signal.metadata_json", signal_meta),
+            ("trade.signal_snapshot", metadata.get("signal_snapshot")),
+            ("signal.signal_snapshot", signal_meta.get("signal_snapshot")),
+            ("trade.match", metadata.get("match")),
+            ("signal.match", signal_meta.get("match")),
+        ]
+        for source_name, payload in sources:
+            candidate = self._bar_from_payload(payload, source_name)
+            if candidate is not None:
+                return candidate
+        return None
+
+    def _bar_from_payload(self, payload: Any, source_name: str) -> dict[str, Any] | None:
+        if not isinstance(payload, dict):
+            return None
+        for key in ("last_bar", "latest_bar", "market_bar", "bar", "ohlcv"):
+            bar = payload.get(key)
+            if isinstance(bar, dict) and self._safe_positive_float(bar.get("close") or bar.get("price")) is not None:
+                return {
+                    **bar,
+                    "source": f"{source_name}.{key}",
+                    "timestamp": bar.get("timestamp") or bar.get("time") or bar.get("date"),
+                    "timestamp_source": f"{source_name}.{key}",
+                }
+        entry_gate = payload.get("entry_gate")
+        if isinstance(entry_gate, dict):
+            price = self._safe_positive_float(entry_gate.get("close") or entry_gate.get("last_close"))
+            if price is not None:
+                return {
+                    "price": price,
+                    "open": entry_gate.get("open"),
+                    "high": entry_gate.get("high"),
+                    "low": entry_gate.get("low"),
+                    "volume": entry_gate.get("volume"),
+                    "timestamp": self._first_present(
+                        entry_gate.get("timestamp"),
+                        entry_gate.get("bar_close_time"),
+                        entry_gate.get("decision_ts"),
+                        entry_gate.get("available_data_cutoff_ts"),
+                    ),
+                    "source": f"{source_name}.entry_gate.close",
+                    "timestamp_source": f"{source_name}.entry_gate",
+                }
+        features = payload.get("features")
+        if isinstance(features, dict):
+            price = self._safe_positive_float(features.get("last_close") or features.get("close"))
+            if price is not None:
+                return {
+                    "price": price,
+                    "timestamp": self._snapshot_timestamp(payload),
+                    "source": f"{source_name}.features.last_close",
+                    "timestamp_source": f"{source_name}.captured_at",
+                }
+        metrics = payload.get("metrics")
+        if isinstance(metrics, dict):
+            return self._bar_from_payload(metrics, f"{source_name}.metrics")
+        snapshot = payload.get("signal_snapshot")
+        if isinstance(snapshot, dict):
+            return self._bar_from_payload(snapshot, f"{source_name}.signal_snapshot")
+        return None
+
+    def _last_bar_snapshot(self, frame: pd.DataFrame | None) -> dict[str, Any] | None:
+        if frame is None or frame.empty:
+            return None
+        idx = frame.index[-1]
+        row = frame.iloc[-1]
+        return {
+            "timestamp": self._as_utc(idx).isoformat(),
+            "open": round(float(row["open"]), 4),
+            "high": round(float(row["high"]), 4),
+            "low": round(float(row["low"]), 4),
+            "close": round(float(row["close"]), 4),
+            "volume": round(float(row["volume"]), 4),
+        }
+
+    def _mark_to_market(self, trade: Trade, last_bar: dict[str, Any] | None) -> dict[str, Any] | None:
+        if last_bar is None:
+            return None
+        last_price = self._safe_positive_float(last_bar.get("close"))
+        if last_price is None:
+            return None
+        risk = abs(float(trade.entry) - float(trade.stop))
+        qty = int(trade.qty)
+        if trade.side.lower().strip() == "short":
+            unrealized = (float(trade.entry) - last_price) * qty
+            r_multiple = (float(trade.entry) - last_price) / max(risk, 1e-9)
+        else:
+            unrealized = (last_price - float(trade.entry)) * qty
+            r_multiple = (last_price - float(trade.entry)) / max(risk, 1e-9)
+        return {
+            "price": round(last_price, 4),
+            "unrealized_pnl": round(unrealized, 4),
+            "unrealized_r": round(r_multiple, 6),
+            "entry": round(float(trade.entry), 4),
+            "stop": round(float(trade.stop), 4),
+            "target": round(float(trade.target), 4),
+            "qty": qty,
+        }
+
     @staticmethod
     def _mfe_mae_r(trade: Trade, bars: list[dict[str, Any]]) -> tuple[float, float]:
         risk = abs(float(trade.entry) - float(trade.stop))
@@ -311,3 +558,49 @@ class LabPaperObservationService:
         else:
             ts = ts.tz_convert(timezone.utc)
         return ts.to_pydatetime()
+
+    @staticmethod
+    def _safe_positive_float(value: Any) -> float | None:
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return None
+        if not pd.notna(number) or number <= 0:
+            return None
+        return number
+
+    @staticmethod
+    def _safe_non_negative_float(value: Any) -> float | None:
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return None
+        if not pd.notna(number) or number < 0:
+            return None
+        return number
+
+    @staticmethod
+    def _timestamp_or_opened_at(value: Any, opened_at: Any) -> datetime:
+        if value is None or value == "":
+            return LabPaperObservationService._as_utc(opened_at)
+        try:
+            return LabPaperObservationService._as_utc(value)
+        except Exception:  # noqa: BLE001
+            return LabPaperObservationService._as_utc(opened_at)
+
+    @staticmethod
+    def _first_present(*values: Any) -> Any:
+        for value in values:
+            if value not in (None, ""):
+                return value
+        return None
+
+    @staticmethod
+    def _snapshot_timestamp(payload: dict[str, Any]) -> Any:
+        entry_audit = payload.get("entry_audit") if isinstance(payload.get("entry_audit"), dict) else {}
+        return LabPaperObservationService._first_present(
+            payload.get("captured_at"),
+            entry_audit.get("available_data_cutoff_ts"),
+            entry_audit.get("decision_ts"),
+            payload.get("window_end"),
+        )

@@ -101,6 +101,28 @@ evidencia suficiente.
 El objetivo es generar historia Lab cerrada para Director sin relajar ejecucion.
 Director sigue bloqueando promociones hasta que haya evidencia paper suficiente.
 
+### Fallback Post-Close
+
+Tras el cierre de mercado, IBKR puede responder `no bars` para una observacion
+recien abierta. Ese caso no debe dejar el lifecycle mudo ni intentar ordenes.
+
+`LabPaperObservationService` aplica este orden conservador:
+
+1. Si hay barras nuevas de mercado, evalua target, stop y time stop como antes.
+2. Si el provider no devuelve barras, busca una ultima vela o precio guardado en
+   metadata (`latest_bar`, `last_bar`, `entry_gate.close`,
+   `signal_snapshot.features.last_close` o `match.metrics.entry_gate`).
+3. Si esa vela guardada es posterior a `opened_at` y toca stop/target, cierra la
+   observacion shadow de forma determinista con `no_ibkr_order=true`.
+4. Si solo sirve para valorar, deja la trade `open` y escribe
+   `shadow_lifecycle.status=market_data_unavailable` con `mark_to_market`,
+   razon, timestamp, fuente del fallback y `paper_only=true`.
+5. Si no hay fallback usable, deja la trade `open` y registra
+   `market_data_unavailable` con razon y timestamp para auditoria.
+
+Este fallback solo afecta observaciones `lab_shadow_observation`; no activa live,
+no envia ordenes a IBKR y no convierte near-miss en promocion.
+
 ## Ranking
 
 El ranking combina:

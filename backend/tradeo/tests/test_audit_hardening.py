@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import importlib.util
 import json
+import sys
 from pathlib import Path
 
 import pandas as pd
@@ -303,6 +304,95 @@ def test_normalize_ohlcv_rejects_duplicate_timestamps() -> None:
 
     with pytest.raises(ValueError, match="duplicate timestamps"):
         normalize_ohlcv(df)
+
+
+def test_audit_runner_parses_compose_ps_json_without_container_name_dependency() -> None:
+    runner = _load_audit_runner()
+    stdout = "\n".join(
+        [
+            json.dumps(
+                {
+                    "Name": "tradeo-backend-1",
+                    "Service": "backend",
+                    "State": "running",
+                    "Health": "healthy",
+                }
+            ),
+            json.dumps(
+                {
+                    "Name": "tradeo-worker-1",
+                    "Service": "worker",
+                    "State": "running",
+                    "Status": "Up 10 minutes (healthy)",
+                }
+            ),
+        ]
+    )
+
+    services = runner.parse_compose_ps_json(stdout)
+
+    assert [service["service"] for service in services] == ["backend", "worker"]
+    assert [service["health"] for service in services] == ["healthy", "healthy"]
+
+
+def test_audit_runner_ignores_nonblocking_compose_ps_failures() -> None:
+    runner = _load_audit_runner()
+
+    review = runner.deterministic_review(
+        "TEST_AUDIT",
+        "manual",
+        {"status": "passed", "blockers": []},
+        [runner.CommandRun("docker_compose_ps", ["docker", "compose", "ps"], 1, blocking=False)],
+    )
+
+    assert review["failed_commands"] == []
+    assert review["priority"] == "P2"
+
+
+def test_audit_runner_writes_artifacts_when_gate_command_raises(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = _load_audit_runner()
+    requests = tmp_path / "requests"
+    monkeypatch.setattr(runner, "REQUESTS", requests)
+    monkeypatch.setattr(
+        runner,
+        "collect_compose_status",
+        lambda: (
+            runner.CommandRun("docker_compose_ps", ["docker", "compose", "ps"], 1, blocking=False),
+            {"available": False, "reason": "docker_compose_ps_unavailable"},
+        ),
+    )
+
+    def raise_from_gate(*_args, **_kwargs):
+        raise RuntimeError("gate exploded")
+
+    monkeypatch.setattr(runner, "run_subprocess", raise_from_gate)
+    monkeypatch.setattr(
+        runner.sys,
+        "argv",
+        [
+            "run_director_audit.py",
+            "--cadence",
+            "manual",
+            "--audit-id",
+            "TEST_AUDIT",
+            "--skip-export",
+        ],
+    )
+
+    exit_code = runner.main()
+
+    run_json = requests / "TEST_AUDIT" / "director_audit_run.json"
+    review_json = requests / "TEST_AUDIT" / "internal_auditor_agent_review.json"
+    assert exit_code == 1
+    assert run_json.exists()
+    assert review_json.exists()
+    payload = json.loads(run_json.read_text(encoding="utf-8"))
+    assert payload["director_gate_status"] == "runner_error"
+    assert payload["commands"][-1]["name"] == "runner_error"
+    assert payload["artifact_paths"]["run_json"].endswith("director_audit_run.json")
 
 
 def _write_minimal_audit_package(tmp_path: Path, validator, *, duplicate_repeated_rows: int) -> Path:
@@ -664,6 +754,16 @@ def _load_audit_validator():
     spec = importlib.util.spec_from_file_location("validate_audit_package", path)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _load_audit_runner():
+    path = _repo_root() / "research" / "audit_bridge" / "run_director_audit.py"
+    spec = importlib.util.spec_from_file_location("run_director_audit", path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
 

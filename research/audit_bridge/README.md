@@ -27,6 +27,35 @@ Flujo recomendado:
 5. Revisar que no haya datos sensibles.
 6. Commit del paquete completo o, si es demasiado grande, commit de muestra representativa, manifest con hashes e instrucciones exactas de regeneracion.
 
+## Auditoria automatizada robusta
+
+El entrypoint recomendado para auditorias manuales, diarias y semanales es:
+
+```bash
+python research/audit_bridge/run_director_audit.py --cadence manual --audit-id <audit_id>
+```
+
+El runner siempre intenta escribir artefactos locales en:
+
+```text
+research/audit_bridge/requests/<audit_id>/
+```
+
+Como minimo deja `director_audit_run.json`, `director_audit_run.md`,
+`internal_auditor_agent_review.json` e `internal_auditor_agent_review.md` incluso
+si export, gate, validacion o entrega externa fallan antes de completar el ciclo.
+
+La comprobacion de runtime Docker es informativa y no bloqueante. Usa
+`docker compose ps --format json` y cae a `docker compose ps` si la salida JSON no
+esta disponible. No depende de nombres fijos como `tradeo-backend` o
+`tradeo-worker`; el campo estable es el servicio Compose (`backend`, `worker`,
+`db`, `redis`, `frontend`). Si hay que usar compose files no estandar, definir:
+
+```bash
+TRADEO_AUDIT_COMPOSE_FILES=docker-compose.yml:docker-compose.audit.yml \
+  python research/audit_bridge/run_director_audit.py --cadence daily
+```
+
 ## Datos obligatorios
 
 Todo paquete debe incluir, como minimo:

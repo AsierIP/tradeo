@@ -26,9 +26,102 @@ class CommandRun:
     exit_code: int
     stdout: str = ""
     stderr: str = ""
+    blocking: bool = True
 
 
 def main() -> int:
+    args = parse_args()
+    audit_id = args.audit_id or build_audit_id(args.cadence)
+    package = REQUESTS / audit_id
+    package.mkdir(parents=True, exist_ok=True)
+    api_url = args.api_url or os.environ.get("TRADEO_API_URL") or default_api_url()
+    created_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+    runs: list[CommandRun] = []
+    gate_result: dict[str, Any] = {}
+    agent_review: dict[str, Any] = {}
+    runtime_status: dict[str, Any] = {"available": False, "reason": "not_collected"}
+    runner_error: dict[str, str] | None = None
+    exit_code = 1
+
+    try:
+        runtime_run, runtime_status = collect_compose_status()
+        runs.append(runtime_run)
+
+        if not args.skip_export:
+            runs.append(run_exporter(audit_id, api_url, args.pattern_limit, args.match_limit))
+
+        gate_json = package / "director_gate_result.json"
+        gate_md = package / "director_gate_result.md"
+        runs.append(
+            run_subprocess(
+                "director_gate",
+                [
+                    sys.executable,
+                    str(BRIDGE / "director_gate.py"),
+                    str(package),
+                    "--json-output",
+                    str(gate_json),
+                    "--markdown-output",
+                    str(gate_md),
+                    "--allow-blocked-exit-zero",
+                ],
+            )
+        )
+        runs.append(run_subprocess("validate", [sys.executable, str(BRIDGE / "validate_audit_package.py"), str(package)]))
+
+        gate_result = read_json(gate_json)
+        agent_review = deterministic_review(audit_id, args.cadence, gate_result, runs)
+
+        export_failed = any(run.name == "export" and run.exit_code != 0 for run in runs)
+        validation_failed = any(run.name == "validate" and run.exit_code != 0 for run in runs)
+        blocked = gate_result.get("status") == "blocked" if isinstance(gate_result, dict) else False
+        if export_failed or validation_failed:
+            exit_code = 1
+        elif blocked and args.fail_on_blocked:
+            exit_code = 2
+        else:
+            exit_code = 0
+    except Exception as exc:  # noqa: BLE001
+        runner_error = {"type": type(exc).__name__, "message": str(exc)}
+        runs.append(CommandRun("runner_error", [], 1, stderr=f"{type(exc).__name__}: {exc}"))
+        gate_result = {"status": "runner_error", "blockers": [f"runner_error: {type(exc).__name__}: {exc}"]}
+        agent_review = deterministic_review(audit_id, args.cadence, gate_result, runs)
+        exit_code = 1
+
+    result = {
+        "audit_id": audit_id,
+        "cadence": args.cadence,
+        "created_at": created_at,
+        "package": display_path(package),
+        "api_url": api_url,
+        "director_gate_status": gate_result.get("status", "unknown") if isinstance(gate_result, dict) else "unknown",
+        "runtime_status": runtime_status,
+        "commands": [asdict(run) for run in runs],
+        "agent_review": agent_review,
+        "artifact_paths": {
+            "run_json": display_path(package / "director_audit_run.json"),
+            "run_markdown": display_path(package / "director_audit_run.md"),
+            "agent_review_json": display_path(package / "internal_auditor_agent_review.json"),
+            "agent_review_markdown": display_path(package / "internal_auditor_agent_review.md"),
+        },
+    }
+    if runner_error is not None:
+        result["runner_error"] = runner_error
+
+    try:
+        write_json(package / "internal_auditor_agent_review.json", agent_review)
+        write_agent_md(package / "internal_auditor_agent_review.md", agent_review)
+        write_json(package / "director_audit_run.json", result)
+        write_md(package / "director_audit_run.md", result)
+    except Exception as exc:  # noqa: BLE001
+        print(f"failed to write audit artifacts in {package}: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return 1
+
+    return exit_code
+
+
+def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run the automated Tradeo Director audit loop.")
     parser.add_argument("--audit-id", default=None)
     parser.add_argument("--cadence", choices=["daily", "weekly", "manual"], default="daily")
@@ -37,62 +130,7 @@ def main() -> int:
     parser.add_argument("--match-limit", type=int, default=500)
     parser.add_argument("--skip-export", action="store_true")
     parser.add_argument("--fail-on-blocked", action="store_true")
-    args = parser.parse_args()
-
-    audit_id = args.audit_id or build_audit_id(args.cadence)
-    package = REQUESTS / audit_id
-    package.mkdir(parents=True, exist_ok=True)
-    api_url = args.api_url or os.environ.get("TRADEO_API_URL") or default_api_url()
-
-    runs: list[CommandRun] = []
-    if not args.skip_export:
-        runs.append(run_exporter(audit_id, api_url, args.pattern_limit, args.match_limit))
-
-    gate_json = package / "director_gate_result.json"
-    gate_md = package / "director_gate_result.md"
-    runs.append(
-        run_subprocess(
-            "director_gate",
-            [
-                sys.executable,
-                str(BRIDGE / "director_gate.py"),
-                str(package),
-                "--json-output",
-                str(gate_json),
-                "--markdown-output",
-                str(gate_md),
-                "--allow-blocked-exit-zero",
-            ],
-        )
-    )
-    runs.append(run_subprocess("validate", [sys.executable, str(BRIDGE / "validate_audit_package.py"), str(package)]))
-
-    gate_result = read_json(gate_json)
-    agent_review = deterministic_review(audit_id, args.cadence, gate_result, runs)
-    write_json(package / "internal_auditor_agent_review.json", agent_review)
-    write_agent_md(package / "internal_auditor_agent_review.md", agent_review)
-
-    result = {
-        "audit_id": audit_id,
-        "cadence": args.cadence,
-        "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "package": str(package.relative_to(ROOT)),
-        "api_url": api_url,
-        "director_gate_status": gate_result.get("status", "unknown") if isinstance(gate_result, dict) else "unknown",
-        "commands": [asdict(run) for run in runs],
-        "agent_review": agent_review,
-    }
-    write_json(package / "director_audit_run.json", result)
-    write_md(package / "director_audit_run.md", result)
-
-    export_failed = any(run.name == "export" and run.exit_code != 0 for run in runs)
-    validation_failed = any(run.name == "validate" and run.exit_code != 0 for run in runs)
-    blocked = result["director_gate_status"] == "blocked"
-    if export_failed or validation_failed:
-        return 1
-    if blocked and args.fail_on_blocked:
-        return 2
-    return 0
+    return parser.parse_args()
 
 
 def build_audit_id(cadence: str) -> str:
@@ -104,6 +142,98 @@ def default_api_url() -> str:
     if Path("/.dockerenv").exists() or Path("/app").exists():
         return "http://backend:8000/api"
     return "http://localhost:8000/api"
+
+
+def collect_compose_status() -> tuple[CommandRun, dict[str, Any]]:
+    command = compose_ps_command(json_format=True)
+    run = run_subprocess("docker_compose_ps", command, blocking=False)
+    if run.exit_code == 0:
+        services = parse_compose_ps_json(run.stdout)
+        if not services and run.stdout.strip():
+            fallback = run_subprocess("docker_compose_ps", compose_ps_command(json_format=False), blocking=False)
+            return fallback, {
+                "available": fallback.exit_code == 0,
+                "source": "docker compose ps",
+                "service_count": None,
+                "services": [],
+                "reason": "json_output_unparseable",
+                "json_stdout": run.stdout,
+                "json_stderr": run.stderr,
+            }
+        return run, {
+            "available": True,
+            "source": "docker compose ps --format json",
+            "service_count": len(services),
+            "services": services,
+        }
+
+    fallback = run_subprocess("docker_compose_ps", compose_ps_command(json_format=False), blocking=False)
+    return fallback, {
+        "available": fallback.exit_code == 0,
+        "source": "docker compose ps",
+        "service_count": None,
+        "services": [],
+        "reason": "json_format_failed" if fallback.exit_code == 0 else "docker_compose_ps_unavailable",
+        "json_stderr": run.stderr,
+    }
+
+
+def compose_ps_command(*, json_format: bool) -> list[str]:
+    command = ["docker", "compose"]
+    files = [value for value in os.environ.get("TRADEO_AUDIT_COMPOSE_FILES", "").split(os.pathsep) if value]
+    for file_name in files:
+        command.extend(["-f", file_name])
+    command.append("ps")
+    if json_format:
+        command.extend(["--format", "json"])
+    return command
+
+
+def parse_compose_ps_json(stdout: str) -> list[dict[str, Any]]:
+    text = stdout.strip()
+    if not text:
+        return []
+    try:
+        raw = json.loads(text)
+        rows = raw if isinstance(raw, list) else [raw]
+    except json.JSONDecodeError:
+        rows = []
+        for line in text.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rows.append(json.loads(line))
+            except json.JSONDecodeError:
+                return []
+
+    services: list[dict[str, Any]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        name = row.get("Name") or row.get("name") or ""
+        service = row.get("Service") or row.get("service") or name
+        state = row.get("State") or row.get("state") or ""
+        health = row.get("Health") or row.get("health") or health_from_status(row.get("Status") or row.get("status"))
+        services.append(
+            {
+                "service": service,
+                "name": name,
+                "state": state,
+                "health": health,
+                "exit_code": row.get("ExitCode") or row.get("exit_code"),
+            }
+        )
+    return services
+
+
+def health_from_status(status: object) -> str:
+    text = str(status or "").lower()
+    if "unhealthy" in text:
+        return "unhealthy"
+    if "(healthy)" in text or "healthy" in text:
+        return "healthy"
+    return ""
 
 
 def run_exporter(audit_id: str, api_url: str, pattern_limit: int, match_limit: int) -> CommandRun:
@@ -155,9 +285,12 @@ def run_exporter(audit_id: str, api_url: str, pattern_limit: int, match_limit: i
     return CommandRun("export", command, exit_code, stdout.getvalue(), stderr.getvalue())
 
 
-def run_subprocess(name: str, command: list[str]) -> CommandRun:
-    completed = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, check=False)  # noqa: S603
-    return CommandRun(name, command, completed.returncode, completed.stdout, completed.stderr)
+def run_subprocess(name: str, command: list[str], *, blocking: bool = True) -> CommandRun:
+    try:
+        completed = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, check=False)  # noqa: S603
+    except FileNotFoundError as exc:
+        return CommandRun(name, command, 127, stderr=f"{type(exc).__name__}: {exc}", blocking=blocking)
+    return CommandRun(name, command, completed.returncode, completed.stdout, completed.stderr, blocking)
 
 
 def deterministic_review(
@@ -167,7 +300,7 @@ def deterministic_review(
     command_runs: list[CommandRun],
 ) -> dict[str, Any]:
     blockers = gate_result.get("blockers", []) if isinstance(gate_result, dict) else []
-    failed_commands = [run.name for run in command_runs if run.exit_code != 0]
+    failed_commands = [run.name for run in command_runs if run.blocking and run.exit_code != 0]
     status = gate_result.get("status", "unknown") if isinstance(gate_result, dict) else "unknown"
     priority = "P0" if failed_commands or blockers else "P2"
     return {
@@ -212,6 +345,13 @@ def read_json(path: Path) -> dict[str, Any]:
         return {}
 
 
+def display_path(path: Path) -> str:
+    try:
+        return str(path.relative_to(ROOT))
+    except ValueError:
+        return str(path)
+
+
 def write_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -227,13 +367,14 @@ def write_md(path: Path, result: dict[str, Any]) -> None:
         f"- Created at: `{result['created_at']}`",
         f"- Package: `{result['package']}`",
         f"- Director gate status: `{result['director_gate_status']}`",
+        f"- Runtime status: `{result.get('runtime_status', {}).get('source', 'unknown')}`",
         "",
         "## Commands",
         "",
-        "| name | exit_code |",
-        "|---|---:|",
+        "| name | exit_code | blocking |",
+        "|---|---:|---|",
     ]
-    lines.extend(f"| {run['name']} | {run['exit_code']} |" for run in commands)
+    lines.extend(f"| {run['name']} | {run['exit_code']} | {run.get('blocking', True)} |" for run in commands)
     lines.extend(["", "## Agent review", "", "```json", json.dumps(result.get("agent_review", {}), indent=2, ensure_ascii=False), "```", ""])
     path.write_text("\n".join(lines), encoding="utf-8")
 
