@@ -33,9 +33,10 @@ def module_overview(db: Session, module: EntryModule, *, limit: int = 80) -> dic
     pnl_points = _pnl_points(list(reversed(trades)))
     total_pnl = pnl_points[-1]["total_pnl_usd"] if pnl_points else 0.0
     closed_trades = [trade for trade in trades if _status_value(trade.status) == "closed"]
+    signal_payloads = [_signal_to_dict(signal, signal_trade_statuses.get(signal.id)) for signal in signals]
     return {
         "module": module,
-        "signals": [_signal_to_dict(signal, signal_trade_statuses.get(signal.id)) for signal in signals],
+        "signals": signal_payloads,
         "trades": [_trade_to_dict(trade) for trade in trades],
         "pnl_points": pnl_points,
         "stats": {
@@ -50,6 +51,7 @@ def module_overview(db: Session, module: EntryModule, *, limit: int = 80) -> dic
                 if closed_trades
                 else 0.0
             ),
+            "funnel": _signal_funnel(signal_payloads),
         },
     }
 
@@ -183,6 +185,12 @@ def _signal_execution_outcome(signal: Signal, trade_status: dict[str, Any] | Non
 def _signal_to_dict(signal: Signal, trade_status: dict[str, Any] | None = None) -> dict[str, Any]:
     outcome = _signal_execution_outcome(signal, trade_status)
     display_status = str(outcome.get("status") or _status_value(signal.status))
+    metadata = signal.metadata_json or {}
+    entry_quality = metadata.get("entry_quality") if isinstance(metadata.get("entry_quality"), dict) else {}
+    signal_snapshot = (
+        metadata.get("signal_snapshot") if isinstance(metadata.get("signal_snapshot"), dict) else {}
+    )
+    quality_score = _entry_quality_score(signal, entry_quality)
     return {
         "id": signal.id,
         "symbol": signal.symbol,
@@ -195,6 +203,10 @@ def _signal_to_dict(signal: Signal, trade_status: dict[str, Any] | None = None) 
         "reward_risk": signal.reward_risk,
         "confidence": signal.confidence,
         "composite_score": signal.composite_score,
+        "entry_quality_score": quality_score,
+        "entry_quality_label": entry_quality.get("label") or _entry_quality_label(quality_score),
+        "entry_quality_actionable": bool(entry_quality.get("actionable", quality_score >= 0.60)),
+        "entry_quality_flags": list(entry_quality.get("flags") or []),
         "risk_usd": signal.risk_usd,
         "suggested_qty": signal.suggested_qty,
         "strategy_version": signal.strategy_version,
@@ -206,7 +218,8 @@ def _signal_to_dict(signal: Signal, trade_status: dict[str, Any] | None = None) 
         "supervisor_notes": signal.supervisor_notes,
         "human_approved": signal.human_approved,
         "created_at": signal.created_at.isoformat() if signal.created_at else "",
-        "metadata_json": signal.metadata_json or {},
+        "signal_snapshot": signal_snapshot,
+        "metadata_json": metadata,
     }
 
 
@@ -229,4 +242,49 @@ def _trade_to_dict(trade: Trade) -> dict[str, Any]:
         "r_multiple": trade.r_multiple,
         "broker_order_id": trade.broker_order_id,
         "metadata_json": trade.metadata_json or {},
+    }
+
+
+def _entry_quality_score(signal: Signal, entry_quality: dict[str, Any]) -> float:
+    metadata = signal.metadata_json or {}
+    value = entry_quality.get("score", metadata.get("entry_quality_score", signal.composite_score))
+    try:
+        return round(float(value), 6)
+    except (TypeError, ValueError):
+        return round(float(signal.composite_score or 0.0), 6)
+
+
+def _entry_quality_label(score: float) -> str:
+    if score >= 0.78:
+        return "high"
+    if score >= 0.60:
+        return "actionable"
+    if score >= 0.45:
+        return "watch"
+    return "weak"
+
+
+def _signal_funnel(signals: list[dict[str, Any]]) -> dict[str, int]:
+    submitted_statuses = {
+        "retry_order_submission",
+        "order_submitted",
+        "executed",
+        "order_cancelled",
+    }
+    executed_statuses = {"order_submitted", "executed"}
+    blocked_statuses = {"entry_expired", "order_cancelled", "rejected"}
+    return {
+        "detected": len(signals),
+        "actionable": sum(1 for signal in signals if bool(signal.get("entry_quality_actionable"))),
+        "submitted": sum(
+            1
+            for signal in signals
+            if bool(signal.get("human_approved")) or str(signal.get("status")) in submitted_statuses
+        ),
+        "executed": sum(1 for signal in signals if str(signal.get("status")) in executed_statuses),
+        "blocked_or_expired": sum(
+            1
+            for signal in signals
+            if str(signal.get("status")) in blocked_statuses or bool(signal.get("entry_quality_flags"))
+        ),
     }

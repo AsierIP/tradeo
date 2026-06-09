@@ -219,7 +219,16 @@ def test_unsubmitted_signal_keeps_approval_status_for_module_dashboard() -> None
             suggested_qty=10,
             strategy_version="laboratory_pattern_292",
             status=SignalStatus.PAPER_APPROVED,
-            metadata_json={"entry_module": "laboratory"},
+            metadata_json={
+                "entry_module": "laboratory",
+                "entry_quality": {
+                    "score": 0.72,
+                    "label": "actionable",
+                    "actionable": True,
+                    "flags": [],
+                },
+                "signal_snapshot": {"symbol": "FRPT", "risk": {"approved": True}},
+            },
         )
     )
     db.commit()
@@ -231,6 +240,11 @@ def test_unsubmitted_signal_keeps_approval_status_for_module_dashboard() -> None
     assert lab["signals"][0]["execution_reason_code"] == "not_submitted"
     assert lab["signals"][0]["retryable"] is False
     assert lab["signals"][0]["next_action"] == "wait_for_execution_approval"
+    assert lab["signals"][0]["entry_quality_score"] == 0.72
+    assert lab["signals"][0]["entry_quality_label"] == "actionable"
+    assert lab["signals"][0]["signal_snapshot"]["symbol"] == "FRPT"
+    assert lab["stats"]["funnel"]["detected"] == 1
+    assert lab["stats"]["funnel"]["actionable"] == 1
 
 
 def test_approved_signal_without_trade_is_retryable_for_module_dashboard() -> None:

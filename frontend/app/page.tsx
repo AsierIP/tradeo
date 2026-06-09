@@ -45,6 +45,10 @@ type Summary = {
     reward_risk: number
     confidence: number
     composite_score: number
+    entry_quality_score?: number
+    entry_quality_label?: string
+    entry_quality_actionable?: boolean
+    entry_quality_flags?: string[]
     risk_usd: number
     suggested_qty: number
     status: string
@@ -164,6 +168,13 @@ type ModuleOverview = {
     total_pnl_usd: number
     total_r: number
     win_rate: number
+    funnel?: {
+      detected: number
+      actionable: number
+      submitted: number
+      executed: number
+      blocked_or_expired: number
+    }
   }
 }
 type ModuleStatus = {
@@ -234,6 +245,12 @@ function shortDateTime(value?: string | null) {
   return new Date(value).toLocaleString('es-ES', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
 }
 
+function formatQuality(signal: ModuleSignal) {
+  const score = typeof signal.entry_quality_score === 'number' ? signal.entry_quality_score : signal.composite_score
+  const label = signal.entry_quality_label || 'quality'
+  return `${(score * 100).toFixed(0)}% ${label}`
+}
+
 function explainAcceptedPattern(pattern: DiscoveredPattern) {
   const lines = [
     `Lo acepto porque, en las pruebas, su mejor punto esta en ${pattern.best_rr.toFixed(1)}R: por cada 1R que arriesga, intenta sacar ${pattern.best_rr.toFixed(1)}R.`,
@@ -271,6 +288,7 @@ function OperationsModule({
   const trades = overview?.trades || []
   const pnl = overview?.pnl_points?.length ? overview.pnl_points : [{ timestamp: '', total_pnl_usd: 0, trade_pnl_usd: 0 }]
   const stats = overview?.stats || { signals: 0, trades: 0, open_trades: 0, closed_trades: 0, total_pnl_usd: 0, total_r: 0, win_rate: 0 }
+  const funnel = stats.funnel || { detected: stats.signals, actionable: 0, submitted: 0, executed: 0, blocked_or_expired: 0 }
   const operationalOk = Boolean(status?.operational_ok)
   const operationalTone = status?.state === 'market_closed' ? 'warn' : operationalOk ? '' : 'bad'
   return (
@@ -290,6 +308,7 @@ function OperationsModule({
         <div><strong>{status?.eligible_patterns ?? 0}</strong><span>patrones elegibles</span></div>
         <div><strong>{status?.symbols_checked ?? 0}</strong><span>acciones contrastadas</span></div>
         <div><strong>{stats.signals}</strong><span>señales</span></div>
+        <div><strong>{funnel.actionable}</strong><span>accionables</span></div>
         <div><strong>{stats.open_trades}</strong><span>operaciones abiertas</span></div>
         <div><strong>{formatMoney(stats.total_pnl_usd)}</strong><span>beneficio total</span></div>
         <div><strong>{(stats.win_rate * 100).toFixed(1)}%</strong><span>win rate cerrado</span></div>
@@ -342,19 +361,19 @@ function OperationsModule({
           <table>
             <thead>
               <tr>
-                <th>Símbolo</th><th>Lado</th><th>Entrada</th><th>Stop</th><th>Target</th><th>R:R</th><th>Conf.</th><th>Qty</th><th>Estado</th><th>Motivo</th><th>Acción</th>
+                <th>Símbolo</th><th>Lado</th><th>Entrada</th><th>Stop</th><th>Target</th><th>R:R</th><th>Conf.</th><th>Calidad</th><th>Qty</th><th>Estado</th><th>Motivo</th><th>Acción</th>
               </tr>
             </thead>
             <tbody>
               {signals.map((s) => (
                 <tr key={s.id}>
                   <td>{s.symbol}</td><td>{s.side}</td><td>{s.entry}</td><td>{s.stop}</td><td>{s.target}</td>
-                  <td>{s.reward_risk}</td><td>{(s.confidence * 100).toFixed(1)}%</td><td>{s.suggested_qty}</td><td><StatusBadge status={s.status} /></td>
+                  <td>{s.reward_risk}</td><td>{(s.confidence * 100).toFixed(1)}%</td><td title={(s.entry_quality_flags || []).join(', ') || undefined}>{formatQuality(s)}</td><td>{s.suggested_qty}</td><td><StatusBadge status={s.status} /></td>
                   <td title={s.execution_reason || undefined}>{s.execution_reason_code || '-'}</td>
                   <td>{s.retryable ? 'retry' : (s.next_action || '-')}</td>
                 </tr>
               ))}
-              {!signals.length && <tr><td colSpan={11}>Sin señales todavía.</td></tr>}
+              {!signals.length && <tr><td colSpan={12}>Sin señales todavía.</td></tr>}
             </tbody>
           </table>
         </div>

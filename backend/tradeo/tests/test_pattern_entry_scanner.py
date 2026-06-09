@@ -106,6 +106,11 @@ def test_laboratory_scanner_creates_paper_signal_for_validated_lab_pattern() -> 
     assert signal.status == SignalStatus.PAPER_APPROVED
     assert signal.human_approved is False
     assert signal.metadata_json["entry_module"] == "laboratory"
+    assert signal.metadata_json["entry_quality_score"] > 0
+    assert signal.metadata_json["entry_quality"]["label"] in {"blocked", "weak", "watch", "actionable", "high"}
+    assert isinstance(signal.metadata_json["entry_quality"]["flags"], list)
+    assert signal.metadata_json["signal_snapshot"]["symbol"] == provider.symbol
+    assert signal.metadata_json["signal_snapshot"]["risk"]["approved"] is True
 
 
 def test_laboratory_scanner_marks_ibkr_bracket_failure_retryable(monkeypatch) -> None:

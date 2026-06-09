@@ -14,6 +14,7 @@ from tradeo.services.ibkr_broker import IBKRBroker
 from tradeo.services.market_session import market_session_status
 from tradeo.services.order_outcomes import mark_signal_order_failure
 from tradeo.services.risk_manager import RiskManager
+from tradeo.services.signal_quality import build_entry_quality, build_signal_snapshot
 
 EntryModule = Literal["laboratory", "fox_hunter"]
 
@@ -130,6 +131,7 @@ class PatternEntryScanner:
                 candidate=candidate,
                 risk=risk,
                 execute_orders=bool(resolved["execute_orders"]),
+                market_session=session,
             )
             signals_created += 1
             signal_ids.append(signal.id)
@@ -408,6 +410,7 @@ class PatternEntryScanner:
         candidate: PatternCandidate,
         risk,
         execute_orders: bool,
+        market_session: dict[str, Any] | None = None,
     ):
         settings = self.settings
         assert settings is not None
@@ -421,6 +424,21 @@ class PatternEntryScanner:
         else:
             status = SignalStatus.PAPER_APPROVED
             human_approved = execute_orders
+        entry_quality = build_entry_quality(
+            match=match,
+            risk=risk,
+            settings=settings,
+            execution_requested=execute_orders,
+            market_session=market_session,
+        )
+        signal_snapshot = build_signal_snapshot(
+            match=match,
+            risk=risk,
+            settings=settings,
+            entry_quality=entry_quality,
+            execution_requested=execute_orders,
+            market_session=market_session,
+        )
         signal = Signal(
             symbol=candidate.symbol,
             pattern=candidate.pattern,
@@ -444,6 +462,9 @@ class PatternEntryScanner:
                 "pattern_key": match["pattern_key"],
                 "pattern_status": match.get("pattern_status"),
                 "pattern_promotion_status": match.get("pattern_promotion_status"),
+                "entry_quality_score": entry_quality["score"],
+                "entry_quality": entry_quality,
+                "signal_snapshot": signal_snapshot,
                 "match": match,
                 "entry_gate": match.get("metrics", {}).get("entry_gate"),
                 "risk": risk.model_dump(mode="json"),
