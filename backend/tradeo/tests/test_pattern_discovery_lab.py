@@ -120,6 +120,9 @@ def test_cluster_engine_fits_scaler_on_train_only() -> None:
     assert "walk_forward_folds" in candidates[0].metrics
     assert candidates[0].metrics["multiple_testing_trials"] >= 4
     assert "adjusted_p_value" in candidates[0].metrics
+    assert candidates[0].metrics["null_method"] == "stratified_regime_bootstrap"
+    assert "expectancy_ci_low" in candidates[0].metrics
+    assert "overfit_score" in candidates[0].metrics
     assert abs(float(candidates[0].metrics["scaler_mean"][0])) < 0.01
 
 
@@ -190,6 +193,8 @@ def test_validation_gate_allows_edge_below_4r_as_watchlist() -> None:
             "out_of_sample_profit_factor": 1.3,
             "walk_forward_fold_count": 2,
             "walk_forward_positive_fold_rate": 1.0,
+            "expectancy_ci_low": 0.01,
+            "overfit_score": 0.1,
             "rr_metrics": {"2.5": {"expectancy_r": 0.12, "profit_factor": 1.3, "sample_count": 120}},
         },
         feature_summary={},
@@ -231,6 +236,8 @@ def test_validation_gate_rejects_high_adjusted_null_p_value() -> None:
             "statistical_edge_passed": False,
             "walk_forward_fold_count": 2,
             "walk_forward_positive_fold_rate": 1.0,
+            "expectancy_ci_low": 0.05,
+            "overfit_score": 0.1,
             "rr_metrics": {"3": {"expectancy_r": 0.35, "profit_factor": 2.1, "sample_count": 110}},
         },
         feature_summary={},
@@ -272,6 +279,8 @@ def test_validation_gate_marks_strong_underpowered_edge_for_confirmation() -> No
             "statistical_edge_passed": True,
             "walk_forward_fold_count": 2,
             "walk_forward_positive_fold_rate": 1.0,
+            "expectancy_ci_low": 0.05,
+            "overfit_score": 0.1,
             "rr_metrics": {"3": {"expectancy_r": 0.45, "profit_factor": 2.4, "sample_count": 58}},
         },
         feature_summary={},
@@ -315,6 +324,8 @@ def test_validation_gate_rejects_unstable_walk_forward_candidate() -> None:
             "statistical_edge_passed": True,
             "walk_forward_fold_count": 4,
             "walk_forward_positive_fold_rate": 0.25,
+            "expectancy_ci_low": 0.05,
+            "overfit_score": 0.1,
             "rr_metrics": {"3": {"expectancy_r": 0.45, "profit_factor": 2.4, "sample_count": 120}},
         },
         feature_summary={},
@@ -323,3 +334,46 @@ def test_validation_gate_rejects_unstable_walk_forward_candidate() -> None:
     evaluated = ValidationGate().evaluate(candidate)
     assert not evaluated.validation_passed
     assert any("walk-forward inestable" in reason for reason in evaluated.validation_reasons)
+
+
+def test_validation_gate_rejects_high_overfit_score() -> None:
+    candidate = ClusterCandidate(
+        pattern_key="x",
+        name="x",
+        side="long",
+        timeframe="1d",
+        window_size=20,
+        cluster_id=1,
+        centroid=[],
+        sample_count=140,
+        symbol_count=12,
+        year_count=3,
+        score=0.0,
+        validation_passed=False,
+        validation_reasons=[],
+        metrics={
+            "train_sample_count": 120,
+            "best_rr": 3.0,
+            "best_expectancy_r": 0.45,
+            "best_profit_factor": 2.4,
+            "best_max_drawdown_r": 5.0,
+            "expectancy_r": 0.45,
+            "profit_factor": 2.4,
+            "stability_score": 0.62,
+            "out_of_sample_expectancy_r": 0.22,
+            "out_of_sample_profit_factor": 1.8,
+            "expectancy_lift_r": 0.18,
+            "adjusted_p_value": 0.08,
+            "statistical_edge_passed": True,
+            "walk_forward_fold_count": 4,
+            "walk_forward_positive_fold_rate": 1.0,
+            "expectancy_ci_low": 0.05,
+            "overfit_score": 0.9,
+            "rr_metrics": {"3": {"expectancy_r": 0.45, "profit_factor": 2.4, "sample_count": 120}},
+        },
+        feature_summary={},
+        examples=[],
+    )
+    evaluated = ValidationGate().evaluate(candidate)
+    assert not evaluated.validation_passed
+    assert any("overfit alto" in reason for reason in evaluated.validation_reasons)

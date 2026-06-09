@@ -102,6 +102,8 @@ class Settings(BaseSettings):
     discovery_walk_forward_folds: int = 4
     discovery_walk_forward_embargo_samples: int = 5
     discovery_min_walk_forward_positive_rate: float = 0.50
+    discovery_min_expectancy_ci_low: float = 0.0
+    discovery_max_overfit_score: float = 0.65
     discovery_store_rejected: bool = True
     discovery_report_top_n: int = 20
     discovery_match_enabled: bool = True

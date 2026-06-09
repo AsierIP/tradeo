@@ -31,3 +31,34 @@ Checklist de auditoria:
 - Revisar que fold train/validation no se solapan.
 - Revisar `embargo_samples`.
 - Comparar OOS agregado contra folds individuales.
+
+## 2. Null/Baseline Estratificado, Bootstrap Y Overfit
+
+Estado: implementado.
+
+Cambios:
+
+- El null baseline ya no compara contra una poblacion cruda.
+- Cada draw preserva estratos de `year`, regimen de volatilidad y regimen de tendencia.
+- Se publican `null_method`, `null_strata_count`, `null_expectancy_r`, `expectancy_lift_r`, `null_p_value` y `adjusted_p_value`.
+- Se calcula bootstrap determinista sobre resultados train del patron:
+  - `expectancy_ci_low`
+  - `expectancy_ci_high`
+  - `profit_factor_ci_low`
+- Se calcula `overfit_score` usando gap entre train y walk-forward junto con tasa de folds positivos.
+- `ValidationGate` rechaza si:
+  - `expectancy_ci_low < discovery_min_expectancy_ci_low`
+  - `overfit_score > discovery_max_overfit_score`
+
+Lectura para Director:
+
+- `expectancy_lift_r` mide cuanto gana el patron frente a una entrada aleatoria comparable por regimen.
+- `expectancy_ci_low <= 0` indica que el edge no es robusto en bootstrap.
+- `overfit_score` cerca de 1 indica fuerte degradacion fuera de train o folds inconsistentes.
+
+Checklist de auditoria:
+
+- Revisar que `null_method` sea `stratified_regime_bootstrap`.
+- Confirmar que `adjusted_p_value` incluye penalizacion por numero de variantes evaluadas.
+- Exigir CI positivo antes de cualquier escalado serio.
+- Tratar `overfit_score` alto como veto salvo explicacion de regimen.

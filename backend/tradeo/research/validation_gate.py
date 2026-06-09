@@ -75,6 +75,14 @@ class ValidationGate:
         if metrics.get("statistical_edge_passed") is False:
             lift = float(metrics.get("expectancy_lift_r", 0.0))
             warnings.append(f"edge vs baseline débil: lift={lift:.2f}R")
+        expectancy_ci_low = metrics.get("expectancy_ci_low")
+        if expectancy_ci_low is not None and float(expectancy_ci_low) < s.discovery_min_expectancy_ci_low:
+            reasons.append(
+                f"intervalo bootstrap débil: ci_low={float(expectancy_ci_low):.2f}R < {s.discovery_min_expectancy_ci_low:.2f}R"
+            )
+        overfit_score = metrics.get("overfit_score")
+        if overfit_score is not None and float(overfit_score) > s.discovery_max_overfit_score:
+            reasons.append(f"riesgo de overfit alto: {float(overfit_score):.2f} > {s.discovery_max_overfit_score:.2f}")
         fold_count = int(metrics.get("walk_forward_fold_count", 0))
         if fold_count:
             fold_rate = float(metrics.get("walk_forward_positive_fold_rate", 0.0))

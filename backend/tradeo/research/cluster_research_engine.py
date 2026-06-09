@@ -108,6 +108,7 @@ class ClusterResearchEngine:
             metrics["walk_forward_min_expectancy_r"] = walk_forward["min_expectancy_r"]
             metrics["walk_forward_pooled"] = walk_forward["pooled"]
             metrics["walk_forward_embargo_samples"] = self.walk_forward_embargo_samples
+            metrics["overfit_score"] = self._overfit_score(metrics)
             metrics["operational_trigger"] = self._operational_trigger_metrics(cluster_samples, side)
             metrics["event_ledger"] = self._event_ledger(
                 cluster_samples,
@@ -178,12 +179,14 @@ class ClusterResearchEngine:
         in_sample_metrics = self._split_metrics(train_samples, side, best_rr)
         null_baseline = self._null_baseline(
             baseline_samples,
+            cluster_samples=train_samples,
             cluster_size=len(train_samples),
             side=side,
             rr=best_rr,
             observed_expectancy=float(in_sample_metrics["expectancy_r"]),
             multiple_testing_trials=multiple_testing_trials,
         )
+        bootstrap = self._bootstrap_confidence(train_samples, side, best_rr)
         stability_year = self._positive_group_fraction(by_year)
         stability_symbol = self._positive_group_fraction(by_symbol)
         diversity_score = min(1.0, len(by_symbol) / 20.0) * 0.55 + min(1.0, len(by_year) / 4.0) * 0.45
@@ -234,6 +237,12 @@ class ClusterResearchEngine:
             "adjusted_p_value": null_baseline["adjusted_p_value"],
             "multiple_testing_trials": null_baseline["multiple_testing_trials"],
             "statistical_edge_passed": null_baseline["statistical_edge_passed"],
+            "null_method": null_baseline["method"],
+            "null_strata_count": null_baseline["strata_count"],
+            "expectancy_ci_low": bootstrap["expectancy_ci_low"],
+            "expectancy_ci_high": bootstrap["expectancy_ci_high"],
+            "profit_factor_ci_low": bootstrap["profit_factor_ci_low"],
+            "bootstrap_draws": bootstrap["draws"],
             "out_of_sample_expectancy_r": oos["expectancy_r"],
             "out_of_sample_profit_factor": oos["profit_factor"],
             "out_of_sample_win_rate": oos["win_rate"],
@@ -257,6 +266,7 @@ class ClusterResearchEngine:
         self,
         samples: list[WindowSample],
         *,
+        cluster_samples: list[WindowSample],
         cluster_size: int,
         side: Side,
         rr: float,
@@ -274,23 +284,34 @@ class ClusterResearchEngine:
                 "adjusted_p_value": 1.0,
                 "multiple_testing_trials": max(1, int(multiple_testing_trials)),
                 "statistical_edge_passed": False,
+                "method": "stratified_regime_bootstrap",
+                "strata_count": 0,
             }
 
         baseline = self._outcome_metrics(outcomes)
         draws = min(512, max(96, len(outcomes) * 2))
         seed = self._null_seed(side, rr, cluster_size, len(outcomes))
         rng = np.random.default_rng(seed)
+        stratified_groups = self._baseline_groups(samples)
+        cluster_strata = self._cluster_strata(cluster_samples)
         draw_size = min(cluster_size, len(outcomes))
         random_means = []
         for _ in range(draws):
-            idxs = rng.choice(len(outcomes), size=draw_size, replace=False)
-            random_means.append(float(np.mean(outcomes[idxs])))
+            draw = self._stratified_draw(
+                rng,
+                outcomes=outcomes,
+                groups=stratified_groups,
+                cluster_strata=cluster_strata,
+                fallback_size=draw_size,
+            )
+            random_means.append(float(np.mean(draw)))
         p_value = (1 + sum(1 for mean in random_means if mean >= observed_expectancy)) / (draws + 1)
         trial_count = max(1, int(multiple_testing_trials))
         adjusted_p = min(1.0, p_value * trial_count)
-        expectancy_lift = observed_expectancy - float(baseline["expectancy_r"])
+        null_expectancy = float(np.mean(random_means)) if random_means else float(baseline["expectancy_r"])
+        expectancy_lift = observed_expectancy - null_expectancy
         return {
-            "expectancy_r": baseline["expectancy_r"],
+            "expectancy_r": round(null_expectancy, 5),
             "profit_factor": baseline["profit_factor"],
             "win_rate": baseline["win_rate"],
             "expectancy_lift_r": round(expectancy_lift, 5),
@@ -298,7 +319,99 @@ class ClusterResearchEngine:
             "adjusted_p_value": round(float(adjusted_p), 5),
             "multiple_testing_trials": trial_count,
             "statistical_edge_passed": adjusted_p <= 0.25 and expectancy_lift > 0,
+            "method": "stratified_regime_bootstrap",
+            "strata_count": len(cluster_strata),
         }
+
+    def _baseline_groups(self, samples: list[WindowSample]) -> dict[tuple[object, ...], list[int]]:
+        groups: dict[tuple[object, ...], list[int]] = {}
+        for idx, sample in enumerate(samples):
+            groups.setdefault(self._stratum(sample), []).append(idx)
+        return groups
+
+    def _cluster_strata(self, samples: list[WindowSample]) -> dict[tuple[object, ...], int]:
+        strata: dict[tuple[object, ...], int] = {}
+        for sample in samples:
+            key = self._stratum(sample)
+            strata[key] = strata.get(key, 0) + 1
+        return strata
+
+    def _stratified_draw(
+        self,
+        rng: np.random.Generator,
+        *,
+        outcomes: np.ndarray,
+        groups: dict[tuple[object, ...], list[int]],
+        cluster_strata: dict[tuple[object, ...], int],
+        fallback_size: int,
+    ) -> np.ndarray:
+        selected: list[float] = []
+        all_indices = np.arange(len(outcomes))
+        for stratum, count in cluster_strata.items():
+            group = groups.get(stratum)
+            if not group:
+                continue
+            size = min(count, len(group))
+            idxs = rng.choice(np.asarray(group), size=size, replace=False)
+            selected.extend(float(outcomes[int(idx)]) for idx in idxs)
+        missing = max(0, fallback_size - len(selected))
+        if missing:
+            idxs = rng.choice(all_indices, size=min(missing, len(outcomes)), replace=False)
+            selected.extend(float(outcomes[int(idx)]) for idx in idxs)
+        if not selected:
+            idxs = rng.choice(all_indices, size=min(fallback_size, len(outcomes)), replace=False)
+            selected.extend(float(outcomes[int(idx)]) for idx in idxs)
+        return np.asarray(selected, dtype=float)
+
+    @staticmethod
+    def _stratum(sample: WindowSample) -> tuple[object, ...]:
+        volatility = float(sample.features.get("volatility_regime", 1.0))
+        trend = float(sample.features.get("trend_regime", 0.0))
+        if volatility < 0.8:
+            vol_bucket = "low_vol"
+        elif volatility > 1.25:
+            vol_bucket = "high_vol"
+        else:
+            vol_bucket = "normal_vol"
+        if trend > 0.25:
+            trend_bucket = "up"
+        elif trend < -0.25:
+            trend_bucket = "down"
+        else:
+            trend_bucket = "mixed"
+        return (sample.year, vol_bucket, trend_bucket)
+
+    def _bootstrap_confidence(self, samples: list[WindowSample], side: Side, rr: float) -> dict[str, float | int]:
+        outcomes = np.asarray([RewardRiskAnalyzer._simulate_sample(sample, side, rr)[0] for sample in samples], dtype=float)
+        if len(outcomes) == 0:
+            return {"expectancy_ci_low": 0.0, "expectancy_ci_high": 0.0, "profit_factor_ci_low": 0.0, "draws": 0}
+        draws = min(512, max(128, len(outcomes) * 3))
+        rng = np.random.default_rng(self._null_seed(side, rr, len(samples), len(outcomes)) ^ 0xA5A5A5A5)
+        expectancies: list[float] = []
+        profit_factors: list[float] = []
+        for _ in range(draws):
+            idxs = rng.choice(len(outcomes), size=len(outcomes), replace=True)
+            metrics = self._outcome_metrics(outcomes[idxs])
+            expectancies.append(float(metrics["expectancy_r"]))
+            profit_factors.append(float(metrics["profit_factor"]))
+        return {
+            "expectancy_ci_low": round(float(np.quantile(expectancies, 0.05)), 5),
+            "expectancy_ci_high": round(float(np.quantile(expectancies, 0.95)), 5),
+            "profit_factor_ci_low": round(float(np.quantile(profit_factors, 0.05)), 5),
+            "draws": draws,
+        }
+
+    @staticmethod
+    def _overfit_score(metrics: dict[str, object]) -> float:
+        fold_count = int(metrics.get("walk_forward_fold_count", 0))
+        if fold_count == 0:
+            return 0.5
+        train_expectancy = float(metrics.get("in_sample_expectancy_r", metrics.get("expectancy_r", 0.0)))
+        walk_forward_expectancy = float(metrics.get("walk_forward_avg_expectancy_r", 0.0))
+        positive_rate = float(metrics.get("walk_forward_positive_fold_rate", 0.0))
+        generalization_gap = max(0.0, train_expectancy - walk_forward_expectancy) / max(abs(train_expectancy), 0.25)
+        score = (1.0 - positive_rate) * 0.55 + min(generalization_gap, 1.0) * 0.45
+        return round(float(min(max(score, 0.0), 1.0)), 5)
 
     def _null_seed(self, side: Side, rr: float, cluster_size: int, population_size: int) -> int:
         digest = blake2b(digest_size=4)
@@ -509,6 +622,8 @@ class ClusterResearchEngine:
         walk_forward_rate = float(metrics.get("walk_forward_positive_fold_rate", 0.0))
         lift = min(max(0.0, float(metrics.get("expectancy_lift_r", 0.0))), 2.0)
         adjusted_p = min(max(float(metrics.get("adjusted_p_value", 1.0)), 0.0), 1.0)
+        overfit = min(max(float(metrics.get("overfit_score", 0.5)), 0.0), 1.0)
+        ci_low_bonus = min(max(0.0, float(metrics.get("expectancy_ci_low", 0.0))), 1.0)
         confidence = 1.0 - adjusted_p
         raw_score = (
             expectancy * 0.28
@@ -519,8 +634,9 @@ class ClusterResearchEngine:
             + rr * 0.06
             + trigger_rate * 0.05
             + walk_forward_rate * 0.04
+            + ci_low_bonus * 0.03
         )
-        return raw_score * (0.45 + 0.55 * confidence) + lift * 0.05
+        return raw_score * (0.45 + 0.55 * confidence) * (1.0 - 0.35 * overfit) + lift * 0.05
 
     @staticmethod
     def _feature_summary(samples: list[WindowSample]) -> dict[str, object]:
