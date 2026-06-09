@@ -159,6 +159,19 @@ type ModuleOverview = {
   module: 'laboratory' | 'fox_hunter'
   signals: ModuleSignal[]
   trades: ModuleTrade[]
+  pattern_outcomes: Array<{
+    pattern: string
+    signals: number
+    actionable: number
+    submitted: number
+    executed: number
+    blocked_or_expired: number
+    closed_trades: number
+    total_pnl_usd: number
+    total_r: number
+    avg_quality_score: number
+    top_reason_code: string
+  }>
   pnl_points: Array<{ timestamp: string; total_pnl_usd: number; trade_pnl_usd: number; symbol?: string; status?: string }>
   stats: {
     signals: number
@@ -286,6 +299,7 @@ function OperationsModule({
 }) {
   const signals = overview?.signals || []
   const trades = overview?.trades || []
+  const patternOutcomes = overview?.pattern_outcomes || []
   const pnl = overview?.pnl_points?.length ? overview.pnl_points : [{ timestamp: '', total_pnl_usd: 0, trade_pnl_usd: 0 }]
   const stats = overview?.stats || { signals: 0, trades: 0, open_trades: 0, closed_trades: 0, total_pnl_usd: 0, total_r: 0, win_rate: 0 }
   const funnel = stats.funnel || { detected: stats.signals, actionable: 0, submitted: 0, executed: 0, blocked_or_expired: 0 }
@@ -353,6 +367,34 @@ function OperationsModule({
             </table>
           </div>
         </section>
+      </div>
+
+      <div className="subsection">
+        <h3>Embudo por patrón</h3>
+        <div className="table-scroll compact-scroll">
+          <table>
+            <thead>
+              <tr><th>Patrón</th><th>Señales</th><th>Acc.</th><th>Enviadas</th><th>Ejecutadas</th><th>Bloq/Exp</th><th>Calidad</th><th>R</th><th>PnL</th><th>Motivo</th></tr>
+            </thead>
+            <tbody>
+              {patternOutcomes.map((p) => (
+                <tr key={p.pattern}>
+                  <td title={p.pattern}>{p.pattern}</td>
+                  <td>{p.signals}</td>
+                  <td>{p.actionable}</td>
+                  <td>{p.submitted}</td>
+                  <td>{p.executed}</td>
+                  <td>{p.blocked_or_expired}</td>
+                  <td>{(p.avg_quality_score * 100).toFixed(0)}%</td>
+                  <td>{p.total_r.toFixed(2)}R</td>
+                  <td className={p.total_pnl_usd > 0 ? 'positive' : p.total_pnl_usd < 0 ? 'negative' : ''}>{formatMoney(p.total_pnl_usd)}</td>
+                  <td>{p.top_reason_code}</td>
+                </tr>
+              ))}
+              {!patternOutcomes.length && <tr><td colSpan={10}>Sin outcomes todavía.</td></tr>}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       <div className="subsection">

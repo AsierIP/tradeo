@@ -34,10 +34,12 @@ def module_overview(db: Session, module: EntryModule, *, limit: int = 80) -> dic
     total_pnl = pnl_points[-1]["total_pnl_usd"] if pnl_points else 0.0
     closed_trades = [trade for trade in trades if _status_value(trade.status) == "closed"]
     signal_payloads = [_signal_to_dict(signal, signal_trade_statuses.get(signal.id)) for signal in signals]
+    trade_payloads = [_trade_to_dict(trade) for trade in trades]
     return {
         "module": module,
         "signals": signal_payloads,
-        "trades": [_trade_to_dict(trade) for trade in trades],
+        "trades": trade_payloads,
+        "pattern_outcomes": _pattern_outcomes(signal_payloads, trade_payloads),
         "pnl_points": pnl_points,
         "stats": {
             "signals": len(signals),
@@ -288,3 +290,84 @@ def _signal_funnel(signals: list[dict[str, Any]]) -> dict[str, int]:
             if str(signal.get("status")) in blocked_statuses or bool(signal.get("entry_quality_flags"))
         ),
     }
+
+
+def _pattern_outcomes(
+    signals: list[dict[str, Any]],
+    trades: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    rows: dict[str, dict[str, Any]] = {}
+    submitted_statuses = {
+        "retry_order_submission",
+        "order_submitted",
+        "executed",
+        "order_cancelled",
+    }
+    executed_statuses = {"order_submitted", "executed"}
+    blocked_statuses = {"entry_expired", "order_cancelled", "rejected"}
+    for signal in signals:
+        pattern = str(signal.get("pattern") or "unknown")
+        row = _pattern_row(rows, pattern)
+        row["signals"] += 1
+        row["actionable"] += 1 if bool(signal.get("entry_quality_actionable")) else 0
+        row["submitted"] += 1 if bool(signal.get("human_approved")) or str(signal.get("status")) in submitted_statuses else 0
+        row["executed"] += 1 if str(signal.get("status")) in executed_statuses else 0
+        row["blocked_or_expired"] += (
+            1
+            if str(signal.get("status")) in blocked_statuses or bool(signal.get("entry_quality_flags"))
+            else 0
+        )
+        quality = float(signal.get("entry_quality_score") or 0.0)
+        row["_quality_sum"] += quality
+        reason_code = str(signal.get("execution_reason_code") or "unknown")
+        row["reason_counts"][reason_code] = row["reason_counts"].get(reason_code, 0) + 1
+    for trade in trades:
+        pattern = str(trade.get("pattern") or "unknown")
+        row = _pattern_row(rows, pattern)
+        row["trades"] += 1
+        if str(trade.get("status")) == "open":
+            row["open_trades"] += 1
+        if str(trade.get("status")) == "closed":
+            row["closed_trades"] += 1
+        row["total_pnl_usd"] += float(trade.get("pnl_usd") or 0.0)
+        row["total_r"] += float(trade.get("r_multiple") or 0.0)
+    outcomes = []
+    for row in rows.values():
+        signals_count = max(1, int(row["signals"]))
+        reason_counts = row.pop("reason_counts")
+        row["avg_quality_score"] = round(float(row.pop("_quality_sum")) / signals_count, 6)
+        row["total_pnl_usd"] = round(float(row["total_pnl_usd"]), 2)
+        row["total_r"] = round(float(row["total_r"]), 4)
+        row["top_reason_code"] = _top_reason_code(reason_counts)
+        outcomes.append(row)
+    return sorted(
+        outcomes,
+        key=lambda row: (int(row["signals"]), float(row["avg_quality_score"])),
+        reverse=True,
+    )
+
+
+def _pattern_row(rows: dict[str, dict[str, Any]], pattern: str) -> dict[str, Any]:
+    if pattern not in rows:
+        rows[pattern] = {
+            "pattern": pattern,
+            "signals": 0,
+            "actionable": 0,
+            "submitted": 0,
+            "executed": 0,
+            "blocked_or_expired": 0,
+            "trades": 0,
+            "open_trades": 0,
+            "closed_trades": 0,
+            "total_pnl_usd": 0.0,
+            "total_r": 0.0,
+            "_quality_sum": 0.0,
+            "reason_counts": {},
+        }
+    return rows[pattern]
+
+
+def _top_reason_code(reason_counts: dict[str, int]) -> str:
+    if not reason_counts:
+        return "none"
+    return sorted(reason_counts.items(), key=lambda item: item[1], reverse=True)[0][0]

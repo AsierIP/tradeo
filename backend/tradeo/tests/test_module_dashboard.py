@@ -245,6 +245,10 @@ def test_unsubmitted_signal_keeps_approval_status_for_module_dashboard() -> None
     assert lab["signals"][0]["signal_snapshot"]["symbol"] == "FRPT"
     assert lab["stats"]["funnel"]["detected"] == 1
     assert lab["stats"]["funnel"]["actionable"] == 1
+    assert lab["pattern_outcomes"][0]["pattern"] == "research_match_292"
+    assert lab["pattern_outcomes"][0]["signals"] == 1
+    assert lab["pattern_outcomes"][0]["actionable"] == 1
+    assert lab["pattern_outcomes"][0]["top_reason_code"] == "not_submitted"
 
 
 def test_approved_signal_without_trade_is_retryable_for_module_dashboard() -> None:
