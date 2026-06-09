@@ -158,3 +158,22 @@ Un estado sano durante mercado abierto puede ser:
 - shadow observations empiezan a acumular evidencia;
 - Director sigue bloqueando promociones hasta tener trades/fills suficientes;
 - audit export valida contrato pero puede quedar `blocked` por falta de evidencia.
+
+## Operacion 2026-06-09
+
+Tras el redeploy del ciclo Lab/Research se detectaron duplicados historicos en
+`discovered_pattern_matches`. Se dejaron 877 matches unicos vivos por la clave:
+
+```text
+pattern_id, symbol, timeframe, entry_variant_id, window_end
+```
+
+Las 53.381 filas duplicadas se conservaron en la tabla local de backup
+`discovered_pattern_matches_dedupe_backup_20260609`. Despues de repetir un scan
+manual limitado, la DB siguio con `duplicate_rows=0`, confirmando que el upsert
+actual no vuelve a crear duplicados exactos.
+
+El paquete
+`TRADEO-AUDIT-20260609-1601_post_dedupe_health` queda como referencia post-fix:
+el export es usable y genera los buckets nuevos, pero Director lo bloquea porque
+aun no existen closed Lab trades ni fills IB Paper enlazados.
