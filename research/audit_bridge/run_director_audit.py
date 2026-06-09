@@ -48,7 +48,6 @@ def main() -> int:
     if not args.skip_export:
         runs.append(run_exporter(audit_id, api_url, args.pattern_limit, args.match_limit))
 
-    runs.append(run_subprocess("validate", [sys.executable, str(BRIDGE / "validate_audit_package.py"), str(package)]))
     gate_json = package / "director_gate_result.json"
     gate_md = package / "director_gate_result.md"
     runs.append(
@@ -66,6 +65,7 @@ def main() -> int:
             ],
         )
     )
+    runs.append(run_subprocess("validate", [sys.executable, str(BRIDGE / "validate_audit_package.py"), str(package)]))
 
     gate_result = read_json(gate_json)
     agent_review = deterministic_review(audit_id, args.cadence, gate_result, runs)

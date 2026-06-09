@@ -1,0 +1,35 @@
+{
+  "discovery_period": "5y",
+  "discovery_interval": "1d",
+  "discovery_window_sizes": "20,50,100,200",
+  "discovery_forward_bars": "5,10,20",
+  "discovery_rr_levels": "1.5,2.0,2.5,3.0,4.0,5.0",
+  "discovery_stride": "3",
+  "discovery_min_cluster_size": "60",
+  "discovery_max_clusters_per_window": "12",
+  "strategy_config": {
+    "name": "cup_v0",
+    "pattern": "mid_small_cap_cup_breakout",
+    "description": "Technical cup/base breakout detector for USA mid/small-cap equities. Paper-first; 4R minimum target.",
+    "target_r_multiple": 4.0,
+    "min_bars": 45,
+    "max_bars": 210,
+    "min_depth": 0.1,
+    "max_depth": 0.42,
+    "rim_tolerance": 0.12,
+    "max_handle_depth": 0.18,
+    "breakout_buffer": 0.002,
+    "min_breakout_volume_ratio": 1.12,
+    "min_confidence": 0.68,
+    "min_composite_score": 0.7,
+    "max_holding_bars": 30,
+    "promotion_gate": {
+      "min_historical_trades": 40,
+      "min_profit_factor": 1.8,
+      "min_expectancy_r": 0.25,
+      "max_drawdown_pct": 12.0,
+      "paper_trading_required": true,
+      "human_approval_required_for_live": true
+    }
+  }
+}

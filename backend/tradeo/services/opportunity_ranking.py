@@ -15,9 +15,14 @@ def rank_entry_matches(
     ranked: list[dict[str, Any]] = []
     for match in matches:
         enriched = dict(match)
-        score, components = _opportunity_score(enriched, settings=settings, execution_history=history)
+        score, components, reason = _opportunity_score(
+            enriched,
+            settings=settings,
+            execution_history=history,
+        )
         enriched["opportunity_rank_score"] = score
         enriched["opportunity_rank_components"] = components
+        enriched["opportunity_rank_reason"] = reason
         ranked.append(enriched)
     ranked.sort(
         key=lambda item: (
@@ -37,7 +42,7 @@ def _opportunity_score(
     *,
     settings: Settings,
     execution_history: dict[tuple[str, ...], dict[str, float]],
-) -> tuple[float, dict[str, float]]:
+) -> tuple[float, dict[str, float], str]:
     metrics = match.get("metrics") or {}
     features = metrics.get("features") or {}
     entry_gate = metrics.get("entry_gate") or {}
@@ -65,7 +70,7 @@ def _opportunity_score(
         avg_dollar_volume / max(settings.min_avg_dollar_volume * 5.0, 1.0),
         default=0.5 if settings.min_avg_dollar_volume <= 0 else 0.0,
     )
-    history_score, history_count = _history_score(match, execution_history)
+    history_score, history_count, history_item = _history_score(match, execution_history)
     exploration_bonus = max(0.0, 1.0 - min(history_count, 10.0) / 10.0) * max(
         0.0,
         min(0.30, float(settings.entry_exploration_rate)),
@@ -81,27 +86,48 @@ def _opportunity_score(
         "regime_fit": round(regime_fit, 4),
         "execution_history": round(history_score, 4),
         "history_count": round(history_count, 4),
+        "history_expectancy_r": round(_safe_float(history_item.get("expectancy_r"), 0.0), 4),
+        "history_win_rate": round(_safe_float(history_item.get("win_rate"), 0.0), 4),
+        "history_profit_factor": round(_safe_float(history_item.get("profit_factor"), 0.0), 4),
+        "history_max_drawdown_r": round(_safe_float(history_item.get("max_drawdown_r"), 0.0), 4),
+        "history_decay": round(_safe_float(history_item.get("decay_score"), 0.5), 4),
         "exploration": round(exploration_bonus, 4),
     }
-    score = round(
-        components["entry"] * 0.22
-        + components["match"] * 0.14
-        + components["research_edge"] * 0.18
-        + components["reward_risk"] * 0.10
-        + components["liquidity"] * 0.08
-        + components["regime_fit"] * 0.10
-        + components["execution_history"] * 0.12
-        + components["similarity"] * 0.04
-        + components["exploration"] * 0.02,
-        6,
-    )
-    return score, components
+    if history_count > 0:
+        score = round(
+            components["execution_history"] * 0.34
+            + components["entry"] * 0.18
+            + components["match"] * 0.10
+            + components["research_edge"] * 0.10
+            + components["reward_risk"] * 0.08
+            + components["liquidity"] * 0.06
+            + components["regime_fit"] * 0.08
+            + components["similarity"] * 0.03
+            + components["exploration"] * 0.03,
+            6,
+        )
+        reason = "paper_history_weighted"
+    else:
+        score = round(
+            components["entry"] * 0.22
+            + components["match"] * 0.14
+            + components["research_edge"] * 0.18
+            + components["reward_risk"] * 0.10
+            + components["liquidity"] * 0.08
+            + components["regime_fit"] * 0.10
+            + components["execution_history"] * 0.12
+            + components["similarity"] * 0.04
+            + components["exploration"] * 0.02,
+            6,
+        )
+        reason = "research_score_fallback_no_paper_history"
+    return score, components, reason
 
 
 def _history_score(
     match: dict[str, Any],
     execution_history: dict[tuple[str, ...], dict[str, float]],
-) -> tuple[float, float]:
+) -> tuple[float, float, dict[str, float]]:
     pattern = str(match.get("pattern_name") or "")
     symbol = str(match.get("symbol") or "")
     variant = str(match.get("entry_variant_id") or "")
@@ -122,8 +148,8 @@ def _history_score(
     for key in keys:
         item = execution_history.get(key)
         if item:
-            return float(item.get("score", 0.5)), float(item.get("count", 0.0))
-    return 0.5, 0.0
+            return float(item.get("score", 0.5)), float(item.get("count", 0.0)), item
+    return 0.5, 0.0, {}
 
 
 def _bounded(value: Any, *, default: float) -> float:

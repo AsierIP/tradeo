@@ -39,6 +39,8 @@ Todo paquete debe incluir, como minimo:
 - `ib_fills.csv`, una fila por fill de IB Paper, anonimizado.
 - `experiment_registry.csv`, todas las variantes probadas, incluidas las descartadas.
 - `metrics_by_pattern.csv`, `metrics_by_ticker.csv`, `metrics_by_period.csv`.
+- `metrics_by_regime.csv` y `metrics_by_entry_variant.csv`, con rendimiento por bucket si hay closed paper trades o `empty_reason` si no hay datos.
+- `director_gate_result.json`, generado antes de la validacion estricta del paquete.
 - `code_references.md`.
 - `config_snapshot/` con configuracion redacted usada para generar el paquete.
 - `data_lineage.md`, `known_issues.md`, `audit_checklist.md`, `chatgpt_questions.md`, `reproducibility.md`.
@@ -82,4 +84,4 @@ Los costes deben mantenerse separados:
 gross_pnl - commission - estimated_spread_cost - estimated_slippage - other_fees
 ```
 
-Si no hay trades paper o fills, los CSV correspondientes deben existir con cabecera y sin filas.
+Si no hay trades paper o fills, los CSV correspondientes deben existir con cabecera y sin filas. Los breakdowns por regimen y entry variant deben seguir existiendo y explicar la ausencia de `closed_lab_trades`.

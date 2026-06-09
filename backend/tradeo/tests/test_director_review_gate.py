@@ -48,6 +48,8 @@ def add_closed_lab_trade(
     r_multiple: float = 1.0,
     *,
     symbol: str | None = None,
+    entry_variant_id: str | None = None,
+    regime_key: str | None = None,
 ) -> None:
     trade_time = datetime(2026, 1, 5, 16, 0, tzinfo=timezone.utc) + timedelta(days=index)
     signal = Signal(
@@ -65,7 +67,12 @@ def add_closed_lab_trade(
         strategy_version=f"laboratory_pattern_{pattern.id}",
         status=SignalStatus.EXECUTED,
         human_approved=True,
-        metadata_json={"entry_module": "laboratory", "pattern_id": pattern.id},
+        metadata_json={
+            "entry_module": "laboratory",
+            "pattern_id": pattern.id,
+            "entry_variant_id": entry_variant_id,
+            "regime": {"regime_key": regime_key} if regime_key else {},
+        },
     )
     db.add(signal)
     db.flush()
@@ -102,8 +109,12 @@ def test_director_review_gate_waits_for_ten_closed_lab_trades() -> None:
     assert result["marked_for_director_review"] == 0
     assert pattern.status == DiscoveredPatternStatus.LAB_CANDIDATE
     assert pattern.metrics_json["lab_execution"]["closed_lab_trades"] == 9
+    assert pattern.metrics_json["lab_execution"]["trades_remaining_for_director_review"] == 1
     assert pattern.metrics_json["lab_execution"]["eligible_for_director_review"] is False
     assert "closed_lab_trades_below_10" in pattern.metrics_json["lab_execution"]["promotion_blockers"]
+    assert pattern.metrics_json["lab_execution"]["by_regime"]
+    assert pattern.metrics_json["lab_execution"]["by_regime_empty_reason"] == ""
+    assert pattern.metrics_json["lab_execution"]["director_recommendations"][0]["action"] == "collect_closed_lab_trades"
 
 
 def test_director_review_gate_marks_candidate_after_ten_closed_lab_trades() -> None:
@@ -123,6 +134,7 @@ def test_director_review_gate_marks_candidate_after_ten_closed_lab_trades() -> N
     assert pattern.metrics_json["lab_execution"]["research_expectancy_r"] == 0.4
     assert pattern.metrics_json["lab_execution"]["unique_lab_symbols"] == 10
     assert pattern.metrics_json["lab_execution"]["unique_lab_days"] == 10
+    assert pattern.metrics_json["lab_execution"]["trades_remaining_for_director_review"] == 0
 
 
 def test_director_review_gate_blocks_low_diversity_lab_results() -> None:
@@ -138,3 +150,66 @@ def test_director_review_gate_blocks_low_diversity_lab_results() -> None:
     assert pattern.status == DiscoveredPatternStatus.LAB_CANDIDATE
     assert pattern.metrics_json["lab_execution"]["eligible_for_director_review"] is False
     assert "unique_lab_symbols_below_3" in pattern.metrics_json["lab_execution"]["promotion_blockers"]
+
+
+def test_director_review_gate_explains_missing_bucket_data_when_no_trades() -> None:
+    db = session_factory()
+    pattern = add_pattern(db)
+
+    DirectorReviewGate(min_closed_lab_trades=10).refresh(db)
+    db.refresh(pattern)
+    lab_execution = pattern.metrics_json["lab_execution"]
+
+    assert lab_execution["closed_lab_trades"] == 0
+    assert lab_execution["by_entry_variant"] == {}
+    assert lab_execution["by_regime"] == {}
+    assert "no_closed_lab_trades" in lab_execution["by_entry_variant_empty_reason"]
+    assert "no_closed_lab_trades" in lab_execution["by_regime_empty_reason"]
+    assert lab_execution["director_recommendations"][0]["trades_remaining"] == 10
+    assert lab_execution["director_recommendations"][1]["action"] == "keep_research_only"
+
+
+def test_director_review_gate_ranks_entry_variant_and_regime_buckets() -> None:
+    db = session_factory()
+    pattern = add_pattern(db)
+    for index in range(5):
+        add_closed_lab_trade(
+            db,
+            pattern,
+            index,
+            r_multiple=1.2,
+            entry_variant_id="next_bar_limit_retest",
+            regime_key="market_up",
+        )
+    for index in range(5, 10):
+        add_closed_lab_trade(
+            db,
+            pattern,
+            index,
+            r_multiple=-0.2,
+            entry_variant_id="momentum_close",
+            regime_key="market_down",
+        )
+
+    DirectorReviewGate(
+        min_closed_lab_trades=10,
+        min_lab_symbols=1,
+        min_lab_trading_days=1,
+        min_baseline_edge_r=0.0,
+        min_lab_profit_factor=0.1,
+    ).refresh(db)
+    db.refresh(pattern)
+    lab_execution = pattern.metrics_json["lab_execution"]
+
+    assert lab_execution["best_entry_variant"]["key"] == "next_bar_limit_retest"
+    assert lab_execution["worst_entry_variant"]["key"] == "momentum_close"
+    assert lab_execution["best_regime"]["key"] == "market_up"
+    assert lab_execution["worst_regime"]["key"] == "market_down"
+    assert any(
+        recommendation["action"] == "prioritize_entry_variant"
+        for recommendation in lab_execution["director_recommendations"]
+    )
+    assert any(
+        recommendation["action"] == "gate_by_regime_until_confirmed"
+        for recommendation in lab_execution["director_recommendations"]
+    )

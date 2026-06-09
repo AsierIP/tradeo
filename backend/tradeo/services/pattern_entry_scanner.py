@@ -11,6 +11,7 @@ from tradeo.db.models import AuditLog, Signal, SignalStatus, Trade, TradeStatus
 from tradeo.research.novel_pattern_matcher import NovelPatternMatcher
 from tradeo.schemas import PatternCandidate
 from tradeo.services.ibkr_broker import IBKRBroker
+from tradeo.services.lab_paper_observations import LabPaperObservationService
 from tradeo.services.market_session import market_session_status
 from tradeo.services.order_outcomes import mark_signal_order_failure
 from tradeo.services.opportunity_ranking import rank_entry_matches
@@ -63,9 +64,14 @@ class PatternEntryScanner:
             store_signals=store_signals,
             execute_orders=execute_orders,
         )
+        observation_lifecycle = self._close_lab_observations(db, module)
         session = market_session_status()
         if self._requires_market_hours(module) and not bool(session["regular_session_open"]):
             result = self._market_closed_result(module, resolved, session)
+            result["paper_observations_opened"] = 0
+            result["paper_observations_closed"] = observation_lifecycle["closed_observations"]
+            result["paper_observation_trade_ids"] = []
+            result["paper_observation_lifecycle"] = observation_lifecycle
             from tradeo.services.runtime_status import write_entry_scan_status
 
             write_entry_scan_status(module, result, settings)
@@ -90,6 +96,8 @@ class PatternEntryScanner:
         order_errors: list[dict[str, Any]] = []
         signal_ids: list[int] = []
         trade_ids: list[int] = []
+        paper_observation_trade_ids: list[int] = []
+        paper_observations_opened = 0
 
         all_ranked_matches = rank_entry_matches(
             match_result["matches"],
@@ -113,10 +121,10 @@ class PatternEntryScanner:
                 )
                 db.commit()
                 continue
-            if self._has_active_exposure(db, match):
+            if self._has_active_exposure(db, match, module=module):
                 skipped_duplicates += 1
                 continue
-            if self._has_recent_signal(db, match):
+            if self._has_recent_signal(db, match, module=module):
                 skipped_cooldown += 1
                 db.add(
                     AuditLog(
@@ -188,6 +196,16 @@ class PatternEntryScanner:
             signal_ids.append(signal.id)
 
             if not resolved["execute_orders"]:
+                if module == "laboratory":
+                    observation = self._open_lab_observation(
+                        db,
+                        signal=signal,
+                        match=match,
+                        risk=risk,
+                    )
+                    if observation is not None:
+                        paper_observations_opened += 1
+                        paper_observation_trade_ids.append(observation.id)
                 continue
 
             try:
@@ -237,6 +255,10 @@ class PatternEntryScanner:
             "order_errors": order_errors,
             "signal_ids": signal_ids,
             "trade_ids": trade_ids,
+            "paper_observations_opened": paper_observations_opened,
+            "paper_observations_closed": observation_lifecycle["closed_observations"],
+            "paper_observation_trade_ids": paper_observation_trade_ids,
+            "paper_observation_lifecycle": observation_lifecycle,
             "top_opportunities": self._top_opportunities(ranked_matches),
             "store_signals": resolved["store_signals"],
             "execute_orders": resolved["execute_orders"],
@@ -348,6 +370,15 @@ class PatternEntryScanner:
             "order_errors": [],
             "signal_ids": [],
             "trade_ids": [],
+            "paper_observations_opened": 0,
+            "paper_observations_closed": 0,
+            "paper_observation_trade_ids": [],
+            "paper_observation_lifecycle": {
+                "open_observations": 0,
+                "closed_observations": 0,
+                "closed_trade_ids": [],
+                "data_errors": [],
+            },
             "top_opportunities": [],
             "store_signals": resolved["store_signals"],
             "execute_orders": resolved["execute_orders"],
@@ -433,9 +464,9 @@ class PatternEntryScanner:
             notes=[str(match.get("notes", ""))],
         )
 
-    @staticmethod
-    def _has_active_exposure(db: Session, match: dict[str, Any]) -> bool:
-        active_signal = (
+    @classmethod
+    def _has_active_exposure(cls, db: Session, match: dict[str, Any], *, module: EntryModule) -> bool:
+        active_signals = (
             db.query(Signal)
             .filter(Signal.symbol == str(match["symbol"]))
             .filter(Signal.pattern == str(match["pattern_name"]))
@@ -449,20 +480,21 @@ class PatternEntryScanner:
                     ]
                 )
             )
-            .first()
+            .all()
         )
-        if active_signal:
+        if any(cls._signal_belongs_to_module(signal, module) for signal in active_signals):
             return True
-        active_trade = (
+        active_trades = (
             db.query(Trade)
+            .options(joinedload(Trade.signal))
             .filter(Trade.symbol == str(match["symbol"]))
             .filter(Trade.pattern == str(match["pattern_name"]))
             .filter(Trade.status == TradeStatus.OPEN)
-            .first()
+            .all()
         )
-        return active_trade is not None
+        return any(cls._trade_belongs_to_module(trade, module) for trade in active_trades)
 
-    def _has_recent_signal(self, db: Session, match: dict[str, Any]) -> bool:
+    def _has_recent_signal(self, db: Session, match: dict[str, Any], *, module: EntryModule) -> bool:
         settings = self.settings
         assert settings is not None
         cooldown_minutes = max(0, int(settings.entry_cooldown_minutes))
@@ -478,11 +510,40 @@ class PatternEntryScanner:
         )
         variant = str(match.get("entry_variant_id") or "")
         for signal in recent_signals:
+            if not self._signal_belongs_to_module(signal, module):
+                continue
             metadata = signal.metadata_json or {}
             previous_variant = str(metadata.get("entry_variant_id") or "")
             if not variant or not previous_variant or previous_variant == variant:
                 return True
         return False
+
+    @staticmethod
+    def _signal_belongs_to_module(signal: Signal, module: EntryModule) -> bool:
+        metadata = signal.metadata_json or {}
+        entry_module = metadata.get("entry_module")
+        if entry_module:
+            return str(entry_module) == module
+        if module == "fox_hunter":
+            return signal.strategy_version.startswith("fox_hunter_")
+        purpose = str(metadata.get("purpose") or "")
+        return signal.strategy_version.startswith(("laboratory_", "ibkr_paper_", "ibkr_smoke_")) or (
+            purpose.startswith("ibkr_paper_")
+        )
+
+    @classmethod
+    def _trade_belongs_to_module(cls, trade: Trade, module: EntryModule) -> bool:
+        if trade.signal is not None:
+            return cls._signal_belongs_to_module(trade.signal, module)
+        metadata = trade.metadata_json or {}
+        source_module = metadata.get("entry_module") or metadata.get("source_module")
+        if source_module:
+            return str(source_module) == module
+        reason = str(metadata.get("reason") or "")
+        if module == "fox_hunter":
+            return reason.startswith("fox_hunter")
+        execution_mode = str(metadata.get("execution_mode") or "")
+        return reason.startswith("laboratory") or execution_mode in {"paper", "lab_shadow_observation"}
 
     @staticmethod
     def _top_opportunities(matches: list[dict[str, Any]], *, limit: int = 10) -> list[dict[str, Any]]:
@@ -496,6 +557,16 @@ class PatternEntryScanner:
                 "regime_key": (match.get("regime") or {}).get("regime_key"),
                 "entry_score": match.get("entry_score"),
                 "similarity": match.get("similarity"),
+                "entry_gate_passed": ((match.get("metrics") or {}).get("entry_gate") or {}).get("passed"),
+                "entry_gate_reason": ((match.get("metrics") or {}).get("entry_gate") or {}).get("reason"),
+                "entry_rejection_reasons": ((match.get("metrics") or {}).get("entry_gate") or {}).get(
+                    "rejection_reasons", []
+                ),
+                "history_count": (match.get("opportunity_rank_components") or {}).get("history_count"),
+                "history_expectancy_r": (match.get("opportunity_rank_components") or {}).get(
+                    "history_expectancy_r"
+                ),
+                "rank_reason": match.get("opportunity_rank_reason"),
             }
             for match in matches[:limit]
         ]
@@ -559,15 +630,65 @@ class PatternEntryScanner:
         if not values:
             return 0.5
         expectancy = sum(values) / len(values)
-        raw_score = max(0.0, min(1.0, 0.5 + expectancy / 2.0))
+        wins = [value for value in values if value > 0]
+        losses = [abs(value) for value in values if value < 0]
+        win_rate = len(wins) / len(values)
+        profit_factor = (sum(wins) / sum(losses)) if losses else (sum(wins) if wins else 0.0)
+        profit_factor_score = max(0.0, min(1.0, profit_factor / 3.0))
+        chronological = list(reversed(values))
+        equity = 0.0
+        peak = 0.0
+        max_drawdown = 0.0
+        for value in chronological:
+            equity += value
+            peak = max(peak, equity)
+            max_drawdown = max(max_drawdown, peak - equity)
+        drawdown_score = max(0.0, min(1.0, 1.0 - max_drawdown / 6.0))
+        split = max(1, min(5, len(values) // 2 or 1))
+        recent = values[:split]
+        older = values[split:] or recent
+        recent_expectancy = sum(recent) / len(recent)
+        older_expectancy = sum(older) / len(older)
+        decay_score = max(0.0, min(1.0, 0.5 + (recent_expectancy - older_expectancy) / 2.0))
+        expectancy_score = max(0.0, min(1.0, 0.5 + expectancy / 2.0))
+        raw_score = (
+            expectancy_score * 0.35
+            + win_rate * 0.20
+            + profit_factor_score * 0.20
+            + drawdown_score * 0.15
+            + decay_score * 0.10
+        )
         confidence = min(1.0, len(values) / 10.0)
         return round(0.5 * (1.0 - confidence) + raw_score * confidence, 6)
 
     def _history_item(self, values: list[float]) -> dict[str, float]:
+        wins = [value for value in values if value > 0]
+        losses = [abs(value) for value in values if value < 0]
+        profit_factor = (sum(wins) / sum(losses)) if losses else (sum(wins) if wins else 0.0)
+        chronological = list(reversed(values))
+        equity = 0.0
+        peak = 0.0
+        max_drawdown = 0.0
+        for value in chronological:
+            equity += value
+            peak = max(peak, equity)
+            max_drawdown = max(max_drawdown, peak - equity)
+        split = max(1, min(5, len(values) // 2 or 1))
+        recent = values[:split]
+        older = values[split:] or recent
+        recent_expectancy = sum(recent) / len(recent)
+        older_expectancy = sum(older) / len(older)
+        decay_score = max(0.0, min(1.0, 0.5 + (recent_expectancy - older_expectancy) / 2.0))
         return {
             "score": self._history_score(values),
             "count": float(len(values)),
             "expectancy_r": round(sum(values) / len(values), 6) if values else 0.0,
+            "win_rate": round(len(wins) / len(values), 6) if values else 0.0,
+            "profit_factor": round(profit_factor, 6),
+            "max_drawdown_r": round(max_drawdown, 6),
+            "decay_score": round(decay_score, 6),
+            "recent_expectancy_r": round(recent_expectancy, 6),
+            "older_expectancy_r": round(older_expectancy, 6),
         }
 
     def _store_signal(
@@ -640,6 +761,7 @@ class PatternEntryScanner:
                 "opportunity_rank": match.get("opportunity_rank"),
                 "opportunity_rank_score": match.get("opportunity_rank_score"),
                 "opportunity_rank_components": match.get("opportunity_rank_components"),
+                "opportunity_rank_reason": match.get("opportunity_rank_reason"),
                 "entry_quality_score": entry_quality["score"],
                 "entry_quality": entry_quality,
                 "signal_snapshot": signal_snapshot,
@@ -667,3 +789,32 @@ class PatternEntryScanner:
         if module == "fox_hunter":
             return "fox_hunter production live execution"
         return "laboratory IBKR paper validation"
+
+    def _observation_service(self) -> LabPaperObservationService:
+        provider = getattr(self.matcher, "provider", None)
+        return LabPaperObservationService(settings=self.settings, provider=provider)
+
+    def _close_lab_observations(self, db: Session, module: EntryModule) -> dict[str, Any]:
+        if module != "laboratory":
+            return {
+                "open_observations": 0,
+                "closed_observations": 0,
+                "closed_trade_ids": [],
+                "data_errors": [],
+            }
+        return self._observation_service().close_open_observations(db)
+
+    def _open_lab_observation(
+        self,
+        db: Session,
+        *,
+        signal: Signal,
+        match: dict[str, Any],
+        risk,
+    ) -> Trade | None:
+        return self._observation_service().open_observation(
+            db,
+            signal=signal,
+            match=match,
+            risk=risk,
+        )

@@ -167,12 +167,20 @@ def list_current_matches(
     _: str = Depends(require_admin),
     db: Session = Depends(get_db),
 ) -> list[DiscoveredPatternMatch]:
-    return (
+    rows = (
         db.query(DiscoveredPatternMatch)
         .order_by(DiscoveredPatternMatch.matched_at.desc(), DiscoveredPatternMatch.score.desc())
-        .limit(limit)
+        .limit(min(5000, limit * 10))
         .all()
     )
+    deduped: dict[tuple[str, ...], DiscoveredPatternMatch] = {}
+    for row in rows:
+        key = NovelPatternMatcher.match_dedupe_key_from_model(row)
+        if key not in deduped:
+            deduped[key] = row
+        if len(deduped) >= limit:
+            break
+    return list(deduped.values())
 
 
 @router.get("/runs", response_model=list[DiscoveryRunOut])

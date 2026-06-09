@@ -75,10 +75,18 @@ El historial sale de trades cerrados de Laboratorio, no de metricas teoricas de 
 - `DirectorReviewGate` agrega performance por variante y regimen dentro de `pattern.metrics_json["lab_execution"]`.
 - El audit exporter ya puede exportar `paper_trades.csv` e `ib_fills.csv` desde el overview de Laboratorio cuando existan.
 
+### 7. Diagnostico UI/API
+
+- `GET /api/laboratory/diagnostics?limit=24` es un endpoint de solo lectura para presentacion.
+- Combina senales paper candidatas, rechazos en `audit_logs` y `discovered_pattern_matches` recientes.
+- Cada fila resume simbolo, patron, variante, regimen, rank/score, razon de rechazo, componentes de `entry_gate`, historial paper por patron/variante/regimen y blockers para promocion.
+- No ejecuta scanner, no crea senales y no envia ordenes.
+- El dashboard muestra esta informacion en `Laboratorio -> Diagnostico Lab`.
+
 ## Invariantes
 
 - Laboratorio sigue siendo paper-first.
 - Fox Hunter sigue usando solo patrones `production`.
 - No hay promocion automatica a Produccion.
 - Director sigue exigiendo trades/fills reales antes de aprobar.
-- No se ha cambiado la UI.
+- La UI solo muestra diagnosticos de presentacion; no cambia ejecucion.

@@ -166,6 +166,9 @@ class DirectorReviewGate:
         metrics = {
             "closed_lab_trades": len(trades),
             "min_closed_lab_trades": self.min_closed_lab_trades,
+            "trades_remaining_for_director_review": max(
+                0, self.min_closed_lab_trades - len(trades)
+            ),
             "unique_lab_symbols": unique_symbols,
             "min_lab_symbols": self.min_lab_symbols,
             "unique_lab_days": unique_days,
@@ -196,6 +199,28 @@ class DirectorReviewGate:
                 ),
             ),
         }
+        metrics["by_entry_variant_empty_reason"] = self._empty_bucket_reason(
+            trades,
+            "closed lab trades with signal.metadata_json.entry_variant_id",
+        )
+        metrics["by_regime_empty_reason"] = self._empty_bucket_reason(
+            trades,
+            "closed lab trades with signal.metadata_json.regime.regime_key",
+        )
+        metrics["best_entry_variant"] = self._best_bucket(metrics["by_entry_variant"])
+        metrics["worst_entry_variant"] = self._worst_bucket(metrics["by_entry_variant"])
+        metrics["best_regime"] = self._best_bucket(metrics["by_regime"])
+        metrics["worst_regime"] = self._worst_bucket(metrics["by_regime"])
+        metrics["director_recommendations"] = self._director_recommendations(
+            trades=trades,
+            blockers=blockers,
+            expectancy=expectancy,
+            profit_factor=profit_factor,
+            baseline_expectancy=baseline_expectancy,
+            research_expectancy=research_expectancy,
+            by_entry_variant=metrics["by_entry_variant"],
+            by_regime=metrics["by_regime"],
+        )
         pattern.metrics_json = {**(pattern.metrics_json or {}), "lab_execution": metrics}
         return metrics
 
@@ -216,6 +241,149 @@ class DirectorReviewGate:
                 "profit_factor": round(sum(wins) / loss, 4) if loss > 0 else round(sum(wins), 4),
             }
         return result
+
+    @staticmethod
+    def _empty_bucket_reason(trades: list[Trade], required_data: str) -> str:
+        if trades:
+            return ""
+        return (
+            "no_closed_lab_trades: bucket performance is empty because there are no closed "
+            f"laboratory paper trades yet; missing {required_data}."
+        )
+
+    @staticmethod
+    def _best_bucket(buckets: dict[str, dict[str, Any]]) -> dict[str, Any]:
+        if not buckets:
+            return {}
+        key, metrics = max(
+            buckets.items(),
+            key=lambda item: (
+                float(item[1].get("expectancy_r", 0.0) or 0.0),
+                float(item[1].get("profit_factor", 0.0) or 0.0),
+                int(item[1].get("closed_trades", 0) or 0),
+            ),
+        )
+        return {"key": key, **metrics}
+
+    @staticmethod
+    def _worst_bucket(buckets: dict[str, dict[str, Any]]) -> dict[str, Any]:
+        if not buckets:
+            return {}
+        key, metrics = min(
+            buckets.items(),
+            key=lambda item: (
+                float(item[1].get("expectancy_r", 0.0) or 0.0),
+                float(item[1].get("profit_factor", 0.0) or 0.0),
+                int(item[1].get("closed_trades", 0) or 0),
+            ),
+        )
+        return {"key": key, **metrics}
+
+    def _director_recommendations(
+        self,
+        *,
+        trades: list[Trade],
+        blockers: list[str],
+        expectancy: float,
+        profit_factor: float,
+        baseline_expectancy: float,
+        research_expectancy: float,
+        by_entry_variant: dict[str, dict[str, Any]],
+        by_regime: dict[str, dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        recommendations: list[dict[str, Any]] = []
+        trades_remaining = max(0, self.min_closed_lab_trades - len(trades))
+        if trades_remaining:
+            recommendations.append(
+                {
+                    "action": "collect_closed_lab_trades",
+                    "priority": "high",
+                    "trades_remaining": trades_remaining,
+                    "reason": (
+                        f"needs {trades_remaining} more closed laboratory paper trades "
+                        "before Director review can rely on execution evidence"
+                    ),
+                }
+            )
+        if not trades:
+            recommendations.append(
+                {
+                    "action": "keep_research_only",
+                    "priority": "high",
+                    "reason": (
+                        "no closed_lab_trades exist, so by_regime and by_entry_variant "
+                        "performance cannot be ranked yet"
+                    ),
+                }
+            )
+            return recommendations
+        if any(blocker.startswith("unique_lab_symbols_below_") for blocker in blockers) or any(
+            blocker.startswith("unique_lab_days_below_") for blocker in blockers
+        ):
+            recommendations.append(
+                {
+                    "action": "diversify_paper_validation",
+                    "priority": "medium",
+                    "reason": "paper evidence is too concentrated by symbol or day",
+                }
+            )
+        if expectancy <= baseline_expectancy + self.min_baseline_edge_r:
+            recommendations.append(
+                {
+                    "action": "compare_against_baseline_before_promotion",
+                    "priority": "high",
+                    "reason": "lab expectancy does not clear the configured baseline edge",
+                }
+            )
+        if research_expectancy > 0 and expectancy < research_expectancy * self.min_research_expectancy_ratio:
+            recommendations.append(
+                {
+                    "action": "freeze_and_explain_research_decay",
+                    "priority": "high",
+                    "reason": "paper expectancy degraded materially versus research expectancy",
+                }
+            )
+        if profit_factor < self.min_lab_profit_factor:
+            recommendations.append(
+                {
+                    "action": "refine_or_reject_profit_factor",
+                    "priority": "high",
+                    "reason": "paper profit factor is below Director threshold",
+                }
+            )
+        best_variant = self._best_bucket(by_entry_variant)
+        worst_variant = self._worst_bucket(by_entry_variant)
+        if best_variant and worst_variant and best_variant.get("key") != worst_variant.get("key"):
+            recommendations.append(
+                {
+                    "action": "prioritize_entry_variant",
+                    "priority": "medium",
+                    "best_entry_variant": best_variant.get("key"),
+                    "worst_entry_variant": worst_variant.get("key"),
+                    "reason": "entry variants have materially different paper outcomes",
+                }
+            )
+        best_regime = self._best_bucket(by_regime)
+        worst_regime = self._worst_bucket(by_regime)
+        if best_regime and worst_regime and best_regime.get("key") != worst_regime.get("key"):
+            recommendations.append(
+                {
+                    "action": "gate_by_regime_until_confirmed",
+                    "priority": "medium",
+                    "best_regime": best_regime.get("key"),
+                    "worst_regime": worst_regime.get("key"),
+                    "reason": "paper performance differs by market regime",
+                }
+            )
+        if not recommendations:
+            recommendations.append(
+                {
+                    "action": "prepare_director_packet",
+                    "priority": "medium",
+                    "reason": "minimum paper evidence is present; still requires Director audit, not live trading",
+                }
+            )
+        return recommendations
 
     def _promotion_blockers(
         self,

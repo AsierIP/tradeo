@@ -244,6 +244,48 @@ METRICS_BY_PERIOD_COLUMNS = [
     "notes",
 ]
 
+METRICS_BY_REGIME_COLUMNS = [
+    "pattern_id",
+    "market_regime",
+    "analysis_available",
+    "empty_reason",
+    "trade_count",
+    "event_count",
+    "gross_pnl",
+    "net_pnl",
+    "avg_trade",
+    "expectancy_r",
+    "winrate",
+    "profit_factor",
+    "max_drawdown",
+    "best_trade",
+    "worst_trade",
+    "first_seen",
+    "last_seen",
+    "notes",
+]
+
+METRICS_BY_ENTRY_VARIANT_COLUMNS = [
+    "pattern_id",
+    "entry_variant_id",
+    "analysis_available",
+    "empty_reason",
+    "trade_count",
+    "event_count",
+    "gross_pnl",
+    "net_pnl",
+    "avg_trade",
+    "expectancy_r",
+    "winrate",
+    "profit_factor",
+    "max_drawdown",
+    "best_trade",
+    "worst_trade",
+    "first_seen",
+    "last_seen",
+    "notes",
+]
+
 
 def main() -> int:
     parser = argparse.ArgumentParser()
@@ -302,6 +344,8 @@ def main() -> int:
     metrics_pattern_rows = build_metrics_by_pattern(patterns, examples_by_pattern, paper_trade_rows)
     metrics_ticker_rows = build_metrics_by_ticker(examples_by_pattern)
     metrics_period_rows = build_metrics_by_period(examples_by_pattern)
+    metrics_regime_rows = build_metrics_by_regime(patterns, event_rows, paper_trade_rows)
+    metrics_entry_variant_rows = build_metrics_by_entry_variant(patterns, paper_trade_rows)
 
     write_csv(package / "pattern_catalog.csv", PATTERN_CATALOG_COLUMNS, pattern_catalog_rows)
     write_csv(package / "pattern_events.csv", PATTERN_EVENTS_COLUMNS, event_rows)
@@ -311,6 +355,8 @@ def main() -> int:
     write_csv(package / "metrics_by_pattern.csv", METRICS_BY_PATTERN_COLUMNS, metrics_pattern_rows)
     write_csv(package / "metrics_by_ticker.csv", METRICS_BY_TICKER_COLUMNS, metrics_ticker_rows)
     write_csv(package / "metrics_by_period.csv", METRICS_BY_PERIOD_COLUMNS, metrics_period_rows)
+    write_csv(package / "metrics_by_regime.csv", METRICS_BY_REGIME_COLUMNS, metrics_regime_rows)
+    write_csv(package / "metrics_by_entry_variant.csv", METRICS_BY_ENTRY_VARIANT_COLUMNS, metrics_entry_variant_rows)
 
     write_audit_request(package, context, patterns, pattern_catalog_rows, metrics_pattern_rows, experiment_rows, event_rows)
     write_audit_summary_for_chatgpt(
@@ -321,10 +367,22 @@ def main() -> int:
         metrics_pattern_rows,
         metrics_ticker_rows,
         metrics_period_rows,
+        metrics_regime_rows,
+        metrics_entry_variant_rows,
         paper_trade_rows,
         fill_rows,
     )
-    write_manifest(package, context, patterns, event_rows, experiment_rows, paper_trade_rows, fill_rows)
+    write_manifest(
+        package,
+        context,
+        patterns,
+        event_rows,
+        experiment_rows,
+        paper_trade_rows,
+        fill_rows,
+        metrics_regime_rows,
+        metrics_entry_variant_rows,
+    )
     write_code_references(package, patterns)
     write_config_snapshot(package / "config_snapshot", context)
     write_supporting_docs(package, context, patterns, event_rows, experiment_rows, paper_trade_rows, fill_rows)
@@ -337,6 +395,8 @@ def main() -> int:
         "paper_trades_exported": len(paper_trade_rows),
         "fills_exported": len(fill_rows),
         "experiments_exported": len(experiment_rows),
+        "metrics_by_regime_rows": len(metrics_regime_rows),
+        "metrics_by_entry_variant_rows": len(metrics_entry_variant_rows),
         "package": str(package.relative_to(ROOT)),
     }, indent=2))
     return 0
@@ -897,7 +957,7 @@ def build_metrics_by_pattern(
         trade_count = len(trades)
         avg_win = metrics.get("avg_win_r", "")
         avg_loss = metrics.get("avg_loss_r", "")
-        payoff = round(float(avg_win) / float(avg_loss), 6) if avg_win not in ("", 0) and avg_loss not in ("", 0) else ""
+        payoff = round(float(avg_win) / float(avg_loss), 6) if trades and avg_win not in ("", 0) and avg_loss not in ("", 0) else ""
         rows.append({
             "pattern_id": audit_id,
             "sample_count": pattern.get("sample_count", ""),
@@ -910,15 +970,15 @@ def build_metrics_by_pattern(
             "gross_pnl": round(sum(gross_values), 4) if trades else "0",
             "net_pnl": round(sum(net_values), 4) if trades else "0",
             "avg_trade": round(sum(net_values) / trade_count, 4) if trades else "",
-            "median_trade": metrics.get("median_result_r", ""),
+            "median_trade": metrics.get("median_result_r", "") if trades else "",
             "std_trade": round(float(statistics.pstdev(net_values)), 4) if len(net_values) > 1 else "",
-            "winrate": round(len(wins) / trade_count, 6) if trades else pattern.get("best_win_rate", ""),
-            "avg_win": avg_win,
-            "avg_loss": avg_loss,
+            "winrate": round(len(wins) / trade_count, 6) if trades else "",
+            "avg_win": avg_win if trades else "",
+            "avg_loss": avg_loss if trades else "",
             "payoff_ratio": payoff,
-            "profit_factor": round(sum(wins) / sum(losses), 6) if losses else (round(sum(wins), 6) if wins else pattern.get("best_profit_factor", "")),
-            "expectancy": round(sum(r_values) / trade_count, 6) if trades else pattern.get("best_expectancy_r", ""),
-            "max_drawdown": max_drawdown(r_values) if trades else pattern.get("best_max_drawdown_r", ""),
+            "profit_factor": round(sum(wins) / sum(losses), 6) if losses else (round(sum(wins), 6) if wins else ""),
+            "expectancy": round(sum(r_values) / trade_count, 6) if trades else "",
+            "max_drawdown": max_drawdown(r_values) if trades else "",
             "max_consecutive_losses": "",
             "best_trade": max(net_values) if net_values else "",
             "worst_trade": min(net_values) if net_values else "",
@@ -931,9 +991,169 @@ def build_metrics_by_pattern(
             "sortino": "",
             "calmar": "",
             "avg_holding_period_seconds": "",
-            "notes": "Operational columns use paper trades when present; otherwise research R metrics remain informational only.",
+            "notes": (
+                "Operational columns use closed paper trades only; research R metrics remain in experiment_registry.csv."
+                if trades
+                else "No closed_lab_trades/paper trades; operational performance columns intentionally blank."
+            ),
         })
     return rows
+
+
+def build_metrics_by_regime(
+    patterns: list[dict[str, Any]],
+    event_rows: list[dict[str, Any]],
+    paper_trade_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    if not paper_trade_rows:
+        return [empty_bucket_row("market_regime")]
+    events_by_pattern_regime: dict[tuple[str, str], int] = defaultdict(int)
+    for row in event_rows:
+        key = (str(row.get("pattern_id", "")), str(row.get("market_regime") or "unknown"))
+        events_by_pattern_regime[key] += 1
+    buckets: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+    for trade in paper_trade_rows:
+        regime = note_value(trade.get("notes"), "regime") or "unknown"
+        buckets[(str(trade.get("pattern_id", "")), regime)].append(trade)
+    rows = []
+    known_patterns = {pattern_id(pattern) for pattern in patterns}
+    for (pid, regime), trades in sorted(buckets.items()):
+        row = performance_bucket_row(
+            pattern_id_value=pid,
+            bucket_value=regime,
+            bucket_column="market_regime",
+            trades=trades,
+            event_count=events_by_pattern_regime.get((pid, regime), len(trades)),
+            notes="Closed paper-trade performance grouped by persisted regime metadata.",
+        )
+        rows.append(row)
+    missing_patterns = known_patterns - {str(row.get("pattern_id", "")) for row in rows}
+    for pid in sorted(missing_patterns):
+        rows.append(empty_bucket_row("market_regime", pattern_id_value=pid))
+    return rows
+
+
+def build_metrics_by_entry_variant(
+    patterns: list[dict[str, Any]],
+    paper_trade_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    if not paper_trade_rows:
+        return [empty_bucket_row("entry_variant_id")]
+    buckets: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+    for trade in paper_trade_rows:
+        variant = note_value(trade.get("notes"), "entry_variant") or "unknown"
+        buckets[(str(trade.get("pattern_id", "")), variant)].append(trade)
+    rows = []
+    known_patterns = {pattern_id(pattern) for pattern in patterns}
+    for (pid, variant), trades in sorted(buckets.items()):
+        row = performance_bucket_row(
+            pattern_id_value=pid,
+            bucket_value=variant,
+            bucket_column="entry_variant_id",
+            trades=trades,
+            event_count=len(trades),
+            notes="Closed paper-trade performance grouped by entry variant metadata.",
+        )
+        rows.append(row)
+    missing_patterns = known_patterns - {str(row.get("pattern_id", "")) for row in rows}
+    for pid in sorted(missing_patterns):
+        rows.append(empty_bucket_row("entry_variant_id", pattern_id_value=pid))
+    return rows
+
+
+def empty_bucket_row(bucket_column: str, *, pattern_id_value: str = "") -> dict[str, Any]:
+    missing = (
+        "closed_lab_trades with signal.metadata_json.regime.regime_key"
+        if bucket_column == "market_regime"
+        else "closed_lab_trades with signal.metadata_json.entry_variant_id"
+    )
+    return {
+        "pattern_id": pattern_id_value,
+        bucket_column: "",
+        "analysis_available": "false",
+        "empty_reason": f"no_closed_lab_trades: missing {missing}; paper_trades.csv has no matching closed trades.",
+        "trade_count": "0",
+        "event_count": "0",
+        "gross_pnl": "0",
+        "net_pnl": "0",
+        "avg_trade": "",
+        "expectancy_r": "",
+        "winrate": "",
+        "profit_factor": "",
+        "max_drawdown": "",
+        "best_trade": "",
+        "worst_trade": "",
+        "first_seen": "",
+        "last_seen": "",
+        "notes": "Explicit empty bucket for Director audit contract.",
+    }
+
+
+def performance_bucket_row(
+    *,
+    pattern_id_value: str,
+    bucket_value: str,
+    bucket_column: str,
+    trades: list[dict[str, Any]],
+    event_count: int,
+    notes: str,
+) -> dict[str, Any]:
+    net_values = [safe_float(trade.get("net_pnl"), 0.0) for trade in trades]
+    gross_values = [safe_float(trade.get("gross_pnl"), 0.0) for trade in trades]
+    r_values = [safe_float(trade.get("r_multiple"), 0.0) for trade in trades]
+    wins = [value for value in net_values if value > 0]
+    losses = [abs(value) for value in net_values if value < 0]
+    first_seen, last_seen = trade_time_bounds(trades)
+    trade_count = len(trades)
+    return {
+        "pattern_id": pattern_id_value,
+        bucket_column: bucket_value or "unknown",
+        "analysis_available": "true",
+        "empty_reason": "",
+        "trade_count": trade_count,
+        "event_count": event_count,
+        "gross_pnl": round(sum(gross_values), 4),
+        "net_pnl": round(sum(net_values), 4),
+        "avg_trade": round(sum(net_values) / trade_count, 4) if trade_count else "",
+        "expectancy_r": round(sum(r_values) / trade_count, 6) if trade_count else "",
+        "winrate": round(len(wins) / trade_count, 6) if trade_count else "",
+        "profit_factor": round(sum(wins) / sum(losses), 6) if losses else (round(sum(wins), 6) if wins else ""),
+        "max_drawdown": max_drawdown(r_values),
+        "best_trade": max(net_values) if net_values else "",
+        "worst_trade": min(net_values) if net_values else "",
+        "first_seen": first_seen,
+        "last_seen": last_seen,
+        "notes": notes,
+    }
+
+
+def note_value(notes: Any, key: str) -> str:
+    for part in str(notes or "").split(";"):
+        if "=" not in part:
+            continue
+        raw_key, value = part.split("=", 1)
+        if raw_key.strip() == key:
+            return value.strip()
+    return ""
+
+
+def trade_time_bounds(trades: list[dict[str, Any]]) -> tuple[str, str]:
+    values = sorted(
+        normalize_ts(
+            trade.get("exit_fill_time")
+            or trade.get("exit_order_time")
+            or trade.get("entry_fill_time")
+            or trade.get("entry_order_time")
+        )
+        for trade in trades
+        if trade.get("exit_fill_time")
+        or trade.get("exit_order_time")
+        or trade.get("entry_fill_time")
+        or trade.get("entry_order_time")
+    )
+    if not values:
+        return "", ""
+    return values[0], values[-1]
 
 
 def build_metrics_by_ticker(examples_by_pattern: dict[int, list[dict[str, Any]]]) -> list[dict[str, Any]]:
@@ -1029,7 +1249,10 @@ def write_manifest(
     experiment_rows: list[dict[str, Any]],
     paper_trade_rows: list[dict[str, Any]],
     fill_rows: list[dict[str, Any]],
+    metrics_regime_rows: list[dict[str, Any]],
+    metrics_entry_variant_rows: list[dict[str, Any]],
 ) -> None:
+    duplicate_groups = duplicate_event_groups(event_rows)
     manifest = {
         "audit_id": context["audit_id"],
         "created_at": context["created_at"],
@@ -1046,6 +1269,15 @@ def write_manifest(
         "total_paper_trades": len(paper_trade_rows),
         "total_ib_fills": len(fill_rows),
         "total_experiment_variants": len(experiment_rows),
+        "total_metrics_by_regime_rows": len(metrics_regime_rows),
+        "total_metrics_by_entry_variant_rows": len(metrics_entry_variant_rows),
+        "duplicate_event_groups": duplicate_groups["groups"],
+        "duplicate_repeated_rows": duplicate_groups["repeated_rows"],
+        "metric_breakdowns": {
+            "by_regime": metric_breakdown_state(metrics_regime_rows),
+            "by_entry_variant": metric_breakdown_state(metrics_entry_variant_rows),
+        },
+        "director_gate_required": True,
         "contains_sensitive_data": False,
         "account_ids_redacted": True,
         "orders_anonymized": True,
@@ -1061,6 +1293,8 @@ def write_manifest(
             {"path": "metrics_by_pattern.csv", "description": "Aggregated metrics by pattern"},
             {"path": "metrics_by_ticker.csv", "description": "Aggregated metrics by pattern/ticker"},
             {"path": "metrics_by_period.csv", "description": "Aggregated metrics by period"},
+            {"path": "metrics_by_regime.csv", "description": "Closed paper-trade performance by market regime, or explicit empty reason"},
+            {"path": "metrics_by_entry_variant.csv", "description": "Closed paper-trade performance by entry variant, or explicit empty reason"},
             {"path": "code_references.md", "description": "Code paths and functions relevant to detection, validation, execution, and risk"},
             {"path": "data_lineage.md", "description": "Data origin, transformations, and known data-quality limits"},
             {"path": "known_issues.md", "description": "Known lab limitations and audit warnings"},
@@ -1079,6 +1313,29 @@ def write_manifest(
     (package / "manifest.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
+def duplicate_event_groups(event_rows: list[dict[str, Any]]) -> dict[str, int]:
+    counts: dict[str, int] = defaultdict(int)
+    for row in event_rows:
+        group = str(row.get("duplicate_group_id") or "").strip()
+        if group:
+            counts[group] += 1
+    repeated = [count for count in counts.values() if count > 1]
+    return {"groups": len(repeated), "repeated_rows": sum(repeated)}
+
+
+def metric_breakdown_state(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    available_rows = [
+        row
+        for row in rows
+        if str(row.get("analysis_available", "")).strip().lower() == "true"
+        and int(float(str(row.get("trade_count") or "0"))) > 0
+    ]
+    if available_rows:
+        return {"available": True, "rows": len(available_rows), "empty_reason": ""}
+    reason = next((str(row.get("empty_reason", "")).strip() for row in rows if row.get("empty_reason")), "")
+    return {"available": False, "rows": len(rows), "empty_reason": reason}
+
+
 def write_audit_request(
     package: Path,
     context: dict[str, Any],
@@ -1091,6 +1348,7 @@ def write_audit_request(
     metric_by_pattern = {row["pattern_id"]: row for row in metrics_rows}
     timeframes = sorted({str(p.get("timeframe", "")) for p in patterns if p.get("timeframe")})
     discarded = sum(1 for row in experiment_rows if row["status"] == "discarded")
+    total_paper_trades = sum(to_int(row.get("trade_count")) or 0 for row in metrics_rows)
     table_lines = [
         "| pattern_id | pattern_name | status | sample_count | trade_count | ticker_count | first_seen | last_seen | gross_pnl | net_pnl | winrate | avg_win | avg_loss | profit_factor | max_drawdown | notes |",
         "|---|---|---:|---:|---:|---:|---|---|---:|---:|---:|---:|---:|---:|---:|---|",
@@ -1137,7 +1395,7 @@ def write_audit_request(
 - Numero total de variantes probadas: {len(experiment_rows)}
 - Numero total de variantes descartadas: {discarded}
 - Numero de eventos exportados: {len(event_rows)}
-- Numero de trades reales/paper por patron: 0 en este paquete; el laboratorio sigue en read-only y no genero trades.
+- Numero de trades paper cerrados exportados: {total_paper_trades}. Si es 0, falta evidencia `closed_lab_trades` y no se puede rankear por PnL, regimen o entry_variant.
 
 ## Que esperamos de ChatGPT
 
@@ -1292,6 +1550,8 @@ def write_supporting_docs(
 - Fuente de bid/ask: no persistida en este paquete; campos bid/ask/spread quedan vacios.
 - Fuente de paper trades: `paper_trades.csv` exporta {len(paper_trade_rows)} filas desde Laboratorio cuando existen.
 - Fuente de fills: `ib_fills.csv` exporta {len(fill_rows)} fills paper reconstruidos desde trades cerrados/registrados cuando existen.
+- Fuente de breakdown por regimen: `metrics_by_regime.csv` usa closed paper trades si existen; si no, contiene `empty_reason`.
+- Fuente de breakdown por entry variant: `metrics_by_entry_variant.csv` usa `entry_variant_id` de metadata de senal si existen closed paper trades; si no, contiene `empty_reason`.
 - Fuente de comisiones/slippage: se exportan desde metadata de trade si estan persistidas; si no, quedan vacias o en cero.
 - Fuente de volumen: barras OHLCV de IBKR cuando estan disponibles; el export actual solo conserva volumen en features agregadas si el detector lo genero.
 - Ajustes por splits/dividendos: no documentados por barra en el laboratorio actual; requiere auditoria adicional del proveedor IBKR.
@@ -1315,6 +1575,7 @@ def write_supporting_docs(
 - Posible survivorship bias: no hay archivo de tickers deslistados.
 - Posible concentracion por pocos tickers o regimenes: revisar `metrics_by_ticker.csv` y `metrics_by_period.csv`.
 - Regimen de mercado y sector se exportan desde features/metadata cuando estan disponibles.
+- `metrics_by_regime.csv` y `metrics_by_entry_variant.csv` deben tener filas accionables solo cuando haya `closed_lab_trades`; si no, documentan la razon de vacio.
 - Los timestamps diarios se normalizan a UTC cuando el dato original no trae timezone explicita.
 - Fills IB Paper exportados en este paquete: {len(fill_rows)}.
 - El paquete contiene {len(patterns)} patrones y {len(experiment_rows)} variantes RR; ChatGPT debe revisar tambien variantes descartadas.
@@ -1372,11 +1633,11 @@ python3 research/audit_bridge/export_audit_package.py --audit-id {context['audit
 
 ## Comando usado para exportar trades
 
-El mismo exportador crea `paper_trades.csv`. En este snapshot no hay trades paper en DB, por lo que se genera cabecera vacia.
+El mismo exportador crea `paper_trades.csv`. Si no hay trades paper en DB, genera cabecera vacia.
 
 ## Comando usado para exportar fills
 
-El mismo exportador crea `ib_fills.csv`. En este snapshot no hay fills IB Paper anonimizados en DB, por lo que se genera cabecera vacia.
+El mismo exportador crea `ib_fills.csv`. Si no hay fills IB Paper anonimizados en DB, genera cabecera vacia.
 
 ## Variables de entorno necesarias
 
@@ -1399,10 +1660,19 @@ No incluir valores secretos en el paquete.
 - Backend: Python 3.12 en contenedor.
 - Frontend: Node/Next.js segun `frontend/Dockerfile`.
 
-## Validar paquete completo
+## Validar paquete completo despues del Director gate
 
 ```bash
 python3 research/audit_bridge/validate_audit_package.py research/audit_bridge/requests/{context['audit_id']}
+```
+
+## Ejecutar Director gate antes del validator estricto
+
+```bash
+python3 research/audit_bridge/director_gate.py research/audit_bridge/requests/{context['audit_id']} \
+  --json-output research/audit_bridge/requests/{context['audit_id']}/director_gate_result.json \
+  --markdown-output research/audit_bridge/requests/{context['audit_id']}/director_gate_result.md \
+  --allow-blocked-exit-zero
 ```
 
 ## Hashes
@@ -1419,6 +1689,8 @@ def write_audit_summary_for_chatgpt(
     metrics_rows: list[dict[str, Any]],
     metrics_ticker_rows: list[dict[str, Any]],
     metrics_period_rows: list[dict[str, Any]],
+    metrics_regime_rows: list[dict[str, Any]],
+    metrics_entry_variant_rows: list[dict[str, Any]],
     paper_trade_rows: list[dict[str, Any]],
     fill_rows: list[dict[str, Any]],
 ) -> None:
@@ -1509,7 +1781,7 @@ def write_audit_summary_for_chatgpt(
         f"This package includes {len(paper_trade_rows)} paper trades and {len(fill_rows)} reconstructed fills; "
         "Director must still verify execution quality before promotion."
         if paper_trade_rows or fill_rows
-        else "**Validation stance:** no pattern is approved for operation in this package. Paper/live execution validation is unavailable because `paper_trades.csv` and `ib_fills.csv` have zero rows."
+        else "**Validation stance:** no pattern is approved for operation in this package. Paper/live execution validation is unavailable because `paper_trades.csv` and `ib_fills.csv` have zero rows; there are no `closed_lab_trades` from which to rank by regime or entry variant."
     )
     lines = [
         "# Audit Summary For ChatGPT",
@@ -1567,6 +1839,8 @@ def write_audit_summary_for_chatgpt(
         f"| patterns concentrated in fewer than 5 tickers | {len(few_tickers)} | Based on `metrics_by_pattern.ticker_count`. |",
         f"| patterns concentrated in fewer than 5 days | {len(few_days)} | Based on unique event dates in `pattern_events.csv`. |",
         f"| patterns concentrated in one market regime | {len(single_regime)} | Current export mostly uses `not_persisted`; regime audit is limited. |",
+        f"| regime performance buckets available | {count_available_bucket_rows(metrics_regime_rows)} | See `metrics_by_regime.csv`; empty rows include `empty_reason`. |",
+        f"| entry variant performance buckets available | {count_available_bucket_rows(metrics_entry_variant_rows)} | See `metrics_by_entry_variant.csv`; empty rows include `empty_reason`. |",
         "",
         "## E. Automatically Detected Risks",
         "",
@@ -1590,6 +1864,7 @@ def write_audit_summary_for_chatgpt(
         f"| likely_duplicates | {possible_duplicates + duplicate_variants} | Deduplicate or explain before ranking. |",
         f"| freeze_until_more_data | {len(freeze_until_more_data)} | No paper trades yet; execution validation unavailable. |",
         f"| discard_candidates | {len(discard_candidates)} | Low sample or low ticker diversity; keep rejected unless new evidence appears. |",
+        f"| no_closed_lab_trades_bucket_gap | {int(not paper_trade_rows)} | Fill `paper_trades.csv` with closed lab trades carrying regime and entry_variant metadata before bucket ranking. |",
         "",
         "### First Candidates For Audit",
         "",
@@ -1602,6 +1877,36 @@ def write_audit_summary_for_chatgpt(
             f"| {md(row['pattern_id'])} | {md(catalog.get('pattern_name', ''))} | {cell(row.get('independent_sample_count'))} | {cell(row.get('ticker_count'))} | {md(catalog.get('status', ''))} |"
         )
 
+    lines.extend(["", "### Regime Bucket Snapshot", ""])
+    available_regime = [row for row in metrics_regime_rows if str(row.get("analysis_available", "")).lower() == "true"]
+    if available_regime:
+        lines.extend([
+            "| pattern_id | market_regime | trade_count | net_pnl | expectancy_r | profit_factor |",
+            "|---|---|---:|---:|---:|---:|",
+        ])
+        for row in sorted(available_regime, key=lambda item: to_float(item.get("expectancy_r")) or 0.0, reverse=True)[:20]:
+            lines.append(
+                f"| {md(row.get('pattern_id', ''))} | {md(row.get('market_regime', ''))} | {cell(row.get('trade_count'))} | {cell(row.get('net_pnl'))} | {cell(row.get('expectancy_r'))} | {cell(row.get('profit_factor'))} |"
+            )
+    else:
+        reason = next((str(row.get("empty_reason", "")).strip() for row in metrics_regime_rows if row.get("empty_reason")), "")
+        lines.append(reason or "No regime bucket performance is available.")
+
+    lines.extend(["", "### Entry Variant Bucket Snapshot", ""])
+    available_variants = [row for row in metrics_entry_variant_rows if str(row.get("analysis_available", "")).lower() == "true"]
+    if available_variants:
+        lines.extend([
+            "| pattern_id | entry_variant_id | trade_count | net_pnl | expectancy_r | profit_factor |",
+            "|---|---|---:|---:|---:|---:|",
+        ])
+        for row in sorted(available_variants, key=lambda item: to_float(item.get("expectancy_r")) or 0.0, reverse=True)[:20]:
+            lines.append(
+                f"| {md(row.get('pattern_id', ''))} | {md(row.get('entry_variant_id', ''))} | {cell(row.get('trade_count'))} | {cell(row.get('net_pnl'))} | {cell(row.get('expectancy_r'))} | {cell(row.get('profit_factor'))} |"
+            )
+    else:
+        reason = next((str(row.get("empty_reason", "")).strip() for row in metrics_entry_variant_rows if row.get("empty_reason")), "")
+        lines.append(reason or "No entry-variant bucket performance is available.")
+
     lines.extend([
         "",
         "### Bottom-Line Instruction",
@@ -1610,6 +1915,10 @@ def write_audit_summary_for_chatgpt(
         "",
     ])
     (package / "AUDIT_SUMMARY_FOR_CHATGPT.md").write_text("\n".join(lines), encoding="utf-8")
+
+
+def count_available_bucket_rows(rows: list[dict[str, Any]]) -> int:
+    return sum(1 for row in rows if str(row.get("analysis_available", "")).strip().lower() == "true")
 
 
 def to_int(value: Any) -> int | None:

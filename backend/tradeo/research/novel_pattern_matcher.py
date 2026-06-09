@@ -386,6 +386,19 @@ class NovelPatternMatcher:
         )
         volume_confirmed = volume_ratio >= settings.entry_min_volume_ratio
         not_extended = extension_atr <= settings.entry_max_extension_atr
+        rejection_reasons: list[str] = []
+        if trigger_score <= 0:
+            rejection_reasons.append("weak_trigger")
+        if entry_score < settings.entry_min_score:
+            rejection_reasons.append("weak_entry_score")
+        if not regime_ok:
+            rejection_reasons.append("regime_not_aligned")
+        if not volume_confirmed:
+            rejection_reasons.append("insufficient_volume")
+        if not not_extended:
+            rejection_reasons.append("excessive_extension")
+        if not volatility_ok:
+            rejection_reasons.append("excessive_volatility")
         passed = (
             trigger_score > 0
             and entry_score >= settings.entry_min_score
@@ -393,6 +406,7 @@ class NovelPatternMatcher:
             and volume_confirmed
             and not_extended
         )
+        reason = "entry gate passed" if passed else ";".join(rejection_reasons) or "entry gate failed"
         return {
             "passed": passed,
             "trigger": trigger,
@@ -412,7 +426,8 @@ class NovelPatternMatcher:
             "sma20": round(sma20, 4),
             "sma50": round(sma50, 4),
             "close": round(close, 4),
-            "reason": "entry gate passed" if passed else "entry gate failed",
+            "reason": reason,
+            "rejection_reasons": rejection_reasons,
         }
 
     @staticmethod
@@ -510,26 +525,104 @@ class NovelPatternMatcher:
             return f"{days}d"
         return "6mo"
 
-    @staticmethod
-    def _store_matches(db: Session, matches: list[dict[str, Any]]) -> None:
+    @classmethod
+    def _store_matches(cls, db: Session, matches: list[dict[str, Any]]) -> None:
+        now = datetime.now(timezone.utc)
         for match in matches:
-            db.add(
-                DiscoveredPatternMatch(
-                    pattern_id=int(match["pattern_id"]),
-                    symbol=str(match["symbol"]),
-                    timeframe=str(match["timeframe"]),
-                    side=str(match["side"]),
-                    similarity=float(match["similarity"]),
-                    score=float(match["score"]),
-                    entry_price=float(match["entry_price"]),
-                    stop_price=float(match["stop_price"]),
-                    target_price=float(match["target_price"]),
-                    reward_risk=float(match["reward_risk"]),
-                    window_end=str(match["window_end"]),
-                    status=str(match["status"]),
-                    notes=str(match["notes"]),
-                    chart_json=match.get("chart", {}),
-                    metrics_json=match.get("metrics", {}),
+            metrics = cls._stored_match_metrics(match, now=now)
+            existing = cls._existing_match(db, match, metrics)
+            if existing is None:
+                db.add(
+                    DiscoveredPatternMatch(
+                        pattern_id=int(match["pattern_id"]),
+                        symbol=str(match["symbol"]),
+                        timeframe=str(match["timeframe"]),
+                        side=str(match["side"]),
+                        similarity=float(match["similarity"]),
+                        score=float(match["score"]),
+                        entry_price=float(match["entry_price"]),
+                        stop_price=float(match["stop_price"]),
+                        target_price=float(match["target_price"]),
+                        reward_risk=float(match["reward_risk"]),
+                        matched_at=now,
+                        window_end=str(match["window_end"]),
+                        status=str(match["status"]),
+                        notes=str(match["notes"]),
+                        chart_json=match.get("chart", {}),
+                        metrics_json=metrics,
+                    )
                 )
+                continue
+            prior = existing.metrics_json or {}
+            metrics["first_seen_at"] = prior.get("first_seen_at") or (
+                existing.matched_at.isoformat() if existing.matched_at else now.isoformat()
             )
+            metrics["seen_count"] = int(prior.get("seen_count") or 1) + 1
+            existing.side = str(match["side"])
+            existing.similarity = float(match["similarity"])
+            existing.score = float(match["score"])
+            existing.entry_price = float(match["entry_price"])
+            existing.stop_price = float(match["stop_price"])
+            existing.target_price = float(match["target_price"])
+            existing.reward_risk = float(match["reward_risk"])
+            existing.matched_at = now
+            existing.status = str(match["status"])
+            existing.notes = str(match["notes"])
+            existing.chart_json = match.get("chart", {})
+            existing.metrics_json = metrics
+            db.add(existing)
         db.commit()
+
+    @classmethod
+    def _existing_match(
+        cls,
+        db: Session,
+        match: dict[str, Any],
+        metrics: dict[str, Any],
+    ) -> DiscoveredPatternMatch | None:
+        candidate_rows = (
+            db.query(DiscoveredPatternMatch)
+            .filter(DiscoveredPatternMatch.pattern_id == int(match["pattern_id"]))
+            .filter(DiscoveredPatternMatch.symbol == str(match["symbol"]))
+            .filter(DiscoveredPatternMatch.timeframe == str(match["timeframe"]))
+            .filter(DiscoveredPatternMatch.window_end == str(match["window_end"]))
+            .all()
+        )
+        wanted = cls.match_dedupe_key(match, metrics)
+        for row in candidate_rows:
+            if cls.match_dedupe_key_from_model(row) == wanted:
+                return row
+        return None
+
+    @staticmethod
+    def _stored_match_metrics(match: dict[str, Any], *, now: datetime) -> dict[str, Any]:
+        metrics = dict(match.get("metrics") or {})
+        metrics["entry_variant_id"] = str(match.get("entry_variant_id") or metrics.get("entry_variant_id") or "")
+        metrics["entry_variant"] = match.get("entry_variant") or metrics.get("entry_variant") or {}
+        metrics["match_dedupe_key"] = NovelPatternMatcher.match_dedupe_key(match, metrics)
+        metrics.setdefault("first_seen_at", now.isoformat())
+        metrics["last_seen_at"] = now.isoformat()
+        metrics.setdefault("seen_count", 1)
+        return metrics
+
+    @staticmethod
+    def match_dedupe_key(match: dict[str, Any], metrics: dict[str, Any] | None = None) -> tuple[str, ...]:
+        data = metrics or match.get("metrics") or {}
+        return (
+            str(match.get("pattern_id") or ""),
+            str(match.get("symbol") or "").upper(),
+            str(match.get("timeframe") or ""),
+            str(data.get("entry_variant_id") or match.get("entry_variant_id") or ""),
+            str(match.get("window_end") or ""),
+        )
+
+    @staticmethod
+    def match_dedupe_key_from_model(match: DiscoveredPatternMatch) -> tuple[str, ...]:
+        metrics = match.metrics_json or {}
+        return (
+            str(match.pattern_id),
+            str(match.symbol or "").upper(),
+            str(match.timeframe or ""),
+            str(metrics.get("entry_variant_id") or ""),
+            str(match.window_end or ""),
+        )

@@ -400,8 +400,62 @@ class PatternEntryScanResponse(BaseModel):
     order_errors: list[dict[str, Any]] = Field(default_factory=list)
     signal_ids: list[int] = Field(default_factory=list)
     trade_ids: list[int] = Field(default_factory=list)
+    paper_observations_opened: int = 0
+    paper_observations_closed: int = 0
+    paper_observation_trade_ids: list[int] = Field(default_factory=list)
+    paper_observation_lifecycle: dict[str, Any] = Field(default_factory=dict)
     top_opportunities: list[dict[str, Any]] = Field(default_factory=list)
     store_signals: bool
     execute_orders: bool
     similarity_threshold: float
     generated_at: str
+
+
+class LabPaperHistoryOut(BaseModel):
+    closed_trades: int = 0
+    open_trades: int = 0
+    total_r: float = 0.0
+    expectancy_r: float = 0.0
+    win_rate: float = 0.0
+    profit_factor: float = 0.0
+    unique_symbols: int = 0
+    unique_days: int = 0
+    variant_closed_trades: int = 0
+    regime_closed_trades: int = 0
+    last_trade_status: str | None = None
+
+
+class LabOpportunityDiagnosticOut(BaseModel):
+    source: str
+    status: str
+    symbol: str
+    pattern: str
+    pattern_id: int | None = None
+    side: str = ""
+    timeframe: str = ""
+    entry_variant_id: str = ""
+    entry_variant_label: str = ""
+    regime_key: str = ""
+    rank: int | None = None
+    rank_score: float | None = None
+    score: float | None = None
+    entry_score: float | None = None
+    similarity: float | None = None
+    opportunity_rank_components: dict[str, Any] = Field(default_factory=dict)
+    entry_gate: dict[str, Any] = Field(default_factory=dict)
+    entry_gate_components: list[dict[str, Any]] = Field(default_factory=list)
+    entry_quality: dict[str, Any] = Field(default_factory=dict)
+    regime_fit: dict[str, Any] = Field(default_factory=dict)
+    rejection_stage: str | None = None
+    rejection_reason: str = ""
+    created_at: str = ""
+    window_end: str = ""
+    paper_history: LabPaperHistoryOut = Field(default_factory=LabPaperHistoryOut)
+    promotion: dict[str, Any] = Field(default_factory=dict)
+    missing_to_promote: list[str] = Field(default_factory=list)
+
+
+class LabDiagnosticsResponse(BaseModel):
+    generated_at: str
+    summary: dict[str, Any]
+    opportunities: list[LabOpportunityDiagnosticOut] = Field(default_factory=list)

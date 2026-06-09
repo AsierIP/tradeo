@@ -30,6 +30,8 @@ REQUIRED_FILES = [
     "metrics_by_pattern.csv",
     "metrics_by_ticker.csv",
     "metrics_by_period.csv",
+    "metrics_by_regime.csv",
+    "metrics_by_entry_variant.csv",
     "code_references.md",
     "config_snapshot/detector_config.json",
     "config_snapshot/universe_config.json",
@@ -42,6 +44,7 @@ REQUIRED_FILES = [
     "audit_checklist.md",
     "chatgpt_questions.md",
     "reproducibility.md",
+    "director_gate_result.json",
 ]
 
 CSV_COLUMNS = {
@@ -101,6 +104,18 @@ CSV_COLUMNS = {
         "period_start", "period_end", "period_type", "pattern_id", "event_count", "trade_count",
         "gross_pnl", "net_pnl", "winrate", "profit_factor", "max_drawdown", "market_regime", "notes",
     ],
+    "metrics_by_regime.csv": [
+        "pattern_id", "market_regime", "analysis_available", "empty_reason", "trade_count",
+        "event_count", "gross_pnl", "net_pnl", "avg_trade", "expectancy_r", "winrate",
+        "profit_factor", "max_drawdown", "best_trade", "worst_trade", "first_seen",
+        "last_seen", "notes",
+    ],
+    "metrics_by_entry_variant.csv": [
+        "pattern_id", "entry_variant_id", "analysis_available", "empty_reason", "trade_count",
+        "event_count", "gross_pnl", "net_pnl", "avg_trade", "expectancy_r", "winrate",
+        "profit_factor", "max_drawdown", "best_trade", "worst_trade", "first_seen",
+        "last_seen", "notes",
+    ],
 }
 
 TIMESTAMP_COLUMNS = {
@@ -118,6 +133,8 @@ TIMESTAMP_COLUMNS = {
     "metrics_by_pattern.csv": ["first_seen", "last_seen"],
     "metrics_by_ticker.csv": ["first_seen", "last_seen"],
     "metrics_by_period.csv": ["period_start", "period_end"],
+    "metrics_by_regime.csv": ["first_seen", "last_seen"],
+    "metrics_by_entry_variant.csv": ["first_seen", "last_seen"],
 }
 
 ACCOUNT_RE = re.compile(r"\b(?:DU|DUN|U|F)\d{5,}\b")
@@ -133,39 +150,7 @@ def main() -> int:
     parser.add_argument("package", type=Path)
     args = parser.parse_args()
     package = args.package
-    errors: list[str] = []
-    bridge_root = package.parent.parent
-
-    for rel in REQUIRED_BRIDGE_FILES:
-        if not (bridge_root / rel).exists():
-            errors.append(f"missing required bridge file: {rel}")
-
-    for rel in REQUIRED_FILES:
-        if not (package / rel).exists():
-            errors.append(f"missing required file: {rel}")
-
-    manifest = load_json(package / "manifest.json", errors)
-    if manifest:
-        if manifest.get("contains_sensitive_data") is not False:
-            errors.append("manifest.contains_sensitive_data must be false")
-        if manifest.get("account_ids_redacted") is not True:
-            errors.append("manifest.account_ids_redacted must be true")
-
-    csv_rows: dict[str, list[dict[str, str]]] = {}
-    for rel, expected_columns in CSV_COLUMNS.items():
-        path = package / rel
-        if not path.exists():
-            continue
-        rows, columns = read_csv(path, errors)
-        csv_rows[rel] = rows
-        missing = [column for column in expected_columns if column not in columns]
-        if missing:
-            errors.append(f"{rel}: missing columns: {', '.join(missing)}")
-        check_timestamps(rel, rows, errors)
-
-    check_sensitive_values(package, errors)
-    check_references(csv_rows, errors)
-    check_pnl(csv_rows.get("paper_trades.csv", []), errors)
+    errors, csv_rows = validate_package(package)
 
     if errors:
         print("AUDIT PACKAGE INVALID")
@@ -183,12 +168,120 @@ def main() -> int:
     return 0
 
 
+def validate_package(package: Path) -> tuple[list[str], dict[str, list[dict[str, str]]]]:
+    errors: list[str] = []
+    bridge_root = package.parent.parent
+
+    for rel in REQUIRED_BRIDGE_FILES:
+        if not (bridge_root / rel).exists():
+            errors.append(f"missing required bridge file: {rel}")
+
+    for rel in REQUIRED_FILES:
+        if not (package / rel).exists():
+            errors.append(f"missing required file: {rel}")
+
+    manifest = load_json(package / "manifest.json", errors)
+    director_gate = load_json(package / "director_gate_result.json", errors)
+    if manifest:
+        check_manifest(package, manifest, errors)
+    if director_gate:
+        check_director_gate_result(director_gate, errors)
+
+    csv_rows: dict[str, list[dict[str, str]]] = {}
+    for rel, expected_columns in CSV_COLUMNS.items():
+        path = package / rel
+        if not path.exists():
+            continue
+        rows, columns = read_csv(path, errors)
+        csv_rows[rel] = rows
+        missing = [column for column in expected_columns if column not in columns]
+        if missing:
+            errors.append(f"{rel}: missing columns: {', '.join(missing)}")
+        check_timestamps(rel, rows, errors)
+
+    check_sensitive_values(package, errors)
+    check_references(csv_rows, errors)
+    check_pnl(csv_rows.get("paper_trades.csv", []), errors)
+    check_manifest_counts(manifest, csv_rows, errors)
+    check_duplicate_reporting(manifest, csv_rows.get("pattern_events.csv", []), errors)
+    check_metric_coherence(csv_rows, errors)
+    check_bucket_breakdowns(csv_rows, errors)
+    return errors, csv_rows
+
+
 def load_json(path: Path, errors: list[str]) -> Any:
+    if not path.exists():
+        return None
     try:
         return json.loads(path.read_text(encoding="utf-8"))
     except Exception as exc:  # noqa: BLE001
         errors.append(f"{path.name}: invalid JSON: {exc}")
         return None
+
+
+def check_manifest(package: Path, manifest: dict[str, Any], errors: list[str]) -> None:
+    required_fields = [
+        "audit_id",
+        "created_at",
+        "repo_commit",
+        "repo_branch",
+        "patterns_detected",
+        "total_pattern_events",
+        "total_paper_trades",
+        "total_ib_fills",
+        "total_experiment_variants",
+        "duplicate_event_groups",
+        "duplicate_repeated_rows",
+        "metric_breakdowns",
+        "files",
+    ]
+    for field in required_fields:
+        if field not in manifest:
+            errors.append(f"manifest.{field} is required")
+    if manifest.get("contains_sensitive_data") is not False:
+        errors.append("manifest.contains_sensitive_data must be false")
+    if manifest.get("account_ids_redacted") is not True:
+        errors.append("manifest.account_ids_redacted must be true")
+    if manifest.get("orders_anonymized") is not True:
+        errors.append("manifest.orders_anonymized must be true")
+    if manifest.get("director_gate_required") is not True:
+        errors.append("manifest.director_gate_required must be true")
+    files = manifest.get("files")
+    if not isinstance(files, list):
+        errors.append("manifest.files must be a list")
+        return
+    listed_paths = {str(item.get("path", "")) for item in files if isinstance(item, dict)}
+    required_manifest_paths = set(REQUIRED_FILES) - {"director_gate_result.json"}
+    missing_listed = sorted(required_manifest_paths - listed_paths)
+    if missing_listed:
+        errors.append("manifest.files missing required paths: " + ", ".join(missing_listed))
+    for rel in listed_paths:
+        if rel and not (package / rel).exists():
+            errors.append(f"manifest.files lists missing file: {rel}")
+
+
+def check_director_gate_result(result: dict[str, Any], errors: list[str]) -> None:
+    status = result.get("status")
+    if status not in {"passed", "blocked", "invalid"}:
+        errors.append("director_gate_result.json status must be passed, blocked or invalid")
+    summary = result.get("summary")
+    if not isinstance(summary, dict):
+        errors.append("director_gate_result.json summary must be an object")
+        return
+    if summary.get("director_gate") not in {"passed", "blocked", "invalid"}:
+        errors.append("director_gate_result.json summary.director_gate must be present")
+    for field in ("by_regime", "by_entry_variant"):
+        value = summary.get(field)
+        if not isinstance(value, dict):
+            errors.append(f"director_gate_result.json summary.{field} must be present")
+            continue
+        available = value.get("available")
+        buckets = value.get("buckets") if isinstance(value.get("buckets"), list) else []
+        reason = str(value.get("empty_reason", "")).strip()
+        if available is False and not reason:
+            errors.append(f"director_gate_result.json summary.{field} is empty without empty_reason")
+        if available is True and not buckets:
+            errors.append(f"director_gate_result.json summary.{field} is available but has no buckets")
 
 
 def read_csv(path: Path, errors: list[str]) -> tuple[list[dict[str, str]], list[str]]:
@@ -261,6 +354,11 @@ def check_references(csv_rows: dict[str, list[dict[str, str]]], errors: list[str
         trade_id = row.get("trade_id")
         if trade_id and trade_id not in trade_ids:
             errors.append(f"ib_fills.csv:{idx}: unknown trade_id {trade_id}")
+        if str(row.get("account_id_redacted", "")).strip().lower() != "true":
+            errors.append(f"ib_fills.csv:{idx}: account_id_redacted must be true")
+        order_id_hash = str(row.get("order_id_hash", "")).strip()
+        if order_id_hash and order_id_hash.isdigit():
+            errors.append(f"ib_fills.csv:{idx}: order_id_hash appears to contain raw numeric order id")
 
 
 def check_pnl(rows: list[dict[str, str]], errors: list[str]) -> None:
@@ -276,6 +374,121 @@ def check_pnl(rows: list[dict[str, str]], errors: list[str]) -> None:
         expected = gross - commission - spread - slippage - fees
         if abs(expected - net) > Decimal("0.01"):
             errors.append(f"paper_trades.csv:{idx}: net_pnl formula mismatch expected {expected} got {net}")
+
+
+def check_manifest_counts(
+    manifest: Any,
+    csv_rows: dict[str, list[dict[str, str]]],
+    errors: list[str],
+) -> None:
+    if not isinstance(manifest, dict):
+        return
+    expected = {
+        "patterns_detected": len(csv_rows.get("pattern_catalog.csv", [])),
+        "total_pattern_events": len(csv_rows.get("pattern_events.csv", [])),
+        "total_paper_trades": len(csv_rows.get("paper_trades.csv", [])),
+        "total_ib_fills": len(csv_rows.get("ib_fills.csv", [])),
+        "total_experiment_variants": len(csv_rows.get("experiment_registry.csv", [])),
+        "total_metrics_by_regime_rows": len(csv_rows.get("metrics_by_regime.csv", [])),
+        "total_metrics_by_entry_variant_rows": len(csv_rows.get("metrics_by_entry_variant.csv", [])),
+    }
+    for field, observed in expected.items():
+        if field not in manifest:
+            errors.append(f"manifest.{field} is required")
+            continue
+        if as_int(manifest.get(field)) != observed:
+            errors.append(f"manifest.{field} mismatch expected {observed} got {manifest.get(field)}")
+
+
+def check_duplicate_reporting(
+    manifest: Any,
+    event_rows: list[dict[str, str]],
+    errors: list[str],
+) -> None:
+    if not isinstance(manifest, dict):
+        return
+    counts: dict[str, int] = {}
+    for row in event_rows:
+        group = str(row.get("duplicate_group_id", "")).strip()
+        if group:
+            counts[group] = counts.get(group, 0) + 1
+    repeated_counts = [count for count in counts.values() if count > 1]
+    duplicate_groups = len(repeated_counts)
+    duplicate_repeated_rows = sum(repeated_counts)
+    if as_int(manifest.get("duplicate_event_groups")) != duplicate_groups:
+        errors.append(
+            f"manifest.duplicate_event_groups mismatch expected {duplicate_groups} got {manifest.get('duplicate_event_groups')}"
+        )
+    if as_int(manifest.get("duplicate_repeated_rows")) != duplicate_repeated_rows:
+        errors.append(
+            f"manifest.duplicate_repeated_rows mismatch expected {duplicate_repeated_rows} got {manifest.get('duplicate_repeated_rows')}"
+        )
+
+
+def check_metric_coherence(csv_rows: dict[str, list[dict[str, str]]], errors: list[str]) -> None:
+    trades_by_pattern: dict[str, list[dict[str, str]]] = {}
+    for trade in csv_rows.get("paper_trades.csv", []):
+        trades_by_pattern.setdefault(trade.get("pattern_id", ""), []).append(trade)
+    for idx, row in enumerate(csv_rows.get("metrics_by_pattern.csv", []), start=2):
+        pid = row.get("pattern_id", "")
+        trades = trades_by_pattern.get(pid, [])
+        trade_count = as_int(row.get("trade_count"))
+        if trade_count != len(trades):
+            errors.append(f"metrics_by_pattern.csv:{idx}: trade_count expected {len(trades)} got {trade_count}")
+        if trade_count == 0:
+            for field in ("avg_trade", "median_trade", "winrate", "profit_factor", "expectancy", "max_drawdown"):
+                if str(row.get(field, "")).strip():
+                    errors.append(f"metrics_by_pattern.csv:{idx}: {field} must be empty when trade_count is zero")
+            continue
+        gross = sum(decimal_or_zero(trade.get("gross_pnl")) for trade in trades)
+        net = sum(decimal_or_zero(trade.get("net_pnl")) for trade in trades)
+        if abs(gross - decimal_or_zero(row.get("gross_pnl"))) > Decimal("0.01"):
+            errors.append(f"metrics_by_pattern.csv:{idx}: gross_pnl does not match paper_trades.csv")
+        if abs(net - decimal_or_zero(row.get("net_pnl"))) > Decimal("0.01"):
+            errors.append(f"metrics_by_pattern.csv:{idx}: net_pnl does not match paper_trades.csv")
+
+
+def check_bucket_breakdowns(csv_rows: dict[str, list[dict[str, str]]], errors: list[str]) -> None:
+    for rel, bucket_column in (
+        ("metrics_by_regime.csv", "market_regime"),
+        ("metrics_by_entry_variant.csv", "entry_variant_id"),
+    ):
+        rows = csv_rows.get(rel, [])
+        if not rows:
+            errors.append(f"{rel}: must contain bucket rows or one explicit empty_reason row")
+            continue
+        available_rows = [row for row in rows if truthy(row.get("analysis_available"))]
+        if not available_rows:
+            if not any(str(row.get("empty_reason", "")).strip() for row in rows):
+                errors.append(f"{rel}: empty breakdown requires non-empty empty_reason")
+            continue
+        for idx, row in enumerate(rows, start=2):
+            if not truthy(row.get("analysis_available")):
+                continue
+            if not str(row.get(bucket_column, "")).strip():
+                errors.append(f"{rel}:{idx}: {bucket_column} is required when analysis_available=true")
+            if as_int(row.get("trade_count")) <= 0:
+                errors.append(f"{rel}:{idx}: trade_count must be positive when analysis_available=true")
+
+
+def as_int(value: Any) -> int:
+    try:
+        text = str(value or "").strip()
+        return int(float(text)) if text else 0
+    except (TypeError, ValueError):
+        return 0
+
+
+def decimal_or_zero(value: Any) -> Decimal:
+    try:
+        text = str(value or "").strip()
+        return Decimal(text) if text else Decimal("0")
+    except InvalidOperation:
+        return Decimal("0")
+
+
+def truthy(value: Any) -> bool:
+    return str(value or "").strip().lower() in {"true", "1", "yes", "y"}
 
 
 if __name__ == "__main__":

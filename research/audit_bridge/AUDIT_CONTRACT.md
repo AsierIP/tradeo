@@ -28,7 +28,7 @@ Cada paquete debe contener:
 - Trades paper, incluidos ganadores, perdedores, flat, cancelados, parciales y abiertos.
 - Fills IB Paper anonimizados o archivo vacio con cabecera si no existen.
 - Registro de experimentos con variantes descartadas.
-- Metricas por patron, ticker y periodo.
+- Metricas por patron, ticker, periodo, regimen y entry variant.
 - Configuracion usada para detectar, evaluar y ejecutar.
 - Linaje de datos y problemas conocidos.
 
@@ -52,6 +52,9 @@ research/audit_bridge/
     metrics_by_pattern.csv
     metrics_by_ticker.csv
     metrics_by_period.csv
+    metrics_by_regime.csv
+    metrics_by_entry_variant.csv
+    director_gate_result.json
     code_references.md
     config_snapshot/
       detector_config.json
@@ -166,6 +169,8 @@ Metricas minimas:
 - Sharpe, Sortino y Calmar si hay suficientes trades.
 - Distribucion por ticker.
 - Distribucion por periodo.
+- Distribucion por regimen con rendimiento separado cuando haya `closed_lab_trades`; si no, razon explicita.
+- Distribucion por `entry_variant` con rendimiento separado cuando haya `closed_lab_trades`; si no, razon explicita.
 - Separacion de costes.
 
 ## L. Criterios De Aprobacion, Refinamiento O Descarte
@@ -200,6 +205,8 @@ Estados esperados:
 - Hay variantes descartadas y numero total de experimentos probados.
 - Hay datos por ticker y periodo.
 - Hay fills IB Paper anonimizados o archivo vacio con cabecera.
+- Hay `metrics_by_regime.csv` y `metrics_by_entry_variant.csv`, o filas explicitamente vacias con `empty_reason`.
+- Hay `director_gate_result.json`.
 - Hay referencias de codigo y configuracion.
 - Cada muestra indica independencia o limitacion conocida.
 - Hay separacion in-sample, out-of-sample y paper-live.

@@ -1,0 +1,86 @@
+{
+  "audit_id": "TRADEO-AUDIT-20260609-1502_cron_lab_research",
+  "cadence": "manual",
+  "created_at": "2026-06-09T15:03:25+00:00",
+  "package": "research/audit_bridge/requests/TRADEO-AUDIT-20260609-1502_cron_lab_research",
+  "api_url": "http://localhost:8000/api",
+  "director_gate_status": "blocked",
+  "commands": [
+    {
+      "name": "export",
+      "command": [
+        "/usr/bin/python3",
+        "/home/vboxuser/tradeo/research/audit_bridge/export_audit_package.py",
+        "--audit-id",
+        "TRADEO-AUDIT-20260609-1502_cron_lab_research",
+        "--api-url",
+        "http://localhost:8000/api",
+        "--pattern-limit",
+        "120",
+        "--match-limit",
+        "300"
+      ],
+      "exit_code": 0,
+      "stdout": "{\n  \"audit_id\": \"TRADEO-AUDIT-20260609-1502_cron_lab_research\",\n  \"patterns_exported\": 120,\n  \"events_exported\": 1459,\n  \"paper_trades_exported\": 0,\n  \"fills_exported\": 2,\n  \"experiments_exported\": 720,\n  \"package\": \"research/audit_bridge/requests/TRADEO-AUDIT-20260609-1502_cron_lab_research\"\n}\n",
+      "stderr": ""
+    },
+    {
+      "name": "validate",
+      "command": [
+        "/usr/bin/python3",
+        "/home/vboxuser/tradeo/research/audit_bridge/validate_audit_package.py",
+        "/home/vboxuser/tradeo/research/audit_bridge/requests/TRADEO-AUDIT-20260609-1502_cron_lab_research"
+      ],
+      "exit_code": 1,
+      "stdout": "AUDIT PACKAGE INVALID\n- ib_fills.csv:2: unknown trade_id 5\n- ib_fills.csv:3: unknown trade_id 1\n",
+      "stderr": ""
+    },
+    {
+      "name": "director_gate",
+      "command": [
+        "/usr/bin/python3",
+        "/home/vboxuser/tradeo/research/audit_bridge/director_gate.py",
+        "/home/vboxuser/tradeo/research/audit_bridge/requests/TRADEO-AUDIT-20260609-1502_cron_lab_research",
+        "--json-output",
+        "/home/vboxuser/tradeo/research/audit_bridge/requests/TRADEO-AUDIT-20260609-1502_cron_lab_research/director_gate_result.json",
+        "--markdown-output",
+        "/home/vboxuser/tradeo/research/audit_bridge/requests/TRADEO-AUDIT-20260609-1502_cron_lab_research/director_gate_result.md",
+        "--allow-blocked-exit-zero"
+      ],
+      "exit_code": 0,
+      "stdout": "DIRECTOR GATE BLOCKED\n- paper_trades.csv has zero rows; no pattern can be approved beyond research/watchlist.\n- promoted statuses require linked paper trades; offenders: PATTERN_000282, PATTERN_000364, PATTERN_000366\n- promoted statuses require at least 30 IB Paper fills; package has 2.\n- research R metrics are populated in operational metric columns while trade_count is zero; offenders: PATTERN_000200, PATTERN_000466, PATTERN_000410, PATTERN_000617, PATTERN_000103, PATTERN_000349, PATTERN_000223, PATTERN_000258, PATTERN_000237, PATTERN_000490 (+110 more)\n- duplicate_group_id repeats exceed gate: 189/1459 rows (12.95%).\n- 190 event rows are not verified independent samples.\n- 190 event rows have pending/unknown independence labels.\n- independent_sample_count is not reconstructable from exported event rows for 120 patterns.\n- no experiment has explicit out_of_sample_start/out_of_sample_end boundaries.\n- no train-only fit evidence fields found; cannot prove scaler/clustering/R:R selection avoided OOS contamination.\n- 720 experiment variants were exported without multiple-testing adjusted evidence.\n{\n  \"patterns\": 120,\n  \"events\": 1459,\n  \"paper_trades\": 0,\n  \"fills\": 2,\n  \"experiments\": 720,\n  \"promoted_patterns\": 3,\n  \"promoted_pattern_ids_preview\": [\n    \"PATTERN_000282\",\n    \"PATTERN_000364\",\n    \"PATTERN_000366\"\n  ],\n  \"unknown_statuses\": [],\n  \"duplicate_repeated_rows\": 189,\n  \"duplicate_repeated_row_share\": 0.129541,\n  \"non_independent_event_rows\": 190,\n  \"pending_independence_rows\": 190,\n  \"sample_count_mismatch_patterns\": 120,\n  \"missing_oos_experiments\": 720,\n  \"missing_lookahead_columns\": [],\n  \"research_metric_column_offenders\": 120,\n  \"train_only_evidence_missing\": true,\n  \"director_gate\": \"blocked\"\n}\n",
+      "stderr": ""
+    }
+  ],
+  "agent_review": {
+    "audit_id": "TRADEO-AUDIT-20260609-1502_cron_lab_research",
+    "cadence": "manual",
+    "agent": "tradeo-internal-daily-auditor",
+    "model_profile": "gpt-5.5-xhigh-specified-in-skill; deterministic fallback used by runner",
+    "status": "blocked",
+    "priority": "P0",
+    "failed_commands": [
+      "validate"
+    ],
+    "blocker_count": 11,
+    "top_blockers": [
+      "paper_trades.csv has zero rows; no pattern can be approved beyond research/watchlist.",
+      "promoted statuses require linked paper trades; offenders: PATTERN_000282, PATTERN_000364, PATTERN_000366",
+      "promoted statuses require at least 30 IB Paper fills; package has 2.",
+      "research R metrics are populated in operational metric columns while trade_count is zero; offenders: PATTERN_000200, PATTERN_000466, PATTERN_000410, PATTERN_000617, PATTERN_000103, PATTERN_000349, PATTERN_000223, PATTERN_000258, PATTERN_000237, PATTERN_000490 (+110 more)",
+      "duplicate_group_id repeats exceed gate: 189/1459 rows (12.95%).",
+      "190 event rows are not verified independent samples.",
+      "190 event rows have pending/unknown independence labels.",
+      "independent_sample_count is not reconstructable from exported event rows for 120 patterns.",
+      "no experiment has explicit out_of_sample_start/out_of_sample_end boundaries.",
+      "no train-only fit evidence fields found; cannot prove scaler/clustering/R:R selection avoided OOS contamination."
+    ],
+    "director_handoff": "ChatGPT Director must review weekly packs or any P0 blocker before promotion.",
+    "promotion_decision": "stay_in_research",
+    "required_next_actions": [
+      "Fix failed audit commands before trusting the package.",
+      "Keep all patterns in research/watchlist until paper trades are exported.",
+      "Add explicit OOS/walk-forward boundaries and metrics."
+    ]
+  }
+}

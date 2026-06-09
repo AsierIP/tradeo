@@ -126,6 +126,44 @@ button:disabled { opacity: .55; cursor: wait; }
 .compact-scroll table { min-width: 780px; }
 .signal-scroll { max-height: 470px; }
 .signal-scroll table { min-width: 940px; }
+.diagnostics-scroll { max-height: 430px; }
+.diagnostics-scroll table { min-width: 1320px; }
+.diagnostics-scroll th,
+.diagnostics-scroll td {
+  padding: 9px 8px;
+  font-size: .82rem;
+  vertical-align: top;
+}
+.wrap-cell {
+  max-width: 190px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.25;
+}
+.score-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 62px;
+}
+.score-stack small { color: var(--muted); font-size: .68rem; }
+.gate-components {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-width: 250px;
+}
+.gate-pill {
+  border: 1px solid rgba(255,255,255,.13);
+  background: rgba(255,255,255,.06);
+  border-radius: 999px;
+  padding: 3px 7px;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+.gate-pill.good { color: var(--good); border-color: rgba(134, 239, 172, .22); background: rgba(134, 239, 172, .08); }
+.gate-pill.warn { color: var(--warn); border-color: rgba(253, 230, 138, .22); background: rgba(253, 230, 138, .08); }
+.gate-pill.bad { color: var(--bad); border-color: rgba(252, 165, 165, .22); background: rgba(252, 165, 165, .08); }
 .positive { color: var(--good); font-weight: 800; }
 .negative { color: var(--bad); font-weight: 800; }
 .lab-status-grid {

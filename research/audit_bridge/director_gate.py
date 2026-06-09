@@ -19,12 +19,17 @@ EXECUTION_PROMOTION_STATUSES = {
     "approved",
     "live_candidate",
     "production_candidate",
+    "production",
 }
 
 RESEARCH_ONLY_STATUSES = {
     "lab",
     "lab_watchlist",
     "lab_candidate",
+    "director_review",
+    "needs_confirmation",
+    "confirmed_candidate",
+    "failed_confirmation",
     "rejected",
     "discard",
     "freeze",
@@ -124,6 +129,8 @@ def load_rows(package: Path) -> dict[str, list[dict[str, str]]]:
         "fills": read_csv(package / "ib_fills.csv"),
         "experiments": read_csv(package / "experiment_registry.csv"),
         "metrics": read_csv(package / "metrics_by_pattern.csv"),
+        "metrics_by_regime": read_csv_optional(package / "metrics_by_regime.csv"),
+        "metrics_by_entry_variant": read_csv_optional(package / "metrics_by_entry_variant.csv"),
     }
     return rows
 
@@ -134,6 +141,12 @@ def read_csv(path: Path) -> list[dict[str, str]]:
         if reader.fieldnames is None:
             raise GateInputsError(f"{path.name} has no CSV header")
         return list(reader)
+
+
+def read_csv_optional(path: Path) -> list[dict[str, str]]:
+    if not path.exists():
+        return []
+    return read_csv(path)
 
 
 def evaluate(
@@ -149,6 +162,8 @@ def evaluate(
     fills = rows["fills"]
     experiments = rows["experiments"]
     metrics = rows["metrics"]
+    metrics_by_regime = rows.get("metrics_by_regime", [])
+    metrics_by_entry_variant = rows.get("metrics_by_entry_variant", [])
 
     blockers: list[str] = []
     statuses = {row.get("pattern_id", ""): (row.get("status") or "").strip().lower() for row in catalog}
@@ -277,6 +292,38 @@ def evaluate(
             f"{len(experiments)} experiment variants were exported without multiple-testing adjusted evidence."
         )
 
+    by_regime = bucket_breakdown(
+        metrics_by_regime,
+        bucket_column="market_regime",
+        missing_reason=(
+            "metrics_by_regime.csv is missing or empty; regenerate audit export with closed_lab_trades "
+            "or an explicit no_closed_lab_trades reason."
+        ),
+    )
+    by_entry_variant = bucket_breakdown(
+        metrics_by_entry_variant,
+        bucket_column="entry_variant_id",
+        missing_reason=(
+            "metrics_by_entry_variant.csv is missing or empty; regenerate audit export with "
+            "signal.metadata_json.entry_variant_id on closed_lab_trades or an explicit no_closed_lab_trades reason."
+        ),
+    )
+    pattern_recommendations = build_pattern_recommendations(
+        catalog=catalog,
+        events=events,
+        metrics=metrics,
+        metrics_by_regime=metrics_by_regime,
+        metrics_by_entry_variant=metrics_by_entry_variant,
+        min_paper_trades_for_promotion=min_paper_trades_for_promotion,
+        statuses=statuses,
+    )
+    actionable_recommendations = package_recommendations(
+        blockers=blockers,
+        pattern_recommendations=pattern_recommendations,
+        min_paper_trades_for_promotion=min_paper_trades_for_promotion,
+        min_fills_for_promotion=min_fills_for_promotion,
+    )
+
     summary = {
         "patterns": len(catalog),
         "events": len(events),
@@ -295,6 +342,11 @@ def evaluate(
         "missing_lookahead_columns": missing_lookahead_columns,
         "research_metric_column_offenders": len(research_metric_offenders),
         "train_only_evidence_missing": train_only_evidence_missing,
+        "by_regime": by_regime,
+        "by_entry_variant": by_entry_variant,
+        "actionable_recommendations": actionable_recommendations,
+        "pattern_recommendation_count": len(pattern_recommendations),
+        "pattern_recommendations": pattern_recommendations,
         "director_gate": "blocked" if blockers else "passed",
     }
     return blockers, summary
@@ -310,6 +362,276 @@ def research_metrics_in_operational_columns(metrics: list[dict[str, str]]) -> li
     return offenders
 
 
+def bucket_breakdown(
+    rows: list[dict[str, str]],
+    *,
+    bucket_column: str,
+    missing_reason: str,
+) -> dict[str, Any]:
+    if not rows:
+        return {"available": False, "buckets": [], "empty_reason": missing_reason}
+    available_rows = [
+        row
+        for row in rows
+        if truthy(row.get("analysis_available")) and as_int(row.get("trade_count")) > 0
+    ]
+    if not available_rows:
+        reason = next((row.get("empty_reason", "").strip() for row in rows if row.get("empty_reason")), "")
+        return {
+            "available": False,
+            "buckets": [],
+            "empty_reason": reason or missing_reason,
+        }
+    ranked = sorted(
+        available_rows,
+        key=lambda row: (
+            as_float(row.get("expectancy_r")),
+            as_float(row.get("net_pnl")),
+            as_int(row.get("trade_count")),
+        ),
+        reverse=True,
+    )
+    buckets = [bucket_summary_row(row, bucket_column) for row in ranked[:20]]
+    return {
+        "available": True,
+        "bucket_count": len(available_rows),
+        "best": bucket_summary_row(ranked[0], bucket_column),
+        "worst": bucket_summary_row(ranked[-1], bucket_column),
+        "buckets": buckets,
+        "empty_reason": "",
+    }
+
+
+def bucket_summary_row(row: dict[str, str], bucket_column: str) -> dict[str, Any]:
+    return {
+        "pattern_id": row.get("pattern_id", ""),
+        "bucket": row.get(bucket_column, "") or "unknown",
+        "trade_count": as_int(row.get("trade_count")),
+        "net_pnl": as_float(row.get("net_pnl")),
+        "expectancy_r": as_float(row.get("expectancy_r")),
+        "winrate": as_float(row.get("winrate")),
+        "profit_factor": as_float(row.get("profit_factor")),
+        "max_drawdown": as_float(row.get("max_drawdown")),
+    }
+
+
+def build_pattern_recommendations(
+    *,
+    catalog: list[dict[str, str]],
+    events: list[dict[str, str]],
+    metrics: list[dict[str, str]],
+    metrics_by_regime: list[dict[str, str]],
+    metrics_by_entry_variant: list[dict[str, str]],
+    min_paper_trades_for_promotion: int,
+    statuses: dict[str, str],
+) -> list[dict[str, Any]]:
+    metrics_by_pattern = {row.get("pattern_id", ""): row for row in metrics}
+    events_by_pattern: dict[str, list[dict[str, str]]] = {}
+    for row in events:
+        events_by_pattern.setdefault(row.get("pattern_id", ""), []).append(row)
+    best_regime_by_pattern, worst_regime_by_pattern = pattern_bucket_extremes(
+        metrics_by_regime,
+        bucket_column="market_regime",
+    )
+    best_variant_by_pattern, worst_variant_by_pattern = pattern_bucket_extremes(
+        metrics_by_entry_variant,
+        bucket_column="entry_variant_id",
+    )
+
+    recommendations: list[dict[str, Any]] = []
+    for row in catalog:
+        pid = row.get("pattern_id", "")
+        metric = metrics_by_pattern.get(pid, {})
+        trade_count = as_int(metric.get("trade_count"))
+        independent_samples = as_int(metric.get("independent_sample_count"))
+        ticker_count = as_int(metric.get("ticker_count"))
+        status = statuses.get(pid, "")
+        trades_remaining = max(0, min_paper_trades_for_promotion - trade_count)
+        event_blockers = event_gate_blockers(events_by_pattern.get(pid, []))
+        actions: list[str] = []
+
+        active_research_statuses = {
+            "lab",
+            "lab_watchlist",
+            "lab_candidate",
+            "director_review",
+            "needs_confirmation",
+            "confirmed_candidate",
+        }
+        rejected_statuses = {"rejected", "discard", "freeze", "failed_confirmation"}
+        if status in EXECUTION_PROMOTION_STATUSES and trades_remaining:
+            actions.append(
+                f"freeze promoted status; needs {trades_remaining} more linked paper trades before promotion evidence exists"
+            )
+        elif (
+            status in active_research_statuses
+            and trade_count == 0
+            and independent_samples >= 100
+            and ticker_count >= 8
+        ):
+            actions.append(
+                "promising research candidate without confirmation; collect controlled paper trades before ranking by PnL"
+            )
+        elif status in rejected_statuses and trade_count == 0 and independent_samples >= 100:
+            actions.append(
+                "broad rejected research memory; keep frozen unless a new hypothesis explains the prior rejection"
+            )
+        elif trades_remaining:
+            actions.append(f"collect {trades_remaining} more closed paper trades before Director review")
+
+        if event_blockers["entry_gate"]:
+            actions.append(
+                f"debug entry gate before more paper allocation; {event_blockers['entry_gate']} events mention entry-gate blockage"
+            )
+        if event_blockers["volume"]:
+            actions.append(
+                f"review volume/liquidity filter; {event_blockers['volume']} events mention volume blockage"
+            )
+        if not best_variant_by_pattern.get(pid):
+            actions.append("entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id")
+        if not best_regime_by_pattern.get(pid):
+            actions.append("regime performance unavailable; missing closed_lab_trades with regime_key")
+
+        if not actions:
+            actions.append("review Director packet; no automatic promotion")
+
+        recommendations.append(
+            {
+                "pattern_id": pid,
+                "pattern_name": row.get("pattern_name", ""),
+                "status": status,
+                "independent_sample_count": independent_samples,
+                "ticker_count": ticker_count,
+                "trade_count": trade_count,
+                "trades_remaining_for_promotion": trades_remaining,
+                "best_entry_variant": best_variant_by_pattern.get(pid, {}),
+                "worst_entry_variant": worst_variant_by_pattern.get(pid, {}),
+                "best_regime": best_regime_by_pattern.get(pid, {}),
+                "worst_regime": worst_regime_by_pattern.get(pid, {}),
+                "actions": actions,
+            }
+        )
+    return sorted(
+        recommendations,
+        key=lambda item: (
+            int(item["trades_remaining_for_promotion"] == 0),
+            int(item["status"] in EXECUTION_PROMOTION_STATUSES),
+            int(item["independent_sample_count"]),
+            int(item["ticker_count"]),
+        ),
+        reverse=True,
+    )
+
+
+def pattern_bucket_extremes(
+    rows: list[dict[str, str]],
+    *,
+    bucket_column: str,
+) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
+    grouped: dict[str, list[dict[str, str]]] = {}
+    for row in rows:
+        if not truthy(row.get("analysis_available")) or as_int(row.get("trade_count")) <= 0:
+            continue
+        grouped.setdefault(row.get("pattern_id", ""), []).append(row)
+    best: dict[str, dict[str, Any]] = {}
+    worst: dict[str, dict[str, Any]] = {}
+    for pid, pattern_rows in grouped.items():
+        ranked = sorted(
+            pattern_rows,
+            key=lambda row: (
+                as_float(row.get("expectancy_r")),
+                as_float(row.get("net_pnl")),
+                as_int(row.get("trade_count")),
+            ),
+            reverse=True,
+        )
+        best[pid] = bucket_summary_row(ranked[0], bucket_column)
+        worst[pid] = bucket_summary_row(ranked[-1], bucket_column)
+    return best, worst
+
+
+def event_gate_blockers(rows: list[dict[str, str]]) -> dict[str, int]:
+    entry_gate = 0
+    volume = 0
+    for row in rows:
+        text = " ".join(
+            str(row.get(column, "")).lower()
+            for column in ("reason_not_traded", "notes")
+        )
+        if "entry gate" in text or "entry_gate" in text or "no_operational_trigger" in text:
+            entry_gate += 1
+        if "volume" in text or "liquidity" in text:
+            volume += 1
+    return {"entry_gate": entry_gate, "volume": volume}
+
+
+def package_recommendations(
+    *,
+    blockers: list[str],
+    pattern_recommendations: list[dict[str, Any]],
+    min_paper_trades_for_promotion: int,
+    min_fills_for_promotion: int,
+) -> list[dict[str, Any]]:
+    recommendations: list[dict[str, Any]] = []
+    if any("paper_trades.csv has zero rows" in blocker for blocker in blockers):
+        recommendations.append(
+            {
+                "action": "keep_all_patterns_research_only",
+                "priority": "P0",
+                "reason": "paper_trades.csv has zero rows; no closed_lab_trades can confirm any pattern",
+                "required_data": f"at least {min_paper_trades_for_promotion} linked paper trades for any promoted pattern",
+            }
+        )
+    if any("ib_fills.csv has zero rows" in blocker for blocker in blockers):
+        recommendations.append(
+            {
+                "action": "ingest_ib_paper_fills",
+                "priority": "P0",
+                "reason": "fills, commissions, spread and slippage are unavailable",
+                "required_data": f"at least {min_fills_for_promotion} anonymized IB Paper fills for promoted patterns",
+            }
+        )
+    if any("duplicate_group_id repeats" in blocker for blocker in blockers):
+        recommendations.append(
+            {
+                "action": "deduplicate_or_explain_events",
+                "priority": "P0",
+                "reason": "duplicate event rows can inflate sample counts and apparent edge",
+            }
+        )
+    if any("out_of_sample" in blocker or "train-only" in blocker for blocker in blockers):
+        recommendations.append(
+            {
+                "action": "add_oos_and_train_only_evidence",
+                "priority": "P0",
+                "reason": "Director cannot separate discovery from validation without split evidence",
+            }
+        )
+    promising = [
+        item
+        for item in pattern_recommendations
+        if any("promising research candidate" in action for action in item.get("actions", []))
+    ][:10]
+    if promising:
+        recommendations.append(
+            {
+                "action": "prioritize_controlled_confirmation",
+                "priority": "P1",
+                "patterns": [item["pattern_id"] for item in promising],
+                "reason": "these patterns have samples/tickers but no paper confirmation",
+            }
+        )
+    if not recommendations:
+        recommendations.append(
+            {
+                "action": "prepare_director_review_packet",
+                "priority": "P2",
+                "reason": "gate did not find blocking package-level issues; Director still decides manually",
+            }
+        )
+    return recommendations
+
+
 def nonzero_or_nonblank(value: str | None) -> bool:
     text = (value or "").strip()
     if not text:
@@ -321,13 +643,18 @@ def nonzero_or_nonblank(value: str | None) -> bool:
 
 
 def result_payload(package: Path, status: str, blockers: list[str], summary: dict[str, Any]) -> dict[str, Any]:
-    return {
+    payload = {
         "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "package": str(package),
         "status": status,
         "blockers": blockers,
         "summary": summary,
     }
+    if summary.get("actionable_recommendations"):
+        payload["recommendations"] = summary["actionable_recommendations"]
+    if summary.get("pattern_recommendations"):
+        payload["pattern_recommendations"] = summary["pattern_recommendations"]
+    return payload
 
 
 def write_outputs(result: dict[str, Any], json_output: Path | None, markdown_output: Path | None) -> None:
@@ -351,6 +678,27 @@ def write_outputs(result: dict[str, Any], json_output: Path | None, markdown_out
             lines.extend(f"- {blocker}" for blocker in blockers)
         else:
             lines.append("- None")
+        recommendations = result.get("recommendations") or []
+        lines.extend(["", "## Recommendations", ""])
+        if recommendations:
+            for recommendation in recommendations:
+                action = recommendation.get("action", "review")
+                priority = recommendation.get("priority", "")
+                reason = recommendation.get("reason", "")
+                lines.append(f"- `{priority}` `{action}`: {reason}".strip())
+        else:
+            lines.append("- None")
+        pattern_recommendations = result.get("pattern_recommendations") or []
+        lines.extend(["", "## Pattern Actions", ""])
+        if pattern_recommendations:
+            for item in pattern_recommendations[:40]:
+                actions = "; ".join(str(action) for action in item.get("actions", [])[:3])
+                lines.append(
+                    f"- `{item.get('pattern_id')}` trades={item.get('trade_count')} "
+                    f"remaining={item.get('trades_remaining_for_promotion')}: {actions}"
+                )
+        else:
+            lines.append("- None")
         lines.extend(["", "## Summary", "", "```json", json.dumps(result.get("summary", {}), indent=2, ensure_ascii=False), "```", ""])
         markdown_output.write_text("\n".join(lines), encoding="utf-8")
 
@@ -361,6 +709,18 @@ def as_int(value: str | None) -> int:
         return int(float(text)) if text else 0
     except ValueError:
         return 0
+
+
+def as_float(value: str | None) -> float:
+    try:
+        text = (value or "").strip()
+        return float(text) if text else 0.0
+    except ValueError:
+        return 0.0
+
+
+def truthy(value: str | None) -> bool:
+    return (value or "").strip().lower() in {"true", "1", "yes", "y"}
 
 
 def has_multiple_testing_columns(rows: list[dict[str, str]]) -> bool:

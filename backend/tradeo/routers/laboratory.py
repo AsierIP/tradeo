@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from tradeo.core.security import require_admin
 from tradeo.db.session import get_db
-from tradeo.schemas import PatternEntryScanRequest, PatternEntryScanResponse
+from tradeo.schemas import LabDiagnosticsResponse, PatternEntryScanRequest, PatternEntryScanResponse
+from tradeo.services.lab_diagnostics import laboratory_diagnostics
 from tradeo.services.module_dashboard import module_overview
 from tradeo.services.pattern_entry_scanner import (
     PatternEntryScanner,
@@ -29,6 +30,15 @@ def laboratory_overview(
     db: Session = Depends(get_db),
 ) -> dict[str, object]:
     return module_overview(db, "laboratory")
+
+
+@router.get("/diagnostics", response_model=LabDiagnosticsResponse)
+def laboratory_diagnostics_view(
+    limit: int = Query(default=24, ge=1, le=100),
+    _: str = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> LabDiagnosticsResponse:
+    return LabDiagnosticsResponse(**laboratory_diagnostics(db, limit=limit))
 
 
 @router.post("/scan", response_model=PatternEntryScanResponse)
