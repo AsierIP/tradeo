@@ -1,9 +1,15 @@
 from __future__ import annotations
 
+import gzip
+import hashlib
+import json
 from datetime import date, timedelta
+from pathlib import Path
 
 import numpy as np
 
+from tradeo.agents.pattern_discovery_lab_agent import PatternDiscoveryLabAgent
+from tradeo.core.config import Settings
 from tradeo.research.cluster_research_engine import ClusterResearchEngine
 from tradeo.research.types import ClusterCandidate, ForwardOutcome, WindowSample
 from tradeo.research.validation_gate import ValidationGate
@@ -442,3 +448,43 @@ def test_validation_gate_rejects_failed_cost_stress() -> None:
     evaluated = ValidationGate().evaluate(candidate)
     assert not evaluated.validation_passed
     assert any("coste x2" in reason for reason in evaluated.validation_reasons)
+
+
+def test_lab_agent_persists_compressed_event_ledger(tmp_path: Path) -> None:
+    candidate = ClusterCandidate(
+        pattern_key="family/unsafe pattern",
+        name="auditable",
+        side="long",
+        timeframe="1d",
+        window_size=20,
+        cluster_id=1,
+        centroid=[],
+        sample_count=2,
+        symbol_count=1,
+        year_count=1,
+        score=0.0,
+        validation_passed=False,
+        validation_reasons=[],
+        metrics={
+            "event_ledger": [
+                {"symbol": "AAA", "window_end": "2024-01-01", "result_r": 1.2},
+                {"symbol": "BBB", "window_end": "2024-01-02", "result_r": -1.0},
+            ],
+        },
+        feature_summary={},
+        examples=[],
+    )
+    agent = PatternDiscoveryLabAgent(provider=object(), settings=Settings(reports_dir=str(tmp_path)))
+
+    assert agent._write_event_ledgers(42, [candidate]) == 1
+
+    path = Path(str(candidate.metrics["event_ledger_path"]))
+    raw = gzip.decompress(path.read_bytes())
+    payload = json.loads(raw)
+    assert path.name == "family_unsafe_pattern.json.gz"
+    assert payload["event_count"] == 2
+    assert payload["events"][0]["symbol"] == "AAA"
+    assert candidate.metrics["event_ledger_sha256"] == hashlib.sha256(raw).hexdigest()
+    assert candidate.metrics["event_ledger_persisted"] is True
+    assert "event_ledger" not in candidate.metrics
+    assert len(candidate.metrics["event_ledger_preview"]) == 2

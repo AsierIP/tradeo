@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import gzip
+import hashlib
 import json
 import time
 from dataclasses import dataclass
@@ -88,11 +90,13 @@ class PatternDiscoveryLabAgent:
                 walk_forward_embargo_samples=settings.discovery_walk_forward_embargo_samples,
                 cost_stress_multipliers=settings.discovery_cost_stress_multiplier_list,
                 required_cost_stress_multiplier=settings.discovery_required_cost_stress_multiplier,
+                event_ledger_limit=0,
             )
             raw_candidates = engine.discover(samples)
             candidates = ValidationGate(settings).evaluate_many(raw_candidates)
             accepted = [c for c in candidates if c.validation_passed]
             rejected = [c for c in candidates if not c.validation_passed]
+            ledger_artifacts = self._write_event_ledgers(run.id, candidates)
             stored = NovelPatternRegistry().store_candidates(
                 db,
                 candidates,
@@ -125,6 +129,7 @@ class PatternDiscoveryLabAgent:
                         "accepted": len(accepted),
                         "rejected": len(rejected),
                         "stored": len(stored),
+                        "event_ledgers": ledger_artifacts,
                         "report_path": str(report_path) if report_path else None,
                     },
                 )
@@ -306,6 +311,10 @@ class PatternDiscoveryLabAgent:
             "drift_score": metrics.get("drift_score"),
             "operational_trigger": metrics.get("operational_trigger", {}),
             "event_ledger_count": metrics.get("event_ledger_count", 0),
+            "event_ledger_path": metrics.get("event_ledger_path"),
+            "event_ledger_sha256": metrics.get("event_ledger_sha256"),
+            "event_ledger_compressed_bytes": metrics.get("event_ledger_compressed_bytes"),
+            "event_ledger_uncompressed_bytes": metrics.get("event_ledger_uncompressed_bytes"),
             "walk_forward_fold_count": metrics.get("walk_forward_fold_count", 0),
             "walk_forward_positive_fold_rate": metrics.get("walk_forward_positive_fold_rate", 0.0),
             "walk_forward_avg_expectancy_r": metrics.get("walk_forward_avg_expectancy_r", 0.0),
@@ -328,6 +337,48 @@ class PatternDiscoveryLabAgent:
                 for e in candidate.examples[:5]
             ],
         }
+
+    def _write_event_ledgers(self, run_id: int, candidates: list[Any]) -> int:
+        settings = self.settings
+        assert settings is not None
+        ledger_dir = settings.reports_path / "research" / "event_ledgers" / f"run_{run_id}"
+        written = 0
+        for candidate in candidates:
+            ledger = candidate.metrics.get("event_ledger")
+            if not isinstance(ledger, list):
+                continue
+            ledger_dir.mkdir(parents=True, exist_ok=True)
+            payload = {
+                "run_id": run_id,
+                "pattern_key": candidate.pattern_key,
+                "name": candidate.name,
+                "side": candidate.side,
+                "timeframe": candidate.timeframe,
+                "window_size": candidate.window_size,
+                "cluster_id": candidate.cluster_id,
+                "event_count": len(ledger),
+                "events": ledger,
+            }
+            raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")
+            digest = hashlib.sha256(raw).hexdigest()
+            compressed = gzip.compress(raw, compresslevel=9, mtime=0)
+            path = ledger_dir / f"{self._safe_artifact_stem(candidate.pattern_key)}.json.gz"
+            path.write_bytes(compressed)
+            candidate.metrics["event_ledger_path"] = str(path)
+            candidate.metrics["event_ledger_sha256"] = digest
+            candidate.metrics["event_ledger_count"] = len(ledger)
+            candidate.metrics["event_ledger_compressed_bytes"] = len(compressed)
+            candidate.metrics["event_ledger_uncompressed_bytes"] = len(raw)
+            candidate.metrics["event_ledger_persisted"] = True
+            candidate.metrics["event_ledger_preview"] = ledger[:5]
+            candidate.metrics.pop("event_ledger", None)
+            written += 1
+        return written
+
+    @staticmethod
+    def _safe_artifact_stem(value: object) -> str:
+        stem = "".join(ch if ch.isalnum() or ch in {"-", "_", "."} else "_" for ch in str(value))
+        return stem.strip("._")[:120] or "pattern"
 
     def _write_report(
         self,
@@ -401,6 +452,7 @@ class PatternDiscoveryLabAgent:
                     f"- Walk-forward: {pattern.get('walk_forward_positive_fold_rate')} positive fold rate · avg {pattern.get('walk_forward_avg_expectancy_r')}R · min {pattern.get('walk_forward_min_expectancy_r')}R",
                     f"- Null/CI: {pattern.get('null_method')} · p_adj {pattern.get('adjusted_p_value')} · CI {pattern.get('expectancy_ci_low')}..{pattern.get('expectancy_ci_high')}R · overfit {pattern.get('overfit_score')}",
                     f"- Cost stress passed: {pattern.get('cost_stress_passed')} · {pattern.get('cost_stress')}",
+                    f"- Ledger: {pattern.get('event_ledger_count')} eventos · {pattern.get('event_ledger_path')} · sha256 {pattern.get('event_ledger_sha256')}",
                     f"- R:R estimado: {pattern['reward_risk_estimate']} · Hit 4R: {pattern['hit_4r_rate']} · DD: {pattern.get('best_max_drawdown_r')}R",
                     f"- OOS expectancy: {pattern['out_of_sample_expectancy_r']}R · estabilidad: {pattern['stability_score']}",
                     f"- Razones/avisos: {', '.join(pattern.get('validation_reasons') or ['sin incidencias'])}",

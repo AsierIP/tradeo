@@ -551,7 +551,10 @@ class ClusterResearchEngine:
         train_ids = {id(sample) for sample in train_samples}
         holdout_ids = {id(sample) for sample in holdout_samples}
         ledger: list[dict[str, object]] = []
-        for sample in sorted(samples, key=lambda s: s.end)[: self.event_ledger_limit]:
+        ordered_samples = sorted(samples, key=lambda s: s.end)
+        if self.event_ledger_limit > 0:
+            ordered_samples = ordered_samples[: self.event_ledger_limit]
+        for sample in ordered_samples:
             result_r, target_bar, stop_bar = RewardRiskAnalyzer._simulate_sample(sample, side, rr)
             if id(sample) in train_ids:
                 split = "train"

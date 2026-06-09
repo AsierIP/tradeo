@@ -179,3 +179,34 @@ Checklist de auditoria:
 - Revisar `avg_execution_cost_r`.
 - Exigir `cost_stress_passed=true` antes de Lab candidate serio.
 - Comparar expectancy neta 1x vs 2x vs 3x.
+
+## 7. Event Ledger Auditable
+
+Estado: implementado.
+
+Cambios:
+
+- El agente genera el ledger completo por candidato en los runs de discovery.
+- Cada ledger se persiste como artefacto comprimido `.json.gz` en:
+  - `reports/research/event_ledgers/run_<run_id>/`
+- El digest del patron conserva:
+  - `event_ledger_path`
+  - `event_ledger_sha256`
+  - `event_ledger_count`
+  - `event_ledger_compressed_bytes`
+  - `event_ledger_uncompressed_bytes`
+- El ledger raw se retira de `metrics_json` tras persistirlo para no inflar DB/reportes.
+- Queda una preview compacta de los primeros eventos en `event_ledger_preview`.
+
+Lectura para Director:
+
+- El hash SHA-256 valida el contenido canonico sin comprimir.
+- Si el patron se reevalua, se puede comparar ledger previo vs ledger nuevo por path/hash/count.
+- El reporte de discovery ya muestra ruta y hash junto al patron.
+
+Checklist de auditoria:
+
+- Abrir el `.json.gz` del patron revisado.
+- Verificar que `event_count` coincide con `event_ledger_count`.
+- Validar que el hash del JSON descomprimido coincide con `event_ledger_sha256`.
+- Revisar dispersion por simbolo, fecha, split y resultado R antes de aprobar promocion.
