@@ -53,8 +53,9 @@ def _connect_ibkr(settings: Settings):
     _ensure_event_loop()
     from ib_insync import IB
 
-    client_ids = [settings.ibkr_client_id]
-    client_ids.extend(random.randint(1000, 9999) for _ in range(3))
+    client_ids = random.sample(range(1000, 10000), 4)
+    if settings.ibkr_client_id not in client_ids:
+        client_ids.append(settings.ibkr_client_id)
     last_exc: Exception | None = None
     for client_id in client_ids:
         ib = IB()
