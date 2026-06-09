@@ -104,6 +104,8 @@ class Settings(BaseSettings):
     discovery_min_walk_forward_positive_rate: float = 0.50
     discovery_min_expectancy_ci_low: float = 0.0
     discovery_max_overfit_score: float = 0.65
+    discovery_cost_stress_multipliers: str = "1.0,2.0,3.0"
+    discovery_required_cost_stress_multiplier: float = 2.0
     discovery_store_rejected: bool = True
     discovery_report_top_n: int = 20
     discovery_match_enabled: bool = True
@@ -210,6 +212,11 @@ class Settings(BaseSettings):
     def discovery_rr_level_list(self) -> list[float]:
         values = sorted({float(x.strip()) for x in self.discovery_rr_levels.split(",") if x.strip()})
         return values or [1.5, 2.0, 2.5, 3.0, 4.0, 5.0]
+
+    @property
+    def discovery_cost_stress_multiplier_list(self) -> list[float]:
+        values = sorted({float(x.strip()) for x in self.discovery_cost_stress_multipliers.split(",") if x.strip()})
+        return values or [1.0, 2.0, 3.0]
 
     @property
     def reports_path(self) -> Path:

@@ -39,7 +39,14 @@ class RewardRiskAnalyzer:
             "best_score": round(self._edge_score(best), 5) if best else 0.0,
         }
 
-    def metrics_for_rr(self, samples: list[WindowSample], side: Side, rr: float) -> dict[str, float | int]:
+    def metrics_for_rr(
+        self,
+        samples: list[WindowSample],
+        side: Side,
+        rr: float,
+        *,
+        cost_multiplier: float = 1.0,
+    ) -> dict[str, float | int]:
         results: list[float] = []
         target_bars: list[int] = []
         stop_bars: list[int] = []
@@ -47,7 +54,7 @@ class RewardRiskAnalyzer:
         mae: list[float] = []
         costs: list[float] = []
         for sample in samples:
-            result, target_bar, stop_bar = self._simulate_sample(sample, side, rr)
+            result, target_bar, stop_bar = self._simulate_sample(sample, side, rr, cost_multiplier=cost_multiplier)
             results.append(result)
             if target_bar is not None:
                 target_bars.append(target_bar)
@@ -55,7 +62,7 @@ class RewardRiskAnalyzer:
                 stop_bars.append(stop_bar)
             mfe.append(sample.outcome.mfe_for(side))
             mae.append(sample.outcome.mae_for(side))
-            costs.append(max(0.0, float(sample.outcome.execution_cost_r)))
+            costs.append(max(0.0, float(sample.outcome.execution_cost_r)) * max(0.0, float(cost_multiplier)))
 
         arr = np.asarray(results, dtype=float)
         wins = arr[arr > 0]
@@ -85,10 +92,17 @@ class RewardRiskAnalyzer:
             "avg_bars_to_target": round(float(np.mean(target_bars)), 3) if target_bars else 0.0,
             "avg_bars_to_stop": round(float(np.mean(stop_bars)), 3) if stop_bars else 0.0,
             "sample_count": int(len(arr)),
+            "cost_multiplier": float(cost_multiplier),
         }
 
     @staticmethod
-    def _simulate_sample(sample: WindowSample, side: Side, rr: float) -> tuple[float, int | None, int | None]:
+    def _simulate_sample(
+        sample: WindowSample,
+        side: Side,
+        rr: float,
+        *,
+        cost_multiplier: float = 1.0,
+    ) -> tuple[float, int | None, int | None]:
         entry = sample.outcome.entry_price
         risk = max(sample.outcome.risk_proxy, 1e-9)
         highs = sample.outcome.forward_highs
@@ -96,9 +110,9 @@ class RewardRiskAnalyzer:
         closes = sample.outcome.forward_closes
         if not highs or not lows or not closes:
             fallback = max(-1.0, min(rr, sample.outcome.outcome_for(side)))
-            fallback -= max(0.0, float(sample.outcome.execution_cost_r))
+            fallback -= max(0.0, float(sample.outcome.execution_cost_r)) * max(0.0, float(cost_multiplier))
             return float(fallback), None, None
-        cost_r = max(0.0, float(sample.outcome.execution_cost_r))
+        cost_r = max(0.0, float(sample.outcome.execution_cost_r)) * max(0.0, float(cost_multiplier))
 
         if side == "long":
             target = entry + risk * rr

@@ -153,3 +153,29 @@ Checklist de auditoria:
 - Confirmar si el edge depende de SPY/QQQ.
 - Separar patrones momentum de patrones contrarian.
 - Revisar familias con mismo setup pero distinto contexto benchmark.
+
+## 6. Stress Gates De Costes Y Slippage
+
+Estado: implementado.
+
+Cambios:
+
+- `RewardRiskAnalyzer` soporta `cost_multiplier`.
+- Research calcula `cost_stress` para multiplicadores configurados, por defecto:
+  - `1x`
+  - `2x`
+  - `3x`
+- `cost_stress_passed` exige expectancy positiva y PF >= 1 en el multiplicador requerido.
+- `ValidationGate` rechaza si el edge no sobrevive `discovery_required_cost_stress_multiplier`, por defecto x2.
+
+Lectura para Director:
+
+- Si el patron falla con coste x2, el edge es demasiado fragil para promocion.
+- `cost_stress` permite ver si el patron soporta spreads/slippage peores en small/mid caps.
+- El coste base sigue viniendo de proxy de rango/liquidez por ventana.
+
+Checklist de auditoria:
+
+- Revisar `avg_execution_cost_r`.
+- Exigir `cost_stress_passed=true` antes de Lab candidate serio.
+- Comparar expectancy neta 1x vs 2x vs 3x.

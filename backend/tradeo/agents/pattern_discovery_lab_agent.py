@@ -86,6 +86,8 @@ class PatternDiscoveryLabAgent:
                 min_samples=settings.discovery_min_samples,
                 walk_forward_folds=settings.discovery_walk_forward_folds,
                 walk_forward_embargo_samples=settings.discovery_walk_forward_embargo_samples,
+                cost_stress_multipliers=settings.discovery_cost_stress_multiplier_list,
+                required_cost_stress_multiplier=settings.discovery_required_cost_stress_multiplier,
             )
             raw_candidates = engine.discover(samples)
             candidates = ValidationGate(settings).evaluate_many(raw_candidates)
@@ -184,6 +186,8 @@ class PatternDiscoveryLabAgent:
             "max_drawdown_r": s.discovery_max_drawdown_r,
             "walk_forward_folds": s.discovery_walk_forward_folds,
             "walk_forward_embargo_samples": s.discovery_walk_forward_embargo_samples,
+            "cost_stress_multipliers": s.discovery_cost_stress_multiplier_list,
+            "required_cost_stress_multiplier": s.discovery_required_cost_stress_multiplier,
         }
 
     @staticmethod
@@ -284,6 +288,8 @@ class PatternDiscoveryLabAgent:
             "expectancy_ci_high": metrics.get("expectancy_ci_high"),
             "profit_factor_ci_low": metrics.get("profit_factor_ci_low"),
             "overfit_score": metrics.get("overfit_score"),
+            "cost_stress": metrics.get("cost_stress", {}),
+            "cost_stress_passed": metrics.get("cost_stress_passed"),
             "confirmation_recommended": metrics.get("confirmation_recommended", False),
             "confirmation_status": metrics.get("confirmation_status", ""),
             "confirmation_priority_score": metrics.get("confirmation_priority_score", 0.0),
@@ -394,6 +400,7 @@ class PatternDiscoveryLabAgent:
                     f"- Coste medio: {pattern.get('avg_execution_cost_r')}R · trigger operativo: {pattern.get('operational_trigger')}",
                     f"- Walk-forward: {pattern.get('walk_forward_positive_fold_rate')} positive fold rate · avg {pattern.get('walk_forward_avg_expectancy_r')}R · min {pattern.get('walk_forward_min_expectancy_r')}R",
                     f"- Null/CI: {pattern.get('null_method')} · p_adj {pattern.get('adjusted_p_value')} · CI {pattern.get('expectancy_ci_low')}..{pattern.get('expectancy_ci_high')}R · overfit {pattern.get('overfit_score')}",
+                    f"- Cost stress passed: {pattern.get('cost_stress_passed')} · {pattern.get('cost_stress')}",
                     f"- R:R estimado: {pattern['reward_risk_estimate']} · Hit 4R: {pattern['hit_4r_rate']} · DD: {pattern.get('best_max_drawdown_r')}R",
                     f"- OOS expectancy: {pattern['out_of_sample_expectancy_r']}R · estabilidad: {pattern['stability_score']}",
                     f"- Razones/avisos: {', '.join(pattern.get('validation_reasons') or ['sin incidencias'])}",

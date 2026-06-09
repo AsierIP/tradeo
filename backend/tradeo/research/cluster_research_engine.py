@@ -26,6 +26,8 @@ class ClusterResearchEngine:
     event_ledger_limit: int = 250
     walk_forward_folds: int = 4
     walk_forward_embargo_samples: int = 5
+    cost_stress_multipliers: list[float] | None = None
+    required_cost_stress_multiplier: float = 2.0
 
     def discover(self, samples: list[WindowSample]) -> list[ClusterCandidate]:
         candidates: list[ClusterCandidate] = []
@@ -109,6 +111,15 @@ class ClusterResearchEngine:
             metrics["walk_forward_pooled"] = walk_forward["pooled"]
             metrics["walk_forward_embargo_samples"] = self.walk_forward_embargo_samples
             metrics["overfit_score"] = self._overfit_score(metrics)
+            metrics["cost_stress"] = self._cost_stress_metrics(
+                cluster_samples,
+                side,
+                rr=float(metrics.get("best_rr", self.target_r)),
+            )
+            metrics["cost_stress_passed"] = self._cost_stress_passed(
+                metrics["cost_stress"],
+                required_multiplier=self.required_cost_stress_multiplier,
+            )
             metrics["operational_trigger"] = self._operational_trigger_metrics(cluster_samples, side)
             metrics["event_ledger"] = self._event_ledger(
                 cluster_samples,
@@ -566,9 +577,42 @@ class ClusterResearchEngine:
             )
         return ledger
 
+    def _cost_stress_metrics(self, samples: list[WindowSample], side: Side, rr: float) -> dict[str, object]:
+        stress: dict[str, object] = {}
+        for multiplier in self.cost_stress_multipliers or [1.0, 2.0, 3.0]:
+            metrics = self._split_metrics(samples, side, rr, cost_multiplier=float(multiplier))
+            stress[f"{float(multiplier):g}x"] = {
+                "multiplier": float(multiplier),
+                "expectancy_r": metrics["expectancy_r"],
+                "profit_factor": metrics["profit_factor"],
+                "win_rate": metrics["win_rate"],
+                "max_drawdown_r": metrics["max_drawdown_r"],
+                "sample_count": metrics["sample_count"],
+            }
+        return stress
+
     @staticmethod
-    def _split_metrics(samples: list[WindowSample], side: Side, rr: float) -> dict[str, float | int]:
-        outcomes = np.asarray([RewardRiskAnalyzer._simulate_sample(s, side, rr)[0] for s in samples], dtype=float)
+    def _cost_stress_passed(stress: object, *, required_multiplier: float) -> bool:
+        if not isinstance(stress, dict):
+            return False
+        key = f"{float(required_multiplier):g}x"
+        metrics = stress.get(key)
+        if not isinstance(metrics, dict):
+            return False
+        return float(metrics.get("expectancy_r", 0.0)) > 0 and float(metrics.get("profit_factor", 0.0)) >= 1.0
+
+    @staticmethod
+    def _split_metrics(
+        samples: list[WindowSample],
+        side: Side,
+        rr: float,
+        *,
+        cost_multiplier: float = 1.0,
+    ) -> dict[str, float | int]:
+        outcomes = np.asarray(
+            [RewardRiskAnalyzer._simulate_sample(s, side, rr, cost_multiplier=cost_multiplier)[0] for s in samples],
+            dtype=float,
+        )
         if len(outcomes) == 0:
             return {"sample_count": 0, "expectancy_r": 0.0, "profit_factor": 0.0, "win_rate": 0.0, "max_drawdown_r": 0.0}
         wins = outcomes[outcomes > 0]

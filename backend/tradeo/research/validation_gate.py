@@ -83,6 +83,8 @@ class ValidationGate:
         overfit_score = metrics.get("overfit_score")
         if overfit_score is not None and float(overfit_score) > s.discovery_max_overfit_score:
             reasons.append(f"riesgo de overfit alto: {float(overfit_score):.2f} > {s.discovery_max_overfit_score:.2f}")
+        if metrics.get("cost_stress_passed") is False:
+            reasons.append(f"edge no sobrevive coste x{s.discovery_required_cost_stress_multiplier:g}")
         fold_count = int(metrics.get("walk_forward_fold_count", 0))
         if fold_count:
             fold_rate = float(metrics.get("walk_forward_positive_fold_rate", 0.0))

@@ -77,3 +77,9 @@ def test_simulation_subtracts_execution_cost_r() -> None:
     assert stop_bar is None
     metrics = RewardRiskAnalyzer([3.0], min_samples=1).metrics_for_rr([sample], "long", 3.0)
     assert metrics["avg_execution_cost_r"] == 0.15
+
+
+def test_cost_multiplier_stresses_result_r() -> None:
+    sample = _sample([130.0], [99.0], [130.0], cost_r=0.15)
+    result, _, _ = RewardRiskAnalyzer._simulate_sample(sample, "long", 3.0, cost_multiplier=2.0)
+    assert result == 2.7
