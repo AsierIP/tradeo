@@ -188,9 +188,9 @@ def _quality_flags(
         flags.append("regime_filter_failed")
     if avg_dollar_volume < settings.min_avg_dollar_volume:
         flags.append("thin_liquidity")
-    if volume_ratio and volume_ratio < settings.entry_min_volume_ratio:
+    if settings.entry_gate_enabled and volume_ratio and volume_ratio < settings.entry_min_volume_ratio:
         flags.append("weak_volume_confirmation")
-    if extension_atr > settings.entry_max_extension_atr:
+    if settings.entry_gate_enabled and extension_atr > settings.entry_max_extension_atr:
         flags.append("overextended")
     return flags
 

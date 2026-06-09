@@ -157,7 +157,12 @@ def test_research_to_lab_to_director_to_fox_lifecycle() -> None:
         db.refresh(signal)
         close_lab_trade(db, signal, index, r_multiple=1.0)
 
-    review_result = DirectorReviewGate(min_closed_lab_trades=10).refresh(db)
+    review_result = DirectorReviewGate(
+        min_closed_lab_trades=10,
+        min_lab_symbols=1,
+        min_lab_trading_days=1,
+        min_baseline_edge_r=0.0,
+    ).refresh(db)
     db.refresh(pattern)
     assert review_result["marked_for_director_review"] == 1
     assert pattern.status == DiscoveredPatternStatus.DIRECTOR_REVIEW

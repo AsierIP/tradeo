@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -39,9 +41,17 @@ def add_pattern(db) -> DiscoveredPattern:
     return pattern
 
 
-def add_closed_lab_trade(db, pattern: DiscoveredPattern, index: int, r_multiple: float = 1.0) -> None:
+def add_closed_lab_trade(
+    db,
+    pattern: DiscoveredPattern,
+    index: int,
+    r_multiple: float = 1.0,
+    *,
+    symbol: str | None = None,
+) -> None:
+    trade_time = datetime(2026, 1, 5, 16, 0, tzinfo=timezone.utc) + timedelta(days=index)
     signal = Signal(
-        symbol=f"T{index}",
+        symbol=symbol or f"T{index}",
         pattern=pattern.name,
         side="long",
         entry=10.0,
@@ -70,6 +80,8 @@ def add_closed_lab_trade(db, pattern: DiscoveredPattern, index: int, r_multiple:
             stop=9.0,
             target=14.0,
             status=TradeStatus.CLOSED,
+            opened_at=trade_time,
+            closed_at=trade_time + timedelta(minutes=30),
             pnl_usd=10.0 * r_multiple,
             r_multiple=r_multiple,
             metadata_json={"execution_mode": "ibkr", "ibkr_mode": "paper"},
@@ -91,6 +103,7 @@ def test_director_review_gate_waits_for_ten_closed_lab_trades() -> None:
     assert pattern.status == DiscoveredPatternStatus.LAB_CANDIDATE
     assert pattern.metrics_json["lab_execution"]["closed_lab_trades"] == 9
     assert pattern.metrics_json["lab_execution"]["eligible_for_director_review"] is False
+    assert "closed_lab_trades_below_10" in pattern.metrics_json["lab_execution"]["promotion_blockers"]
 
 
 def test_director_review_gate_marks_candidate_after_ten_closed_lab_trades() -> None:
@@ -108,3 +121,20 @@ def test_director_review_gate_marks_candidate_after_ten_closed_lab_trades() -> N
     assert pattern.metrics_json["lab_execution"]["eligible_for_director_review"] is True
     assert pattern.metrics_json["lab_execution"]["lab_expectancy_r"] == 0.4
     assert pattern.metrics_json["lab_execution"]["research_expectancy_r"] == 0.4
+    assert pattern.metrics_json["lab_execution"]["unique_lab_symbols"] == 10
+    assert pattern.metrics_json["lab_execution"]["unique_lab_days"] == 10
+
+
+def test_director_review_gate_blocks_low_diversity_lab_results() -> None:
+    db = session_factory()
+    pattern = add_pattern(db)
+    for index in range(10):
+        add_closed_lab_trade(db, pattern, index, symbol="SAME")
+
+    result = DirectorReviewGate(min_closed_lab_trades=10).refresh(db)
+    db.refresh(pattern)
+
+    assert result["marked_for_director_review"] == 0
+    assert pattern.status == DiscoveredPatternStatus.LAB_CANDIDATE
+    assert pattern.metrics_json["lab_execution"]["eligible_for_director_review"] is False
+    assert "unique_lab_symbols_below_3" in pattern.metrics_json["lab_execution"]["promotion_blockers"]
