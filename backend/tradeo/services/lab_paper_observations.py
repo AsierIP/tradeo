@@ -50,27 +50,46 @@ class LabPaperObservationService:
         if qty <= 0:
             return None
         now = datetime.now(timezone.utc)
+        signal_metadata = signal.metadata_json or {}
+        entry_gate = signal_metadata.get("entry_gate") or (match.get("metrics") or {}).get("entry_gate")
+        entry_quality = signal_metadata.get("entry_quality") or {}
+        near_miss = bool(signal_metadata.get("near_miss") or match.get("near_miss"))
         metadata = {
             "execution_mode": LAB_SHADOW_EXECUTION_MODE,
+            "entry_module": "laboratory",
             "source_module": "laboratory",
             "observation_only": True,
             "no_ibkr_order": True,
-            "entry_variant_id": match.get("entry_variant_id"),
-            "entry_variant": match.get("entry_variant"),
-            "pattern_id": match.get("pattern_id"),
-            "pattern_key": match.get("pattern_key"),
-            "regime": match.get("regime"),
-            "regime_fit": match.get("regime_fit"),
-            "entry_audit": match.get("entry_audit"),
-            "opportunity_rank": match.get("opportunity_rank"),
-            "opportunity_rank_score": match.get("opportunity_rank_score"),
-            "opportunity_rank_components": match.get("opportunity_rank_components"),
-            "near_miss": bool(match.get("near_miss")),
-            "near_miss_shadow": bool(match.get("near_miss_shadow")),
-            "near_miss_reasons": match.get("near_miss_reasons") or [],
-            "would_have_failed_entry_gate": bool(match.get("would_have_failed_entry_gate")),
+            "entry_variant_id": signal_metadata.get("entry_variant_id") or match.get("entry_variant_id"),
+            "entry_variant": signal_metadata.get("entry_variant") or match.get("entry_variant"),
+            "pattern_id": signal_metadata.get("pattern_id") or match.get("pattern_id"),
+            "pattern_key": signal_metadata.get("pattern_key") or match.get("pattern_key"),
+            "regime": signal_metadata.get("regime") or match.get("regime"),
+            "regime_fit": signal_metadata.get("regime_fit") or match.get("regime_fit"),
+            "entry_gate": entry_gate,
+            "entry_quality": entry_quality,
+            "entry_audit": signal_metadata.get("entry_audit") or match.get("entry_audit"),
+            "opportunity_rank": signal_metadata.get("opportunity_rank") or match.get("opportunity_rank"),
+            "opportunity_rank_score": signal_metadata.get("opportunity_rank_score") or match.get("opportunity_rank_score"),
+            "opportunity_rank_components": signal_metadata.get("opportunity_rank_components")
+            or match.get("opportunity_rank_components"),
+            "near_miss": near_miss,
+            "near_miss_shadow": bool(signal_metadata.get("near_miss_shadow") or match.get("near_miss_shadow")),
+            "near_miss_type": signal_metadata.get("near_miss_type") or match.get("near_miss_type"),
+            "near_miss_reasons": signal_metadata.get("near_miss_reasons") or match.get("near_miss_reasons") or [],
+            "entry_gate_rejection_reasons": signal_metadata.get("entry_gate_rejection_reasons")
+            or match.get("entry_gate_rejection_reasons")
+            or [],
+            "entry_gate_reason": signal_metadata.get("entry_gate_reason") or match.get("entry_gate_reason"),
+            "would_have_failed_entry_gate": bool(
+                signal_metadata.get("would_have_failed_entry_gate") or match.get("would_have_failed_entry_gate")
+            ),
             "paper_only": True,
-            "opened_reason": "lab_entry_candidate_shadow_observation",
+            "opened_reason": (
+                "lab_near_miss_volume_shadow_observation"
+                if near_miss
+                else "lab_entry_candidate_shadow_observation"
+            ),
             "entry_fill_time": now.isoformat(),
             "entry_fill_price": signal.entry,
             "entry_order_type": "shadow_observation",
@@ -104,6 +123,7 @@ class LabPaperObservationService:
                     "symbol": signal.symbol,
                     "pattern": signal.pattern,
                     "entry_variant_id": match.get("entry_variant_id"),
+                    "near_miss": near_miss,
                     "no_ibkr_order": True,
                 },
             )

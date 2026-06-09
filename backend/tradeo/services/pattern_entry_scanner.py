@@ -674,7 +674,7 @@ class PatternEntryScanner:
     ) -> tuple[Signal, Trade] | None:
         settings = self.settings
         assert settings is not None
-        if not resolved["store_signals"] or resolved["execute_orders"]:
+        if not resolved["store_signals"]:
             return None
         entry_gate = ((match.get("metrics") or {}).get("entry_gate") or {})
         if self._has_active_exposure(db, match, module="laboratory"):
@@ -757,52 +757,89 @@ class PatternEntryScanner:
         db.commit()
         return signal, observation
 
-    @classmethod
     def _is_lab_near_miss_shadow_candidate(
-        cls,
+        self,
         match: dict[str, Any],
         entry_gate: dict[str, Any],
     ) -> bool:
-        if not match.get("entry_variant_id"):
+        settings = self.settings
+        assert settings is not None
+        if bool(entry_gate.get("passed", False)):
             return False
-        if not ((match.get("regime") or {}).get("regime_key")):
+        if not str(match.get("entry_variant_id") or ""):
             return False
-        if str(entry_gate.get("trigger") or match.get("entry_trigger") or "") == "no_operational_trigger":
+        if not str((match.get("regime") or {}).get("regime_key") or ""):
             return False
-        reasons = set(cls._entry_gate_reasons(entry_gate))
-        allowed_soft_reasons = {"insufficient_volume", "weak_volume_confirmation"}
-        hard_reasons = {
-            "weak_entry_score",
-            "regime_filter_failed",
-            "volatility_filter_failed",
-            "overextended",
-            "no_operational_trigger",
-            "trigger_not_confirmed",
-        }
-        if not reasons or not reasons.issubset(allowed_soft_reasons) or reasons & hard_reasons:
+        trigger = str(entry_gate.get("trigger") or match.get("entry_trigger") or "")
+        if trigger in {"", "no_operational_trigger", "insufficient_history"}:
             return False
-        rank = int(match.get("opportunity_rank") or 9999)
-        rank_score = float(match.get("opportunity_rank_score") or 0.0)
-        entry_score = float(entry_gate.get("entry_score") or match.get("entry_score") or 0.0)
-        volume_ratio = float(entry_gate.get("volume_ratio") or 0.0)
-        avg_dollar_volume = float(((match.get("metrics") or {}).get("features") or {}).get("avg_dollar_volume") or 0.0)
-        return (
-            (rank <= 10 or rank_score >= 0.66)
-            and rank_score >= 0.62
-            and entry_score >= 0.48
-            and volume_ratio >= 0.20
-            and avg_dollar_volume > 0.0
+        trigger_score = self._safe_float(
+            entry_gate.get("trigger_score"),
+            1.0 if trigger not in {"", "no_operational_trigger"} else 0.0,
         )
+        if trigger_score <= 0:
+            return False
+        reasons = set(self._entry_gate_reasons(entry_gate))
+        if not reasons or not reasons & LAB_NEAR_MISS_VOLUME_REASONS:
+            return False
+        if reasons & LAB_NEAR_MISS_HARD_REASONS:
+            return False
+        if any(reason not in LAB_NEAR_MISS_VOLUME_REASONS for reason in reasons):
+            return False
+        if entry_gate.get("regime_ok") is False:
+            return False
+        if entry_gate.get("volatility_ok") is False:
+            return False
+        if entry_gate.get("not_extended") is False:
+            return False
+        metrics = match.get("metrics") or {}
+        features = metrics.get("features") or {}
+        atr_pct = self._safe_float(entry_gate.get("atr_pct", features.get("atr_pct")), 0.0)
+        if atr_pct > settings.max_atr_pct:
+            return False
+        extension_atr = self._safe_float(entry_gate.get("extension_atr"), 0.0)
+        if extension_atr > settings.entry_max_extension_atr:
+            return False
+        rank = self._safe_int(match.get("opportunity_rank"))
+        rank_score = self._safe_float(match.get("opportunity_rank_score"), 0.0)
+        entry_score = self._safe_float(entry_gate.get("entry_score", match.get("entry_score")), 0.0)
+        if entry_score < max(LAB_NEAR_MISS_MIN_ENTRY_SCORE, settings.entry_min_score):
+            return False
+        if rank_score < LAB_NEAR_MISS_MIN_RANK_SCORE:
+            return False
+        top_ranked = rank is not None and rank <= LAB_NEAR_MISS_TOP_RANK_LIMIT
+        return top_ranked or rank_score >= LAB_NEAR_MISS_HIGH_RANK_SCORE
 
     @staticmethod
     def _entry_gate_reasons(entry_gate: dict[str, Any]) -> list[str]:
         reasons = entry_gate.get("rejection_reasons")
-        if isinstance(reasons, list) and reasons:
-            return [str(reason) for reason in reasons if str(reason)]
+        collected: list[str] = []
+        if isinstance(reasons, list):
+            collected.extend(str(reason).strip() for reason in reasons if str(reason).strip())
         reason = str(entry_gate.get("reason") or "").strip()
-        if not reason or reason == "entry gate failed":
-            return []
-        return [part.strip() for part in reason.split(";") if part.strip()]
+        if reason and reason not in {"entry gate failed", "entry gate passed"}:
+            collected.extend(part.strip() for part in reason.replace(",", ";").split(";") if part.strip())
+        if entry_gate.get("volume_confirmed") is False:
+            collected.append("insufficient_volume")
+        deduped: list[str] = []
+        for reason_item in collected:
+            if reason_item not in deduped:
+                deduped.append(reason_item)
+        return deduped
+
+    @staticmethod
+    def _safe_float(value: Any, default: float) -> float:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return default
+
+    @staticmethod
+    def _safe_int(value: Any) -> int | None:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
 
     @staticmethod
     def _mark_near_miss_shadow_match(match: dict[str, Any], reasons: list[str]) -> dict[str, Any]:
@@ -810,19 +847,30 @@ class PatternEntryScanner:
         metrics = dict(enriched.get("metrics") or {})
         entry_gate = dict(metrics.get("entry_gate") or {})
         entry_gate["near_miss_shadow"] = True
+        entry_gate["near_miss"] = True
         entry_gate["would_have_failed_entry_gate"] = True
         entry_gate["near_miss_reasons"] = reasons
+        entry_gate["entry_gate_rejection_reasons"] = reasons
         metrics["entry_gate"] = entry_gate
+        metrics["near_miss"] = True
         metrics["near_miss_shadow"] = True
+        metrics["near_miss_reasons"] = reasons
+        metrics["entry_gate_rejection_reasons"] = reasons
+        metrics["would_have_failed_entry_gate"] = True
         metrics["paper_only"] = True
+        metrics["no_ibkr_order"] = True
         enriched["metrics"] = metrics
         enriched["near_miss"] = True
         enriched["near_miss_shadow"] = True
         enriched["near_miss_shadow_candidate"] = True
+        enriched["near_miss_type"] = "volume_only_entry_gate_shadow"
         enriched["near_miss_reasons"] = reasons
+        enriched["entry_gate_rejection_reasons"] = reasons
+        enriched["entry_gate_reason"] = str(entry_gate.get("reason") or ";".join(reasons))
         enriched["would_have_failed_entry_gate"] = True
         enriched["paper_only"] = True
         enriched["no_ibkr_order"] = True
+        enriched["observation_only"] = True
         enriched["notes"] = (
             f"{enriched.get('notes', '')} Near-miss Lab shadow observation; "
             "entry gate failed only on soft volume confirmation."
@@ -936,8 +984,8 @@ class PatternEntryScanner:
             )
             human_approved = status == SignalStatus.LIVE_APPROVED
         else:
-            status = SignalStatus.PAPER_APPROVED
-            human_approved = execute_orders
+            status = SignalStatus.WATCHLIST if match.get("near_miss") else SignalStatus.PAPER_APPROVED
+            human_approved = False if match.get("near_miss") else execute_orders
         entry_quality = entry_quality or build_entry_quality(
             match=match,
             risk=risk,
@@ -992,10 +1040,29 @@ class PatternEntryScanner:
                 "entry_gate": match.get("metrics", {}).get("entry_gate"),
                 "near_miss": bool(match.get("near_miss")),
                 "near_miss_shadow": bool(match.get("near_miss_shadow")),
+                "near_miss_type": match.get("near_miss_type"),
                 "near_miss_reasons": match.get("near_miss_reasons") or [],
+                "entry_gate_rejection_reasons": match.get("entry_gate_rejection_reasons") or [],
+                "entry_gate_reason": match.get("entry_gate_reason"),
                 "would_have_failed_entry_gate": bool(match.get("would_have_failed_entry_gate")),
+                "observation_only": bool(match.get("observation_only")),
+                "execution_mode": LAB_SHADOW_EXECUTION_MODE if match.get("near_miss") else None,
                 "paper_only": module == "laboratory" and not execute_orders,
                 "no_ibkr_order": module == "laboratory" and not execute_orders,
+                "execution_outcome": (
+                    {
+                        "status": "near_miss_shadow_observation",
+                        "reason_code": "entry_gate_volume_near_miss_shadow",
+                        "reason": (
+                            "Entry gate failed only volume confirmation; Lab opened a "
+                            "shadow observation with no IBKR order."
+                        ),
+                        "retryable": False,
+                        "next_action": "collect_shadow_outcome",
+                    }
+                    if match.get("near_miss")
+                    else None
+                ),
                 "risk": risk.model_dump(mode="json"),
                 "director_audit_required": True,
             },

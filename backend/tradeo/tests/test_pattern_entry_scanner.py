@@ -46,6 +46,21 @@ class StaticProvider:
         return self.df.copy()
 
 
+class StaticMatcher:
+    def __init__(self, provider: FixtureProvider, matches: list[dict]) -> None:
+        self.provider = provider
+        self.matches = matches
+
+    def match_current(self, *args, **kwargs):
+        return {
+            "patterns_checked": len({match.get("pattern_id") for match in self.matches}),
+            "symbols_checked": len({match.get("symbol") for match in self.matches}),
+            "matches": self.matches,
+            "stored_matches": len(self.matches),
+            "similarity_threshold": 0.45,
+        }
+
+
 def session_factory():
     engine = create_engine("sqlite:///:memory:", future=True)
     Base.metadata.create_all(bind=engine)
@@ -125,6 +140,51 @@ def match_payload(**overrides):
     return payload
 
 
+def near_miss_volume_payload(**overrides):
+    payload = match_payload(
+        pattern_name="near_miss_volume_pattern",
+        pattern_key="near_miss_volume_key",
+        similarity=0.86,
+        score=0.86,
+        entry_score=0.68,
+        entry_gate_passed=False,
+        entry_trigger="breakout",
+        entry_variant_id="volume_confirmed_close",
+        entry_variant={"id": "volume_confirmed_close", "order_style": "shadow_observation"},
+        entry_audit={
+            "available_data_cutoff_ts": "2026-06-09T00:00:00+00:00",
+            "entry_eligible_ts": "2026-06-10T00:00:00+00:00",
+            "source_bar_hash": "near-miss-hash",
+        },
+        regime={"regime_key": "market_up|uptrend|normal_vol|liquid|rs_leader"},
+        regime_fit={"score": 0.74},
+        metrics={
+            "pattern_score": 0.86,
+            "pattern_expectancy_r": 0.4,
+            "pattern_profit_factor": 2.2,
+            "pattern_stability_score": 0.85,
+            "features": {"avg_dollar_volume": 10_000_000, "atr_pct": 0.04},
+            "entry_gate": {
+                "passed": False,
+                "trigger": "breakout",
+                "trigger_score": 1.0,
+                "entry_score": 0.68,
+                "volume_ratio": 0.92,
+                "volume_confirmed": False,
+                "atr_pct": 0.04,
+                "volatility_ok": True,
+                "extension_atr": 0.6,
+                "not_extended": True,
+                "regime_ok": True,
+                "reason": "insufficient_volume",
+                "rejection_reasons": ["insufficient_volume"],
+            },
+        },
+    )
+    payload.update(overrides)
+    return payload
+
+
 def scanner(provider: FixtureProvider, **settings_overrides) -> PatternEntryScanner:
     defaults = {
         "min_avg_dollar_volume": 0,
@@ -195,6 +255,148 @@ def test_laboratory_scanner_creates_paper_signal_for_validated_lab_pattern() -> 
     assert observation.signal_id == signal.id
     assert observation.metadata_json["execution_mode"] == LAB_SHADOW_EXECUTION_MODE
     assert observation.metadata_json["no_ibkr_order"] is True
+
+
+def test_laboratory_volume_near_miss_opens_shadow_observation_without_ibkr(monkeypatch) -> None:
+    db = session_factory()
+    provider = FixtureProvider()
+    pattern = add_pattern(db, provider, status=DiscoveredPatternStatus.LAB_CANDIDATE)
+
+    class FailBroker:
+        def __init__(self, settings) -> None:
+            self.settings = settings
+
+        def submit_signal_bracket(self, db, signal, *, reason: str = "manual"):
+            raise AssertionError("near-miss shadow observations must not call IBKR")
+
+    monkeypatch.setattr("tradeo.services.pattern_entry_scanner.IBKRBroker", FailBroker)
+    match = near_miss_volume_payload(
+        pattern_id=pattern.id,
+        pattern_name=pattern.name,
+        pattern_key=pattern.pattern_key,
+    )
+    cfg = scanner(provider, entry_gate_enabled=True).settings
+
+    result = PatternEntryScanner(settings=cfg, matcher=StaticMatcher(provider, [match])).scan(
+        db,
+        module="laboratory",
+        symbols=[provider.symbol],
+        store_signals=True,
+        execute_orders=False,
+    )
+
+    assert cfg.laboratory_auto_submit_paper_orders is False
+    assert result["rejected_by_entry_gate"] == 1
+    assert result["signals_created"] == 1
+    assert result["orders_submitted"] == 0
+    assert result["paper_observations_opened"] == 1
+    assert result["near_miss_shadow_observations_opened"] == 1
+    assert result["near_miss_signal_ids"] == result["signal_ids"]
+    assert result["near_miss_trade_ids"] == result["paper_observation_trade_ids"]
+
+    signal = db.get(Signal, result["signal_ids"][0])
+    assert signal.status == SignalStatus.WATCHLIST
+    assert signal.human_approved is False
+    signal_meta = signal.metadata_json
+    required_keys = {
+        "entry_variant_id",
+        "regime",
+        "entry_gate",
+        "entry_quality",
+        "opportunity_rank",
+        "opportunity_rank_score",
+        "near_miss",
+        "near_miss_reasons",
+        "entry_gate_rejection_reasons",
+        "would_have_failed_entry_gate",
+        "paper_only",
+        "no_ibkr_order",
+    }
+    assert required_keys.issubset(signal_meta)
+    assert signal_meta["near_miss"] is True
+    assert signal_meta["near_miss_shadow"] is True
+    assert signal_meta["near_miss_reasons"] == ["insufficient_volume"]
+    assert signal_meta["entry_gate_rejection_reasons"] == ["insufficient_volume"]
+    assert signal_meta["would_have_failed_entry_gate"] is True
+    assert signal_meta["paper_only"] is True
+    assert signal_meta["no_ibkr_order"] is True
+    assert signal_meta["entry_quality"]["actionable"] is False
+    assert signal_meta["entry_module"] == "laboratory"
+
+    observation = db.get(Trade, result["paper_observation_trade_ids"][0])
+    trade_meta = observation.metadata_json
+    assert observation.status == TradeStatus.OPEN
+    assert trade_meta["execution_mode"] == LAB_SHADOW_EXECUTION_MODE
+    assert trade_meta["opened_reason"] == "lab_near_miss_volume_shadow_observation"
+    assert required_keys.issubset(trade_meta)
+    assert trade_meta["near_miss"] is True
+    assert trade_meta["paper_only"] is True
+    assert trade_meta["no_ibkr_order"] is True
+
+
+def test_laboratory_near_miss_hard_blocker_does_not_open_shadow_observation() -> None:
+    db = session_factory()
+    provider = FixtureProvider()
+    pattern = add_pattern(db, provider, status=DiscoveredPatternStatus.LAB_CANDIDATE)
+    match = near_miss_volume_payload(
+        pattern_id=pattern.id,
+        pattern_name=pattern.name,
+        pattern_key=pattern.pattern_key,
+    )
+    entry_gate = dict(match["metrics"]["entry_gate"])
+    entry_gate.update(
+        {
+            "extension_atr": 3.4,
+            "not_extended": False,
+            "reason": "insufficient_volume;excessive_extension",
+            "rejection_reasons": ["insufficient_volume", "excessive_extension"],
+        }
+    )
+    match["metrics"] = {**match["metrics"], "entry_gate": entry_gate}
+    cfg = scanner(provider, entry_gate_enabled=True).settings
+
+    result = PatternEntryScanner(settings=cfg, matcher=StaticMatcher(provider, [match])).scan(
+        db,
+        module="laboratory",
+        symbols=[provider.symbol],
+        store_signals=True,
+        execute_orders=False,
+    )
+
+    assert result["rejected_by_entry_gate"] == 1
+    assert result["signals_created"] == 0
+    assert result["paper_observations_opened"] == 0
+    assert result["near_miss_shadow_observations_opened"] == 0
+    assert db.query(Signal).count() == 0
+    assert db.query(Trade).count() == 0
+
+
+def test_fox_hunter_does_not_open_lab_near_miss_shadow_observation() -> None:
+    db = session_factory()
+    provider = FixtureProvider("FOXX")
+    match = near_miss_volume_payload(
+        module="fox_hunter",
+        pattern_status="production",
+        pattern_promotion_status="production",
+        symbol=provider.symbol,
+        status="production_entry_candidate",
+    )
+    cfg = scanner(provider, entry_gate_enabled=True).settings
+
+    result = PatternEntryScanner(settings=cfg, matcher=StaticMatcher(provider, [match])).scan(
+        db,
+        module="fox_hunter",
+        symbols=[provider.symbol],
+        store_signals=True,
+        execute_orders=False,
+    )
+
+    assert result["rejected_by_entry_gate"] == 1
+    assert result["signals_created"] == 0
+    assert result["paper_observations_opened"] == 0
+    assert result["near_miss_shadow_observations_opened"] == 0
+    assert db.query(Signal).count() == 0
+    assert db.query(Trade).count() == 0
 
 
 def test_current_match_storage_upserts_equivalent_entry_variant() -> None:
@@ -830,7 +1032,7 @@ def test_laboratory_opens_near_miss_shadow_observation_for_soft_volume_failure()
     assert result["signals_created"] == 1
     assert result["near_miss_shadow_observations_opened"] == 1
     assert result["orders_submitted"] == 0
-    assert result["rejected_by_entry_gate"] == 0
+    assert result["rejected_by_entry_gate"] == 1
     signal = db.get(Signal, result["signal_ids"][0])
     assert signal.metadata_json["near_miss"] is True
     assert signal.metadata_json["near_miss_shadow"] is True
