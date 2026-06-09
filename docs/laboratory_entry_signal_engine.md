@@ -75,6 +75,12 @@ El historial sale de trades cerrados de Laboratorio, no de metricas teoricas de 
 - `DirectorReviewGate` agrega performance por variante y regimen dentro de `pattern.metrics_json["lab_execution"]`.
 - El audit exporter ya puede exportar `paper_trades.csv` e `ib_fills.csv` desde el overview de Laboratorio cuando existan.
 
+Lab puede abrir `lab_shadow_observation` near-miss para oportunidades top-ranked
+que fallan `entry_gate` solo por volumen (`insufficient_volume` o
+`weak_volume_confirmation`). Estas senales quedan `near_miss=true`,
+`would_have_failed_entry_gate=true`, `paper_only=true` y `no_ibkr_order=true`;
+Fox Hunter no usa este modo y no se envia ninguna orden IBKR.
+
 ### 7. Diagnostico UI/API
 
 - `GET /api/laboratory/diagnostics?limit=24` es un endpoint de solo lectura para presentacion.

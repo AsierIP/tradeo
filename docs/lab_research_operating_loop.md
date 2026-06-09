@@ -81,12 +81,22 @@ La observacion near-miss exige:
 
 Estas senales/observaciones quedan marcadas con:
 
+- `entry_variant_id`;
+- `regime`;
+- `entry_gate`;
+- `entry_quality`;
+- `opportunity_rank`;
+- `opportunity_rank_score`;
 - `near_miss=true`;
 - `near_miss_shadow=true`;
 - `would_have_failed_entry_gate=true`;
 - `paper_only=true`;
 - `no_ibkr_order=true`;
 - razones exactas en `near_miss_reasons`.
+
+Cuando cierran, cuentan como historial shadow de Lab para ranking y Director.
+No relajan promociones: Director sigue bloqueando hasta que su gate apruebe
+evidencia suficiente.
 
 El objetivo es generar historia Lab cerrada para Director sin relajar ejecucion.
 Director sigue bloqueando promociones hasta que haya evidencia paper suficiente.
