@@ -19,7 +19,11 @@ class PatternEmbeddingEngine:
 
     points_per_channel: int = 24
 
-    def embed(self, window: pd.DataFrame) -> tuple[np.ndarray, dict[str, float], dict[str, list[float]]]:
+    def embed(
+        self,
+        window: pd.DataFrame,
+        benchmark_frames: dict[str, pd.DataFrame] | None = None,
+    ) -> tuple[np.ndarray, dict[str, float], dict[str, list[float]]]:
         if len(window) < 5:
             raise ValueError("window must contain at least 5 bars")
         df = window.copy()
@@ -97,6 +101,7 @@ class PatternEmbeddingEngine:
             previous_low=previous_low,
             sma20=sma20,
         )
+        market_context = self._market_context_features(df, benchmark_frames or {})
 
         channels = [
             price_norm,
@@ -130,6 +135,11 @@ class PatternEmbeddingEngine:
                 distance_sma20_atr,
                 long_trigger_score,
                 short_trigger_score,
+                market_context["weekly_return"],
+                market_context["weekly_trend"],
+                market_context["relative_strength_spy"],
+                market_context["relative_strength_qqq"],
+                market_context["benchmark_alignment"],
             ],
             dtype=float,
         )
@@ -155,6 +165,7 @@ class PatternEmbeddingEngine:
             "distance_sma20_atr": distance_sma20_atr,
             "long_entry_trigger_score": long_trigger_score,
             "short_entry_trigger_score": short_trigger_score,
+            **market_context,
             "range_pct_mean": float(np.mean(range_pct) * 0.35),
             "volume_rel_last": float(volume_rel[-1] * 5.0),
         }
@@ -223,6 +234,43 @@ class PatternEmbeddingEngine:
         if momentum:
             return 0.58
         return 0.0
+
+    @staticmethod
+    def _market_context_features(window: pd.DataFrame, benchmark_frames: dict[str, pd.DataFrame]) -> dict[str, float]:
+        close = window["close"].astype(float)
+        local_return = float(close.iloc[-1] / max(close.iloc[0], 1e-9) - 1.0)
+        weekly_close = close.resample("W").last() if isinstance(window.index, pd.DatetimeIndex) else close
+        weekly_return = float(weekly_close.iloc[-1] / max(weekly_close.iloc[0], 1e-9) - 1.0) if len(weekly_close) >= 2 else local_return
+        weekly_trend = PatternEmbeddingEngine._slope(
+            (weekly_close / max(float(weekly_close.iloc[0]), 1e-9) - 1.0).to_numpy()
+        ) if len(weekly_close) >= 2 else 0.0
+        spy_return = PatternEmbeddingEngine._benchmark_return(window, benchmark_frames.get("SPY"))
+        qqq_return = PatternEmbeddingEngine._benchmark_return(window, benchmark_frames.get("QQQ"))
+        benchmark_return = spy_return if spy_return != 0.0 else qqq_return
+        alignment = 1.0 if local_return == 0.0 or benchmark_return == 0.0 or np.sign(local_return) == np.sign(benchmark_return) else -1.0
+        return {
+            "weekly_return": weekly_return,
+            "weekly_trend": float(weekly_trend),
+            "relative_strength_spy": float(local_return - spy_return),
+            "relative_strength_qqq": float(local_return - qqq_return),
+            "benchmark_alignment": float(alignment),
+        }
+
+    @staticmethod
+    def _benchmark_return(window: pd.DataFrame, benchmark: pd.DataFrame | None) -> float:
+        if benchmark is None or benchmark.empty:
+            return 0.0
+        if not isinstance(window.index, pd.DatetimeIndex):
+            return 0.0
+        bench = benchmark.copy()
+        if not isinstance(bench.index, pd.DatetimeIndex):
+            return 0.0
+        bench = bench.sort_index()
+        aligned = bench.reindex(window.index, method="ffill")
+        aligned = aligned.dropna(subset=["close"])
+        if len(aligned) < 2:
+            return 0.0
+        return float(aligned["close"].iloc[-1] / max(float(aligned["close"].iloc[0]), 1e-9) - 1.0)
 
     @staticmethod
     def _winsorize(values: np.ndarray, low_q: float, high_q: float) -> np.ndarray:

@@ -124,3 +124,32 @@ Checklist de auditoria:
 - No contar variantes similares como patrones independientes.
 - Revisar familias con `drift_status=degrading`.
 - Confirmar que el patron canonico conserva lineage de variantes.
+
+## 5. Multi-Timeframe Y Relative Strength
+
+Estado: implementado.
+
+Cambios:
+
+- El embedding incorpora contexto weekly calculado desde la ventana:
+  - `weekly_return`
+  - `weekly_trend`
+- Discovery intenta descargar SPY y QQQ una vez por run.
+- El embedding incorpora relative strength:
+  - `relative_strength_spy`
+  - `relative_strength_qqq`
+  - `benchmark_alignment`
+- El matcher actual tambien calcula SPY/QQQ para poder comparar patrones nuevos.
+- Patrones antiguos siguen funcionando por compatibilidad de prefijo en el matcher.
+
+Lectura para Director:
+
+- Un patron con edge solo cuando la fuerza relativa es positiva puede requerir filtro operativo.
+- `benchmark_alignment=-1` indica setup contrarian vs mercado; revisar por separado.
+- Relative strength ayuda a separar setup local de simple beta de mercado.
+
+Checklist de auditoria:
+
+- Confirmar si el edge depende de SPY/QQQ.
+- Separar patrones momentum de patrones contrarian.
+- Revisar familias con mismo setup pero distinto contexto benchmark.

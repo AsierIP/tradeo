@@ -33,6 +33,7 @@ class WindowSampler:
         forward_bars: Iterable[int],
         stride: int = 3,
         max_windows_per_symbol: int = 450,
+        benchmark_frames: dict[str, pd.DataFrame] | None = None,
     ) -> list[WindowSample]:
         df = normalize_ohlcv(df).dropna()
         forward_bars = sorted({int(x) for x in forward_bars if int(x) > 0})
@@ -64,7 +65,7 @@ class WindowSampler:
                 )
                 execution_cost_r = self._execution_cost_r(window, entry=entry, risk_proxy=risk_proxy)
                 outcome = self._forward_outcome(entry, risk_proxy, future, forward_bars, execution_cost_r)
-                vector, features, chart = self.embedding_engine.embed(window)
+                vector, features, chart = self.embedding_engine.embed(window, benchmark_frames=benchmark_frames)
                 start_idx = window.index[0]
                 end_idx = window.index[-1]
                 year = self._year(end_idx)

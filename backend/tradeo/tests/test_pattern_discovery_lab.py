@@ -72,6 +72,26 @@ def test_window_sampler_generates_forward_labeled_samples() -> None:
     assert "close_norm" in first.chart
     assert "long_entry_trigger_score" in first.features
     assert "liquidity_score" in first.features
+    assert "weekly_return" in first.features
+    assert "relative_strength_spy" in first.features
+
+
+def test_window_sampler_adds_benchmark_relative_strength() -> None:
+    df = fixture_ohlcv("LABR", bars=180)
+    spy = fixture_ohlcv("SPY", bars=180)
+    spy["close"] = spy["close"].iloc[0]
+    samples = WindowSampler().sample(
+        symbol="LABR",
+        df=df,
+        timeframe="1d",
+        window_sizes=[20],
+        forward_bars=[5],
+        stride=20,
+        max_windows_per_symbol=5,
+        benchmark_frames={"SPY": spy},
+    )
+    assert samples
+    assert samples[0].features["relative_strength_spy"] != 0.0
 
 
 def test_cluster_engine_returns_candidates_or_empty_without_crashing() -> None:

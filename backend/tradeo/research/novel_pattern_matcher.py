@@ -68,6 +68,11 @@ class NovelPatternMatcher:
             centroid = np.asarray(pattern.centroid_json, dtype=float)
             if scaler_mean is None or scaler_scale is None or len(centroid) == 0:
                 continue
+            benchmark_frames = self._benchmark_frames(
+                pattern.timeframe,
+                required_bars=required_bars_by_timeframe[pattern.timeframe],
+                cache=data_cache,
+            )
             for symbol in symbols:
                 try:
                     df = self._current_data(
@@ -81,7 +86,7 @@ class NovelPatternMatcher:
                     if len(df) < pattern.window_size + 20:
                         continue
                     window = df.iloc[-pattern.window_size :]
-                    vector, features, chart = engine.embed(window)
+                    vector, features, chart = engine.embed(window, benchmark_frames=benchmark_frames)
                     scaled = self._scaled_vector_for_pattern(vector, centroid, scaler_mean, scaler_scale)
                     if scaled is None:
                         continue
@@ -167,6 +172,20 @@ class NovelPatternMatcher:
             "similarity_threshold": threshold,
             "generated_at": datetime.now(timezone.utc).isoformat(),
         }
+
+    def _benchmark_frames(
+        self,
+        timeframe: str,
+        *,
+        required_bars: int,
+        cache: dict[tuple[str, str], pd.DataFrame | None],
+    ) -> dict[str, pd.DataFrame]:
+        frames: dict[str, pd.DataFrame] = {}
+        for symbol in ("SPY", "QQQ"):
+            df = self._current_data(symbol, timeframe, required_bars=required_bars, cache=cache)
+            if df is not None:
+                frames[symbol] = df
+        return frames
 
     @staticmethod
     def _statuses_for_module(module: str) -> list[DiscoveredPatternStatus]:

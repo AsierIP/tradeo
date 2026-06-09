@@ -53,6 +53,7 @@ class PatternDiscoveryLabAgent:
             symbols = self._resolve_symbols(request, params)
             samples = []
             sampler = WindowSampler(target_r=settings.discovery_min_reward_risk)
+            benchmark_frames = self._benchmark_frames(params, warnings)
             for symbol in symbols:
                 if len(samples) >= params["max_total_windows"]:
                     break
@@ -66,6 +67,7 @@ class PatternDiscoveryLabAgent:
                         forward_bars=params["forward_bars"],
                         stride=params["stride"],
                         max_windows_per_symbol=params["max_windows_per_symbol"],
+                        benchmark_frames=benchmark_frames,
                     )
                     remaining = params["max_total_windows"] - len(samples)
                     samples.extend(symbol_samples[:remaining])
@@ -189,6 +191,20 @@ class PatternDiscoveryLabAgent:
         if request.symbols:
             return [s.upper().strip() for s in request.symbols if s.strip()]
         return pick_symbols(limit=params["limit"])
+
+    def _benchmark_frames(self, params: dict[str, Any], warnings: list[str]) -> dict[str, Any]:
+        frames: dict[str, Any] = {}
+        assert self.provider is not None
+        for symbol in ("SPY", "QQQ"):
+            try:
+                frames[symbol] = self.provider.fetch_ohlcv(
+                    symbol,
+                    period=params["period"],
+                    interval=params["interval"],
+                )
+            except Exception as exc:  # noqa: BLE001
+                warnings.append(f"{symbol} benchmark unavailable: {exc}")
+        return frames
 
     def _summary(self, candidates: list[Any], samples: list[Any], warnings: list[str]) -> dict[str, Any]:
         accepted = [c for c in candidates if c.validation_passed]
