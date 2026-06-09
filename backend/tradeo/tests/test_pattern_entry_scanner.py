@@ -756,3 +756,130 @@ def test_laboratory_matcher_reuses_symbol_data_across_patterns() -> None:
     assert provider.fetch_calls.count(("QQQ", "3mo", "1d")) == 1
     assert provider.fetch_calls.count((provider.symbol, "3mo", "1d")) == 1
     assert len(provider.fetch_calls) == 3
+
+
+def near_miss_match(provider: FixtureProvider, **overrides):
+    payload = {
+        "module": "laboratory",
+        "pattern_id": 42,
+        "pattern_name": "near_miss_pattern",
+        "pattern_key": "near_miss_key",
+        "pattern_status": "lab_candidate",
+        "pattern_promotion_status": "lab_candidate",
+        "symbol": provider.symbol,
+        "timeframe": "1d",
+        "side": "long",
+        "similarity": 0.7,
+        "score": 0.72,
+        "entry_score": 0.56,
+        "entry_gate_passed": False,
+        "entry_trigger": "next_bar_stop_confirmation",
+        "entry_variant_id": "next_bar_stop_confirmation",
+        "entry_variant": {"id": "next_bar_stop_confirmation", "order_style": "next_bar_stop"},
+        "entry_audit": {
+            "source_bar_hash": "near-miss-hash",
+            "entry_eligible_ts": "2026-06-10T00:00:00+00:00",
+        },
+        "regime": {"regime_key": "market_mixed|uptrend|normal_vol|liquid|rs_leader"},
+        "regime_fit": {"score": 0.7},
+        "entry_price": 10.0,
+        "stop_price": 9.0,
+        "target_price": 14.0,
+        "reward_risk": 4.0,
+        "metrics": {
+            "pattern_score": 0.8,
+            "pattern_expectancy_r": 0.3,
+            "pattern_profit_factor": 2.0,
+            "pattern_stability_score": 0.8,
+            "features": {"avg_dollar_volume": 10_000_000, "atr_pct": 0.04},
+            "entry_gate": {
+                "passed": False,
+                "reason": "insufficient_volume",
+                "rejection_reasons": ["insufficient_volume"],
+                "trigger": "next_bar_stop_confirmation",
+                "entry_score": 0.56,
+                "volume_ratio": 0.45,
+                "extension_atr": 0.4,
+                "regime_ok": True,
+            },
+        },
+    }
+    payload.update(overrides)
+    return payload
+
+
+def test_laboratory_opens_near_miss_shadow_observation_for_soft_volume_failure() -> None:
+    db = session_factory()
+    provider = FixtureProvider("MISS")
+
+    class NearMissMatcher:
+        def match_current(self, *args, **kwargs):
+            return {
+                "patterns_checked": 1,
+                "symbols_checked": 1,
+                "matches": [near_miss_match(provider)],
+                "stored_matches": 1,
+                "similarity_threshold": 0.45,
+            }
+
+    result = PatternEntryScanner(
+        settings=scanner(provider, entry_gate_enabled=True).settings,
+        matcher=NearMissMatcher(),
+    ).scan(db, module="laboratory", symbols=[provider.symbol], store_signals=True, execute_orders=False)
+
+    assert result["signals_created"] == 1
+    assert result["near_miss_shadow_observations_opened"] == 1
+    assert result["orders_submitted"] == 0
+    assert result["rejected_by_entry_gate"] == 0
+    signal = db.get(Signal, result["signal_ids"][0])
+    assert signal.metadata_json["near_miss"] is True
+    assert signal.metadata_json["near_miss_shadow"] is True
+    assert signal.metadata_json["would_have_failed_entry_gate"] is True
+    assert signal.metadata_json["paper_only"] is True
+    assert signal.metadata_json["no_ibkr_order"] is True
+    assert signal.metadata_json["entry_variant_id"] == "next_bar_stop_confirmation"
+    assert signal.metadata_json["regime"]["regime_key"]
+    assert signal.metadata_json["entry_gate"]["near_miss_shadow"] is True
+    assert signal.metadata_json["entry_quality"]["near_miss_shadow"] is True
+    observation = db.get(Trade, result["paper_observation_trade_ids"][0])
+    assert observation.metadata_json["execution_mode"] == LAB_SHADOW_EXECUTION_MODE
+    assert observation.metadata_json["near_miss_shadow"] is True
+    assert observation.metadata_json["no_ibkr_order"] is True
+
+
+def test_laboratory_does_not_open_near_miss_shadow_for_hard_entry_blocker() -> None:
+    db = session_factory()
+    provider = FixtureProvider("HARD")
+    hard_match = near_miss_match(
+        provider,
+        entry_score=0.2,
+        metrics={
+            **near_miss_match(provider)["metrics"],
+            "entry_gate": {
+                **near_miss_match(provider)["metrics"]["entry_gate"],
+                "reason": "weak_entry_score;insufficient_volume",
+                "rejection_reasons": ["weak_entry_score", "insufficient_volume"],
+                "entry_score": 0.2,
+            },
+        },
+    )
+
+    class HardBlockerMatcher:
+        def match_current(self, *args, **kwargs):
+            return {
+                "patterns_checked": 1,
+                "symbols_checked": 1,
+                "matches": [hard_match],
+                "stored_matches": 1,
+                "similarity_threshold": 0.45,
+            }
+
+    result = PatternEntryScanner(
+        settings=scanner(provider, entry_gate_enabled=True).settings,
+        matcher=HardBlockerMatcher(),
+    ).scan(db, module="laboratory", symbols=[provider.symbol], store_signals=True, execute_orders=False)
+
+    assert result["signals_created"] == 0
+    assert result["near_miss_shadow_observations_opened"] == 0
+    assert result["rejected_by_entry_gate"] == 1
+    assert db.query(Trade).count() == 0

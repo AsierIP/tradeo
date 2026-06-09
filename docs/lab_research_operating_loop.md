@@ -64,6 +64,33 @@ Estas observaciones:
 
 El objetivo es generar datos para decidir, no simular ejecucion live perfecta.
 
+### Near-Miss Shadow
+
+Lab tambien puede abrir observaciones shadow para near-misses de alta prioridad
+aunque `entry_gate` falle por confirmacion de volumen moderada. Esto solo aplica
+a `laboratory`; Fox Hunter y produccion no cambian.
+
+La observacion near-miss exige:
+
+- `entry_variant_id`;
+- `regime.regime_key`;
+- ranking alto o `opportunity_rank_score` suficiente;
+- fallo blando por `insufficient_volume` o `weak_volume_confirmation`;
+- sin blockers duros como trigger inexistente, regimen invalido, exceso de ATR,
+  sobreextension, score de entrada debil o riesgo rechazado.
+
+Estas senales/observaciones quedan marcadas con:
+
+- `near_miss=true`;
+- `near_miss_shadow=true`;
+- `would_have_failed_entry_gate=true`;
+- `paper_only=true`;
+- `no_ibkr_order=true`;
+- razones exactas en `near_miss_reasons`.
+
+El objetivo es generar historia Lab cerrada para Director sin relajar ejecucion.
+Director sigue bloqueando promociones hasta que haya evidencia paper suficiente.
+
 ## Ranking
 
 El ranking combina:

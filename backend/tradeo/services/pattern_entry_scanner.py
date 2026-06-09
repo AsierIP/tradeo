@@ -11,7 +11,7 @@ from tradeo.db.models import AuditLog, Signal, SignalStatus, Trade, TradeStatus
 from tradeo.research.novel_pattern_matcher import NovelPatternMatcher
 from tradeo.schemas import PatternCandidate
 from tradeo.services.ibkr_broker import IBKRBroker
-from tradeo.services.lab_paper_observations import LabPaperObservationService
+from tradeo.services.lab_paper_observations import LAB_SHADOW_EXECUTION_MODE, LabPaperObservationService
 from tradeo.services.market_session import market_session_status
 from tradeo.services.order_outcomes import mark_signal_order_failure
 from tradeo.services.opportunity_ranking import rank_entry_matches
@@ -19,6 +19,27 @@ from tradeo.services.risk_manager import RiskManager
 from tradeo.services.signal_quality import build_entry_quality, build_signal_snapshot
 
 EntryModule = Literal["laboratory", "fox_hunter"]
+LAB_NEAR_MISS_VOLUME_REASONS = {"insufficient_volume", "weak_volume_confirmation"}
+LAB_NEAR_MISS_HARD_REASONS = {
+    "weak_trigger",
+    "weak_entry_score",
+    "no_operational_trigger",
+    "insufficient_history",
+    "regime_not_aligned",
+    "regime_filter_failed",
+    "excessive_extension",
+    "overextended",
+    "excessive_volatility",
+    "volatility_filter_failed",
+    "atr_filter_failed",
+    "liquidity_filter_failed",
+    "thin_liquidity",
+    "trigger_not_confirmed",
+}
+LAB_NEAR_MISS_TOP_RANK_LIMIT = 3
+LAB_NEAR_MISS_MIN_ENTRY_SCORE = 0.50
+LAB_NEAR_MISS_MIN_RANK_SCORE = 0.45
+LAB_NEAR_MISS_HIGH_RANK_SCORE = 0.60
 
 
 class PatternEntryScannerSafetyError(RuntimeError):
@@ -93,10 +114,13 @@ class PatternEntryScanner:
         rejected_by_entry_gate = 0
         rejected_by_entry_quality = 0
         rejected_by_risk = 0
+        near_miss_shadow_observations_opened = 0
         order_errors: list[dict[str, Any]] = []
         signal_ids: list[int] = []
+        near_miss_signal_ids: list[int] = []
         trade_ids: list[int] = []
         paper_observation_trade_ids: list[int] = []
+        near_miss_trade_ids: list[int] = []
         paper_observations_opened = 0
 
         all_ranked_matches = rank_entry_matches(
@@ -110,16 +134,24 @@ class PatternEntryScanner:
             entry_gate = ((match.get("metrics") or {}).get("entry_gate") or {})
             if settings.entry_gate_enabled and not bool(entry_gate.get("passed", False)):
                 rejected_by_entry_gate += 1
-                db.add(
-                    AuditLog(
-                        actor=module,
-                        action="entry_match_rejected_by_entry_gate",
-                        entity_type="discovered_pattern_match",
-                        entity_id=str(match.get("pattern_id", "")),
-                        details_json={"match": match, "entry_gate": entry_gate},
+                self._audit_entry_gate_rejection(db, module=module, match=match, entry_gate=entry_gate)
+                if module == "laboratory" and self._is_lab_near_miss_shadow_candidate(match, entry_gate):
+                    opened = self._open_near_miss_shadow_observation(
+                        db,
+                        match=match,
+                        resolved=resolved,
+                        session=session,
                     )
-                )
-                db.commit()
+                    if opened is not None:
+                        signal, observation = opened
+                        signals_created += 1
+                        signal_ids.append(signal.id)
+                        near_miss_signal_ids.append(signal.id)
+                        paper_observations_opened += 1
+                        near_miss_shadow_observations_opened += 1
+                        paper_observation_trade_ids.append(observation.id)
+                        near_miss_trade_ids.append(observation.id)
+                        continue
                 continue
             if self._has_active_exposure(db, match, module=module):
                 skipped_duplicates += 1
@@ -252,12 +284,15 @@ class PatternEntryScanner:
             "rejected_by_entry_gate": rejected_by_entry_gate,
             "rejected_by_entry_quality": rejected_by_entry_quality,
             "rejected_by_risk": rejected_by_risk,
+            "near_miss_shadow_observations_opened": near_miss_shadow_observations_opened,
             "order_errors": order_errors,
             "signal_ids": signal_ids,
+            "near_miss_signal_ids": near_miss_signal_ids,
             "trade_ids": trade_ids,
             "paper_observations_opened": paper_observations_opened,
             "paper_observations_closed": observation_lifecycle["closed_observations"],
             "paper_observation_trade_ids": paper_observation_trade_ids,
+            "near_miss_trade_ids": near_miss_trade_ids,
             "paper_observation_lifecycle": observation_lifecycle,
             "top_opportunities": self._top_opportunities(ranked_matches),
             "store_signals": resolved["store_signals"],
@@ -367,12 +402,15 @@ class PatternEntryScanner:
             "rejected_by_entry_gate": 0,
             "rejected_by_entry_quality": 0,
             "rejected_by_risk": 0,
+            "near_miss_shadow_observations_opened": 0,
             "order_errors": [],
             "signal_ids": [],
+            "near_miss_signal_ids": [],
             "trade_ids": [],
             "paper_observations_opened": 0,
             "paper_observations_closed": 0,
             "paper_observation_trade_ids": [],
+            "near_miss_trade_ids": [],
             "paper_observation_lifecycle": {
                 "open_observations": 0,
                 "closed_observations": 0,
@@ -562,6 +600,7 @@ class PatternEntryScanner:
                 "entry_rejection_reasons": ((match.get("metrics") or {}).get("entry_gate") or {}).get(
                     "rejection_reasons", []
                 ),
+                "near_miss_shadow_candidate": match.get("near_miss_shadow_candidate"),
                 "history_count": (match.get("opportunity_rank_components") or {}).get("history_count"),
                 "history_expectancy_r": (match.get("opportunity_rank_components") or {}).get(
                     "history_expectancy_r"
@@ -624,6 +663,190 @@ class PatternEntryScanner:
             for key in keys:
                 by_key.setdefault(key, []).append(float(trade.r_multiple or 0.0))
         return {key: self._history_item(values) for key, values in by_key.items()}
+
+    def _open_near_miss_shadow_observation(
+        self,
+        db: Session,
+        *,
+        match: dict[str, Any],
+        resolved: dict[str, Any],
+        session: dict[str, Any],
+    ) -> tuple[Signal, Trade] | None:
+        settings = self.settings
+        assert settings is not None
+        if not resolved["store_signals"] or resolved["execute_orders"]:
+            return None
+        entry_gate = ((match.get("metrics") or {}).get("entry_gate") or {})
+        if self._has_active_exposure(db, match, module="laboratory"):
+            return None
+        if self._has_recent_signal(db, match, module="laboratory"):
+            return None
+        candidate = self._candidate_from_match(match)
+        risk = RiskManager(settings).validate_candidate(candidate, db)
+        if not risk.approved:
+            db.add(
+                AuditLog(
+                    actor="laboratory",
+                    action="near_miss_shadow_rejected_by_risk",
+                    entity_type="discovered_pattern_match",
+                    entity_id=str(match.get("pattern_id", "")),
+                    details_json={"match": match, "risk": risk.model_dump(mode="json")},
+                )
+            )
+            db.commit()
+            return None
+        entry_quality = build_entry_quality(
+            match=match,
+            risk=risk,
+            settings=settings,
+            execution_requested=False,
+            market_session=session,
+        )
+        if float(entry_quality.get("score") or 0.0) < 0.45:
+            db.add(
+                AuditLog(
+                    actor="laboratory",
+                    action="near_miss_shadow_rejected_by_quality",
+                    entity_type="discovered_pattern_match",
+                    entity_id=str(match.get("pattern_id", "")),
+                    details_json={
+                        "match": match,
+                        "entry_quality": entry_quality,
+                        "min_near_miss_quality_score": 0.45,
+                    },
+                )
+            )
+            db.commit()
+            return None
+        near_miss_reasons = self._entry_gate_reasons(entry_gate)
+        match = self._mark_near_miss_shadow_match(match, near_miss_reasons)
+        entry_quality = dict(entry_quality)
+        entry_quality["near_miss_shadow"] = True
+        entry_quality["actionable"] = False
+        entry_quality["label"] = "watch"
+        entry_quality["flags"] = sorted(set(list(entry_quality.get("flags") or []) + ["near_miss_shadow"]))
+        signal = self._store_signal(
+            db,
+            module="laboratory",
+            match=match,
+            candidate=candidate,
+            risk=risk,
+            execute_orders=False,
+            market_session=session,
+            entry_quality=entry_quality,
+        )
+        observation = self._open_lab_observation(db, signal=signal, match=match, risk=risk)
+        if observation is None:
+            return None
+        db.add(
+            AuditLog(
+                actor="laboratory",
+                action="near_miss_shadow_observation_opened",
+                entity_type="trade",
+                entity_id=str(observation.id),
+                details_json={
+                    "signal_id": signal.id,
+                    "trade_id": observation.id,
+                    "match": match,
+                    "entry_gate": entry_gate,
+                    "near_miss_reasons": near_miss_reasons,
+                    "no_ibkr_order": True,
+                },
+            )
+        )
+        db.commit()
+        return signal, observation
+
+    @classmethod
+    def _is_lab_near_miss_shadow_candidate(
+        cls,
+        match: dict[str, Any],
+        entry_gate: dict[str, Any],
+    ) -> bool:
+        if not match.get("entry_variant_id"):
+            return False
+        if not ((match.get("regime") or {}).get("regime_key")):
+            return False
+        if str(entry_gate.get("trigger") or match.get("entry_trigger") or "") == "no_operational_trigger":
+            return False
+        reasons = set(cls._entry_gate_reasons(entry_gate))
+        allowed_soft_reasons = {"insufficient_volume", "weak_volume_confirmation"}
+        hard_reasons = {
+            "weak_entry_score",
+            "regime_filter_failed",
+            "volatility_filter_failed",
+            "overextended",
+            "no_operational_trigger",
+            "trigger_not_confirmed",
+        }
+        if not reasons or not reasons.issubset(allowed_soft_reasons) or reasons & hard_reasons:
+            return False
+        rank = int(match.get("opportunity_rank") or 9999)
+        rank_score = float(match.get("opportunity_rank_score") or 0.0)
+        entry_score = float(entry_gate.get("entry_score") or match.get("entry_score") or 0.0)
+        volume_ratio = float(entry_gate.get("volume_ratio") or 0.0)
+        avg_dollar_volume = float(((match.get("metrics") or {}).get("features") or {}).get("avg_dollar_volume") or 0.0)
+        return (
+            (rank <= 10 or rank_score >= 0.66)
+            and rank_score >= 0.62
+            and entry_score >= 0.48
+            and volume_ratio >= 0.20
+            and avg_dollar_volume > 0.0
+        )
+
+    @staticmethod
+    def _entry_gate_reasons(entry_gate: dict[str, Any]) -> list[str]:
+        reasons = entry_gate.get("rejection_reasons")
+        if isinstance(reasons, list) and reasons:
+            return [str(reason) for reason in reasons if str(reason)]
+        reason = str(entry_gate.get("reason") or "").strip()
+        if not reason or reason == "entry gate failed":
+            return []
+        return [part.strip() for part in reason.split(";") if part.strip()]
+
+    @staticmethod
+    def _mark_near_miss_shadow_match(match: dict[str, Any], reasons: list[str]) -> dict[str, Any]:
+        enriched = dict(match)
+        metrics = dict(enriched.get("metrics") or {})
+        entry_gate = dict(metrics.get("entry_gate") or {})
+        entry_gate["near_miss_shadow"] = True
+        entry_gate["would_have_failed_entry_gate"] = True
+        entry_gate["near_miss_reasons"] = reasons
+        metrics["entry_gate"] = entry_gate
+        metrics["near_miss_shadow"] = True
+        metrics["paper_only"] = True
+        enriched["metrics"] = metrics
+        enriched["near_miss"] = True
+        enriched["near_miss_shadow"] = True
+        enriched["near_miss_shadow_candidate"] = True
+        enriched["near_miss_reasons"] = reasons
+        enriched["would_have_failed_entry_gate"] = True
+        enriched["paper_only"] = True
+        enriched["no_ibkr_order"] = True
+        enriched["notes"] = (
+            f"{enriched.get('notes', '')} Near-miss Lab shadow observation; "
+            "entry gate failed only on soft volume confirmation."
+        ).strip()
+        return enriched
+
+    @staticmethod
+    def _audit_entry_gate_rejection(
+        db: Session,
+        *,
+        module: EntryModule,
+        match: dict[str, Any],
+        entry_gate: dict[str, Any],
+    ) -> None:
+        db.add(
+            AuditLog(
+                actor=module,
+                action="entry_match_rejected_by_entry_gate",
+                entity_type="discovered_pattern_match",
+                entity_id=str(match.get("pattern_id", "")),
+                details_json={"match": match, "entry_gate": entry_gate},
+            )
+        )
+        db.commit()
 
     @staticmethod
     def _history_score(values: list[float]) -> float:
@@ -767,6 +990,12 @@ class PatternEntryScanner:
                 "signal_snapshot": signal_snapshot,
                 "match": match,
                 "entry_gate": match.get("metrics", {}).get("entry_gate"),
+                "near_miss": bool(match.get("near_miss")),
+                "near_miss_shadow": bool(match.get("near_miss_shadow")),
+                "near_miss_reasons": match.get("near_miss_reasons") or [],
+                "would_have_failed_entry_gate": bool(match.get("would_have_failed_entry_gate")),
+                "paper_only": module == "laboratory" and not execute_orders,
+                "no_ibkr_order": module == "laboratory" and not execute_orders,
                 "risk": risk.model_dump(mode="json"),
                 "director_audit_required": True,
             },
