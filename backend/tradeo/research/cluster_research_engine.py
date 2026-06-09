@@ -64,8 +64,23 @@ class ClusterResearchEngine:
             cluster_holdout_samples = [sample for sample in cluster_samples if id(sample) in holdout_ids]
             cluster_vectors = matrix_all_scaled[all_idxs]
             centroid_scaled = model.cluster_centers_[cluster_id]
-            long_metrics = self._metrics_for_side(cluster_train_samples, cluster_samples, cluster_holdout_samples, "long")
-            short_metrics = self._metrics_for_side(cluster_train_samples, cluster_samples, cluster_holdout_samples, "short")
+            tested_trials = n_clusters * 2 * len(self.rr_levels or [1.5, 2.0, 2.5, 3.0, 4.0, 5.0])
+            long_metrics = self._metrics_for_side(
+                cluster_train_samples,
+                cluster_samples,
+                cluster_holdout_samples,
+                train_samples,
+                "long",
+                multiple_testing_trials=tested_trials,
+            )
+            short_metrics = self._metrics_for_side(
+                cluster_train_samples,
+                cluster_samples,
+                cluster_holdout_samples,
+                train_samples,
+                "short",
+                multiple_testing_trials=tested_trials,
+            )
             side: Side = "long" if self._side_score(long_metrics) >= self._side_score(short_metrics) else "short"
             metrics = long_metrics if side == "long" else short_metrics
             metrics["opposite_side"] = short_metrics if side == "long" else long_metrics
@@ -115,7 +130,9 @@ class ClusterResearchEngine:
         train_samples: list[WindowSample],
         all_samples: list[WindowSample],
         holdout_samples: list[WindowSample],
+        baseline_samples: list[WindowSample],
         side: Side,
+        multiple_testing_trials: int,
     ) -> dict[str, object]:
         rr_levels = self.rr_levels or [1.5, 2.0, 2.5, 3.0, 4.0, 5.0]
         rr_analysis = RewardRiskAnalyzer(
@@ -139,6 +156,14 @@ class ClusterResearchEngine:
         by_symbol = self._group_expectancy(all_samples, outcomes, key="symbol")
         oos = self._split_metrics(holdout_samples, side, best_rr)
         in_sample_metrics = self._split_metrics(train_samples, side, best_rr)
+        null_baseline = self._null_baseline(
+            baseline_samples,
+            cluster_size=len(train_samples),
+            side=side,
+            rr=best_rr,
+            observed_expectancy=float(in_sample_metrics["expectancy_r"]),
+            multiple_testing_trials=multiple_testing_trials,
+        )
         stability_year = self._positive_group_fraction(by_year)
         stability_symbol = self._positive_group_fraction(by_symbol)
         diversity_score = min(1.0, len(by_symbol) / 20.0) * 0.55 + min(1.0, len(by_year) / 4.0) * 0.45
@@ -178,6 +203,14 @@ class ClusterResearchEngine:
             "max_drawdown_r": float(best_rr_metrics.get("max_drawdown_r", 0.0)) if isinstance(best_rr_metrics, dict) else 0.0,
             "in_sample_expectancy_r": in_sample_metrics["expectancy_r"],
             "in_sample_profit_factor": in_sample_metrics["profit_factor"],
+            "null_expectancy_r": null_baseline["expectancy_r"],
+            "null_profit_factor": null_baseline["profit_factor"],
+            "null_win_rate": null_baseline["win_rate"],
+            "expectancy_lift_r": null_baseline["expectancy_lift_r"],
+            "null_p_value": null_baseline["p_value"],
+            "adjusted_p_value": null_baseline["adjusted_p_value"],
+            "multiple_testing_trials": null_baseline["multiple_testing_trials"],
+            "statistical_edge_passed": null_baseline["statistical_edge_passed"],
             "out_of_sample_expectancy_r": oos["expectancy_r"],
             "out_of_sample_profit_factor": oos["profit_factor"],
             "out_of_sample_win_rate": oos["win_rate"],
@@ -196,6 +229,73 @@ class ClusterResearchEngine:
         split = int(len(samples) * (1.0 - self.out_of_sample_pct))
         split = min(max(1, split), len(samples) - 1)
         return samples[:split], samples[split:]
+
+    def _null_baseline(
+        self,
+        samples: list[WindowSample],
+        *,
+        cluster_size: int,
+        side: Side,
+        rr: float,
+        observed_expectancy: float,
+        multiple_testing_trials: int,
+    ) -> dict[str, float | int | bool]:
+        outcomes = np.asarray([RewardRiskAnalyzer._simulate_sample(s, side, rr)[0] for s in samples], dtype=float)
+        if len(outcomes) == 0 or cluster_size <= 0:
+            return {
+                "expectancy_r": 0.0,
+                "profit_factor": 0.0,
+                "win_rate": 0.0,
+                "expectancy_lift_r": observed_expectancy,
+                "p_value": 1.0,
+                "adjusted_p_value": 1.0,
+                "multiple_testing_trials": max(1, int(multiple_testing_trials)),
+                "statistical_edge_passed": False,
+            }
+
+        baseline = self._outcome_metrics(outcomes)
+        draws = min(512, max(96, len(outcomes) * 2))
+        seed = self._null_seed(side, rr, cluster_size, len(outcomes))
+        rng = np.random.default_rng(seed)
+        draw_size = min(cluster_size, len(outcomes))
+        random_means = []
+        for _ in range(draws):
+            idxs = rng.choice(len(outcomes), size=draw_size, replace=False)
+            random_means.append(float(np.mean(outcomes[idxs])))
+        p_value = (1 + sum(1 for mean in random_means if mean >= observed_expectancy)) / (draws + 1)
+        trial_count = max(1, int(multiple_testing_trials))
+        adjusted_p = min(1.0, p_value * trial_count)
+        expectancy_lift = observed_expectancy - float(baseline["expectancy_r"])
+        return {
+            "expectancy_r": baseline["expectancy_r"],
+            "profit_factor": baseline["profit_factor"],
+            "win_rate": baseline["win_rate"],
+            "expectancy_lift_r": round(expectancy_lift, 5),
+            "p_value": round(float(p_value), 5),
+            "adjusted_p_value": round(float(adjusted_p), 5),
+            "multiple_testing_trials": trial_count,
+            "statistical_edge_passed": adjusted_p <= 0.25 and expectancy_lift > 0,
+        }
+
+    def _null_seed(self, side: Side, rr: float, cluster_size: int, population_size: int) -> int:
+        digest = blake2b(digest_size=4)
+        digest.update(
+            f"{self.random_state}|{side}|{rr:g}|cluster={cluster_size}|population={population_size}".encode()
+        )
+        return int.from_bytes(digest.digest(), "big", signed=False)
+
+    @staticmethod
+    def _outcome_metrics(outcomes: np.ndarray) -> dict[str, float]:
+        if len(outcomes) == 0:
+            return {"expectancy_r": 0.0, "profit_factor": 0.0, "win_rate": 0.0}
+        wins = outcomes[outcomes > 0]
+        losses = outcomes[outcomes < 0]
+        profit_factor = float(wins.sum() / abs(losses.sum())) if len(losses) else float(wins.sum() or 0.0)
+        return {
+            "expectancy_r": round(float(np.mean(outcomes)), 5),
+            "profit_factor": round(profit_factor, 5),
+            "win_rate": round(float(np.mean(outcomes > 0)), 5),
+        }
 
     @staticmethod
     def _split_metrics(samples: list[WindowSample], side: Side, rr: float) -> dict[str, float | int]:
@@ -248,7 +348,11 @@ class ClusterResearchEngine:
         stability = float(metrics.get("stability_score", 0.0))
         oos = max(0.0, float(metrics.get("out_of_sample_expectancy_r", 0.0)))
         rr = min(float(metrics.get("best_rr", metrics.get("reward_risk_estimate", 0.0))), 8.0) / 8.0
-        return expectancy * 0.32 + pf * 0.18 + hit * 0.16 + stability * 0.16 + oos * 0.12 + rr * 0.06
+        lift = min(max(0.0, float(metrics.get("expectancy_lift_r", 0.0))), 2.0)
+        adjusted_p = min(max(float(metrics.get("adjusted_p_value", 1.0)), 0.0), 1.0)
+        confidence = 1.0 - adjusted_p
+        raw_score = expectancy * 0.30 + pf * 0.16 + hit * 0.14 + stability * 0.14 + oos * 0.10 + rr * 0.06
+        return raw_score * (0.45 + 0.55 * confidence) + lift * 0.05
 
     @staticmethod
     def _feature_summary(samples: list[WindowSample]) -> dict[str, object]:

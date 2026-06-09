@@ -67,6 +67,14 @@ class ValidationGate:
             reasons.append(
                 f"estabilidad insuficiente: {float(metrics.get('stability_score', 0.0)):.2f} < {s.discovery_min_stability_score:.2f}"
             )
+        adjusted_p = metrics.get("adjusted_p_value")
+        if adjusted_p is not None and float(adjusted_p) > s.discovery_max_adjusted_p_value:
+            reasons.append(
+                f"significancia insuficiente: p_adj={float(adjusted_p):.2f} > {s.discovery_max_adjusted_p_value:.2f}"
+            )
+        if metrics.get("statistical_edge_passed") is False:
+            lift = float(metrics.get("expectancy_lift_r", 0.0))
+            warnings.append(f"edge vs baseline débil: lift={lift:.2f}R")
         oos_positive = float(metrics.get("out_of_sample_expectancy_r", 0.0)) > 0
         if not oos_positive:
             warnings.append("out-of-sample expectancy no positiva")
