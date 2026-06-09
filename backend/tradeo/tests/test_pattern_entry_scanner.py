@@ -111,6 +111,8 @@ def test_laboratory_scanner_creates_paper_signal_for_validated_lab_pattern() -> 
     assert signal.metadata_json["entry_quality_score"] > 0
     assert signal.metadata_json["entry_quality"]["label"] in {"blocked", "weak", "watch", "actionable", "high"}
     assert isinstance(signal.metadata_json["entry_quality"]["flags"], list)
+    assert signal.metadata_json["opportunity_rank"] == 1
+    assert signal.metadata_json["opportunity_rank_score"] > 0
     assert signal.metadata_json["signal_snapshot"]["symbol"] == provider.symbol
     assert signal.metadata_json["signal_snapshot"]["risk"]["approved"] is True
 
@@ -262,6 +264,73 @@ def test_laboratory_scanner_rejects_low_quality_match() -> None:
     assert result["rejected_by_entry_quality"] == 1
     assert result["signals_created"] == 0
     assert db.query(Signal).count() == 0
+
+
+def test_laboratory_scanner_processes_best_ranked_opportunity_first() -> None:
+    db = session_factory()
+    provider = FixtureProvider()
+
+    class RankingMatcher:
+        def match_current(self, *args, **kwargs):
+            def match(name: str, score: float, entry_score: float, expectancy: float):
+                return {
+                    "module": "laboratory",
+                    "pattern_id": 1 if name == "weak_pattern" else 2,
+                    "pattern_name": name,
+                    "pattern_key": f"{name}_key",
+                    "pattern_status": "lab_candidate",
+                    "pattern_promotion_status": "lab_candidate",
+                    "symbol": provider.symbol,
+                    "timeframe": "1d",
+                    "side": "long",
+                    "similarity": score,
+                    "score": score,
+                    "entry_score": entry_score,
+                    "entry_gate_passed": True,
+                    "entry_trigger": "breakout",
+                    "entry_price": 10.0,
+                    "stop_price": 9.0,
+                    "target_price": 14.0,
+                    "reward_risk": 4.0,
+                    "metrics": {
+                        "pattern_score": score,
+                        "pattern_expectancy_r": expectancy,
+                        "pattern_profit_factor": 2.0,
+                        "pattern_stability_score": score,
+                        "features": {"avg_dollar_volume": 10_000_000, "atr_pct": 0.04},
+                        "entry_gate": {
+                            "passed": True,
+                            "trigger": "breakout",
+                            "entry_score": entry_score,
+                            "volume_ratio": 2.0,
+                            "extension_atr": 0.5,
+                            "regime_ok": True,
+                        },
+                    },
+                }
+
+            return {
+                "patterns_checked": 2,
+                "symbols_checked": 1,
+                "matches": [
+                    match("weak_pattern", 0.2, 0.2, 0.0),
+                    match("strong_pattern", 0.9, 0.9, 0.5),
+                ],
+                "stored_matches": 2,
+                "similarity_threshold": 0.45,
+            }
+
+    result = PatternEntryScanner(
+        settings=scanner(provider, entry_min_quality_score=0.0).settings,
+        matcher=RankingMatcher(),
+    ).scan(db, module="laboratory", symbols=[provider.symbol], store_signals=True)
+
+    assert result["signals_created"] == 2
+    first_signal = db.get(Signal, result["signal_ids"][0])
+    second_signal = db.get(Signal, result["signal_ids"][1])
+    assert first_signal.pattern == "strong_pattern"
+    assert first_signal.metadata_json["opportunity_rank"] == 1
+    assert second_signal.metadata_json["opportunity_rank"] == 2
 
 
 def test_laboratory_scanner_respects_symbol_pattern_cooldown() -> None:

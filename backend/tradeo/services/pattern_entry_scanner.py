@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from tradeo.core.config import Settings, get_settings
 from tradeo.db.models import AuditLog, Signal, SignalStatus, Trade, TradeStatus
@@ -13,6 +13,7 @@ from tradeo.schemas import PatternCandidate
 from tradeo.services.ibkr_broker import IBKRBroker
 from tradeo.services.market_session import market_session_status
 from tradeo.services.order_outcomes import mark_signal_order_failure
+from tradeo.services.opportunity_ranking import rank_entry_matches
 from tradeo.services.risk_manager import RiskManager
 from tradeo.services.signal_quality import build_entry_quality, build_signal_snapshot
 
@@ -90,7 +91,13 @@ class PatternEntryScanner:
         signal_ids: list[int] = []
         trade_ids: list[int] = []
 
-        for match in match_result["matches"]:
+        ranked_matches = rank_entry_matches(
+            match_result["matches"],
+            settings=settings,
+            execution_history=self._execution_history(db, module),
+        )
+
+        for match in ranked_matches:
             entry_gate = ((match.get("metrics") or {}).get("entry_gate") or {})
             if settings.entry_gate_enabled and not bool(entry_gate.get("passed", False)):
                 rejected_by_entry_gate += 1
@@ -217,7 +224,7 @@ class PatternEntryScanner:
             "module": module,
             "patterns_checked": match_result["patterns_checked"],
             "symbols_checked": match_result["symbols_checked"],
-            "matches_found": len(match_result["matches"]),
+            "matches_found": len(ranked_matches),
             "signals_created": signals_created,
             "orders_submitted": orders_submitted,
             "skipped_duplicates": skipped_duplicates,
@@ -228,6 +235,7 @@ class PatternEntryScanner:
             "order_errors": order_errors,
             "signal_ids": signal_ids,
             "trade_ids": trade_ids,
+            "top_opportunities": self._top_opportunities(ranked_matches),
             "store_signals": resolved["store_signals"],
             "execute_orders": resolved["execute_orders"],
             "similarity_threshold": match_result["similarity_threshold"],
@@ -337,6 +345,7 @@ class PatternEntryScanner:
             "order_errors": [],
             "signal_ids": [],
             "trade_ids": [],
+            "top_opportunities": [],
             "store_signals": resolved["store_signals"],
             "execute_orders": resolved["execute_orders"],
             "similarity_threshold": resolved["similarity_threshold"],
@@ -464,6 +473,52 @@ class PatternEntryScanner:
         )
         return recent_signal is not None
 
+    @staticmethod
+    def _top_opportunities(matches: list[dict[str, Any]], *, limit: int = 10) -> list[dict[str, Any]]:
+        return [
+            {
+                "rank": match.get("opportunity_rank"),
+                "rank_score": match.get("opportunity_rank_score"),
+                "symbol": match.get("symbol"),
+                "pattern_name": match.get("pattern_name"),
+                "entry_score": match.get("entry_score"),
+                "similarity": match.get("similarity"),
+            }
+            for match in matches[:limit]
+        ]
+
+    def _execution_history(self, db: Session, module: EntryModule) -> dict[tuple[str, str], float]:
+        trades = (
+            db.query(Trade)
+            .options(joinedload(Trade.signal))
+            .filter(Trade.status == TradeStatus.CLOSED)
+            .order_by(Trade.closed_at.desc(), Trade.opened_at.desc())
+            .limit(500)
+            .all()
+        )
+        by_key: dict[tuple[str, str], list[float]] = {}
+        for trade in trades:
+            signal = trade.signal
+            if signal is None:
+                continue
+            metadata = signal.metadata_json or {}
+            if metadata.get("entry_module") != module:
+                continue
+            pattern_key = (trade.pattern, trade.symbol)
+            pattern_all_key = (trade.pattern, "*")
+            by_key.setdefault(pattern_key, []).append(float(trade.r_multiple or 0.0))
+            by_key.setdefault(pattern_all_key, []).append(float(trade.r_multiple or 0.0))
+        return {key: self._history_score(values) for key, values in by_key.items()}
+
+    @staticmethod
+    def _history_score(values: list[float]) -> float:
+        if not values:
+            return 0.5
+        expectancy = sum(values) / len(values)
+        raw_score = max(0.0, min(1.0, 0.5 + expectancy / 2.0))
+        confidence = min(1.0, len(values) / 10.0)
+        return round(0.5 * (1.0 - confidence) + raw_score * confidence, 6)
+
     def _store_signal(
         self,
         db: Session,
@@ -526,6 +581,9 @@ class PatternEntryScanner:
                 "pattern_key": match["pattern_key"],
                 "pattern_status": match.get("pattern_status"),
                 "pattern_promotion_status": match.get("pattern_promotion_status"),
+                "opportunity_rank": match.get("opportunity_rank"),
+                "opportunity_rank_score": match.get("opportunity_rank_score"),
+                "opportunity_rank_components": match.get("opportunity_rank_components"),
                 "entry_quality_score": entry_quality["score"],
                 "entry_quality": entry_quality,
                 "signal_snapshot": signal_snapshot,

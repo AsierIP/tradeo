@@ -209,6 +209,8 @@ def _signal_to_dict(signal: Signal, trade_status: dict[str, Any] | None = None) 
         "entry_quality_label": entry_quality.get("label") or _entry_quality_label(quality_score),
         "entry_quality_actionable": bool(entry_quality.get("actionable", quality_score >= 0.60)),
         "entry_quality_flags": list(entry_quality.get("flags") or []),
+        "opportunity_rank": metadata.get("opportunity_rank"),
+        "opportunity_rank_score": metadata.get("opportunity_rank_score"),
         "risk_usd": signal.risk_usd,
         "suggested_qty": signal.suggested_qty,
         "strategy_version": signal.strategy_version,

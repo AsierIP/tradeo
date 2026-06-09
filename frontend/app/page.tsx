@@ -49,6 +49,8 @@ type Summary = {
     entry_quality_label?: string
     entry_quality_actionable?: boolean
     entry_quality_flags?: string[]
+    opportunity_rank?: number | null
+    opportunity_rank_score?: number | null
     risk_usd: number
     suggested_qty: number
     status: string
@@ -403,19 +405,19 @@ function OperationsModule({
           <table>
             <thead>
               <tr>
-                <th>Símbolo</th><th>Lado</th><th>Entrada</th><th>Stop</th><th>Target</th><th>R:R</th><th>Conf.</th><th>Calidad</th><th>Qty</th><th>Estado</th><th>Motivo</th><th>Acción</th>
+                <th>Rank</th><th>Símbolo</th><th>Lado</th><th>Entrada</th><th>Stop</th><th>Target</th><th>R:R</th><th>Conf.</th><th>Calidad</th><th>Qty</th><th>Estado</th><th>Motivo</th><th>Acción</th>
               </tr>
             </thead>
             <tbody>
               {signals.map((s) => (
                 <tr key={s.id}>
-                  <td>{s.symbol}</td><td>{s.side}</td><td>{s.entry}</td><td>{s.stop}</td><td>{s.target}</td>
+                  <td title={typeof s.opportunity_rank_score === 'number' ? s.opportunity_rank_score.toFixed(3) : undefined}>{s.opportunity_rank ?? '-'}</td><td>{s.symbol}</td><td>{s.side}</td><td>{s.entry}</td><td>{s.stop}</td><td>{s.target}</td>
                   <td>{s.reward_risk}</td><td>{(s.confidence * 100).toFixed(1)}%</td><td title={(s.entry_quality_flags || []).join(', ') || undefined}>{formatQuality(s)}</td><td>{s.suggested_qty}</td><td><StatusBadge status={s.status} /></td>
                   <td title={s.execution_reason || undefined}>{s.execution_reason_code || '-'}</td>
                   <td>{s.retryable ? 'retry' : (s.next_action || '-')}</td>
                 </tr>
               ))}
-              {!signals.length && <tr><td colSpan={12}>Sin señales todavía.</td></tr>}
+              {!signals.length && <tr><td colSpan={13}>Sin señales todavía.</td></tr>}
             </tbody>
           </table>
         </div>

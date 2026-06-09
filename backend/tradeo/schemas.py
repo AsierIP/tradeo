@@ -377,6 +377,7 @@ class PatternEntryScanResponse(BaseModel):
     order_errors: list[dict[str, Any]] = Field(default_factory=list)
     signal_ids: list[int] = Field(default_factory=list)
     trade_ids: list[int] = Field(default_factory=list)
+    top_opportunities: list[dict[str, Any]] = Field(default_factory=list)
     store_signals: bool
     execute_orders: bool
     similarity_threshold: float
