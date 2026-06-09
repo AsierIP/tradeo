@@ -34,6 +34,9 @@ def _sample(highs: list[float], lows: list[float], closes: list[float], cost_r: 
             forward_lows=lows,
             forward_closes=closes,
             execution_cost_r=cost_r,
+            long_gap_adverse_r=0.2,
+            long_mfe_before_mae=True,
+            execution={"fill_probability": 0.8, "max_size_usd": 12_500.0, "spread_proxy_pct": 0.001},
         ),
     )
 
@@ -77,6 +80,11 @@ def test_simulation_subtracts_execution_cost_r() -> None:
     assert stop_bar is None
     metrics = RewardRiskAnalyzer([3.0], min_samples=1).metrics_for_rr([sample], "long", 3.0)
     assert metrics["avg_execution_cost_r"] == 0.15
+    assert metrics["triple_barrier_labels"] == {"target": 1, "stop": 0, "timeout": 0}
+    assert metrics["avg_gap_adverse_r"] == 0.2
+    assert metrics["mfe_before_mae_rate"] == 1.0
+    assert metrics["avg_fill_probability"] == 0.8
+    assert metrics["p25_max_size_usd"] == 12500.0
 
 
 def test_cost_multiplier_stresses_result_r() -> None:

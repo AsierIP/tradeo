@@ -364,6 +364,17 @@ class NovelPatternMatchResponse(BaseModel):
     generated_at: str
 
 
+class ResearchDirectorResponse(BaseModel):
+    generated_at: str
+    run_id: int | None = None
+    patterns_reviewed: int
+    hypotheses_created: int
+    memory_graph: dict[str, Any]
+    active_learning_agenda: list[dict[str, Any]] = Field(default_factory=list)
+    director_state: dict[str, Any]
+    artifacts: dict[str, str] = Field(default_factory=dict)
+
+
 class PatternEntryScanRequest(BaseModel):
     symbols: list[str] | None = None
     limit: int | None = None

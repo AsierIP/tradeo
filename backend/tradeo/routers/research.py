@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import json
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session, selectinload
 
 from tradeo.agents.pattern_discovery_lab_agent import PatternDiscoveryLabAgent
+from tradeo.core.config import get_settings
 from tradeo.core.security import require_admin
 from tradeo.db.models import DiscoveredPattern, DiscoveredPatternExample, DiscoveredPatternMatch, DiscoveredPatternMetric, DiscoveryRun
 from tradeo.db.session import get_db
+from tradeo.research.autonomous_research_director import ResearchDirector
 from tradeo.research.novel_pattern_matcher import NovelPatternMatcher
 from tradeo.research.novel_pattern_registry import NovelPatternRegistry
 from tradeo.services.director_review_gate import DirectorReviewGate
@@ -21,6 +25,7 @@ from tradeo.schemas import (
     NovelPatternMatchOut,
     NovelPatternMatchRequest,
     NovelPatternMatchResponse,
+    ResearchDirectorResponse,
 )
 
 router = APIRouter(prefix="/research", tags=["research"])
@@ -177,6 +182,31 @@ def list_discovery_runs(
     db: Session = Depends(get_db),
 ) -> list[DiscoveryRun]:
     return db.query(DiscoveryRun).order_by(DiscoveryRun.started_at.desc()).limit(limit).all()
+
+
+@router.post("/director/run", response_model=ResearchDirectorResponse)
+def run_research_director(
+    run_id: int | None = None,
+    limit: int = Query(default=120, ge=1, le=500),
+    _: str = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> ResearchDirectorResponse:
+    result = ResearchDirector().run(db, run_id=run_id, limit=limit)
+    return ResearchDirectorResponse(**result)
+
+
+@router.get("/director/latest", response_model=ResearchDirectorResponse)
+def latest_research_director(
+    _: str = Depends(require_admin),
+) -> ResearchDirectorResponse:
+    path = get_settings().reports_path / "research" / "director" / "latest_research_director.json"
+    if not path.exists():
+        raise HTTPException(404, "research director has not generated a report yet")
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    summary = payload.get("summary") if isinstance(payload, dict) else None
+    if not isinstance(summary, dict):
+        raise HTTPException(500, "research director latest report is malformed")
+    return ResearchDirectorResponse(**summary)
 
 
 @router.post("/director-review/refresh")

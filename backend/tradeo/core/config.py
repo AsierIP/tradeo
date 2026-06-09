@@ -115,6 +115,9 @@ class Settings(BaseSettings):
     discovery_match_similarity_threshold: float = 0.45
     discovery_match_max_results: int = 100
     discovery_registry_similarity_threshold: float = 0.96
+    research_director_enabled: bool = True
+    research_director_interval_minutes: int = 180
+    research_director_pattern_limit: int = 120
     entry_gate_enabled: bool = True
     entry_min_score: float = 0.50
     entry_min_quality_score: float = 0.60

@@ -63,9 +63,18 @@ class WindowSampler:
                     entry * self.min_risk_pct,
                     0.01,
                 )
-                execution_cost_r = self._execution_cost_r(window, entry=entry, risk_proxy=risk_proxy)
-                outcome = self._forward_outcome(entry, risk_proxy, future, forward_bars, execution_cost_r)
+                execution_metrics = self._execution_cost_metrics(window, entry=entry, risk_proxy=risk_proxy)
+                execution_cost_r = float(execution_metrics["execution_cost_r"])
+                outcome = self._forward_outcome(
+                    entry,
+                    risk_proxy,
+                    future,
+                    forward_bars,
+                    execution_cost_r,
+                    execution_metrics,
+                )
                 vector, features, chart = self.embedding_engine.embed(window, benchmark_frames=benchmark_frames)
+                features.update({f"execution_{k}": float(v) for k, v in execution_metrics.items()})
                 start_idx = window.index[0]
                 end_idx = window.index[-1]
                 year = self._year(end_idx)
@@ -94,10 +103,12 @@ class WindowSampler:
         future: pd.DataFrame,
         forward_bars: list[int],
         execution_cost_r: float = 0.0,
+        execution_metrics: dict[str, float] | None = None,
     ) -> ForwardOutcome:
         closes = future["close"].astype(float).to_numpy()
         highs = future["high"].astype(float).to_numpy()
         lows = future["low"].astype(float).to_numpy()
+        opens = future["open"].astype(float).to_numpy() if "open" in future else closes
         forward_returns = {}
         for horizon in forward_bars:
             idx = min(horizon, len(closes)) - 1
@@ -107,8 +118,20 @@ class WindowSampler:
         long_mae_r = float(max(0.0, np.max(entry - lows) / risk_proxy))
         short_mfe_r = float(np.max(entry - lows) / risk_proxy)
         short_mae_r = float(max(0.0, np.max(highs - entry) / risk_proxy))
-        long_outcome_r, long_hit_4r = self._path_outcome(entry, risk_proxy, future, side="long")
-        short_outcome_r, short_hit_4r = self._path_outcome(entry, risk_proxy, future, side="short")
+        long_path = self._path_outcome(entry, risk_proxy, future, side="long")
+        short_path = self._path_outcome(entry, risk_proxy, future, side="short")
+        long_outcome_r, long_hit_4r, long_target_bar, long_stop_bar, long_label = long_path
+        short_outcome_r, short_hit_4r, short_target_bar, short_stop_bar, short_label = short_path
+        first_open = float(opens[0]) if len(opens) else float(entry)
+        long_gap_adverse_r = max(0.0, (entry - first_open) / max(risk_proxy, 1e-9))
+        short_gap_adverse_r = max(0.0, (first_open - entry) / max(risk_proxy, 1e-9))
+        long_mfe_bar = int(np.argmax(highs - entry) + 1) if len(highs) else 0
+        long_mae_bar = int(np.argmax(entry - lows) + 1) if len(lows) else 0
+        short_mfe_bar = int(np.argmax(entry - lows) + 1) if len(lows) else 0
+        short_mae_bar = int(np.argmax(highs - entry) + 1) if len(highs) else 0
+        strong_close_threshold = self.target_r * 0.75
+        long_final_r = float((closes[-1] - entry) / risk_proxy) if len(closes) else 0.0
+        short_final_r = float((entry - closes[-1]) / risk_proxy) if len(closes) else 0.0
         return ForwardOutcome(
             forward_returns=forward_returns,
             entry_price=float(entry),
@@ -126,39 +149,118 @@ class WindowSampler:
             forward_lows=np.round(lows.astype(float), 6).tolist(),
             forward_closes=np.round(closes.astype(float), 6).tolist(),
             execution_cost_r=round(float(execution_cost_r), 5),
+            long_label=long_label,
+            short_label=short_label,
+            long_time_to_target=long_target_bar,
+            long_time_to_stop=long_stop_bar,
+            short_time_to_target=short_target_bar,
+            short_time_to_stop=short_stop_bar,
+            long_mfe_before_mae=long_mfe_bar > 0 and (long_mae_bar == 0 or long_mfe_bar <= long_mae_bar),
+            short_mfe_before_mae=short_mfe_bar > 0 and (short_mae_bar == 0 or short_mfe_bar <= short_mae_bar),
+            long_gap_adverse_r=round(float(long_gap_adverse_r), 5),
+            short_gap_adverse_r=round(float(short_gap_adverse_r), 5),
+            long_strong_close_without_target=long_target_bar is None and long_final_r >= strong_close_threshold,
+            short_strong_close_without_target=short_target_bar is None and short_final_r >= strong_close_threshold,
+            long_speed_label=self._speed_label(long_target_bar, long_stop_bar, len(closes)),
+            short_speed_label=self._speed_label(short_target_bar, short_stop_bar, len(closes)),
+            execution={k: round(float(v), 6) for k, v in (execution_metrics or {}).items()},
         )
 
     @staticmethod
     def _execution_cost_r(window: pd.DataFrame, *, entry: float, risk_proxy: float) -> float:
+        metrics = WindowSampler._execution_cost_metrics(window, entry=entry, risk_proxy=risk_proxy)
+        return float(metrics["execution_cost_r"])
+
+    @staticmethod
+    def _execution_cost_metrics(window: pd.DataFrame, *, entry: float, risk_proxy: float) -> dict[str, float]:
         latest = window.iloc[-1]
+        previous_close = float(window["close"].iloc[-2]) if len(window) >= 2 else float(latest["close"])
         range_pct = float((latest["high"] - latest["low"]) / max(entry, 1e-9))
         avg_dollar_volume = float((window["close"] * window["volume"]).tail(20).mean())
+        adv_shares = float(window["volume"].tail(20).mean())
+        atr_pct_proxy = max(
+            range_pct,
+            float((window["high"] - window["low"]).tail(14).mean() / max(entry, 1e-9)),
+        )
         liquidity_penalty_pct = 0.0015 if avg_dollar_volume < 5_000_000 else 0.0008
-        spread_proxy_pct = min(0.02, max(0.0005, range_pct * 0.08))
-        roundtrip_cost = entry * (liquidity_penalty_pct + spread_proxy_pct)
-        return max(0.0, float(roundtrip_cost / max(risk_proxy, 1e-9)))
+        price_penalty_pct = 0.0012 if entry < 5 else 0.0004 if entry < 15 else 0.00015
+        liquidity_factor = 1.0 - min(avg_dollar_volume / 50_000_000, 1.0)
+        spread_proxy_pct = min(0.025, max(0.0004, range_pct * (0.05 + 0.15 * liquidity_factor)))
+        participation_rate = min(0.05, max(0.001, 250_000.0 / max(avg_dollar_volume, 1.0)))
+        slippage_pct = min(0.03, atr_pct_proxy * (0.03 + np.sqrt(participation_rate) * 0.25))
+        entry_gap_pct = abs(float(latest["open"]) / max(previous_close, 1e-9) - 1.0)
+        entry_gap_penalty_pct = min(0.02, entry_gap_pct * 0.35)
+        short_borrow_proxy_pct = min(
+            0.015,
+            0.00025 + max(0.0, 5_000_000.0 - avg_dollar_volume) / 5_000_000.0 * 0.004,
+        )
+        adverse_fill_pressure = min(
+            1.0,
+            spread_proxy_pct / 0.02 + slippage_pct / 0.03 + entry_gap_penalty_pct / 0.02,
+        )
+        fill_probability = max(0.10, min(0.99, 0.98 - adverse_fill_pressure * 0.22))
+        max_size_usd = max(0.0, min(avg_dollar_volume * 0.005, adv_shares * entry * 0.02))
+        roundtrip_cost_pct = (
+            liquidity_penalty_pct
+            + price_penalty_pct
+            + spread_proxy_pct
+            + slippage_pct
+            + entry_gap_penalty_pct
+        )
+        execution_cost_r = max(0.0, float(entry * roundtrip_cost_pct / max(risk_proxy, 1e-9)))
+        return {
+            "execution_cost_r": execution_cost_r,
+            "spread_proxy_pct": float(spread_proxy_pct),
+            "slippage_proxy_pct": float(slippage_pct),
+            "entry_gap_penalty_pct": float(entry_gap_penalty_pct),
+            "liquidity_penalty_pct": float(liquidity_penalty_pct),
+            "price_penalty_pct": float(price_penalty_pct),
+            "short_borrow_proxy_pct": float(short_borrow_proxy_pct),
+            "fill_probability": float(fill_probability),
+            "max_size_usd": float(max_size_usd),
+            "avg_dollar_volume": float(avg_dollar_volume),
+            "participation_rate": float(participation_rate),
+        }
 
-    def _path_outcome(self, entry: float, risk: float, future: pd.DataFrame, side: str) -> tuple[float, bool]:
+    def _path_outcome(
+        self,
+        entry: float,
+        risk: float,
+        future: pd.DataFrame,
+        side: str,
+    ) -> tuple[float, bool, int | None, int | None, str]:
         if side == "long":
             target = entry + self.target_r * risk
             stop = entry - self.stop_r * risk
-            for _, row in future.iterrows():
+            for bar, (_, row) in enumerate(future.iterrows(), start=1):
                 # Conservative path assumption: if both are touched intrabar,
                 # stop is considered first. That prevents discovery from being
                 # overly optimistic on daily bars.
                 if float(row["low"]) <= stop:
-                    return -self.stop_r, False
+                    return -self.stop_r, False, None, bar, "stop"
                 if float(row["high"]) >= target:
-                    return self.target_r, True
-            return float((future["close"].iloc[-1] - entry) / risk), False
+                    return self.target_r, True, bar, None, "target"
+            return float((future["close"].iloc[-1] - entry) / risk), False, None, None, "timeout"
         target = entry - self.target_r * risk
         stop = entry + self.stop_r * risk
-        for _, row in future.iterrows():
+        for bar, (_, row) in enumerate(future.iterrows(), start=1):
             if float(row["high"]) >= stop:
-                return -self.stop_r, False
+                return -self.stop_r, False, None, bar, "stop"
             if float(row["low"]) <= target:
-                return self.target_r, True
-        return float((entry - future["close"].iloc[-1]) / risk), False
+                return self.target_r, True, bar, None, "target"
+        return float((entry - future["close"].iloc[-1]) / risk), False, None, None, "timeout"
+
+    @staticmethod
+    def _speed_label(target_bar: int | None, stop_bar: int | None, horizon: int) -> str:
+        if target_bar is None:
+            return "stopped" if stop_bar is not None else "timeout"
+        fast_cutoff = max(2, int(np.ceil(max(horizon, 1) * 0.25)))
+        slow_cutoff = max(fast_cutoff + 1, int(np.ceil(max(horizon, 1) * 0.70)))
+        if target_bar <= fast_cutoff:
+            return "fast_target"
+        if target_bar >= slow_cutoff:
+            return "slow_target"
+        return "normal_target"
 
     @staticmethod
     def _date_str(value: object) -> str:

@@ -1,7 +1,7 @@
 -include .env
 export
 
-.PHONY: setup up down logs ps test scan report self-improve discover-patterns match-discovered-patterns current-matches research-runs
+.PHONY: setup up down logs ps test scan report self-improve discover-patterns match-discovered-patterns current-matches research-runs research-director research-director-latest
 
 setup:
 	cp -n .env.example .env || true
@@ -37,6 +37,12 @@ discover-patterns:
 
 research-runs:
 	bash -lc 'set -a; source .env; set +a; curl -u "$${TRADEO_ADMIN_USERNAME:-admin}:$${TRADEO_ADMIN_PASSWORD:-change-me}" http://localhost:8000/api/research/runs'
+
+research-director:
+	bash -lc 'set -a; source .env; set +a; curl -u "$${TRADEO_ADMIN_USERNAME:-admin}:$${TRADEO_ADMIN_PASSWORD:-change-me}" -X POST "http://localhost:8000/api/research/director/run?limit=120"'
+
+research-director-latest:
+	bash -lc 'set -a; source .env; set +a; curl -u "$${TRADEO_ADMIN_USERNAME:-admin}:$${TRADEO_ADMIN_PASSWORD:-change-me}" http://localhost:8000/api/research/director/latest'
 
 
 match-discovered-patterns:

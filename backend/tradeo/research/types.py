@@ -33,6 +33,21 @@ class ForwardOutcome:
     forward_lows: list[float] = field(default_factory=list)
     forward_closes: list[float] = field(default_factory=list)
     execution_cost_r: float = 0.0
+    long_label: str = "timeout"
+    short_label: str = "timeout"
+    long_time_to_target: int | None = None
+    long_time_to_stop: int | None = None
+    short_time_to_target: int | None = None
+    short_time_to_stop: int | None = None
+    long_mfe_before_mae: bool = False
+    short_mfe_before_mae: bool = False
+    long_gap_adverse_r: float = 0.0
+    short_gap_adverse_r: float = 0.0
+    long_strong_close_without_target: bool = False
+    short_strong_close_without_target: bool = False
+    long_speed_label: str = "unknown"
+    short_speed_label: str = "unknown"
+    execution: dict[str, float] = field(default_factory=dict)
 
     def outcome_for(self, side: Side) -> float:
         return self.long_outcome_r if side == "long" else self.short_outcome_r
@@ -45,6 +60,18 @@ class ForwardOutcome:
 
     def hit_4r_for(self, side: Side) -> bool:
         return self.long_hit_4r if side == "long" else self.short_hit_4r
+
+    def label_for(self, side: Side) -> str:
+        return self.long_label if side == "long" else self.short_label
+
+    def time_to_target_for(self, side: Side) -> int | None:
+        return self.long_time_to_target if side == "long" else self.short_time_to_target
+
+    def time_to_stop_for(self, side: Side) -> int | None:
+        return self.long_time_to_stop if side == "long" else self.short_time_to_stop
+
+    def speed_label_for(self, side: Side) -> str:
+        return self.long_speed_label if side == "long" else self.short_speed_label
 
 
 @dataclass(slots=True)

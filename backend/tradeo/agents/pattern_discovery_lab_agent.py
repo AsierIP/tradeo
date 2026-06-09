@@ -15,7 +15,9 @@ from sqlalchemy.orm import Session
 from tradeo.core.config import Settings, get_settings
 from tradeo.db.models import AuditLog, DiscoveryRun
 from tradeo.research.cluster_research_engine import ClusterResearchEngine
+from tradeo.research.autonomous_research_director import ResearchDirector as PersistentResearchDirector
 from tradeo.research.novel_pattern_registry import NovelPatternRegistry
+from tradeo.research.research_director import ResearchDirector as CandidateResearchDirector
 from tradeo.research.validation_gate import ValidationGate
 from tradeo.research.window_sampler import WindowSampler
 from tradeo.schemas import DiscoveryRunRequest, DiscoveryRunResponse
@@ -97,14 +99,50 @@ class PatternDiscoveryLabAgent:
             accepted = [c for c in candidates if c.validation_passed]
             rejected = [c for c in candidates if not c.validation_passed]
             ledger_artifacts = self._write_event_ledgers(run.id, candidates)
+            candidate_director_summary: dict[str, Any] = {}
+            if settings.research_director_enabled:
+                try:
+                    logger.info("Research Director: enriqueciendo candidatos antes del registry")
+                    candidate_director_summary = CandidateResearchDirector(settings=settings).run(
+                        run_id=run.id,
+                        candidates=candidates,
+                        samples=samples,
+                        params=params,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    msg = f"CandidateResearchDirector failed: {exc}"
+                    logger.exception(msg)
+                    warnings.append(msg)
             stored = NovelPatternRegistry().store_candidates(
                 db,
                 candidates,
                 run_id=run.id,
                 store_rejected=params["store_rejected"],
             )
+            director_result: dict[str, Any] | None = None
+            if settings.research_director_enabled:
+                try:
+                    director_result = PersistentResearchDirector(settings).run(
+                        db,
+                        run_id=run.id,
+                        limit=settings.research_director_pattern_limit,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    msg = f"ResearchDirector failed: {exc}"
+                    logger.exception(msg)
+                    warnings.append(msg)
             duration = round(time.perf_counter() - started, 3)
             summary = self._summary(candidates, samples, warnings)
+            summary["research_director"] = {
+                "candidate_completion": candidate_director_summary,
+            }
+            if director_result is not None:
+                summary["research_director"]["db_director"] = {
+                    "patterns_reviewed": director_result.get("patterns_reviewed", 0),
+                    "hypotheses_created": director_result.get("hypotheses_created", 0),
+                    "director_state": director_result.get("director_state", {}),
+                    "artifacts": director_result.get("artifacts", {}),
+                }
             report_path = self._write_report(run.id, params, summary, candidates)
             run.status = "completed"
             run.finished_at = datetime.now(timezone.utc)
@@ -129,6 +167,7 @@ class PatternDiscoveryLabAgent:
                         "accepted": len(accepted),
                         "rejected": len(rejected),
                         "stored": len(stored),
+                        "research_director": summary.get("research_director", {}),
                         "event_ledgers": ledger_artifacts,
                         "report_path": str(report_path) if report_path else None,
                     },
@@ -274,6 +313,23 @@ class PatternDiscoveryLabAgent:
             "best_win_rate": metrics.get("best_win_rate"),
             "best_max_drawdown_r": metrics.get("best_max_drawdown_r"),
             "avg_execution_cost_r": metrics.get("avg_execution_cost_r"),
+            "avg_bars_to_target": metrics.get("avg_bars_to_target"),
+            "avg_bars_to_stop": metrics.get("avg_bars_to_stop"),
+            "triple_barrier_labels": metrics.get("triple_barrier_labels", {}),
+            "mfe_before_mae_rate": metrics.get("mfe_before_mae_rate"),
+            "avg_gap_adverse_r": metrics.get("avg_gap_adverse_r"),
+            "strong_close_without_target_rate": metrics.get("strong_close_without_target_rate"),
+            "speed_label_counts": metrics.get("speed_label_counts", {}),
+            "fast_target_rate": metrics.get("fast_target_rate"),
+            "slow_target_rate": metrics.get("slow_target_rate"),
+            "timeout_rate": metrics.get("timeout_rate"),
+            "avg_fill_probability": metrics.get("avg_fill_probability"),
+            "p25_max_size_usd": metrics.get("p25_max_size_usd"),
+            "median_max_size_usd": metrics.get("median_max_size_usd"),
+            "avg_spread_proxy_pct": metrics.get("avg_spread_proxy_pct"),
+            "avg_slippage_proxy_pct": metrics.get("avg_slippage_proxy_pct"),
+            "avg_entry_gap_penalty_pct": metrics.get("avg_entry_gap_penalty_pct"),
+            "avg_short_borrow_proxy_pct": metrics.get("avg_short_borrow_proxy_pct"),
             "preferred_rr_passed": metrics.get("preferred_rr_passed"),
             "premium_rr_passed": metrics.get("premium_rr_passed"),
             "promotion_reason": metrics.get("promotion_reason"),
@@ -285,6 +341,17 @@ class PatternDiscoveryLabAgent:
             "expectancy_lift_r": metrics.get("expectancy_lift_r"),
             "null_p_value": metrics.get("null_p_value"),
             "adjusted_p_value": metrics.get("adjusted_p_value"),
+            "wrc_p_value": metrics.get("wrc_p_value"),
+            "spa_p_value": metrics.get("spa_p_value"),
+            "probabilistic_sharpe": metrics.get("probabilistic_sharpe"),
+            "deflated_sharpe": metrics.get("deflated_sharpe"),
+            "deflated_sharpe_probability": metrics.get("deflated_sharpe_probability"),
+            "edge_decay_parameter_score": metrics.get("edge_decay_parameter_score"),
+            "edge_decay_passed": metrics.get("edge_decay_passed"),
+            "purged_cv_fold_count": metrics.get("purged_cv_fold_count", 0),
+            "purged_cv_positive_rate": metrics.get("purged_cv_positive_rate", 0.0),
+            "purged_cv_avg_expectancy_r": metrics.get("purged_cv_avg_expectancy_r", 0.0),
+            "purged_cv_min_expectancy_r": metrics.get("purged_cv_min_expectancy_r", 0.0),
             "multiple_testing_trials": metrics.get("multiple_testing_trials"),
             "statistical_edge_passed": metrics.get("statistical_edge_passed"),
             "null_method": metrics.get("null_method"),
@@ -309,12 +376,30 @@ class PatternDiscoveryLabAgent:
             "variant_count": metrics.get("variant_count"),
             "drift_status": metrics.get("drift_status"),
             "drift_score": metrics.get("drift_score"),
+            "novelty_score": metrics.get("novelty_score"),
+            "diversity_bucket": metrics.get("diversity_bucket"),
+            "diversity_quota_rank": metrics.get("diversity_quota_rank"),
+            "expected_information_gain": metrics.get("expected_information_gain"),
+            "registry_novelty_score": metrics.get("registry_novelty_score"),
+            "registry_expected_information_gain": metrics.get("registry_expected_information_gain"),
+            "human_rule": metrics.get("human_rule", {}),
+            "regime_profile": metrics.get("regime_profile", {}),
             "operational_trigger": metrics.get("operational_trigger", {}),
             "event_ledger_count": metrics.get("event_ledger_count", 0),
             "event_ledger_path": metrics.get("event_ledger_path"),
             "event_ledger_sha256": metrics.get("event_ledger_sha256"),
             "event_ledger_compressed_bytes": metrics.get("event_ledger_compressed_bytes"),
             "event_ledger_uncompressed_bytes": metrics.get("event_ledger_uncompressed_bytes"),
+            "foundation_teacher": metrics.get("foundation_teacher", {}),
+            "market_replay": metrics.get("market_replay", {}),
+            "causal_invariance": metrics.get("causal_invariance", {}),
+            "adversarial_challenge": metrics.get("adversarial_challenge", {}),
+            "research_hypothesis": metrics.get("research_hypothesis", {}),
+            "research_memory": metrics.get("research_memory", {}),
+            "active_learning": metrics.get("active_learning", {}),
+            "pattern_lifecycle": metrics.get("pattern_lifecycle", {}),
+            "research_director": metrics.get("research_director", {}),
+            "research_paper_report_path": metrics.get("research_paper_report_path"),
             "walk_forward_fold_count": metrics.get("walk_forward_fold_count", 0),
             "walk_forward_positive_fold_rate": metrics.get("walk_forward_positive_fold_rate", 0.0),
             "walk_forward_avg_expectancy_r": metrics.get("walk_forward_avg_expectancy_r", 0.0),
@@ -333,6 +418,10 @@ class PatternDiscoveryLabAgent:
                     "outcome_r": e.get("outcome_r"),
                     "mfe_r": e.get("mfe_r"),
                     "mae_r": e.get("mae_r"),
+                    "triple_barrier_label": e.get("triple_barrier_label"),
+                    "speed_label": e.get("speed_label"),
+                    "time_to_target": e.get("time_to_target"),
+                    "time_to_stop": e.get("time_to_stop"),
                 }
                 for e in candidate.examples[:5]
             ],
@@ -432,6 +521,11 @@ class PatternDiscoveryLabAgent:
             "## Política de tokens",
             "El laboratorio no envía ventanas OHLCV crudas a ningún LLM. Solo exporta este digest compacto para revisión.",
             "",
+            "## Research Director",
+            "```json",
+            json.dumps(summary.get("research_director", {}), indent=2, ensure_ascii=False, default=str),
+            "```",
+            "",
             "## Parámetros",
             "```json",
             json.dumps(params, indent=2, ensure_ascii=False),
@@ -440,21 +534,93 @@ class PatternDiscoveryLabAgent:
             "## Top patrones",
         ]
         for pattern in summary.get("top_patterns", []):
+            human_rule = pattern.get("human_rule")
+            human_rule_text = (
+                human_rule.get("rule")
+                if isinstance(human_rule, dict)
+                else human_rule
+            )
             lines.extend(
                 [
                     f"### {pattern['name']}",
                     f"- Estado: {pattern['status']}",
                     f"- Lado: {pattern['side']} · ventana: {pattern['window_size']}",
-                    f"- Muestras/símbolos/años: {pattern['sample_count']} / {pattern['symbol_count']} / {pattern['year_count']}",
+                    (
+                        "- Muestras/símbolos/años: "
+                        f"{pattern['sample_count']} / {pattern['symbol_count']} / {pattern['year_count']}"
+                    ),
                     f"- Score: {pattern['score']}",
-                    f"- Best R:R: {pattern.get('best_rr')} · Expectancy: {pattern.get('best_expectancy_r')}R · PF: {pattern.get('best_profit_factor')} · Win rate: {pattern.get('best_win_rate')}",
-                    f"- Coste medio: {pattern.get('avg_execution_cost_r')}R · trigger operativo: {pattern.get('operational_trigger')}",
-                    f"- Walk-forward: {pattern.get('walk_forward_positive_fold_rate')} positive fold rate · avg {pattern.get('walk_forward_avg_expectancy_r')}R · min {pattern.get('walk_forward_min_expectancy_r')}R",
-                    f"- Null/CI: {pattern.get('null_method')} · p_adj {pattern.get('adjusted_p_value')} · CI {pattern.get('expectancy_ci_low')}..{pattern.get('expectancy_ci_high')}R · overfit {pattern.get('overfit_score')}",
+                    (
+                        f"- Best R:R: {pattern.get('best_rr')} · "
+                        f"Expectancy: {pattern.get('best_expectancy_r')}R · "
+                        f"PF: {pattern.get('best_profit_factor')} · "
+                        f"Win rate: {pattern.get('best_win_rate')}"
+                    ),
+                    (
+                        f"- Labels: {pattern.get('triple_barrier_labels')} · "
+                        f"target bars {pattern.get('avg_bars_to_target')} · "
+                        f"stop bars {pattern.get('avg_bars_to_stop')} · "
+                        f"MFE antes MAE {pattern.get('mfe_before_mae_rate')}"
+                    ),
+                    (
+                        f"- Coste/fill: coste {pattern.get('avg_execution_cost_r')}R · "
+                        f"fill {pattern.get('avg_fill_probability')} · "
+                        f"p25 max size ${pattern.get('p25_max_size_usd')} · "
+                        f"spread {pattern.get('avg_spread_proxy_pct')} · "
+                        f"slippage {pattern.get('avg_slippage_proxy_pct')}"
+                    ),
+                    f"- Trigger operativo: {pattern.get('operational_trigger')}",
+                    (
+                        "- Walk-forward: "
+                        f"{pattern.get('walk_forward_positive_fold_rate')} positive fold rate · "
+                        f"avg {pattern.get('walk_forward_avg_expectancy_r')}R · "
+                        f"min {pattern.get('walk_forward_min_expectancy_r')}R"
+                    ),
+                    (
+                        f"- Purged CV: {pattern.get('purged_cv_positive_rate')} positive · "
+                        f"avg {pattern.get('purged_cv_avg_expectancy_r')}R · "
+                        f"min {pattern.get('purged_cv_min_expectancy_r')}R"
+                    ),
+                    (
+                        f"- Null/CI: {pattern.get('null_method')} · "
+                        f"p_adj {pattern.get('adjusted_p_value')} · "
+                        f"WRC {pattern.get('wrc_p_value')} · SPA {pattern.get('spa_p_value')} · "
+                        f"CI {pattern.get('expectancy_ci_low')}..{pattern.get('expectancy_ci_high')}R · "
+                        f"overfit {pattern.get('overfit_score')}"
+                    ),
+                    (
+                        f"- Sharpe/decay: PSR {pattern.get('probabilistic_sharpe')} · "
+                        f"DSR {pattern.get('deflated_sharpe_probability')} · "
+                        f"edge decay {pattern.get('edge_decay_parameter_score')}"
+                    ),
+                    (
+                        f"- Novelty: score {pattern.get('novelty_score')} · "
+                        f"EIG {pattern.get('expected_information_gain')} · "
+                        f"bucket {pattern.get('diversity_bucket')} · "
+                        f"rank {pattern.get('diversity_quota_rank')}"
+                    ),
+                    f"- Regla humana: {human_rule_text}",
+                    f"- Hipótesis: {(pattern.get('research_hypothesis') or {}).get('thesis') if isinstance(pattern.get('research_hypothesis'), dict) else None}",
+                    f"- Market replay: {pattern.get('market_replay')}",
+                    f"- Adversarial challenge: {pattern.get('adversarial_challenge')}",
+                    f"- Invariancia causal: {pattern.get('causal_invariance')}",
+                    f"- Lifecycle: {pattern.get('pattern_lifecycle')}",
+                    f"- Active learning: {pattern.get('active_learning')}",
+                    f"- Paper report: {pattern.get('research_paper_report_path')}",
                     f"- Cost stress passed: {pattern.get('cost_stress_passed')} · {pattern.get('cost_stress')}",
-                    f"- Ledger: {pattern.get('event_ledger_count')} eventos · {pattern.get('event_ledger_path')} · sha256 {pattern.get('event_ledger_sha256')}",
-                    f"- R:R estimado: {pattern['reward_risk_estimate']} · Hit 4R: {pattern['hit_4r_rate']} · DD: {pattern.get('best_max_drawdown_r')}R",
-                    f"- OOS expectancy: {pattern['out_of_sample_expectancy_r']}R · estabilidad: {pattern['stability_score']}",
+                    (
+                        f"- Ledger: {pattern.get('event_ledger_count')} eventos · "
+                        f"{pattern.get('event_ledger_path')} · sha256 {pattern.get('event_ledger_sha256')}"
+                    ),
+                    (
+                        f"- R:R estimado: {pattern['reward_risk_estimate']} · "
+                        f"Hit 4R: {pattern['hit_4r_rate']} · "
+                        f"DD: {pattern.get('best_max_drawdown_r')}R"
+                    ),
+                    (
+                        f"- OOS expectancy: {pattern['out_of_sample_expectancy_r']}R · "
+                        f"estabilidad: {pattern['stability_score']}"
+                    ),
                     f"- Razones/avisos: {', '.join(pattern.get('validation_reasons') or ['sin incidencias'])}",
                     "",
                 ]

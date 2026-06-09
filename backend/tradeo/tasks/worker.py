@@ -12,6 +12,7 @@ from tradeo.core.config import get_settings
 from tradeo.db.init_db import init_db, seed_db
 from tradeo.db.models import DiscoveryRun
 from tradeo.db.session import SessionLocal
+from tradeo.research.autonomous_research_director import ResearchDirector
 from tradeo.research.novel_pattern_matcher import NovelPatternMatcher
 from tradeo.schemas import ScanRequest
 from tradeo.services.pattern_entry_scanner import (
@@ -134,6 +135,24 @@ def novel_match_job() -> None:
         db.close()
 
 
+def research_director_job() -> None:
+    db = SessionLocal()
+    try:
+        settings = get_settings()
+        if not settings.research_director_enabled:
+            logger.info("research director skipped: research_director_enabled=false")
+            return
+        result = ResearchDirector(settings).run(
+            db,
+            limit=settings.research_director_pattern_limit,
+        )
+        logger.info("research director result: {}", result.get("director_state", {}))
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("research director failed: {}", exc)
+    finally:
+        db.close()
+
+
 def laboratory_entry_job() -> None:
     db = SessionLocal()
     try:
@@ -236,6 +255,16 @@ def main() -> None:
                 "interval",
                 minutes=settings.discovery_match_scan_minutes,
                 id="novel_pattern_matcher",
+                max_instances=1,
+                coalesce=True,
+            )
+        if settings.research_director_enabled:
+            research_director_job()
+            scheduler.add_job(
+                research_director_job,
+                "interval",
+                minutes=settings.research_director_interval_minutes,
+                id="research_director",
                 max_instances=1,
                 coalesce=True,
             )

@@ -74,10 +74,18 @@ def test_window_sampler_generates_forward_labeled_samples() -> None:
     assert first.vector.shape[0] > 50
     assert first.outcome.risk_proxy > 0
     assert first.outcome.execution_cost_r > 0
+    assert first.outcome.long_label in {"target", "stop", "timeout"}
+    assert first.outcome.short_label in {"target", "stop", "timeout"}
+    assert first.outcome.long_speed_label in {"fast_target", "normal_target", "slow_target", "stopped", "timeout"}
+    assert first.outcome.execution["fill_probability"] > 0
     assert 20 in first.outcome.forward_returns
     assert "close_norm" in first.chart
+    assert "swing_state" in first.chart
     assert "long_entry_trigger_score" in first.features
     assert "liquidity_score" in first.features
+    assert "shapelet_flag_continuation_score" in first.features
+    assert "swing_trend_score" in first.features
+    assert "execution_fill_probability" in first.features
     assert "weekly_return" in first.features
     assert "relative_strength_spy" in first.features
 
@@ -85,7 +93,11 @@ def test_window_sampler_generates_forward_labeled_samples() -> None:
 def test_window_sampler_adds_benchmark_relative_strength() -> None:
     df = fixture_ohlcv("LABR", bars=180)
     spy = fixture_ohlcv("SPY", bars=180)
+    sector = fixture_ohlcv("SECTOR", bars=180)
+    industry = fixture_ohlcv("INDUSTRY", bars=180)
     spy["close"] = spy["close"].iloc[0]
+    sector["close"] = sector["close"].iloc[0] * 0.98
+    industry["close"] = industry["close"].iloc[0] * 1.02
     samples = WindowSampler().sample(
         symbol="LABR",
         df=df,
@@ -94,10 +106,13 @@ def test_window_sampler_adds_benchmark_relative_strength() -> None:
         forward_bars=[5],
         stride=20,
         max_windows_per_symbol=5,
-        benchmark_frames={"SPY": spy},
+        benchmark_frames={"SPY": spy, "SECTOR": sector, "INDUSTRY": industry},
     )
     assert samples
     assert samples[0].features["relative_strength_spy"] != 0.0
+    assert "relative_strength_sector" in samples[0].features
+    assert "relative_strength_industry" in samples[0].features
+    assert "market_breadth_proxy" in samples[0].features
 
 
 def test_cluster_engine_returns_candidates_or_empty_without_crashing() -> None:
@@ -122,6 +137,10 @@ def test_cluster_engine_returns_candidates_or_empty_without_crashing() -> None:
         assert "operational_trigger" in candidate.metrics
         assert "event_ledger_count" in candidate.metrics
         assert "cost_stress" in candidate.metrics
+        assert "human_rule" in candidate.metrics
+        assert "regime_profile" in candidate.metrics
+        assert "novelty_score" in candidate.metrics
+        assert "expected_information_gain" in candidate.metrics
 
 
 def test_cluster_engine_fits_scaler_on_train_only() -> None:
@@ -147,8 +166,13 @@ def test_cluster_engine_fits_scaler_on_train_only() -> None:
     assert "walk_forward_folds" in candidates[0].metrics
     assert candidates[0].metrics["multiple_testing_trials"] >= 4
     assert "adjusted_p_value" in candidates[0].metrics
+    assert "wrc_p_value" in candidates[0].metrics
+    assert "spa_p_value" in candidates[0].metrics
     assert candidates[0].metrics["null_method"] == "stratified_regime_bootstrap"
     assert "expectancy_ci_low" in candidates[0].metrics
+    assert "deflated_sharpe_probability" in candidates[0].metrics
+    assert "purged_cv_fold_count" in candidates[0].metrics
+    assert "edge_decay_parameter_score" in candidates[0].metrics
     assert "overfit_score" in candidates[0].metrics
     assert abs(float(candidates[0].metrics["scaler_mean"][0])) < 0.01
 
@@ -273,6 +297,53 @@ def test_validation_gate_rejects_high_adjusted_null_p_value() -> None:
     evaluated = ValidationGate().evaluate(candidate)
     assert not evaluated.validation_passed
     assert any("significancia insuficiente" in reason for reason in evaluated.validation_reasons)
+
+
+def test_validation_gate_rejects_failed_reality_check_and_edge_decay() -> None:
+    candidate = ClusterCandidate(
+        pattern_key="x",
+        name="x",
+        side="long",
+        timeframe="1d",
+        window_size=20,
+        cluster_id=1,
+        centroid=[],
+        sample_count=140,
+        symbol_count=12,
+        year_count=3,
+        score=0.0,
+        validation_passed=False,
+        validation_reasons=[],
+        metrics={
+            "train_sample_count": 120,
+            "best_rr": 3.0,
+            "best_expectancy_r": 0.45,
+            "best_profit_factor": 2.4,
+            "best_max_drawdown_r": 5.0,
+            "expectancy_r": 0.45,
+            "profit_factor": 2.4,
+            "stability_score": 0.62,
+            "out_of_sample_expectancy_r": 0.22,
+            "out_of_sample_profit_factor": 1.8,
+            "expectancy_lift_r": 0.18,
+            "adjusted_p_value": 0.08,
+            "wrc_p_value": 0.7,
+            "spa_p_value": 0.08,
+            "statistical_edge_passed": True,
+            "walk_forward_fold_count": 4,
+            "walk_forward_positive_fold_rate": 1.0,
+            "expectancy_ci_low": 0.05,
+            "overfit_score": 0.1,
+            "edge_decay_passed": False,
+            "rr_metrics": {"3": {"expectancy_r": 0.45, "profit_factor": 2.4, "sample_count": 120}},
+        },
+        feature_summary={},
+        examples=[],
+    )
+    evaluated = ValidationGate().evaluate(candidate)
+    assert not evaluated.validation_passed
+    assert any("White Reality Check" in reason for reason in evaluated.validation_reasons)
+    assert any("edge decae" in reason for reason in evaluated.validation_reasons)
 
 
 def test_validation_gate_marks_strong_underpowered_edge_for_confirmation() -> None:

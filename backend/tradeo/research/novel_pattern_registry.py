@@ -45,8 +45,17 @@ class NovelPatternRegistry:
             db.refresh(pattern)
         return stored
 
-    def upsert_candidate(self, db: Session, candidate: ClusterCandidate, run_id: int | None = None) -> DiscoveredPattern:
-        pattern = db.query(DiscoveredPattern).filter(DiscoveredPattern.pattern_key == candidate.pattern_key).one_or_none()
+    def upsert_candidate(
+        self,
+        db: Session,
+        candidate: ClusterCandidate,
+        run_id: int | None = None,
+    ) -> DiscoveredPattern:
+        pattern = (
+            db.query(DiscoveredPattern)
+            .filter(DiscoveredPattern.pattern_key == candidate.pattern_key)
+            .one_or_none()
+        )
         is_variant = False
         if pattern is None:
             pattern, similarity = self._find_similar_pattern(db, candidate)
@@ -64,6 +73,16 @@ class NovelPatternRegistry:
                 candidate.metrics["registry_candidate_pattern_key"] = candidate.pattern_key
         metrics = candidate.metrics
         drift = self._drift(pattern, candidate, is_variant=is_variant)
+        registry_similarity = float(metrics.get("registry_similarity", 0.0))
+        registry_novelty = max(0.0, min(1.0, 1.0 - registry_similarity))
+        registry_eig = float(metrics.get("expected_information_gain", 0.0)) * (0.35 + 0.65 * registry_novelty)
+        metrics["registry_novelty_score"] = round(registry_novelty, 6)
+        metrics["registry_expected_information_gain"] = round(registry_eig, 6)
+        metrics["registry_family_penalty"] = round(1.0 - (0.70 + 0.30 * registry_novelty), 6)
+        metrics["registry_adjusted_score"] = round(
+            float(candidate.score) * (0.70 + 0.30 * registry_novelty) + registry_eig * 0.04,
+            5,
+        )
         pattern.run_id = run_id
         pattern.name = candidate.name
         status = str(metrics.get("promotion_status", "lab" if candidate.validation_passed else "rejected"))
@@ -95,7 +114,7 @@ class NovelPatternRegistry:
         pattern.sample_count = candidate.sample_count
         pattern.symbol_count = candidate.symbol_count
         pattern.year_count = candidate.year_count
-        pattern.score = candidate.score
+        pattern.score = float(metrics.get("registry_adjusted_score", candidate.score))
         pattern.reward_risk_estimate = float(metrics.get("reward_risk_estimate", 0.0))
         pattern.expectancy_r = float(metrics.get("expectancy_r", 0.0))
         pattern.profit_factor = float(metrics.get("profit_factor", 0.0))
@@ -231,7 +250,10 @@ class NovelPatternRegistry:
         limit: int = 100,
         status: str | None = None,
     ) -> list[DiscoveredPattern]:
-        query = db.query(DiscoveredPattern).order_by(DiscoveredPattern.score.desc(), DiscoveredPattern.created_at.desc())
+        query = db.query(DiscoveredPattern).order_by(
+            DiscoveredPattern.score.desc(),
+            DiscoveredPattern.created_at.desc(),
+        )
         if status:
             try:
                 query = query.filter(DiscoveredPattern.status == DiscoveredPatternStatus(status))

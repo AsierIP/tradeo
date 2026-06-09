@@ -72,6 +72,14 @@ class ValidationGate:
             reasons.append(
                 f"significancia insuficiente: p_adj={float(adjusted_p):.2f} > {s.discovery_max_adjusted_p_value:.2f}"
             )
+        wrc_p = metrics.get("wrc_p_value")
+        if wrc_p is not None and float(wrc_p) > s.discovery_max_adjusted_p_value:
+            reasons.append(
+                f"White Reality Check insuficiente: p={float(wrc_p):.2f} > {s.discovery_max_adjusted_p_value:.2f}"
+            )
+        spa_p = metrics.get("spa_p_value")
+        if spa_p is not None and float(spa_p) > s.discovery_max_adjusted_p_value:
+            reasons.append(f"SPA insuficiente: p={float(spa_p):.2f} > {s.discovery_max_adjusted_p_value:.2f}")
         if metrics.get("statistical_edge_passed") is False:
             lift = float(metrics.get("expectancy_lift_r", 0.0))
             warnings.append(f"edge vs baseline débil: lift={lift:.2f}R")
@@ -83,8 +91,85 @@ class ValidationGate:
         overfit_score = metrics.get("overfit_score")
         if overfit_score is not None and float(overfit_score) > s.discovery_max_overfit_score:
             reasons.append(f"riesgo de overfit alto: {float(overfit_score):.2f} > {s.discovery_max_overfit_score:.2f}")
+        purged_fold_count = int(metrics.get("purged_cv_fold_count", 0))
+        if purged_fold_count:
+            purged_rate = float(metrics.get("purged_cv_positive_rate", 0.0))
+            if purged_rate < s.discovery_min_walk_forward_positive_rate:
+                reasons.append(
+                    "purged combinatorial CV inestable: "
+                    f"{purged_rate:.2f} < {s.discovery_min_walk_forward_positive_rate:.2f}"
+                )
+        deflated_psr = metrics.get("deflated_sharpe_probability")
+        if deflated_psr is not None and float(deflated_psr) < 0.50:
+            reasons.append(f"Deflated Sharpe débil: prob={float(deflated_psr):.2f} < 0.50")
+        probabilistic_sharpe = metrics.get("probabilistic_sharpe")
+        if probabilistic_sharpe is not None and float(probabilistic_sharpe) < 0.55:
+            warnings.append(f"Probabilistic Sharpe bajo: {float(probabilistic_sharpe):.2f}")
+        if metrics.get("edge_decay_passed") is False:
+            reasons.append("edge decae demasiado ante cambios cercanos de R:R")
         if metrics.get("cost_stress_passed") is False:
             reasons.append(f"edge no sobrevive coste x{s.discovery_required_cost_stress_multiplier:g}")
+        replay = metrics.get("market_replay", {})
+        if isinstance(replay, dict) and replay:
+            replay_expectancy = float(replay.get("expected_expectancy_r", 0.0))
+            replay_fill_ratio = float(replay.get("avg_fill_ratio", 0.0))
+            if replay_expectancy <= 0:
+                reasons.append(f"market replay sin expectancy positiva: {replay_expectancy:.2f}R")
+            if replay_fill_ratio < 0.25:
+                reasons.append(f"market replay fill ratio demasiado bajo: {replay_fill_ratio:.2f}")
+            elif replay_fill_ratio < 0.45:
+                warnings.append(f"market replay fill ratio debil: {replay_fill_ratio:.2f}")
+            for warning in replay.get("warnings", [])[:3]:
+                warnings.append(str(warning))
+        causal = metrics.get("causal_invariance", {})
+        if isinstance(causal, dict) and causal:
+            invariance_score = float(causal.get("invariance_score", 0.0))
+            symbol_dependency = causal.get("symbol_dependency", {})
+            no_three_symbols = (
+                bool(symbol_dependency.get("no_three_symbol_dependency", False))
+                if isinstance(symbol_dependency, dict)
+                else True
+            )
+            if not no_three_symbols:
+                reasons.append("dependencia de <=3 simbolos/eventos en invariancia causal")
+            if invariance_score < 0.25:
+                reasons.append(f"invariancia causal muy debil: {invariance_score:.2f}")
+            elif invariance_score < 0.45:
+                warnings.append(f"invariancia causal debil: {invariance_score:.2f}")
+            expected_fail_count = len(causal.get("expected_fail_buckets", []))
+            if expected_fail_count:
+                warnings.append(f"{expected_fail_count} buckets expected-fail detectados")
+        adversarial = metrics.get("adversarial_challenge", {})
+        if isinstance(adversarial, dict) and adversarial:
+            challenge_score = float(adversarial.get("challenge_score", 0.0))
+            for reason in adversarial.get("rejection_reasons", [])[:5]:
+                reasons.append(f"adversarial rejection: {reason}")
+            if challenge_score < 0.45:
+                reasons.append(f"challenge score bajo: {challenge_score:.2f} < 0.45")
+            elif challenge_score < 0.55:
+                warnings.append(f"challenge score liminal: {challenge_score:.2f} < 0.55")
+            for warning in adversarial.get("warnings", [])[:5]:
+                warnings.append(str(warning))
+        teacher = metrics.get("foundation_teacher", {})
+        if isinstance(teacher, dict):
+            digest = teacher.get("pretraining_digest", {})
+            teacher_score = (
+                float(digest.get("embedding_quality_score", 0.0))
+                if isinstance(digest, dict)
+                else 0.0
+            )
+            if teacher_score and teacher_score < 0.30:
+                warnings.append(f"teacher embedding quality debil: {teacher_score:.2f}")
+        if "avg_fill_probability" in metrics and float(metrics.get("avg_fill_probability", 1.0)) < 0.35:
+            reasons.append(
+                "baja probabilidad de fill estimada: "
+                f"{float(metrics.get('avg_fill_probability', 0.0)):.2f}"
+            )
+        if (
+            "p25_max_size_usd" in metrics
+            and 0.0 < float(metrics.get("p25_max_size_usd", 0.0)) < s.account_risk_usd * 5
+        ):
+            warnings.append("tamano operable bajo para el patron; limitar size o exigir mas liquidez")
         fold_count = int(metrics.get("walk_forward_fold_count", 0))
         if fold_count:
             fold_rate = float(metrics.get("walk_forward_positive_fold_rate", 0.0))
@@ -132,7 +217,11 @@ class ValidationGate:
             # Discovery can only create lab-stage states. It must never promote to
             # paper/live from simulated research R metrics, even when those metrics
             # look strong. The Director gate owns all execution-stage promotion.
-            if preferred_passed and oos_positive and float(metrics.get("stability_score", 0.0)) >= s.discovery_min_stability_score:
+            if (
+                preferred_passed
+                and oos_positive
+                and float(metrics.get("stability_score", 0.0)) >= s.discovery_min_stability_score
+            ):
                 promotion_status = "lab_candidate"
             elif preferred_passed or (minimum and float(minimum.get("expectancy_r", 0.0)) > 0):
                 promotion_status = "lab_watchlist"
@@ -146,9 +235,17 @@ class ValidationGate:
         candidate.metrics["validation_passed"] = candidate.validation_passed
         candidate.metrics["preferred_rr_passed"] = preferred_passed
         candidate.metrics["premium_rr_passed"] = premium_passed
-        candidate.metrics["execution_promotion_blocked"] = premium_passed or promotion_status in {"lab_candidate", "lab_watchlist", "lab"}
+        candidate.metrics["execution_promotion_blocked"] = (
+            premium_passed or promotion_status in {"lab_candidate", "lab_watchlist", "lab"}
+        )
         candidate.metrics["promotion_status"] = promotion_status
-        candidate.metrics["promotion_reason"] = self._promotion_reason(promotion_status, best_rr, best_expectancy, best_pf, oos_positive)
+        candidate.metrics["promotion_reason"] = self._promotion_reason(
+            promotion_status,
+            best_rr,
+            best_expectancy,
+            best_pf,
+            oos_positive,
+        )
         candidate.metrics["confirmation_recommended"] = bool(confirmation["recommended"])
         candidate.metrics["confirmation_status"] = "needs_confirmation" if confirmation["recommended"] else ""
         candidate.metrics["confirmation_reason"] = str(confirmation["reason"])

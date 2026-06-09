@@ -68,6 +68,9 @@ def test_registry_dedupes_similar_centroids() -> None:
     assert stored_second.drift_status == "degrading"
     assert second.metrics["registry_deduped"] is True
     assert second.metrics["registry_canonical_pattern_key"] == "novel_long_w20_a"
+    assert second.metrics["registry_novelty_score"] < 0.01
+    assert second.metrics["registry_family_penalty"] > 0
+    assert "registry_adjusted_score" in second.metrics
     assert db.query(DiscoveredPattern).count() == 1
 
 

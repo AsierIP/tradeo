@@ -44,6 +44,13 @@ El laboratorio es pionero, pero está aislado del motor operativo. Su salida má
    - Exporta JSON y Markdown en `reports/research/`.
    - El digest es compacto para revisión humana/API: no incluye millones de velas crudas.
 
+7. **Autonomous Research Director**
+   - Convierte cada patrón en hipótesis falsable.
+   - Ejecuta challenge adversarial, invariance testing, replay de ejecución y lifecycle.
+   - Mantiene un memory graph de familias, variantes y regímenes.
+   - Genera agenda activa de próximos experimentos y mini papers por patrón.
+   - Ver: `docs/autonomous_research_director.md`.
+
 ## Política de tokens
 
 El agente está diseñado para trabajar todo el día sin consumir tokens de modelo:
@@ -66,6 +73,8 @@ El supervisor API debe recibir únicamente el archivo JSON/Markdown de `reports/
 - `POST /api/research/match-current`
 - `GET /api/research/current-matches`
 - `GET /api/research/runs`
+- `POST /api/research/director/run`
+- `GET /api/research/director/latest`
 
 ## Comandos
 
@@ -97,6 +106,17 @@ TRADEO_DISCOVERY_SCHEDULER_ENABLED=true
 
 Por defecto son 90 minutos. Se usa `max_instances=1` para evitar solapamientos.
 
+El Research Director también corre automáticamente:
+
+```env
+TRADEO_RESEARCH_DIRECTOR_ENABLED=true
+TRADEO_RESEARCH_DIRECTOR_INTERVAL_MINUTES=180
+TRADEO_RESEARCH_DIRECTOR_PATTERN_LIMIT=120
+```
+
+Además, cada discovery run lo invoca al terminar para que los patrones nuevos
+queden enriquecidos con hipótesis, challenge, lifecycle, memory graph y agenda.
+
 ## Estados
 
 - `lab`: patrón aceptado por el gate estadístico. Requiere revisión humana/API, backtest dedicado y paper trading antes de uso operativo.
@@ -108,8 +128,9 @@ Por defecto son 90 minutos. Se usa `max_instances=1` para evitar solapamientos.
 
 - No convierte automáticamente un patrón descubierto en estrategia operativa.
 - No opera con dinero real.
-- No optimiza ejecución, slippage o borrow de cortos.
-- No entrena modelos profundos todavía.
+- No promociona a paper/live sin Director gate.
+- No entrena modelos profundos todavía; usa un proxy self-supervised local para
+  medir calidad de embedding y aprendizaje.
 
 La ampliación incluye `NovelPatternMatcher`, que compara gráficos actuales contra centroides validados y guarda coincidencias en `lab_watchlist`. Esas coincidencias no son señales operativas; sirven para paper validation y revisión.
 
