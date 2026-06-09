@@ -4,7 +4,15 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from tradeo.core.config import Settings
-from tradeo.db.models import DiscoveredPattern, DiscoveredPatternStatus, Signal, SignalStatus, Trade, TradeStatus
+from tradeo.db.models import (
+    DiscoveredPattern,
+    DiscoveredPatternMatch,
+    DiscoveredPatternStatus,
+    Signal,
+    SignalStatus,
+    Trade,
+    TradeStatus,
+)
 from tradeo.db.session import Base
 from tradeo.research.novel_pattern_matcher import NovelPatternMatcher
 from tradeo.research.pattern_embedding_engine import PatternEmbeddingEngine
@@ -123,6 +131,16 @@ def test_laboratory_scanner_creates_paper_signal_for_validated_lab_pattern() -> 
     assert signal.metadata_json["signal_snapshot"]["entry_variant_id"] == signal.metadata_json["entry_variant_id"]
     assert signal.metadata_json["signal_snapshot"]["entry_audit"]["source_bar_hash"]
     assert signal.metadata_json["signal_snapshot"]["risk"]["approved"] is True
+    stored_match = (
+        db.query(DiscoveredPatternMatch)
+        .filter(
+            DiscoveredPatternMatch.metrics_json["entry_variant_id"].as_string()
+            == signal.metadata_json["entry_variant_id"]
+        )
+        .one()
+    )
+    assert stored_match.metrics_json["entry_variant_id"] == signal.metadata_json["entry_variant_id"]
+    assert stored_match.metrics_json["entry_variant"]["id"] == signal.metadata_json["entry_variant_id"]
 
 
 def test_laboratory_scanner_marks_ibkr_bracket_failure_retryable(monkeypatch) -> None:

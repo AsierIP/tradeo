@@ -203,6 +203,8 @@ class NovelPatternMatcher:
                                 "regime_fit": regime_fit,
                                 "metrics": {
                                     "entry_module": module,
+                                    "entry_variant_id": variant["entry_variant_id"],
+                                    "entry_variant": variant["entry_variant"],
                                     "pattern_status": pattern.status.value,
                                     "pattern_promotion_status": pattern.promotion_status,
                                     "pattern_score": pattern.score,
