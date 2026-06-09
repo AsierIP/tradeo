@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 
 from sqlalchemy.orm import Session
@@ -82,7 +82,9 @@ class PatternEntryScanner:
         signals_created = 0
         orders_submitted = 0
         skipped_duplicates = 0
+        skipped_cooldown = 0
         rejected_by_entry_gate = 0
+        rejected_by_entry_quality = 0
         rejected_by_risk = 0
         order_errors: list[dict[str, Any]] = []
         signal_ids: list[int] = []
@@ -106,6 +108,22 @@ class PatternEntryScanner:
             if self._has_active_exposure(db, match):
                 skipped_duplicates += 1
                 continue
+            if self._has_recent_signal(db, match):
+                skipped_cooldown += 1
+                db.add(
+                    AuditLog(
+                        actor=module,
+                        action="entry_match_skipped_by_cooldown",
+                        entity_type="discovered_pattern_match",
+                        entity_id=str(match.get("pattern_id", "")),
+                        details_json={
+                            "match": match,
+                            "cooldown_minutes": settings.entry_cooldown_minutes,
+                        },
+                    )
+                )
+                db.commit()
+                continue
             candidate = self._candidate_from_match(match)
             risk = RiskManager(settings).validate_candidate(candidate, db)
             if not risk.approved:
@@ -121,6 +139,30 @@ class PatternEntryScanner:
                 )
                 db.commit()
                 continue
+            entry_quality = build_entry_quality(
+                match=match,
+                risk=risk,
+                settings=settings,
+                execution_requested=bool(resolved["execute_orders"]),
+                market_session=session,
+            )
+            if entry_quality["score"] < settings.entry_min_quality_score or entry_quality["flags"]:
+                rejected_by_entry_quality += 1
+                db.add(
+                    AuditLog(
+                        actor=module,
+                        action="entry_match_rejected_by_quality",
+                        entity_type="discovered_pattern_match",
+                        entity_id=str(match.get("pattern_id", "")),
+                        details_json={
+                            "match": match,
+                            "entry_quality": entry_quality,
+                            "min_quality_score": settings.entry_min_quality_score,
+                        },
+                    )
+                )
+                db.commit()
+                continue
             if not resolved["store_signals"]:
                 continue
 
@@ -132,6 +174,7 @@ class PatternEntryScanner:
                 risk=risk,
                 execute_orders=bool(resolved["execute_orders"]),
                 market_session=session,
+                entry_quality=entry_quality,
             )
             signals_created += 1
             signal_ids.append(signal.id)
@@ -178,7 +221,9 @@ class PatternEntryScanner:
             "signals_created": signals_created,
             "orders_submitted": orders_submitted,
             "skipped_duplicates": skipped_duplicates,
+            "skipped_cooldown": skipped_cooldown,
             "rejected_by_entry_gate": rejected_by_entry_gate,
+            "rejected_by_entry_quality": rejected_by_entry_quality,
             "rejected_by_risk": rejected_by_risk,
             "order_errors": order_errors,
             "signal_ids": signal_ids,
@@ -285,7 +330,9 @@ class PatternEntryScanner:
             "signals_created": 0,
             "orders_submitted": 0,
             "skipped_duplicates": 0,
+            "skipped_cooldown": 0,
             "rejected_by_entry_gate": 0,
+            "rejected_by_entry_quality": 0,
             "rejected_by_risk": 0,
             "order_errors": [],
             "signal_ids": [],
@@ -293,7 +340,7 @@ class PatternEntryScanner:
             "store_signals": resolved["store_signals"],
             "execute_orders": resolved["execute_orders"],
             "similarity_threshold": resolved["similarity_threshold"],
-            "skipped_reason": "market_closed",
+            "skipped_reason": session.get("state", "market_closed"),
             "market_session": session,
             "generated_at": datetime.now(timezone.utc).isoformat(),
         }
@@ -401,6 +448,22 @@ class PatternEntryScanner:
         )
         return active_trade is not None
 
+    def _has_recent_signal(self, db: Session, match: dict[str, Any]) -> bool:
+        settings = self.settings
+        assert settings is not None
+        cooldown_minutes = max(0, int(settings.entry_cooldown_minutes))
+        if cooldown_minutes <= 0:
+            return False
+        cutoff = datetime.now(timezone.utc) - timedelta(minutes=cooldown_minutes)
+        recent_signal = (
+            db.query(Signal)
+            .filter(Signal.symbol == str(match["symbol"]))
+            .filter(Signal.pattern == str(match["pattern_name"]))
+            .filter(Signal.created_at >= cutoff)
+            .first()
+        )
+        return recent_signal is not None
+
     def _store_signal(
         self,
         db: Session,
@@ -411,6 +474,7 @@ class PatternEntryScanner:
         risk,
         execute_orders: bool,
         market_session: dict[str, Any] | None = None,
+        entry_quality: dict[str, Any] | None = None,
     ):
         settings = self.settings
         assert settings is not None
@@ -424,7 +488,7 @@ class PatternEntryScanner:
         else:
             status = SignalStatus.PAPER_APPROVED
             human_approved = execute_orders
-        entry_quality = build_entry_quality(
+        entry_quality = entry_quality or build_entry_quality(
             match=match,
             risk=risk,
             settings=settings,

@@ -54,6 +54,9 @@ def settings() -> Settings:
         fox_hunter_auto_submit_live_orders=False,
         fox_hunter_enabled=True,
         entry_max_extension_atr=99.0,
+        entry_min_regime_score=0.0,
+        entry_min_quality_score=0.0,
+        entry_cooldown_minutes=0,
     )
 
 

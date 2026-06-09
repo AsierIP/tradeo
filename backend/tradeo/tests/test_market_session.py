@@ -22,3 +22,11 @@ def test_market_session_status_reports_closed_state() -> None:
 
     assert status["regular_session_open"] is False
     assert status["state"] == "market_closed"
+
+
+def test_market_session_closes_on_nyse_holiday() -> None:
+    status = market_session_status(datetime(2026, 6, 19, 10, 0, tzinfo=NY))
+
+    assert status["regular_session_open"] is False
+    assert status["state"] == "market_holiday"
+    assert status["holiday"] == "juneteenth"

@@ -125,7 +125,7 @@ def build_signal_snapshot(
         "entry_gate": entry_gate,
         "features": {
             "avg_dollar_volume": features.get("avg_dollar_volume"),
-            "atr_pct": features.get("atr_pct"),
+            "atr_pct": features.get("atr_pct", entry_gate.get("atr_pct")),
             "trend_score": features.get("trend_score"),
             "volume_ratio": entry_gate.get("volume_ratio"),
             "extension_atr": entry_gate.get("extension_atr"),
@@ -184,6 +184,8 @@ def _quality_flags(
     entry_gate = ((match.get("metrics") or {}).get("entry_gate") or {})
     if settings.entry_gate_enabled and not bool(entry_gate.get("passed", False)):
         flags.append("entry_gate_failed")
+    if settings.entry_gate_enabled and entry_gate.get("regime_ok") is False:
+        flags.append("regime_filter_failed")
     if avg_dollar_volume < settings.min_avg_dollar_volume:
         flags.append("thin_liquidity")
     if volume_ratio and volume_ratio < settings.entry_min_volume_ratio:

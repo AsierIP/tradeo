@@ -79,6 +79,8 @@ def scanner(provider: FixtureProvider, **settings_overrides) -> PatternEntryScan
         "fox_hunter_enabled": False,
         "fox_hunter_market_hours_only": False,
         "entry_gate_enabled": False,
+        "entry_min_quality_score": 0.0,
+        "entry_cooldown_minutes": 0,
     }
     defaults.update(settings_overrides)
     settings = Settings(**defaults)
@@ -196,6 +198,105 @@ def test_laboratory_scanner_rejects_match_without_entry_trigger() -> None:
     assert result["rejected_by_entry_gate"] == 1
     assert result["signals_created"] == 0
     assert db.query(Signal).count() == 0
+
+
+def test_laboratory_scanner_rejects_low_quality_match() -> None:
+    db = session_factory()
+    provider = FixtureProvider()
+    add_pattern(db, provider, status=DiscoveredPatternStatus.LAB_CANDIDATE)
+
+    class LowQualityMatcher:
+        def match_current(self, *args, **kwargs):
+            return {
+                "patterns_checked": 1,
+                "symbols_checked": 1,
+                "matches": [
+                    {
+                        "module": "laboratory",
+                        "pattern_id": 1,
+                        "pattern_name": "low_quality_pattern",
+                        "pattern_key": "low_quality_key",
+                        "pattern_status": "lab_candidate",
+                        "pattern_promotion_status": "lab_candidate",
+                        "symbol": provider.symbol,
+                        "timeframe": "1d",
+                        "side": "long",
+                        "similarity": 0.1,
+                        "score": 0.1,
+                        "entry_score": 0.1,
+                        "entry_gate_passed": True,
+                        "entry_trigger": "momentum_close",
+                        "entry_price": 10.0,
+                        "stop_price": 9.0,
+                        "target_price": 14.0,
+                        "reward_risk": 4.0,
+                        "metrics": {
+                            "pattern_score": 0.1,
+                            "pattern_expectancy_r": 0.0,
+                            "pattern_profit_factor": 0.0,
+                            "pattern_stability_score": 0.1,
+                            "features": {"avg_dollar_volume": 10_000_000, "atr_pct": 0.04},
+                            "entry_gate": {
+                                "passed": True,
+                                "trigger": "momentum_close",
+                                "entry_score": 0.1,
+                                "volume_ratio": 1.5,
+                                "extension_atr": 0.5,
+                                "regime_ok": True,
+                            },
+                        },
+                    }
+                ],
+                "stored_matches": 1,
+                "similarity_threshold": 0.45,
+            }
+
+    cfg = scanner(provider, entry_min_quality_score=0.8).settings
+    result = PatternEntryScanner(settings=cfg, matcher=LowQualityMatcher()).scan(
+        db,
+        module="laboratory",
+        symbols=[provider.symbol],
+        store_signals=True,
+    )
+
+    assert result["rejected_by_entry_quality"] == 1
+    assert result["signals_created"] == 0
+    assert db.query(Signal).count() == 0
+
+
+def test_laboratory_scanner_respects_symbol_pattern_cooldown() -> None:
+    db = session_factory()
+    provider = FixtureProvider()
+    pattern = add_pattern(db, provider, status=DiscoveredPatternStatus.LAB_CANDIDATE)
+    db.add(
+        Signal(
+            symbol=provider.symbol,
+            pattern=pattern.name,
+            side="long",
+            entry=10.0,
+            stop=9.0,
+            target=14.0,
+            reward_risk=4.0,
+            confidence=0.7,
+            composite_score=0.7,
+            risk_usd=10.0,
+            suggested_qty=1,
+            strategy_version=f"laboratory_pattern_{pattern.id}",
+            status=SignalStatus.EXPIRED,
+            metadata_json={"entry_module": "laboratory", "pattern_id": pattern.id},
+        )
+    )
+    db.commit()
+
+    result = scanner(provider, entry_cooldown_minutes=60).scan(
+        db,
+        module="laboratory",
+        symbols=[provider.symbol],
+        store_signals=True,
+    )
+
+    assert result["skipped_cooldown"] == 1
+    assert result["signals_created"] == 0
 
 
 def test_laboratory_scanner_skips_signal_creation_when_market_closed(monkeypatch) -> None:

@@ -214,10 +214,25 @@ class NovelPatternMatcher:
         avg_volume = float(previous["volume"].tail(20).mean())
         volume_ratio = float(latest["volume"] / max(avg_volume, 1.0))
         sma20 = float(df["close"].tail(20).mean())
+        sma50 = float(df["close"].tail(50).mean()) if len(df) >= 50 else sma20
+        sma20_prev = float(df["close"].iloc[-40:-20].mean()) if len(df) >= 40 else sma20
         atr_value = float(atr(df, 14).iloc[-1]) if len(df) >= 15 else max(close * 0.02, 0.01)
+        atr_pct = atr_value / max(close, 0.01)
         extension_atr = abs(close - sma20) / max(atr_value, 0.01)
         extension_score = max(0.0, min(1.0, 1.0 - extension_atr / settings.entry_max_extension_atr))
         volume_score = max(0.0, min(1.0, (volume_ratio - 0.8) / 1.2))
+        volatility_ok = atr_pct <= settings.max_atr_pct
+        if side.lower() == "short":
+            trend_aligned = close <= sma20 and sma20 <= sma50 and sma20 <= sma20_prev * 1.01
+        else:
+            trend_aligned = close >= sma20 and sma20 >= sma50 and sma20 >= sma20_prev * 0.99
+        trend_score = 1.0 if trend_aligned else 0.35
+        volatility_score = 1.0 if volatility_ok else max(0.0, 1.0 - (atr_pct / max(settings.max_atr_pct, 0.01) - 1.0))
+        regime_score = round(
+            trend_score * 0.45 + volatility_score * 0.30 + extension_score * 0.15 + volume_score * 0.10,
+            6,
+        )
+        regime_ok = regime_score >= settings.entry_min_regime_score
 
         if side.lower() == "short":
             breakout = close <= prev_low * 1.005
@@ -250,6 +265,7 @@ class NovelPatternMatcher:
         passed = (
             trigger_score > 0
             and entry_score >= settings.entry_min_score
+            and regime_ok
             and volume_confirmed
             and not_extended
         )
@@ -260,11 +276,17 @@ class NovelPatternMatcher:
             "trigger_score": round(trigger_score, 4),
             "volume_ratio": round(volume_ratio, 4),
             "volume_confirmed": volume_confirmed,
+            "atr_pct": round(atr_pct, 6),
+            "volatility_ok": volatility_ok,
             "extension_atr": round(extension_atr, 4),
             "not_extended": not_extended,
+            "regime_score": regime_score,
+            "regime_ok": regime_ok,
+            "trend_aligned": trend_aligned,
             "prev_high_20": round(prev_high, 4),
             "prev_low_20": round(prev_low, 4),
             "sma20": round(sma20, 4),
+            "sma50": round(sma50, 4),
             "close": round(close, 4),
             "reason": "entry gate passed" if passed else "entry gate failed",
         }

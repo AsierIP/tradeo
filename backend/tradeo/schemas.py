@@ -370,7 +370,9 @@ class PatternEntryScanResponse(BaseModel):
     signals_created: int
     orders_submitted: int
     skipped_duplicates: int
+    skipped_cooldown: int = 0
     rejected_by_entry_gate: int = 0
+    rejected_by_entry_quality: int = 0
     rejected_by_risk: int
     order_errors: list[dict[str, Any]] = Field(default_factory=list)
     signal_ids: list[int] = Field(default_factory=list)
