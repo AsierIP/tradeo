@@ -34,37 +34,54 @@ class ClusterResearchEngine:
     def _cluster_window_size(self, window_size: int, samples: list[WindowSample]) -> list[ClusterCandidate]:
         if len(samples) < max(self.min_cluster_size * 2, 20):
             return []
-        matrix = np.vstack([s.vector for s in samples])
+        ordered_samples = sorted(samples, key=lambda s: s.end)
+        train_samples, holdout_samples = self._train_holdout_samples(ordered_samples)
+        if len(train_samples) < max(self.min_cluster_size * 2, 20):
+            return []
+        matrix_train = np.vstack([s.vector for s in train_samples])
+        matrix_all = np.vstack([s.vector for s in ordered_samples])
         scaler = StandardScaler()
-        matrix_scaled = scaler.fit_transform(matrix)
-        n_clusters = min(self.max_clusters_per_window, max(2, len(samples) // self.min_cluster_size))
+        matrix_train_scaled = scaler.fit_transform(matrix_train)
+        matrix_all_scaled = scaler.transform(matrix_all)
+        n_clusters = min(self.max_clusters_per_window, max(2, len(train_samples) // self.min_cluster_size))
         model = MiniBatchKMeans(
             n_clusters=n_clusters,
             random_state=self.random_state,
             n_init=10,
-            batch_size=min(2048, max(128, len(samples))),
+            batch_size=min(2048, max(128, len(train_samples))),
         )
-        labels = model.fit_predict(matrix_scaled)
+        train_labels = model.fit_predict(matrix_train_scaled)
+        all_labels = model.predict(matrix_all_scaled)
         candidates: list[ClusterCandidate] = []
-        for cluster_id in sorted(set(labels.tolist())):
-            idxs = np.flatnonzero(labels == cluster_id)
-            if len(idxs) < max(10, self.min_cluster_size // 2):
+        holdout_ids = {id(sample) for sample in holdout_samples}
+        for cluster_id in sorted(set(train_labels.tolist())):
+            train_idxs = np.flatnonzero(train_labels == cluster_id)
+            if len(train_idxs) < max(10, self.min_cluster_size // 2):
                 continue
-            cluster_samples = [samples[int(i)] for i in idxs]
-            cluster_vectors = matrix_scaled[idxs]
+            all_idxs = np.flatnonzero(all_labels == cluster_id)
+            cluster_samples = [ordered_samples[int(i)] for i in all_idxs]
+            cluster_train_samples = [train_samples[int(i)] for i in train_idxs]
+            cluster_holdout_samples = [sample for sample in cluster_samples if id(sample) in holdout_ids]
+            cluster_vectors = matrix_all_scaled[all_idxs]
             centroid_scaled = model.cluster_centers_[cluster_id]
-            long_metrics = self._metrics_for_side(cluster_samples, "long")
-            short_metrics = self._metrics_for_side(cluster_samples, "short")
+            long_metrics = self._metrics_for_side(cluster_train_samples, cluster_samples, cluster_holdout_samples, "long")
+            short_metrics = self._metrics_for_side(cluster_train_samples, cluster_samples, cluster_holdout_samples, "short")
             side: Side = "long" if self._side_score(long_metrics) >= self._side_score(short_metrics) else "short"
             metrics = long_metrics if side == "long" else short_metrics
             metrics["opposite_side"] = short_metrics if side == "long" else long_metrics
-            metrics["cluster_density"] = round(float(len(idxs) / len(samples)), 5)
+            metrics["cluster_density"] = round(float(len(all_idxs) / len(ordered_samples)), 5)
+            metrics["train_cluster_density"] = round(float(len(train_idxs) / len(train_samples)), 5)
             metrics["window_size"] = window_size
             metrics["side"] = side
             metrics["target_r"] = self.target_r
-            metrics["embedding_length"] = int(matrix.shape[1])
+            metrics["embedding_length"] = int(matrix_all.shape[1])
             metrics["scaler_mean"] = np.nan_to_num(scaler.mean_, nan=0, posinf=0, neginf=0).round(6).tolist()
             metrics["scaler_scale"] = np.nan_to_num(scaler.scale_, nan=1, posinf=1, neginf=1).round(6).tolist()
+            metrics["validation_method"] = "train_fit_forward_holdout"
+            metrics["train_cutoff"] = train_samples[-1].end if train_samples else None
+            metrics["holdout_start"] = holdout_samples[0].end if holdout_samples else None
+            metrics["model_fit_sample_count"] = len(train_samples)
+            metrics["model_holdout_sample_count"] = len(holdout_samples)
             score = self._candidate_score(metrics)
             feature_summary = self._feature_summary(cluster_samples)
             centroid = np.nan_to_num(centroid_scaled, nan=0, posinf=0, neginf=0).round(6).tolist()
@@ -93,29 +110,35 @@ class ClusterResearchEngine:
             )
         return candidates
 
-    def _metrics_for_side(self, samples: list[WindowSample], side: Side) -> dict[str, object]:
+    def _metrics_for_side(
+        self,
+        train_samples: list[WindowSample],
+        all_samples: list[WindowSample],
+        holdout_samples: list[WindowSample],
+        side: Side,
+    ) -> dict[str, object]:
         rr_levels = self.rr_levels or [1.5, 2.0, 2.5, 3.0, 4.0, 5.0]
-        rr_analysis = RewardRiskAnalyzer(rr_levels=rr_levels, min_samples=self.min_samples).analyze(samples, side)
+        rr_analysis = RewardRiskAnalyzer(
+            rr_levels=rr_levels,
+            min_samples=self.min_samples,
+        ).analyze(train_samples, side)
         best_rr = float(rr_analysis.get("best_rr", self.target_r))
         rr_metrics = rr_analysis.get("rr_metrics", {})
         best_rr_metrics = rr_metrics.get(f"{best_rr:g}", {}) if isinstance(rr_metrics, dict) else {}
         outcomes = np.asarray(
-            [RewardRiskAnalyzer._simulate_sample(s, side, best_rr)[0] for s in samples],
+            [RewardRiskAnalyzer._simulate_sample(s, side, best_rr)[0] for s in all_samples],
             dtype=float,
         )
-        mfe = np.asarray([s.outcome.mfe_for(side) for s in samples], dtype=float)
-        mae = np.asarray([s.outcome.mae_for(side) for s in samples], dtype=float)
-        hits = np.asarray([RewardRiskAnalyzer._simulate_sample(s, side, 4.0)[0] >= 4.0 for s in samples], dtype=bool)
+        mfe = np.asarray([s.outcome.mfe_for(side) for s in all_samples], dtype=float)
+        mae = np.asarray([s.outcome.mae_for(side) for s in all_samples], dtype=float)
+        hits = np.asarray([RewardRiskAnalyzer._simulate_sample(s, side, 4.0)[0] >= 4.0 for s in all_samples], dtype=bool)
         wins = outcomes[outcomes > 0]
         losses = outcomes[outcomes < 0]
         profit_factor = float(wins.sum() / abs(losses.sum())) if len(losses) else float(wins.sum() or 0.0)
-        by_year = self._group_expectancy(samples, outcomes, key="year")
-        by_symbol = self._group_expectancy(samples, outcomes, key="symbol")
-        split = self._split_samples(samples)
-        in_sample = split[0]
-        out_of_sample = split[1]
-        oos = self._split_metrics(out_of_sample, side, best_rr)
-        in_sample_metrics = self._split_metrics(in_sample, side, best_rr)
+        by_year = self._group_expectancy(all_samples, outcomes, key="year")
+        by_symbol = self._group_expectancy(all_samples, outcomes, key="symbol")
+        oos = self._split_metrics(holdout_samples, side, best_rr)
+        in_sample_metrics = self._split_metrics(train_samples, side, best_rr)
         stability_year = self._positive_group_fraction(by_year)
         stability_symbol = self._positive_group_fraction(by_symbol)
         diversity_score = min(1.0, len(by_symbol) / 20.0) * 0.55 + min(1.0, len(by_year) / 4.0) * 0.45
@@ -123,9 +146,11 @@ class ClusterResearchEngine:
         avg_mae = float(np.mean(mae)) if len(mae) else 0.0
         avg_mfe = float(np.mean(mfe)) if len(mfe) else 0.0
         return {
-            "sample_count": len(samples),
-            "symbol_count": len({s.symbol for s in samples}),
-            "year_count": len({s.year for s in samples}),
+            "sample_count": len(all_samples),
+            "train_sample_count": len(train_samples),
+            "holdout_sample_count": len(holdout_samples),
+            "symbol_count": len({s.symbol for s in all_samples}),
+            "year_count": len({s.year for s in all_samples}),
             "expectancy_r": round(float(np.mean(outcomes)), 5) if len(outcomes) else 0.0,
             "median_r": round(float(np.median(outcomes)), 5) if len(outcomes) else 0.0,
             "win_rate": round(float(np.mean(outcomes > 0)), 5) if len(outcomes) else 0.0,
@@ -139,6 +164,7 @@ class ClusterResearchEngine:
             else 0.0,
             "rr_levels": rr_levels,
             "rr_metrics": rr_metrics,
+            "train_rr_metrics": rr_metrics,
             "rr_metrics_json": rr_metrics,
             "best_rr": round(float(best_rr), 5),
             "best_tested_rr": round(float(rr_analysis.get("best_tested_rr", best_rr)), 5),
@@ -164,12 +190,12 @@ class ClusterResearchEngine:
             "top_symbols_expectancy": dict(list(by_symbol.items())[:25]),
         }
 
-    def _split_samples(self, samples: list[WindowSample]) -> tuple[list[WindowSample], list[WindowSample]]:
-        ordered = sorted(samples, key=lambda s: s.end)
-        if len(ordered) < 8:
-            return ordered, []
-        split = int(len(ordered) * (1.0 - self.out_of_sample_pct))
-        return ordered[: max(1, split)], ordered[max(1, split) :]
+    def _train_holdout_samples(self, samples: list[WindowSample]) -> tuple[list[WindowSample], list[WindowSample]]:
+        if len(samples) < 8:
+            return samples, []
+        split = int(len(samples) * (1.0 - self.out_of_sample_pct))
+        split = min(max(1, split), len(samples) - 1)
+        return samples[:split], samples[split:]
 
     @staticmethod
     def _split_metrics(samples: list[WindowSample], side: Side, rr: float) -> dict[str, float | int]:
@@ -208,8 +234,8 @@ class ClusterResearchEngine:
 
     @staticmethod
     def _side_score(metrics: dict[str, object]) -> float:
-        expectancy = float(metrics.get("expectancy_r", 0.0))
-        pf = min(float(metrics.get("profit_factor", 0.0)), 8.0)
+        expectancy = float(metrics.get("in_sample_expectancy_r", metrics.get("expectancy_r", 0.0)))
+        pf = min(float(metrics.get("in_sample_profit_factor", metrics.get("profit_factor", 0.0))), 8.0)
         hit_rate = float(metrics.get("target_hit_rate", metrics.get("hit_4r_rate", 0.0)))
         stability = float(metrics.get("stability_score", 0.0))
         return expectancy * 2.0 + pf * 0.15 + hit_rate * 1.5 + stability * 0.7

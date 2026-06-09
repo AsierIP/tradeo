@@ -37,9 +37,12 @@ class ValidationGate:
         minimum = self._metrics_at_or_above(rr_metrics, s.discovery_min_reward_risk)
         preferred_passed = self._quality_pass(preferred, s.discovery_min_expectancy_r, s.discovery_min_profit_factor)
         premium_passed = self._quality_pass(premium, s.discovery_min_expectancy_r, s.discovery_min_profit_factor)
+        train_sample_count = int(metrics.get("train_sample_count", candidate.sample_count))
 
         if candidate.sample_count < s.discovery_min_samples:
             reasons.append(f"muestras insuficientes: {candidate.sample_count} < {s.discovery_min_samples}")
+        if train_sample_count < s.discovery_min_samples:
+            reasons.append(f"muestras train insuficientes: {train_sample_count} < {s.discovery_min_samples}")
         if candidate.symbol_count < s.discovery_min_symbols:
             reasons.append(f"poca diversidad de símbolos: {candidate.symbol_count} < {s.discovery_min_symbols}")
         if candidate.year_count < s.discovery_min_years:
