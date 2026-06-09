@@ -43,6 +43,13 @@ backups/
 Thumbs.db
 .vscode/
 .idea/
+.openclaw/
+AGENTS.md
+HEARTBEAT.md
+IDENTITY.md
+SOUL.md
+TOOLS.md
+USER.md
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/

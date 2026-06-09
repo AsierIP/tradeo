@@ -141,9 +141,12 @@ def run_exporter(audit_id: str, api_url: str, pattern_limit: int, match_limit: i
             return env
 
         exporter.read_env = read_env_with_process_env
-        sys.argv = command[:]
+        sys.argv = command[1:]
         with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
-            exit_code = int(exporter.main())
+            try:
+                exit_code = int(exporter.main())
+            except SystemExit as exc:
+                exit_code = exc.code if isinstance(exc.code, int) else 1
     except Exception as exc:  # noqa: BLE001
         stderr.write(f"{type(exc).__name__}: {exc}\n")
         exit_code = 1

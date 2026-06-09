@@ -83,6 +83,7 @@ class IBKRHistoricalDataProvider:
         self.settings = self.settings or get_settings()
 
     def fetch_ohlcv(self, symbol: str, period: str = "2y", interval: str = "1d") -> pd.DataFrame:
+        _ensure_event_loop()
         from ib_insync import Stock, util
 
         ib, _ = _connect_ibkr(self.settings)
