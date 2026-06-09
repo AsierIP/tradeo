@@ -123,6 +123,22 @@ def get_discovered_pattern_rr_metrics(
     }
 
 
+@router.get("/confirmation-queue", response_model=list[DiscoveredPatternOut])
+def list_confirmation_queue(
+    limit: int = Query(default=50, ge=1, le=200),
+    _: str = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> list[DiscoveredPattern]:
+    patterns = (
+        db.query(DiscoveredPattern)
+        .order_by(DiscoveredPattern.score.desc(), DiscoveredPattern.created_at.desc())
+        .limit(500)
+        .all()
+    )
+    queued = [pattern for pattern in patterns if (pattern.metrics_json or {}).get("confirmation_recommended")]
+    return queued[:limit]
+
+
 @router.post("/match-current", response_model=NovelPatternMatchResponse)
 def match_current_patterns(
     request: NovelPatternMatchRequest,

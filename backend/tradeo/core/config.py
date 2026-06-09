@@ -95,6 +95,9 @@ class Settings(BaseSettings):
     discovery_min_expectancy_r: float = 0.25
     discovery_min_stability_score: float = 0.45
     discovery_max_adjusted_p_value: float = 0.25
+    discovery_confirmation_min_samples: int = 50
+    discovery_confirmation_min_profit_factor: float = 1.6
+    discovery_confirmation_min_expectancy_r: float = 0.20
     discovery_out_of_sample_pct: float = 0.25
     discovery_store_rejected: bool = True
     discovery_report_top_n: int = 20

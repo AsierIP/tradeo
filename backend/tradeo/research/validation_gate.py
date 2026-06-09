@@ -92,6 +92,17 @@ class ValidationGate:
             warnings.append(
                 "premium/paper promotion bloqueada en discovery: requiere Director gate con trades, fills, costes y OOS limpio"
             )
+        confirmation = self._confirmation_candidate(
+            candidate=candidate,
+            hard_reasons=reasons,
+            best_expectancy=best_expectancy,
+            best_pf=best_pf,
+            best_drawdown=best_drawdown,
+            oos_positive=oos_positive,
+            train_sample_count=train_sample_count,
+        )
+        if confirmation["recommended"]:
+            warnings.append(str(confirmation["reason"]))
 
         promotion_status = "rejected"
         if not reasons:
@@ -115,6 +126,10 @@ class ValidationGate:
         candidate.metrics["execution_promotion_blocked"] = premium_passed or promotion_status in {"lab_candidate", "lab_watchlist", "lab"}
         candidate.metrics["promotion_status"] = promotion_status
         candidate.metrics["promotion_reason"] = self._promotion_reason(promotion_status, best_rr, best_expectancy, best_pf, oos_positive)
+        candidate.metrics["confirmation_recommended"] = bool(confirmation["recommended"])
+        candidate.metrics["confirmation_reason"] = str(confirmation["reason"])
+        candidate.metrics["confirmation_priority_score"] = float(confirmation["priority_score"])
+        candidate.metrics["confirmation_next_action"] = str(confirmation["next_action"])
         candidate.metrics["rejection_reasons"] = reasons
         return candidate
 
@@ -142,6 +157,60 @@ class ValidationGate:
         if not metrics:
             return False
         return float(metrics.get("expectancy_r", 0.0)) >= min_expectancy and float(metrics.get("profit_factor", 0.0)) >= min_profit_factor
+
+    def _confirmation_candidate(
+        self,
+        *,
+        candidate: ClusterCandidate,
+        hard_reasons: list[str],
+        best_expectancy: float,
+        best_pf: float,
+        best_drawdown: float,
+        oos_positive: bool,
+        train_sample_count: int,
+    ) -> dict[str, object]:
+        s = self.settings
+        assert s is not None
+        sample_limited = any(reason.startswith("muestras") for reason in hard_reasons)
+        if not sample_limited:
+            return self._no_confirmation()
+        adjusted_p = candidate.metrics.get("adjusted_p_value")
+        stats_ok = adjusted_p is None or float(adjusted_p) <= s.discovery_max_adjusted_p_value
+        enough_seed_samples = candidate.sample_count >= s.discovery_confirmation_min_samples
+        enough_train_samples = train_sample_count >= max(20, s.discovery_confirmation_min_samples // 2)
+        quality_ok = (
+            best_expectancy >= s.discovery_confirmation_min_expectancy_r
+            and best_pf >= s.discovery_confirmation_min_profit_factor
+            and best_drawdown <= s.discovery_max_drawdown_r
+            and oos_positive
+            and stats_ok
+        )
+        if not (enough_seed_samples and enough_train_samples and quality_ok):
+            return self._no_confirmation()
+        priority = (
+            max(0.0, best_expectancy) * 0.45
+            + min(best_pf / 4.0, 1.0) * 0.25
+            + max(0.0, float(candidate.metrics.get("expectancy_lift_r", 0.0))) * 0.20
+            + min(candidate.sample_count / max(s.discovery_min_samples, 1), 1.0) * 0.10
+        )
+        return {
+            "recommended": True,
+            "reason": (
+                "requiere confirmación ampliada: edge fuerte pero muestra train/total insuficiente "
+                f"({train_sample_count}/{candidate.sample_count})"
+            ),
+            "priority_score": round(float(priority), 5),
+            "next_action": "rerun con universo/periodo ampliado y mismos window_size/side antes de promocionar",
+        }
+
+    @staticmethod
+    def _no_confirmation() -> dict[str, object]:
+        return {
+            "recommended": False,
+            "reason": "",
+            "priority_score": 0.0,
+            "next_action": "",
+        }
 
     @staticmethod
     def _promotion_reason(status: str, best_rr: float, expectancy: float, profit_factor: float, oos_positive: bool) -> str:

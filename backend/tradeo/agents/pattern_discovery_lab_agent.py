@@ -188,17 +188,24 @@ class PatternDiscoveryLabAgent:
 
     def _summary(self, candidates: list[Any], samples: list[Any], warnings: list[str]) -> dict[str, Any]:
         accepted = [c for c in candidates if c.validation_passed]
+        confirmation = [c for c in candidates if c.metrics.get("confirmation_recommended")]
         status_counts: dict[str, int] = {}
         for candidate in candidates:
             status = str(candidate.metrics.get("promotion_status", "lab" if candidate.validation_passed else "rejected"))
             status_counts[status] = status_counts.get(status, 0) + 1
         top = sorted(candidates, key=lambda c: c.score, reverse=True)[: self.settings.discovery_report_top_n]  # type: ignore[union-attr]
+        confirmation_top = sorted(
+            confirmation,
+            key=lambda c: float(c.metrics.get("confirmation_priority_score", 0.0)),
+            reverse=True,
+        )[: self.settings.discovery_report_top_n]  # type: ignore[union-attr]
         return {
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "windows_sampled": len(samples),
             "clusters_evaluated": len(candidates),
             "accepted_patterns": len(accepted),
             "rejected_patterns": len(candidates) - len(accepted),
+            "confirmation_candidates": len(confirmation),
             "status_counts": status_counts,
             "rr_levels": self.settings.discovery_rr_level_list,  # type: ignore[union-attr]
             "safety": {
@@ -212,6 +219,7 @@ class PatternDiscoveryLabAgent:
                 "reason": "Discovery is local/vectorized; API supervisor only needs top cluster metrics and examples.",
             },
             "top_patterns": [self._candidate_digest(c) for c in top],
+            "confirmation_queue": [self._candidate_digest(c) for c in confirmation_top],
             "warnings": warnings[:50],
         }
 
@@ -249,6 +257,10 @@ class PatternDiscoveryLabAgent:
             "adjusted_p_value": metrics.get("adjusted_p_value"),
             "multiple_testing_trials": metrics.get("multiple_testing_trials"),
             "statistical_edge_passed": metrics.get("statistical_edge_passed"),
+            "confirmation_recommended": metrics.get("confirmation_recommended", False),
+            "confirmation_priority_score": metrics.get("confirmation_priority_score", 0.0),
+            "confirmation_reason": metrics.get("confirmation_reason", ""),
+            "confirmation_next_action": metrics.get("confirmation_next_action", ""),
             "out_of_sample_expectancy_r": metrics.get("out_of_sample_expectancy_r"),
             "out_of_sample_profit_factor": metrics.get("out_of_sample_profit_factor"),
             "out_of_sample_win_rate": metrics.get("out_of_sample_win_rate"),
@@ -311,6 +323,7 @@ class PatternDiscoveryLabAgent:
             f"- Clusters evaluados: {summary['clusters_evaluated']}",
             f"- Patrones LAB aceptados: {summary['accepted_patterns']}",
             f"- Patrones rechazados: {summary['rejected_patterns']}",
+            f"- Candidatos para confirmación: {summary.get('confirmation_candidates', 0)}",
             f"- Estados: {summary.get('status_counts', {})}",
             f"- R:R evaluados: {summary.get('rr_levels', [])}",
             f"- Seguridad: {summary.get('safety', {})}",
@@ -340,4 +353,17 @@ class PatternDiscoveryLabAgent:
                     "",
                 ]
             )
+        if summary.get("confirmation_queue"):
+            lines.extend(["", "## Cola de confirmación"])
+            for pattern in summary.get("confirmation_queue", []):
+                lines.extend(
+                    [
+                        f"### {pattern['name']}",
+                        f"- Prioridad: {pattern.get('confirmation_priority_score')}",
+                        f"- Motivo: {pattern.get('confirmation_reason')}",
+                        f"- Siguiente acción: {pattern.get('confirmation_next_action')}",
+                        f"- Best R:R: {pattern.get('best_rr')} · Expectancy: {pattern.get('best_expectancy_r')}R · PF: {pattern.get('best_profit_factor')}",
+                        "",
+                    ]
+                )
         return "\n".join(lines)
