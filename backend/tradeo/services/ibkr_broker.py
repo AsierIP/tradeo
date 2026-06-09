@@ -355,6 +355,16 @@ class IBKRBroker:
             order_ids = [t.order.orderId for t in trades]
             perm_ids = [t.orderStatus.permId for t in trades]
             now = datetime.now(timezone.utc)
+            signal_metadata = signal.metadata_json or {}
+            execution_observation = {
+                "source": "ibkr_order_submission",
+                "truth_status": "orders_accepted_waiting_fill_reconciliation",
+                "submitted_at": now.isoformat(),
+                "entry_variant_id": signal_metadata.get("entry_variant_id"),
+                "regime_key": (signal_metadata.get("regime") or {}).get("regime_key"),
+                "order_ids": order_ids,
+                "perm_ids": perm_ids,
+            }
             trade = Trade(
                 signal_id=signal.id,
                 symbol=signal.symbol,
@@ -372,6 +382,12 @@ class IBKRBroker:
                     "ibkr_mode": self.settings.trading_mode,
                     "source_signal": signal.id,
                     "reason": reason,
+                    "entry_variant_id": signal_metadata.get("entry_variant_id"),
+                    "entry_variant": signal_metadata.get("entry_variant"),
+                    "entry_audit": signal_metadata.get("entry_audit"),
+                    "regime": signal_metadata.get("regime"),
+                    "regime_fit": signal_metadata.get("regime_fit"),
+                    "execution_observation": execution_observation,
                     "contract": {
                         "con_id": contract.conId,
                         "symbol": contract.symbol,
@@ -388,6 +404,7 @@ class IBKRBroker:
                 },
             )
             signal.status = SignalStatus.EXECUTED
+            signal.metadata_json = {**signal_metadata, "execution_observation": execution_observation}
             db.add(trade)
             db.add(
                 AuditLog(

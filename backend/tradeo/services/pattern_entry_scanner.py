@@ -91,11 +91,12 @@ class PatternEntryScanner:
         signal_ids: list[int] = []
         trade_ids: list[int] = []
 
-        ranked_matches = rank_entry_matches(
+        all_ranked_matches = rank_entry_matches(
             match_result["matches"],
             settings=settings,
             execution_history=self._execution_history(db, module),
         )
+        ranked_matches = self._select_best_variant_per_exposure(all_ranked_matches)
 
         for match in ranked_matches:
             entry_gate = ((match.get("metrics") or {}).get("entry_gate") or {})
@@ -225,6 +226,7 @@ class PatternEntryScanner:
             "patterns_checked": match_result["patterns_checked"],
             "symbols_checked": match_result["symbols_checked"],
             "matches_found": len(ranked_matches),
+            "entry_variants_considered": len(all_ranked_matches),
             "signals_created": signals_created,
             "orders_submitted": orders_submitted,
             "skipped_duplicates": skipped_duplicates,
@@ -335,6 +337,7 @@ class PatternEntryScanner:
             "patterns_checked": 0,
             "symbols_checked": 0,
             "matches_found": 0,
+            "entry_variants_considered": 0,
             "signals_created": 0,
             "orders_submitted": 0,
             "skipped_duplicates": 0,
@@ -410,6 +413,8 @@ class PatternEntryScanner:
     def _candidate_from_match(self, match: dict[str, Any]) -> PatternCandidate:
         metrics = match.get("metrics") or {}
         features = dict(metrics.get("features") or {})
+        features["entry_variant_id"] = str(match.get("entry_variant_id") or "")
+        features["regime_key"] = str((match.get("regime") or {}).get("regime_key") or "")
         return PatternCandidate(
             symbol=str(match["symbol"]),
             pattern=str(match["pattern_name"]),
@@ -464,14 +469,20 @@ class PatternEntryScanner:
         if cooldown_minutes <= 0:
             return False
         cutoff = datetime.now(timezone.utc) - timedelta(minutes=cooldown_minutes)
-        recent_signal = (
+        recent_signals = (
             db.query(Signal)
             .filter(Signal.symbol == str(match["symbol"]))
             .filter(Signal.pattern == str(match["pattern_name"]))
             .filter(Signal.created_at >= cutoff)
-            .first()
+            .all()
         )
-        return recent_signal is not None
+        variant = str(match.get("entry_variant_id") or "")
+        for signal in recent_signals:
+            metadata = signal.metadata_json or {}
+            previous_variant = str(metadata.get("entry_variant_id") or "")
+            if not variant or not previous_variant or previous_variant == variant:
+                return True
+        return False
 
     @staticmethod
     def _top_opportunities(matches: list[dict[str, Any]], *, limit: int = 10) -> list[dict[str, Any]]:
@@ -481,13 +492,38 @@ class PatternEntryScanner:
                 "rank_score": match.get("opportunity_rank_score"),
                 "symbol": match.get("symbol"),
                 "pattern_name": match.get("pattern_name"),
+                "entry_variant_id": match.get("entry_variant_id"),
+                "regime_key": (match.get("regime") or {}).get("regime_key"),
                 "entry_score": match.get("entry_score"),
                 "similarity": match.get("similarity"),
             }
             for match in matches[:limit]
         ]
 
-    def _execution_history(self, db: Session, module: EntryModule) -> dict[tuple[str, str], float]:
+    @staticmethod
+    def _select_best_variant_per_exposure(matches: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        selected: dict[tuple[str, str], dict[str, Any]] = {}
+        for match in matches:
+            key = (str(match.get("symbol") or ""), str(match.get("pattern_name") or ""))
+            current = selected.get(key)
+            if current is None or float(match.get("opportunity_rank_score") or 0.0) > float(
+                current.get("opportunity_rank_score") or 0.0
+            ):
+                selected[key] = match
+        ordered = sorted(
+            selected.values(),
+            key=lambda item: (
+                float(item.get("opportunity_rank_score") or 0.0),
+                float(item.get("entry_score") or 0.0),
+                float(item.get("score") or 0.0),
+            ),
+            reverse=True,
+        )
+        for index, match in enumerate(ordered, start=1):
+            match["opportunity_rank"] = index
+        return ordered
+
+    def _execution_history(self, db: Session, module: EntryModule) -> dict[tuple[str, ...], dict[str, float]]:
         trades = (
             db.query(Trade)
             .options(joinedload(Trade.signal))
@@ -496,7 +532,7 @@ class PatternEntryScanner:
             .limit(500)
             .all()
         )
-        by_key: dict[tuple[str, str], list[float]] = {}
+        by_key: dict[tuple[str, ...], list[float]] = {}
         for trade in trades:
             signal = trade.signal
             if signal is None:
@@ -504,11 +540,19 @@ class PatternEntryScanner:
             metadata = signal.metadata_json or {}
             if metadata.get("entry_module") != module:
                 continue
-            pattern_key = (trade.pattern, trade.symbol)
-            pattern_all_key = (trade.pattern, "*")
-            by_key.setdefault(pattern_key, []).append(float(trade.r_multiple or 0.0))
-            by_key.setdefault(pattern_all_key, []).append(float(trade.r_multiple or 0.0))
-        return {key: self._history_score(values) for key, values in by_key.items()}
+            variant = str(metadata.get("entry_variant_id") or "*")
+            regime_key = str((metadata.get("regime") or {}).get("regime_key") or "*")
+            keys = [
+                (trade.pattern, trade.symbol, variant, regime_key),
+                (trade.pattern, "*", variant, regime_key),
+                (trade.pattern, trade.symbol, variant, "*"),
+                (trade.pattern, "*", variant, "*"),
+                (trade.pattern, trade.symbol, "*", "*"),
+                (trade.pattern, "*", "*", "*"),
+            ]
+            for key in keys:
+                by_key.setdefault(key, []).append(float(trade.r_multiple or 0.0))
+        return {key: self._history_item(values) for key, values in by_key.items()}
 
     @staticmethod
     def _history_score(values: list[float]) -> float:
@@ -518,6 +562,13 @@ class PatternEntryScanner:
         raw_score = max(0.0, min(1.0, 0.5 + expectancy / 2.0))
         confidence = min(1.0, len(values) / 10.0)
         return round(0.5 * (1.0 - confidence) + raw_score * confidence, 6)
+
+    def _history_item(self, values: list[float]) -> dict[str, float]:
+        return {
+            "score": self._history_score(values),
+            "count": float(len(values)),
+            "expectancy_r": round(sum(values) / len(values), 6) if values else 0.0,
+        }
 
     def _store_signal(
         self,
@@ -581,6 +632,11 @@ class PatternEntryScanner:
                 "pattern_key": match["pattern_key"],
                 "pattern_status": match.get("pattern_status"),
                 "pattern_promotion_status": match.get("pattern_promotion_status"),
+                "entry_variant_id": match.get("entry_variant_id"),
+                "entry_variant": match.get("entry_variant"),
+                "entry_audit": match.get("entry_audit"),
+                "regime": match.get("regime"),
+                "regime_fit": match.get("regime_fit"),
                 "opportunity_rank": match.get("opportunity_rank"),
                 "opportunity_rank_score": match.get("opportunity_rank_score"),
                 "opportunity_rank_components": match.get("opportunity_rank_components"),

@@ -378,6 +378,7 @@ class PatternEntryScanResponse(BaseModel):
     patterns_checked: int
     symbols_checked: int
     matches_found: int
+    entry_variants_considered: int = 0
     signals_created: int
     orders_submitted: int
     skipped_duplicates: int

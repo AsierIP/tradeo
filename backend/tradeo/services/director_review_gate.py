@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable
 
 from sqlalchemy.orm import Session, joinedload
 
@@ -184,9 +184,38 @@ class DirectorReviewGate:
             "research_profit_factor": round(research_profit_factor, 4),
             "expectancy_delta_r": round(expectancy - research_expectancy, 4),
             "profit_factor_delta": round(profit_factor - research_profit_factor, 4),
+            "by_entry_variant": self._bucket_metrics(
+                trades,
+                lambda trade: str(((trade.signal.metadata_json or {}) if trade.signal else {}).get("entry_variant_id") or "unknown"),
+            ),
+            "by_regime": self._bucket_metrics(
+                trades,
+                lambda trade: str(
+                    ((((trade.signal.metadata_json or {}) if trade.signal else {}).get("regime") or {}).get("regime_key"))
+                    or "unknown"
+                ),
+            ),
         }
         pattern.metrics_json = {**(pattern.metrics_json or {}), "lab_execution": metrics}
         return metrics
+
+    @staticmethod
+    def _bucket_metrics(trades: list[Trade], key_fn: Callable[[Trade], str]) -> dict[str, dict[str, Any]]:
+        buckets: dict[str, list[float]] = {}
+        for trade in trades:
+            buckets.setdefault(key_fn(trade), []).append(float(trade.r_multiple or 0.0))
+        result: dict[str, dict[str, Any]] = {}
+        for key, values in sorted(buckets.items()):
+            wins = [value for value in values if value > 0]
+            losses = [abs(value) for value in values if value < 0]
+            loss = sum(losses)
+            result[key] = {
+                "closed_trades": len(values),
+                "expectancy_r": round(sum(values) / len(values), 4) if values else 0.0,
+                "win_rate": round(len(wins) / len(values), 4) if values else 0.0,
+                "profit_factor": round(sum(wins) / loss, 4) if loss > 0 else round(sum(wins), 4),
+            }
+        return result
 
     def _promotion_blockers(
         self,

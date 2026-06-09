@@ -52,6 +52,7 @@ def build_entry_quality(
         1.0 - extension_atr / max(settings.entry_max_extension_atr, 0.01),
         default=1.0,
     )
+    regime_fit = _bounded((match.get("regime_fit") or metrics.get("regime_fit") or {}).get("score"), default=0.5)
 
     components = {
         "match": round(match_score, 4),
@@ -62,15 +63,17 @@ def build_entry_quality(
         "liquidity": round(liquidity_score, 4),
         "volume": round(volume_score, 4),
         "extension": round(extension_score, 4),
+        "regime_fit": round(regime_fit, 4),
     }
     score = round(
-        components["entry"] * 0.28
-        + components["match"] * 0.18
-        + components["research_edge"] * 0.18
-        + components["reward_risk"] * 0.12
-        + components["liquidity"] * 0.10
+        components["entry"] * 0.25
+        + components["match"] * 0.16
+        + components["research_edge"] * 0.17
+        + components["reward_risk"] * 0.11
+        + components["liquidity"] * 0.09
         + components["volume"] * 0.08
-        + components["extension"] * 0.06,
+        + components["extension"] * 0.06
+        + components["regime_fit"] * 0.08,
         6,
     )
     flags = _quality_flags(
@@ -121,6 +124,11 @@ def build_signal_snapshot(
         "target": target,
         "risk_per_share": round(risk_per_share, 4),
         "notional_usd": round(entry * int(getattr(risk, "suggested_qty", 0) or 0), 2),
+        "entry_variant": match.get("entry_variant") or {},
+        "entry_variant_id": match.get("entry_variant_id"),
+        "entry_audit": match.get("entry_audit") or metrics.get("entry_audit") or {},
+        "regime": match.get("regime") or metrics.get("regime") or {},
+        "regime_fit": match.get("regime_fit") or metrics.get("regime_fit") or {},
         "entry_quality": entry_quality,
         "entry_gate": entry_gate,
         "features": {

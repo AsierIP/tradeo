@@ -122,6 +122,8 @@ class Settings(BaseSettings):
     entry_min_volume_ratio: float = 1.05
     entry_max_extension_atr: float = 2.75
     entry_cooldown_minutes: int = 60
+    entry_variant_max_per_pattern_symbol: int = 3
+    entry_exploration_rate: float = 0.15
 
     # Laboratory scans validated Research patterns in paper mode. It may create
     # auditable paper signals continuously, but it never sends IB orders unless

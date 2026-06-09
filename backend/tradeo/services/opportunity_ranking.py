@@ -9,7 +9,7 @@ def rank_entry_matches(
     matches: list[dict[str, Any]],
     *,
     settings: Settings,
-    execution_history: dict[tuple[str, str], float] | None = None,
+    execution_history: dict[tuple[str, ...], dict[str, float]] | None = None,
 ) -> list[dict[str, Any]]:
     history = execution_history or {}
     ranked: list[dict[str, Any]] = []
@@ -36,7 +36,7 @@ def _opportunity_score(
     match: dict[str, Any],
     *,
     settings: Settings,
-    execution_history: dict[tuple[str, str], float],
+    execution_history: dict[tuple[str, ...], dict[str, float]],
 ) -> tuple[float, dict[str, float]]:
     metrics = match.get("metrics") or {}
     features = metrics.get("features") or {}
@@ -59,12 +59,17 @@ def _opportunity_score(
         _safe_float(match.get("reward_risk"), 0.0) / max(settings.min_reward_risk, 1.0),
         default=0.0,
     )
+    regime_fit = _bounded(((match.get("regime_fit") or {}).get("score")), default=0.5)
     avg_dollar_volume = _safe_float(features.get("avg_dollar_volume"), 0.0)
     liquidity = _bounded(
         avg_dollar_volume / max(settings.min_avg_dollar_volume * 5.0, 1.0),
         default=0.5 if settings.min_avg_dollar_volume <= 0 else 0.0,
     )
-    history_score = _history_score(match, execution_history)
+    history_score, history_count = _history_score(match, execution_history)
+    exploration_bonus = max(0.0, 1.0 - min(history_count, 10.0) / 10.0) * max(
+        0.0,
+        min(0.30, float(settings.entry_exploration_rate)),
+    )
     research_edge = expectancy * 0.55 + profit_factor * 0.30 + stability * 0.15
     components = {
         "entry": round(entry_score, 4),
@@ -73,16 +78,21 @@ def _opportunity_score(
         "research_edge": round(research_edge, 4),
         "reward_risk": round(reward_risk, 4),
         "liquidity": round(liquidity, 4),
+        "regime_fit": round(regime_fit, 4),
         "execution_history": round(history_score, 4),
+        "history_count": round(history_count, 4),
+        "exploration": round(exploration_bonus, 4),
     }
     score = round(
-        components["entry"] * 0.24
-        + components["match"] * 0.16
-        + components["research_edge"] * 0.20
-        + components["reward_risk"] * 0.12
-        + components["liquidity"] * 0.10
+        components["entry"] * 0.22
+        + components["match"] * 0.14
+        + components["research_edge"] * 0.18
+        + components["reward_risk"] * 0.10
+        + components["liquidity"] * 0.08
+        + components["regime_fit"] * 0.10
         + components["execution_history"] * 0.12
-        + components["similarity"] * 0.06,
+        + components["similarity"] * 0.04
+        + components["exploration"] * 0.02,
         6,
     )
     return score, components
@@ -90,11 +100,30 @@ def _opportunity_score(
 
 def _history_score(
     match: dict[str, Any],
-    execution_history: dict[tuple[str, str], float],
-) -> float:
+    execution_history: dict[tuple[str, ...], dict[str, float]],
+) -> tuple[float, float]:
     pattern = str(match.get("pattern_name") or "")
     symbol = str(match.get("symbol") or "")
-    return execution_history.get((pattern, symbol), execution_history.get((pattern, "*"), 0.5))
+    variant = str(match.get("entry_variant_id") or "")
+    regime_key = str((match.get("regime") or {}).get("regime_key") or "")
+    keys: tuple[tuple[str, ...], ...]
+    if variant:
+        keys = (
+            (pattern, symbol, variant, regime_key),
+            (pattern, "*", variant, regime_key),
+            (pattern, symbol, variant, "*"),
+            (pattern, "*", variant, "*"),
+        )
+    else:
+        keys = (
+            (pattern, symbol, "*", "*"),
+            (pattern, "*", "*", "*"),
+        )
+    for key in keys:
+        item = execution_history.get(key)
+        if item:
+            return float(item.get("score", 0.5)), float(item.get("count", 0.0))
+    return 0.5, 0.0
 
 
 def _bounded(value: Any, *, default: float) -> float:

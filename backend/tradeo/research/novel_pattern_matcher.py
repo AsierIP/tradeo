@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import math
@@ -14,6 +15,11 @@ from tradeo.core.config import Settings, get_settings
 from tradeo.db.models import DiscoveredPattern, DiscoveredPatternMatch, DiscoveredPatternStatus
 from tradeo.research.pattern_embedding_engine import PatternEmbeddingEngine
 from tradeo.services.data_provider import MarketDataProvider, pick_symbols
+from tradeo.services.entry_variants import (
+    build_entry_audit_context,
+    build_entry_variants,
+    classify_regime,
+)
 from tradeo.services.provider_factory import get_market_data_provider
 from tradeo.services.technical_indicators import atr, normalize_ohlcv
 
@@ -63,101 +69,164 @@ class NovelPatternMatcher:
         engine = PatternEmbeddingEngine()
         required_bars_by_timeframe = self._required_bars_by_timeframe(patterns)
         data_cache: dict[tuple[str, str], pd.DataFrame | None] = {}
+        benchmark_cache: dict[str, dict[str, pd.DataFrame]] = {}
+        embedding_cache: dict[
+            tuple[str, str, int],
+            tuple[pd.DataFrame, np.ndarray, dict[str, float], dict[str, list[float]]] | None,
+        ] = {}
+        patterns_by_timeframe: dict[str, list[DiscoveredPattern]] = defaultdict(list)
         for pattern in patterns:
-            scaler_mean, scaler_scale = self._scaler(pattern)
-            centroid = np.asarray(pattern.centroid_json, dtype=float)
-            if scaler_mean is None or scaler_scale is None or len(centroid) == 0:
-                continue
-            benchmark_frames = self._benchmark_frames(
-                pattern.timeframe,
-                required_bars=required_bars_by_timeframe[pattern.timeframe],
+            patterns_by_timeframe[pattern.timeframe].append(pattern)
+
+        for timeframe, timeframe_patterns in patterns_by_timeframe.items():
+            required_bars = required_bars_by_timeframe[timeframe]
+            benchmark_cache[timeframe] = self._benchmark_frames(
+                timeframe,
+                required_bars=required_bars,
                 cache=data_cache,
             )
             for symbol in symbols:
-                try:
-                    df = self._current_data(
-                        symbol,
-                        pattern.timeframe,
-                        required_bars=required_bars_by_timeframe[pattern.timeframe],
-                        cache=data_cache,
-                    )
-                    if df is None:
-                        continue
-                    if len(df) < pattern.window_size + 20:
-                        continue
-                    window = df.iloc[-pattern.window_size :]
-                    vector, features, chart = engine.embed(window, benchmark_frames=benchmark_frames)
-                    scaled = self._scaled_vector_for_pattern(vector, centroid, scaler_mean, scaler_scale)
-                    if scaled is None:
-                        continue
-                    normalized_distance = float(
-                        np.linalg.norm(scaled - centroid) / max(1.0, np.sqrt(len(centroid)))
-                    )
-                    similarity = float(1.0 / (1.0 + normalized_distance))
-                    if similarity < threshold:
-                        continue
-                    features = dict(features)
-                    features["avg_dollar_volume"] = float(
-                        (df["close"] * df["volume"]).tail(20).mean()
-                    )
-                    reward_risk = float(
-                        pattern.best_rr or settings.unvalidated_pattern_min_reward_risk
-                    )
-                    prices = self._prices(pattern, df, reward_risk=reward_risk)
-                    score = round(
-                        similarity * 0.55 + pattern.score * 0.30 + pattern.stability_score * 0.15,
-                        6,
-                    )
-                    entry_gate = self._entry_gate(pattern.side, df, score=score, settings=settings)
-                    match_status = (
-                        "production_entry_candidate"
-                        if module == "fox_hunter"
-                        else "lab_entry_candidate"
-                    )
-                    match = {
-                        "module": module,
-                        "pattern_id": pattern.id,
-                        "pattern_name": pattern.name,
-                        "pattern_key": pattern.pattern_key,
-                        "pattern_status": pattern.status.value,
-                        "pattern_promotion_status": pattern.promotion_status,
-                        "symbol": symbol,
-                        "timeframe": pattern.timeframe,
-                        "side": pattern.side,
-                        "similarity": round(similarity, 6),
-                        "score": score,
-                        "entry_score": entry_gate["entry_score"],
-                        "entry_gate_passed": entry_gate["passed"],
-                        "entry_trigger": entry_gate["trigger"],
-                        "entry_price": prices["entry_price"],
-                        "stop_price": prices["stop_price"],
-                        "target_price": prices["target_price"],
-                        "reward_risk": reward_risk,
-                        "window_end": str(df.index[-1]),
-                        "status": match_status,
-                        "notes": self._notes_for_module(module),
-                        "chart": chart,
-                        "metrics": {
-                            "entry_module": module,
-                            "pattern_status": pattern.status.value,
-                            "pattern_promotion_status": pattern.promotion_status,
-                            "pattern_score": pattern.score,
-                            "pattern_expectancy_r": pattern.expectancy_r,
-                            "pattern_profit_factor": pattern.profit_factor,
-                            "pattern_stability_score": pattern.stability_score,
-                            "features": features,
-                            "entry_gate": entry_gate,
-                        },
-                    }
-                    matches.append(match)
-                except Exception as exc:  # noqa: BLE001
-                    logger.warning(
-                        "novel pattern match failed for {} / {}: {}",
-                        pattern.name,
-                        symbol,
-                        exc,
-                    )
+                df = self._current_data(
+                    symbol,
+                    timeframe,
+                    required_bars=required_bars,
+                    cache=data_cache,
+                )
+                if df is None:
                     continue
+                for window_size in sorted({pattern.window_size for pattern in timeframe_patterns}):
+                    cache_key = (symbol.upper(), timeframe, int(window_size))
+                    if cache_key not in embedding_cache:
+                        if len(df) < int(window_size) + 20:
+                            embedding_cache[cache_key] = None
+                        else:
+                            try:
+                                window = df.iloc[-int(window_size) :]
+                                embedding_cache[cache_key] = (
+                                    df,
+                                    *engine.embed(window, benchmark_frames=benchmark_cache[timeframe]),
+                                )
+                            except Exception as exc:  # noqa: BLE001
+                                logger.warning(
+                                    "current embedding failed for {} / {} / w{}: {}",
+                                    symbol,
+                                    timeframe,
+                                    window_size,
+                                    exc,
+                                )
+                                embedding_cache[cache_key] = None
+
+                for pattern in timeframe_patterns:
+                    try:
+                        scaler_mean, scaler_scale = self._scaler(pattern)
+                        centroid = np.asarray(pattern.centroid_json, dtype=float)
+                        if scaler_mean is None or scaler_scale is None or len(centroid) == 0:
+                            continue
+                        cached = embedding_cache.get((symbol.upper(), timeframe, int(pattern.window_size)))
+                        if cached is None:
+                            continue
+                        df_for_match, vector, features, chart = cached
+                        scaled = self._scaled_vector_for_pattern(vector, centroid, scaler_mean, scaler_scale)
+                        if scaled is None:
+                            continue
+                        normalized_distance = float(
+                            np.linalg.norm(scaled - centroid) / max(1.0, np.sqrt(len(centroid)))
+                        )
+                        similarity = float(1.0 / (1.0 + normalized_distance))
+                        if similarity < threshold:
+                            continue
+                        features = dict(features)
+                        features["avg_dollar_volume"] = float(
+                            (df_for_match["close"] * df_for_match["volume"]).tail(20).mean()
+                        )
+                        reward_risk = float(
+                            pattern.best_rr or settings.unvalidated_pattern_min_reward_risk
+                        )
+                        base_score = round(
+                            similarity * 0.55 + pattern.score * 0.30 + pattern.stability_score * 0.15,
+                            6,
+                        )
+                        base_gate = self._entry_gate(pattern.side, df_for_match, score=base_score, settings=settings)
+                        regime = classify_regime(features, base_gate)
+                        regime_fit = self._pattern_regime_fit(pattern, regime)
+                        entry_audit = build_entry_audit_context(df_for_match, pattern.timeframe)
+                        variants = build_entry_variants(
+                            side=pattern.side,
+                            df=df_for_match,
+                            base_entry_gate=base_gate,
+                            score=base_score,
+                            reward_risk=reward_risk,
+                            settings=settings,
+                        )
+                        if not variants:
+                            continue
+                        match_status = (
+                            "production_entry_candidate"
+                            if module == "fox_hunter"
+                            else "lab_entry_candidate"
+                        )
+                        for variant in variants:
+                            entry_gate = variant["entry_gate"]
+                            score = round(
+                                base_score * 0.78
+                                + float(entry_gate.get("entry_score", 0.0)) * 0.14
+                                + float(regime_fit["score"]) * 0.08,
+                                6,
+                            )
+                            match = {
+                                "module": module,
+                                "pattern_id": pattern.id,
+                                "pattern_name": pattern.name,
+                                "pattern_key": pattern.pattern_key,
+                                "pattern_status": pattern.status.value,
+                                "pattern_promotion_status": pattern.promotion_status,
+                                "symbol": symbol,
+                                "timeframe": pattern.timeframe,
+                                "side": pattern.side,
+                                "similarity": round(similarity, 6),
+                                "score": score,
+                                "entry_score": entry_gate["entry_score"],
+                                "entry_gate_passed": entry_gate["passed"],
+                                "entry_trigger": entry_gate["trigger"],
+                                "entry_variant_id": variant["entry_variant_id"],
+                                "entry_variant": variant["entry_variant"],
+                                "entry_price": variant["entry_price"],
+                                "stop_price": variant["stop_price"],
+                                "target_price": variant["target_price"],
+                                "reward_risk": reward_risk,
+                                "window_end": str(df_for_match.index[-1]),
+                                "status": match_status,
+                                "notes": self._notes_for_module(module),
+                                "chart": chart,
+                                "entry_audit": entry_audit,
+                                "regime": regime,
+                                "regime_fit": regime_fit,
+                                "metrics": {
+                                    "entry_module": module,
+                                    "pattern_status": pattern.status.value,
+                                    "pattern_promotion_status": pattern.promotion_status,
+                                    "pattern_score": pattern.score,
+                                    "pattern_expectancy_r": pattern.expectancy_r,
+                                    "pattern_profit_factor": pattern.profit_factor,
+                                    "pattern_stability_score": pattern.stability_score,
+                                    "pattern_regime_profile": (pattern.metrics_json or {}).get("regime_profile", {}),
+                                    "features": features,
+                                    "entry_gate": entry_gate,
+                                    "base_entry_gate": base_gate,
+                                    "entry_audit": entry_audit,
+                                    "regime": regime,
+                                    "regime_fit": regime_fit,
+                                },
+                            }
+                            matches.append(match)
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning(
+                            "novel pattern match failed for {} / {}: {}",
+                            pattern.name,
+                            symbol,
+                            exc,
+                        )
+                        continue
         matches = sorted(matches, key=lambda m: m["score"], reverse=True)[
             : settings.discovery_match_max_results
         ]
@@ -211,6 +280,40 @@ class NovelPatternMatcher:
             "Match de patrón de Laboratorio; requiere paper validation "
             "y auditoría de Director."
         )
+
+    @staticmethod
+    def _pattern_regime_fit(pattern: DiscoveredPattern, regime: dict[str, Any]) -> dict[str, Any]:
+        profile = (pattern.metrics_json or {}).get("regime_profile", {})
+        if not isinstance(profile, dict) or not profile:
+            return {"score": 0.5, "label": "unknown_pattern_regime", "matched": False}
+        regime_key = str(regime.get("regime_key") or "")
+        preferred = profile.get("preferred_regime_keys")
+        if isinstance(preferred, list) and preferred:
+            if regime_key in {str(item) for item in preferred}:
+                return {"score": 1.0, "label": "preferred_regime", "matched": True}
+            return {"score": 0.35, "label": "outside_preferred_regime", "matched": False}
+        buckets = profile.get("bucket_counts") if isinstance(profile.get("bucket_counts"), dict) else {}
+        if not buckets and isinstance(profile.get("buckets"), dict):
+            buckets = profile["buckets"]
+        if regime_key and regime_key in buckets:
+            return {"score": 0.85, "label": "seen_regime", "matched": True}
+        dominant = str(profile.get("dominant_regime") or "")
+        if dominant and regime_key and dominant in regime_key:
+            return {"score": 0.75, "label": "dominant_regime_overlap", "matched": True}
+        market = str(regime.get("market_regime") or "")
+        trend = str(regime.get("trend_regime") or "")
+        top_market = profile.get("top_market_regime")
+        top_trend = profile.get("top_trend_regime")
+        overlap = 0.0
+        if top_market and str(top_market) == market:
+            overlap += 0.25
+        if top_trend and str(top_trend) == trend:
+            overlap += 0.25
+        return {
+            "score": round(0.45 + overlap, 4),
+            "label": "partial_regime_overlap" if overlap else "unseen_regime",
+            "matched": bool(overlap),
+        }
 
     @staticmethod
     def _entry_gate(side: str, df: pd.DataFrame, *, score: float, settings: Settings) -> dict[str, Any]:

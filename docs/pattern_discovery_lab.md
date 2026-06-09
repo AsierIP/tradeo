@@ -112,3 +112,5 @@ Por defecto son 90 minutos. Se usa `max_instances=1` para evitar solapamientos.
 - No entrena modelos profundos todavía.
 
 La ampliación incluye `NovelPatternMatcher`, que compara gráficos actuales contra centroides validados y guarda coincidencias en `lab_watchlist`. Esas coincidencias no son señales operativas; sirven para paper validation y revisión.
+
+Ver también: `docs/laboratory_entry_signal_engine.md` para el motor operativo de Laboratorio: variantes de entrada, anti-lookahead, regime router, ranking adaptativo y aprendizaje desde paper trades.

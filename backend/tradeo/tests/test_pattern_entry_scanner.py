@@ -4,7 +4,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from tradeo.core.config import Settings
-from tradeo.db.models import DiscoveredPattern, DiscoveredPatternStatus, Signal, SignalStatus
+from tradeo.db.models import DiscoveredPattern, DiscoveredPatternStatus, Signal, SignalStatus, Trade, TradeStatus
 from tradeo.db.session import Base
 from tradeo.research.novel_pattern_matcher import NovelPatternMatcher
 from tradeo.research.pattern_embedding_engine import PatternEmbeddingEngine
@@ -102,18 +102,26 @@ def test_laboratory_scanner_creates_paper_signal_for_validated_lab_pattern() -> 
     )
 
     assert result["matches_found"] == 1
+    assert result["entry_variants_considered"] >= 1
     assert result["signals_created"] == 1
     signal_id = result["signal_ids"][0]
     signal = db.get(Signal, signal_id)
     assert signal.status == SignalStatus.PAPER_APPROVED
     assert signal.human_approved is False
     assert signal.metadata_json["entry_module"] == "laboratory"
+    assert signal.metadata_json["entry_variant_id"]
+    assert signal.metadata_json["entry_audit"]["available_data_cutoff_ts"]
+    assert signal.metadata_json["entry_audit"]["entry_eligible_ts"]
+    assert signal.metadata_json["entry_audit"]["source_bar_hash"]
+    assert signal.metadata_json["regime"]["regime_key"]
     assert signal.metadata_json["entry_quality_score"] > 0
     assert signal.metadata_json["entry_quality"]["label"] in {"blocked", "weak", "watch", "actionable", "high"}
     assert isinstance(signal.metadata_json["entry_quality"]["flags"], list)
     assert signal.metadata_json["opportunity_rank"] == 1
     assert signal.metadata_json["opportunity_rank_score"] > 0
     assert signal.metadata_json["signal_snapshot"]["symbol"] == provider.symbol
+    assert signal.metadata_json["signal_snapshot"]["entry_variant_id"] == signal.metadata_json["entry_variant_id"]
+    assert signal.metadata_json["signal_snapshot"]["entry_audit"]["source_bar_hash"]
     assert signal.metadata_json["signal_snapshot"]["risk"]["approved"] is True
 
 
@@ -331,6 +339,112 @@ def test_laboratory_scanner_processes_best_ranked_opportunity_first() -> None:
     assert first_signal.pattern == "strong_pattern"
     assert first_signal.metadata_json["opportunity_rank"] == 1
     assert second_signal.metadata_json["opportunity_rank"] == 2
+
+
+def test_laboratory_scanner_prefers_entry_variant_with_paper_history() -> None:
+    db = session_factory()
+    provider = FixtureProvider()
+    historical_signal = Signal(
+        symbol=provider.symbol,
+        pattern="adaptive_pattern",
+        side="long",
+        entry=10.0,
+        stop=9.0,
+        target=14.0,
+        reward_risk=4.0,
+        confidence=0.7,
+        composite_score=0.7,
+        risk_usd=10.0,
+        suggested_qty=1,
+        strategy_version="laboratory_pattern_1",
+        status=SignalStatus.EXECUTED,
+        metadata_json={
+            "entry_module": "laboratory",
+            "entry_variant_id": "next_bar_limit_retest",
+            "regime": {"regime_key": "market_up|uptrend|normal_vol|liquid|rs_leader"},
+        },
+    )
+    db.add(historical_signal)
+    db.flush()
+    for _ in range(10):
+        db.add(
+            Trade(
+                signal_id=historical_signal.id,
+                symbol=provider.symbol,
+                pattern="adaptive_pattern",
+                side="long",
+                qty=1,
+                entry=10.0,
+                stop=9.0,
+                target=14.0,
+                status=TradeStatus.CLOSED,
+                pnl_usd=20.0,
+                r_multiple=2.0,
+            )
+        )
+    db.commit()
+
+    class VariantMatcher:
+        def match_current(self, *args, **kwargs):
+            def match(variant: str):
+                return {
+                    "module": "laboratory",
+                    "pattern_id": 1,
+                    "pattern_name": "adaptive_pattern",
+                    "pattern_key": "adaptive_key",
+                    "pattern_status": "lab_candidate",
+                    "pattern_promotion_status": "lab_candidate",
+                    "symbol": provider.symbol,
+                    "timeframe": "1d",
+                    "side": "long",
+                    "similarity": 0.8,
+                    "score": 0.8,
+                    "entry_score": 0.8,
+                    "entry_gate_passed": True,
+                    "entry_trigger": variant,
+                    "entry_variant_id": variant,
+                    "entry_variant": {"id": variant, "order_style": "next_bar_limit"},
+                    "entry_audit": {"source_bar_hash": "abc", "entry_eligible_ts": "2026-06-10T00:00:00+00:00"},
+                    "regime": {"regime_key": "market_up|uptrend|normal_vol|liquid|rs_leader"},
+                    "regime_fit": {"score": 0.8},
+                    "entry_price": 10.0,
+                    "stop_price": 9.0,
+                    "target_price": 14.0,
+                    "reward_risk": 4.0,
+                    "metrics": {
+                        "pattern_score": 0.8,
+                        "pattern_expectancy_r": 0.2,
+                        "pattern_profit_factor": 2.0,
+                        "pattern_stability_score": 0.8,
+                        "features": {"avg_dollar_volume": 10_000_000, "atr_pct": 0.04},
+                        "entry_gate": {
+                            "passed": True,
+                            "trigger": variant,
+                            "entry_score": 0.8,
+                            "volume_ratio": 2.0,
+                            "extension_atr": 0.5,
+                            "regime_ok": True,
+                        },
+                    },
+                }
+
+            return {
+                "patterns_checked": 1,
+                "symbols_checked": 1,
+                "matches": [match("momentum_close_next_bar_limit"), match("next_bar_limit_retest")],
+                "stored_matches": 2,
+                "similarity_threshold": 0.45,
+            }
+
+    result = PatternEntryScanner(
+        settings=scanner(provider, entry_min_quality_score=0.0).settings,
+        matcher=VariantMatcher(),
+    ).scan(db, module="laboratory", symbols=[provider.symbol], store_signals=True)
+
+    assert result["entry_variants_considered"] == 2
+    signal = db.get(Signal, result["signal_ids"][0])
+    assert signal.metadata_json["entry_variant_id"] == "next_bar_limit_retest"
+    assert signal.metadata_json["opportunity_rank_components"]["history_count"] >= 1
 
 
 def test_laboratory_scanner_respects_symbol_pattern_cooldown() -> None:

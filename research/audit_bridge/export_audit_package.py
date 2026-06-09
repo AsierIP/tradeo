@@ -6,8 +6,8 @@ import base64
 import csv
 import hashlib
 import json
-import os
 import re
+import statistics
 import subprocess
 import sys
 from collections import defaultdict
@@ -80,6 +80,12 @@ PATTERN_EVENTS_COLUMNS = [
     "duplicate_group_id",
     "is_independent_sample",
     "data_available_at_signal",
+    "available_data_cutoff_ts",
+    "decision_ts",
+    "entry_eligible_ts",
+    "label_generated_ts",
+    "source_bar_hash",
+    "split_id",
     "features_used_json",
     "notes",
 ]
@@ -258,6 +264,7 @@ def main() -> int:
     patterns = api_get(api_url, f"/research/discovered-patterns?limit={args.pattern_limit}", user, password)
     runs = api_get(api_url, "/research/runs?limit=200", user, password)
     matches = api_get(api_url, f"/research/current-matches?limit={args.match_limit}", user, password)
+    laboratory_overview = api_get_optional(api_url, "/laboratory/overview", user, password, default={})
 
     examples_by_pattern: dict[int, list[dict[str, Any]]] = {}
     for pattern in patterns:
@@ -284,34 +291,46 @@ def main() -> int:
 
     pattern_catalog_rows = build_pattern_catalog(patterns, examples_by_pattern, context)
     event_rows = build_pattern_events(patterns, examples_by_pattern, matches, context)
+    paper_trade_rows = build_paper_trades(patterns, laboratory_overview)
+    fill_rows = build_ib_fills(laboratory_overview)
     experiment_rows = build_experiment_registry(patterns, examples_by_pattern, runs, context)
-    metrics_pattern_rows = build_metrics_by_pattern(patterns, examples_by_pattern)
+    metrics_pattern_rows = build_metrics_by_pattern(patterns, examples_by_pattern, paper_trade_rows)
     metrics_ticker_rows = build_metrics_by_ticker(examples_by_pattern)
     metrics_period_rows = build_metrics_by_period(examples_by_pattern)
 
     write_csv(package / "pattern_catalog.csv", PATTERN_CATALOG_COLUMNS, pattern_catalog_rows)
     write_csv(package / "pattern_events.csv", PATTERN_EVENTS_COLUMNS, event_rows)
-    write_csv(package / "paper_trades.csv", PAPER_TRADES_COLUMNS, [])
-    write_csv(package / "ib_fills.csv", IB_FILLS_COLUMNS, [])
+    write_csv(package / "paper_trades.csv", PAPER_TRADES_COLUMNS, paper_trade_rows)
+    write_csv(package / "ib_fills.csv", IB_FILLS_COLUMNS, fill_rows)
     write_csv(package / "experiment_registry.csv", EXPERIMENT_COLUMNS, experiment_rows)
     write_csv(package / "metrics_by_pattern.csv", METRICS_BY_PATTERN_COLUMNS, metrics_pattern_rows)
     write_csv(package / "metrics_by_ticker.csv", METRICS_BY_TICKER_COLUMNS, metrics_ticker_rows)
     write_csv(package / "metrics_by_period.csv", METRICS_BY_PERIOD_COLUMNS, metrics_period_rows)
 
     write_audit_request(package, context, patterns, pattern_catalog_rows, metrics_pattern_rows, experiment_rows, event_rows)
-    write_audit_summary_for_chatgpt(package, pattern_catalog_rows, event_rows, experiment_rows, metrics_pattern_rows, metrics_ticker_rows, metrics_period_rows)
-    write_manifest(package, context, patterns, event_rows, experiment_rows)
+    write_audit_summary_for_chatgpt(
+        package,
+        pattern_catalog_rows,
+        event_rows,
+        experiment_rows,
+        metrics_pattern_rows,
+        metrics_ticker_rows,
+        metrics_period_rows,
+        paper_trade_rows,
+        fill_rows,
+    )
+    write_manifest(package, context, patterns, event_rows, experiment_rows, paper_trade_rows, fill_rows)
     write_code_references(package, patterns)
     write_config_snapshot(package / "config_snapshot", context)
-    write_supporting_docs(package, context, patterns, event_rows, experiment_rows)
+    write_supporting_docs(package, context, patterns, event_rows, experiment_rows, paper_trade_rows, fill_rows)
     write_hashes(package)
 
     print(json.dumps({
         "audit_id": args.audit_id,
         "patterns_exported": len(patterns),
         "events_exported": len(event_rows),
-        "paper_trades_exported": 0,
-        "fills_exported": 0,
+        "paper_trades_exported": len(paper_trade_rows),
+        "fills_exported": len(fill_rows),
         "experiments_exported": len(experiment_rows),
         "package": str(package.relative_to(ROOT)),
     }, indent=2))
@@ -337,6 +356,13 @@ def api_get(api_url: str, path: str, user: str, password: str) -> Any:
     request = Request(f"{api_url}{path}", headers={"Authorization": f"Basic {token}"})
     with urlopen(request, timeout=120) as response:  # noqa: S310 - local admin API export
         return json.loads(response.read().decode("utf-8"))
+
+
+def api_get_optional(api_url: str, path: str, user: str, password: str, *, default: Any) -> Any:
+    try:
+        return api_get(api_url, path, user, password)
+    except Exception:  # noqa: BLE001
+        return default
 
 
 def run_git(*args: str) -> str:
@@ -383,6 +409,62 @@ def normalize_ts(value: Any) -> str:
     if "T" in text:
         return f"{text}+00:00"
     return f"{text}T00:00:00+00:00"
+
+
+def next_eligible_ts(value: Any, timeframe: Any) -> str:
+    normalized = normalize_ts(value)
+    if not normalized:
+        return ""
+    try:
+        base = datetime.fromisoformat(normalized)
+    except ValueError:
+        return normalized
+    tf = str(timeframe or "1d").lower().strip()
+    if tf in {"1d", "1 day"}:
+        delta_seconds = 24 * 60 * 60
+    elif tf in {"1wk", "1 week"}:
+        delta_seconds = 7 * 24 * 60 * 60
+    elif tf.endswith("m") and tf[:-1].isdigit():
+        delta_seconds = int(tf[:-1]) * 60
+    elif tf.endswith("h") and tf[:-1].isdigit():
+        delta_seconds = int(tf[:-1]) * 60 * 60
+    else:
+        delta_seconds = 24 * 60 * 60
+    return datetime.fromtimestamp(base.timestamp() + delta_seconds, tz=timezone.utc).isoformat()
+
+
+def stable_hash(payload: Any) -> str:
+    raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def regime_label_from_features(features: Any) -> str:
+    if not isinstance(features, dict):
+        return "not_persisted"
+    score = safe_float(features.get("market_regime_score"), 0.0)
+    if score > 0.25:
+        return "market_up"
+    if score < -0.25:
+        return "market_down"
+    return "market_mixed"
+
+
+def sector_label_from_features(features: Any) -> str:
+    if not isinstance(features, dict):
+        return "not_persisted"
+    strength = safe_float(features.get("sector_strength"), 0.0)
+    if strength > 0.03:
+        return "sector_strong"
+    if strength < -0.03:
+        return "sector_weak"
+    return "sector_neutral"
+
+
+def safe_float(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
 
 
 def min_max_times(examples: list[dict[str, Any]]) -> tuple[str, str]:
@@ -495,6 +577,7 @@ def build_pattern_events(
         for example in examples:
             event_id = f"EVT_{pattern_id(pattern)}_EX_{int(example['id']):06d}"
             window_end = normalize_ts(example.get("window_end"))
+            features = example.get("features_json") or {}
             rows.append({
                 "event_id": event_id,
                 "pattern_id": pattern_id(pattern),
@@ -513,15 +596,21 @@ def build_pattern_events(
                 "volume_at_signal": "",
                 "atr_at_signal": example.get("risk_proxy", ""),
                 "volatility_context": f"risk_proxy={example.get('risk_proxy', '')}; mfe_r={example.get('mfe_r', '')}; mae_r={example.get('mae_r', '')}",
-                "market_regime": "not_persisted",
-                "sector": "not_persisted",
+                "market_regime": regime_label_from_features(features),
+                "sector": sector_label_from_features(features),
                 "was_trade_triggered": "false",
                 "trade_id": "",
                 "reason_not_traded": "Historical representative research sample; not routed to paper execution.",
                 "duplicate_group_id": f"DUP_{pattern_id(pattern)}_{example.get('symbol', '')}_{window_end}",
                 "is_independent_sample": "true",
                 "data_available_at_signal": "true",
-                "features_used_json": example.get("features_json") or {},
+                "available_data_cutoff_ts": window_end,
+                "decision_ts": window_end,
+                "entry_eligible_ts": next_eligible_ts(window_end, example.get("timeframe", pattern.get("timeframe", "1d"))),
+                "label_generated_ts": normalize_ts(example.get("forward_end")),
+                "source_bar_hash": stable_hash({"example": example.get("id"), "window_end": window_end, "features": features}),
+                "split_id": "research_example",
+                "features_used_json": features,
                 "notes": f"stored_example_kind={example.get('kind', '')}; outcome_r={example.get('outcome_r', '')}; similarity={example.get('similarity', '')}",
             })
     for match in matches:
@@ -530,7 +619,10 @@ def build_pattern_events(
             continue
         matched_at = normalize_ts(match.get("matched_at"))
         event_id = f"EVT_{pattern_id(pattern)}_MATCH_{int(match['id']):06d}"
-        features = ((match.get("metrics_json") or {}).get("features") or {})
+        metrics = match.get("metrics_json") or {}
+        features = metrics.get("features") or {}
+        audit = metrics.get("entry_audit") or {}
+        regime = metrics.get("regime") or {}
         rows.append({
             "event_id": event_id,
             "pattern_id": pattern_id(pattern),
@@ -549,18 +641,173 @@ def build_pattern_events(
             "volume_at_signal": "",
             "atr_at_signal": "",
             "volatility_context": json.dumps(features, ensure_ascii=False, sort_keys=True),
-            "market_regime": "not_persisted",
-            "sector": "not_persisted",
+            "market_regime": regime.get("regime_key") or regime_label_from_features(features),
+            "sector": regime.get("sector_regime") or sector_label_from_features(features),
             "was_trade_triggered": "false",
             "trade_id": "",
             "reason_not_traded": "Current lab watchlist match; execution disabled/read-only and requires paper validation.",
             "duplicate_group_id": f"DUP_{pattern_id(pattern)}_{match.get('symbol', '')}_{normalize_ts(match.get('window_end'))}",
             "is_independent_sample": "pending_review",
             "data_available_at_signal": "true",
+            "available_data_cutoff_ts": audit.get("available_data_cutoff_ts") or normalize_ts(match.get("window_end")),
+            "decision_ts": audit.get("decision_ts") or matched_at,
+            "entry_eligible_ts": audit.get("entry_eligible_ts")
+            or next_eligible_ts(match.get("window_end"), match.get("timeframe", pattern.get("timeframe", "1d"))),
+            "label_generated_ts": audit.get("label_generated_ts") or "",
+            "source_bar_hash": audit.get("source_bar_hash")
+            or stable_hash({"match": match.get("id"), "window_end": match.get("window_end"), "features": features}),
+            "split_id": audit.get("split_id") or "live_forward_scan",
             "features_used_json": features,
             "notes": f"similarity={match.get('similarity')}; score={match.get('score')}; status={match.get('status')}",
         })
     return rows
+
+
+def build_paper_trades(patterns: list[dict[str, Any]], laboratory_overview: dict[str, Any]) -> list[dict[str, Any]]:
+    signals = {
+        int(signal["id"]): signal
+        for signal in laboratory_overview.get("signals", [])
+        if isinstance(signal, dict) and str(signal.get("id", "")).isdigit()
+    }
+    pattern_by_name = {str(pattern.get("name")): pattern for pattern in patterns}
+    rows: list[dict[str, Any]] = []
+    for trade in laboratory_overview.get("trades", []):
+        if not isinstance(trade, dict):
+            continue
+        signal = signals.get(int(trade.get("signal_id") or 0), {})
+        metadata = trade.get("metadata_json") or {}
+        signal_metadata = signal.get("metadata_json") or {}
+        pattern_ref = audit_pattern_id(signal_metadata, trade, pattern_by_name)
+        if not pattern_ref:
+            continue
+        event_id = linked_event_id(pattern_ref, signal, trade)
+        entry = safe_float(trade.get("entry"), safe_float(signal.get("entry"), 0.0))
+        qty = safe_float(trade.get("qty"), 0.0)
+        gross_pnl = safe_float(trade.get("pnl_usd"), 0.0)
+        commission = safe_float(metadata.get("commission"), 0.0)
+        estimated_spread = safe_float(metadata.get("estimated_spread_cost"), 0.0)
+        estimated_slippage = safe_float(metadata.get("estimated_slippage"), 0.0)
+        other_fees = safe_float(metadata.get("other_fees"), 0.0)
+        net_pnl = gross_pnl - commission - estimated_spread - estimated_slippage - other_fees
+        rows.append(
+            {
+                "trade_id": trade.get("id"),
+                "event_id": event_id,
+                "pattern_id": pattern_ref,
+                "ticker": trade.get("symbol", ""),
+                "side": trade.get("side", ""),
+                "quantity": trade.get("qty", ""),
+                "entry_signal_time": signal.get("created_at", ""),
+                "entry_order_time": metadata.get("submitted_at") or trade.get("opened_at", ""),
+                "entry_fill_time": metadata.get("entry_fill_time") or trade.get("opened_at", ""),
+                "entry_signal_price": signal.get("entry", entry),
+                "entry_order_type": ((signal_metadata.get("entry_variant") or {}).get("order_style")) or "limit",
+                "entry_limit_price": signal.get("entry", entry),
+                "entry_fill_price": metadata.get("entry_fill_price") or entry,
+                "exit_signal_time": trade.get("closed_at", ""),
+                "exit_order_time": metadata.get("exit_order_time") or trade.get("closed_at", ""),
+                "exit_fill_time": metadata.get("exit_fill_time") or trade.get("closed_at", ""),
+                "exit_order_type": metadata.get("exit_order_type") or "bracket_exit",
+                "exit_limit_price": trade.get("target", ""),
+                "exit_fill_price": trade.get("exit_price", ""),
+                "exit_reason": metadata.get("exit_reason") or trade.get("status", ""),
+                "gross_pnl": round(gross_pnl, 4),
+                "commission": round(commission, 4),
+                "estimated_spread_cost": round(estimated_spread, 4),
+                "estimated_slippage": round(estimated_slippage, 4),
+                "other_fees": round(other_fees, 4),
+                "net_pnl": round(net_pnl, 4),
+                "return_pct": round(net_pnl / max(abs(entry * qty), 1e-9), 6) if qty else "",
+                "mae": metadata.get("mae"),
+                "mfe": metadata.get("mfe"),
+                "holding_period_seconds": metadata.get("holding_period_seconds"),
+                "risk_amount": signal.get("risk_usd", ""),
+                "r_multiple": trade.get("r_multiple", ""),
+                "account_equity_snapshot": metadata.get("account_equity_snapshot", ""),
+                "position_size_method": "risk_manager_suggested_qty",
+                "notes": "; ".join(
+                    part
+                    for part in (
+                        f"entry_variant={signal_metadata.get('entry_variant_id', '')}",
+                        f"regime={((signal_metadata.get('regime') or {}).get('regime_key') or '')}",
+                        f"execution_mode={metadata.get('execution_mode', '')}",
+                    )
+                    if part
+                ),
+            }
+        )
+    return rows
+
+
+def build_ib_fills(laboratory_overview: dict[str, Any]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for trade in laboratory_overview.get("trades", []):
+        if not isinstance(trade, dict):
+            continue
+        metadata = trade.get("metadata_json") or {}
+        if str(metadata.get("execution_mode") or "") not in {"ibkr", "paper"}:
+            continue
+        trade_id = str(trade.get("id") or "")
+        entry_price = safe_float(metadata.get("entry_fill_price"), safe_float(trade.get("entry"), 0.0))
+        opened_at = normalize_ts(metadata.get("entry_fill_time") or trade.get("opened_at"))
+        if entry_price > 0 and opened_at:
+            rows.append(fill_row(trade, metadata, trade_id=trade_id, suffix="ENTRY", timestamp=opened_at, price=entry_price))
+        exit_price = safe_float(metadata.get("exit_fill_price"), safe_float(trade.get("exit_price"), 0.0))
+        closed_at = normalize_ts(metadata.get("exit_fill_time") or trade.get("closed_at"))
+        if exit_price > 0 and closed_at:
+            rows.append(fill_row(trade, metadata, trade_id=trade_id, suffix="EXIT", timestamp=closed_at, price=exit_price))
+    return rows
+
+
+def fill_row(
+    trade: dict[str, Any],
+    metadata: dict[str, Any],
+    *,
+    trade_id: str,
+    suffix: str,
+    timestamp: str,
+    price: float,
+) -> dict[str, Any]:
+    order_ids = metadata.get("order_ids") if isinstance(metadata.get("order_ids"), list) else []
+    raw_order_id = order_ids[0] if order_ids else metadata.get("parent_order_id", "")
+    return {
+        "fill_id_hash": stable_hash({"trade_id": trade_id, "suffix": suffix, "timestamp": timestamp})[:24],
+        "trade_id": trade_id,
+        "order_id_hash": stable_hash({"order_id": raw_order_id})[:24] if raw_order_id else "",
+        "ib_execution_time": timestamp,
+        "timezone": "UTC",
+        "ticker": trade.get("symbol", ""),
+        "side": trade.get("side", ""),
+        "quantity": trade.get("qty", ""),
+        "price": round(price, 4),
+        "commission": metadata.get("commission", ""),
+        "liquidity_flag": metadata.get("liquidity_flag", ""),
+        "exchange": "SMART/IBKR",
+        "order_type": metadata.get("entry_order_type") or "bracket",
+        "account_id_redacted": "true",
+        "raw_status": trade.get("status", ""),
+        "notes": f"{suffix.lower()} fill reconstructed from paper trade record",
+    }
+
+
+def audit_pattern_id(
+    signal_metadata: dict[str, Any],
+    trade: dict[str, Any],
+    pattern_by_name: dict[str, dict[str, Any]],
+) -> str:
+    raw_id = signal_metadata.get("pattern_id")
+    try:
+        if raw_id:
+            return f"PATTERN_{int(raw_id):06d}"
+    except (TypeError, ValueError):
+        pass
+    pattern = pattern_by_name.get(str(trade.get("pattern") or ""))
+    return pattern_id(pattern) if pattern else ""
+
+
+def linked_event_id(pattern_ref: str, signal: dict[str, Any], trade: dict[str, Any]) -> str:
+    signal_id = signal.get("id") or trade.get("signal_id") or "0"
+    return f"EVT_{pattern_ref}_TRADE_SIGNAL_{int(signal_id):06d}" if str(signal_id).isdigit() else f"EVT_{pattern_ref}_TRADE"
 
 
 def build_experiment_registry(
@@ -620,50 +867,63 @@ def build_experiment_registry(
 
 
 def build_metrics_by_pattern(
-    patterns: list[dict[str, Any]], examples_by_pattern: dict[int, list[dict[str, Any]]]
+    patterns: list[dict[str, Any]],
+    examples_by_pattern: dict[int, list[dict[str, Any]]],
+    paper_trade_rows: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
+    trades_by_pattern: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for trade in paper_trade_rows:
+        trades_by_pattern[str(trade.get("pattern_id") or "")].append(trade)
     rows = []
     for pattern in patterns:
         examples = examples_by_pattern.get(int(pattern["id"]), [])
         first_seen, last_seen = min_max_times(examples)
         metrics = best_rr_metrics(pattern)
+        audit_id = pattern_id(pattern)
+        trades = trades_by_pattern.get(audit_id, [])
+        net_values = [safe_float(trade.get("net_pnl"), 0.0) for trade in trades]
+        gross_values = [safe_float(trade.get("gross_pnl"), 0.0) for trade in trades]
+        r_values = [safe_float(trade.get("r_multiple"), 0.0) for trade in trades]
+        wins = [value for value in net_values if value > 0]
+        losses = [abs(value) for value in net_values if value < 0]
+        trade_count = len(trades)
         avg_win = metrics.get("avg_win_r", "")
         avg_loss = metrics.get("avg_loss_r", "")
         payoff = round(float(avg_win) / float(avg_loss), 6) if avg_win not in ("", 0) and avg_loss not in ("", 0) else ""
         rows.append({
-            "pattern_id": pattern_id(pattern),
+            "pattern_id": audit_id,
             "sample_count": pattern.get("sample_count", ""),
             "independent_sample_count": pattern.get("sample_count", ""),
-            "trade_count": "0",
+            "trade_count": trade_count,
             "ticker_count": pattern.get("symbol_count", ""),
             "sector_count": "",
             "first_seen": first_seen,
             "last_seen": last_seen,
-            "gross_pnl": "0",
-            "net_pnl": "0",
-            "avg_trade": "",
+            "gross_pnl": round(sum(gross_values), 4) if trades else "0",
+            "net_pnl": round(sum(net_values), 4) if trades else "0",
+            "avg_trade": round(sum(net_values) / trade_count, 4) if trades else "",
             "median_trade": metrics.get("median_result_r", ""),
-            "std_trade": "",
-            "winrate": pattern.get("best_win_rate", ""),
+            "std_trade": round(float(statistics.pstdev(net_values)), 4) if len(net_values) > 1 else "",
+            "winrate": round(len(wins) / trade_count, 6) if trades else pattern.get("best_win_rate", ""),
             "avg_win": avg_win,
             "avg_loss": avg_loss,
             "payoff_ratio": payoff,
-            "profit_factor": pattern.get("best_profit_factor", ""),
-            "expectancy": pattern.get("best_expectancy_r", ""),
-            "max_drawdown": pattern.get("best_max_drawdown_r", ""),
+            "profit_factor": round(sum(wins) / sum(losses), 6) if losses else (round(sum(wins), 6) if wins else pattern.get("best_profit_factor", "")),
+            "expectancy": round(sum(r_values) / trade_count, 6) if trades else pattern.get("best_expectancy_r", ""),
+            "max_drawdown": max_drawdown(r_values) if trades else pattern.get("best_max_drawdown_r", ""),
             "max_consecutive_losses": "",
-            "best_trade": "",
-            "worst_trade": "",
-            "top_5_trades_pnl": "",
-            "bottom_5_trades_pnl": "",
-            "pnl_without_best_trade": "",
-            "pnl_without_top_5_trades": "",
-            "pnl_without_worst_trade": "",
+            "best_trade": max(net_values) if net_values else "",
+            "worst_trade": min(net_values) if net_values else "",
+            "top_5_trades_pnl": round(sum(sorted(net_values, reverse=True)[:5]), 4) if net_values else "",
+            "bottom_5_trades_pnl": round(sum(sorted(net_values)[:5]), 4) if net_values else "",
+            "pnl_without_best_trade": round(sum(net_values) - max(net_values), 4) if net_values else "",
+            "pnl_without_top_5_trades": round(sum(net_values) - sum(sorted(net_values, reverse=True)[:5]), 4) if net_values else "",
+            "pnl_without_worst_trade": round(sum(net_values) - min(net_values), 4) if net_values else "",
             "sharpe": "",
             "sortino": "",
             "calmar": "",
             "avg_holding_period_seconds": "",
-            "notes": "No paper trades yet; trade PnL fields are zero/blank. Statistical edge fields are research R metrics.",
+            "notes": "Operational columns use paper trades when present; otherwise research R metrics remain informational only.",
         })
     return rows
 
@@ -759,6 +1019,8 @@ def write_manifest(
     patterns: list[dict[str, Any]],
     event_rows: list[dict[str, Any]],
     experiment_rows: list[dict[str, Any]],
+    paper_trade_rows: list[dict[str, Any]],
+    fill_rows: list[dict[str, Any]],
 ) -> None:
     manifest = {
         "audit_id": context["audit_id"],
@@ -773,7 +1035,8 @@ def write_manifest(
         "asset_class": "US equities",
         "patterns_detected": len(patterns),
         "total_pattern_events": len(event_rows),
-        "total_paper_trades": 0,
+        "total_paper_trades": len(paper_trade_rows),
+        "total_ib_fills": len(fill_rows),
         "total_experiment_variants": len(experiment_rows),
         "contains_sensitive_data": False,
         "account_ids_redacted": True,
@@ -1012,14 +1275,16 @@ def write_supporting_docs(
     patterns: list[dict[str, Any]],
     event_rows: list[dict[str, Any]],
     experiment_rows: list[dict[str, Any]],
+    paper_trade_rows: list[dict[str, Any]],
+    fill_rows: list[dict[str, Any]],
 ) -> None:
     (package / "data_lineage.md").write_text(f"""# Data Lineage
 
 - Fuente de barras/precios: Interactive Brokers Paper historical data through `IBKRHistoricalDataProvider`.
 - Fuente de bid/ask: no persistida en este paquete; campos bid/ask/spread quedan vacios.
-- Fuente de fills: DB local no contiene trades/fills paper para patrones en este snapshot; `ib_fills.csv` existe con cabecera vacia.
-- Fuente de comisiones: no hay fills/trades; comisiones por trade quedan vacias.
-- Fuente de slippage estimado: no persistida todavia; campos separados existen para paper trades futuros.
+- Fuente de paper trades: `paper_trades.csv` exporta {len(paper_trade_rows)} filas desde Laboratorio cuando existen.
+- Fuente de fills: `ib_fills.csv` exporta {len(fill_rows)} fills paper reconstruidos desde trades cerrados/registrados cuando existen.
+- Fuente de comisiones/slippage: se exportan desde metadata de trade si estan persistidas; si no, quedan vacias o en cero.
 - Fuente de volumen: barras OHLCV de IBKR cuando estan disponibles; el export actual solo conserva volumen en features agregadas si el detector lo genero.
 - Ajustes por splits/dividendos: no documentados por barra en el laboratorio actual; requiere auditoria adicional del proveedor IBKR.
 - Acciones deslistadas: el universo actual viene de `data/universe_us_mid_small.csv`; no hay control completo de survivorship bias.
@@ -1036,14 +1301,14 @@ def write_supporting_docs(
 - El laboratorio guarda ejemplos representativos por patron, no todos los eventos crudos. Eventos exportados: {len(event_rows)}.
 - Puede haber muestras solapadas por `stride`; independencia estadistica requiere auditoria adicional.
 - Bid/ask/spread no estan persistidos en algunos eventos.
-- Slippage estimado no observado; no hay paper trades cerrados en este paquete.
+- Slippage estimado solo es auditable si cada trade lo persiste en metadata.
 - Universo limitado a `data/universe_us_mid_small.csv`.
 - Datos actuales vienen de IB Paper/historicos; no equivalen a ejecucion live.
 - Posible survivorship bias: no hay archivo de tickers deslistados.
 - Posible concentracion por pocos tickers o regimenes: revisar `metrics_by_ticker.csv` y `metrics_by_period.csv`.
-- Regimen de mercado y sector no estan persistidos.
+- Regimen de mercado y sector se exportan desde features/metadata cuando estan disponibles.
 - Los timestamps diarios se normalizan a UTC cuando el dato original no trae timezone explicita.
-- No hay fills IB Paper para patrones porque Tradeo esta en modo read-only/sin ordenes.
+- Fills IB Paper exportados en este paquete: {len(fill_rows)}.
 - El paquete contiene {len(patterns)} patrones y {len(experiment_rows)} variantes RR; ChatGPT debe revisar tambien variantes descartadas.
 """, encoding="utf-8")
 
@@ -1146,6 +1411,8 @@ def write_audit_summary_for_chatgpt(
     metrics_rows: list[dict[str, Any]],
     metrics_ticker_rows: list[dict[str, Any]],
     metrics_period_rows: list[dict[str, Any]],
+    paper_trade_rows: list[dict[str, Any]],
+    fill_rows: list[dict[str, Any]],
 ) -> None:
     catalog_by_pattern = {row["pattern_id"]: row for row in pattern_rows}
     sample_counts = sorted(to_int(row.get("independent_sample_count")) for row in metrics_rows)
@@ -1229,12 +1496,19 @@ def write_audit_summary_for_chatgpt(
         if (to_int(row.get("independent_sample_count")) or 0) < 30 or (to_int(row.get("ticker_count")) or 0) < 5
     ]
 
+    validation_stance = (
+        f"**Validation stance:** no pattern is approved automatically. "
+        f"This package includes {len(paper_trade_rows)} paper trades and {len(fill_rows)} reconstructed fills; "
+        "Director must still verify execution quality before promotion."
+        if paper_trade_rows or fill_rows
+        else "**Validation stance:** no pattern is approved for operation in this package. Paper/live execution validation is unavailable because `paper_trades.csv` and `ib_fills.csv` have zero rows."
+    )
     lines = [
         "# Audit Summary For ChatGPT",
         "",
         "Generated from the package CSV exports. This is a lab-audit and candidate-ranking aid only.",
         "",
-        "**Validation stance:** no pattern is approved for operation in this package. Paper/live execution validation is unavailable because `paper_trades.csv` and `ib_fills.csv` have zero rows.",
+        validation_stance,
         "",
         "## A. Sample Distribution By Pattern",
         "",
