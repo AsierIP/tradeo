@@ -269,6 +269,7 @@ class PatternDiscoveryLabAgent:
             "profit_factor_ci_low": metrics.get("profit_factor_ci_low"),
             "overfit_score": metrics.get("overfit_score"),
             "confirmation_recommended": metrics.get("confirmation_recommended", False),
+            "confirmation_status": metrics.get("confirmation_status", ""),
             "confirmation_priority_score": metrics.get("confirmation_priority_score", 0.0),
             "confirmation_reason": metrics.get("confirmation_reason", ""),
             "confirmation_next_action": metrics.get("confirmation_next_action", ""),

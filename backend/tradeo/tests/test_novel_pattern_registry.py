@@ -4,7 +4,7 @@ import numpy as np
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from tradeo.db.models import DiscoveredPattern
+from tradeo.db.models import DiscoveredPattern, DiscoveredPatternStatus
 from tradeo.db.session import Base
 from tradeo.research.novel_pattern_matcher import NovelPatternMatcher
 from tradeo.research.novel_pattern_registry import NovelPatternRegistry
@@ -73,3 +73,27 @@ def test_matcher_scales_legacy_centroid_prefix() -> None:
 
     assert scaled is not None
     assert scaled.tolist() == [1.0, 0.5]
+
+
+def test_registry_persists_confirmation_lifecycle() -> None:
+    db = session_factory()
+    candidate = _candidate("novel_confirm", [0.0, 0.0, 0.0])
+    candidate.validation_passed = False
+    candidate.metrics.update(
+        {
+            "promotion_status": "rejected",
+            "confirmation_recommended": True,
+            "confirmation_status": "needs_confirmation",
+            "confirmation_priority_score": 0.72,
+            "confirmation_reason": "edge strong but underpowered",
+            "confirmation_next_action": "rerun expanded universe",
+        }
+    )
+
+    stored = NovelPatternRegistry(similarity_threshold=0.99).store_candidates(db, [candidate])[0]
+
+    assert stored.status == DiscoveredPatternStatus.NEEDS_CONFIRMATION
+    assert stored.promotion_status == "needs_confirmation"
+    assert stored.confirmation_status == "needs_confirmation"
+    assert stored.confirmation_priority_score == 0.72
+    assert stored.confirmation_reason == "edge strong but underpowered"

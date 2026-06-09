@@ -62,3 +62,35 @@ Checklist de auditoria:
 - Confirmar que `adjusted_p_value` incluye penalizacion por numero de variantes evaluadas.
 - Exigir CI positivo antes de cualquier escalado serio.
 - Tratar `overfit_score` alto como veto salvo explicacion de regimen.
+
+## 3. Lifecycle Real De Confirmacion
+
+Estado: implementado.
+
+Cambios:
+
+- Se anaden estados de patron:
+  - `needs_confirmation`
+  - `confirmed_candidate`
+  - `failed_confirmation`
+- `discovered_patterns` guarda columnas dedicadas:
+  - `confirmation_status`
+  - `confirmation_priority_score`
+  - `confirmation_reason`
+  - `confirmation_next_action`
+  - `confirmation_attempts`
+- Los candidatos fuertes pero underpowered ya no son solo `rejected` con metadata JSON.
+- Si `ValidationGate` recomienda confirmacion, `NovelPatternRegistry` persiste el patron como `needs_confirmation`.
+- `/api/research/confirmation-queue` filtra por columna DB y ordena por prioridad.
+
+Lectura para Director:
+
+- `needs_confirmation` no es aprobacion ni promocion.
+- Es una cola formal para re-run ampliado con mismo setup/side/window antes de volver a evaluar.
+- `confirmation_priority_score` ayuda a ordenar coste computacional vs promesa estadistica.
+
+Checklist de auditoria:
+
+- Revisar que ningun `needs_confirmation` pueda alimentar Fox/produccion.
+- Exigir nuevo run ampliado antes de cambiar a `confirmed_candidate`.
+- Si el re-run falla, marcar `failed_confirmation` y conservar evidencia.

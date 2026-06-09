@@ -63,6 +63,8 @@ class NovelPatternRegistry:
         pattern.run_id = run_id
         pattern.name = candidate.name
         status = str(metrics.get("promotion_status", "lab" if candidate.validation_passed else "rejected"))
+        if metrics.get("confirmation_recommended") and status == "rejected":
+            status = "needs_confirmation"
         try:
             pattern.status = DiscoveredPatternStatus(status)
         except ValueError:
@@ -94,6 +96,12 @@ class NovelPatternRegistry:
         pattern.preferred_rr_passed = bool(metrics.get("preferred_rr_passed", False))
         pattern.premium_rr_passed = bool(metrics.get("premium_rr_passed", False))
         pattern.promotion_reason = str(metrics.get("promotion_reason", ""))
+        pattern.confirmation_status = str(metrics.get("confirmation_status", ""))
+        if metrics.get("confirmation_recommended") and not pattern.confirmation_status:
+            pattern.confirmation_status = "needs_confirmation"
+        pattern.confirmation_priority_score = float(metrics.get("confirmation_priority_score", 0.0))
+        pattern.confirmation_reason = str(metrics.get("confirmation_reason", ""))
+        pattern.confirmation_next_action = str(metrics.get("confirmation_next_action", ""))
         pattern.rr_metrics_json = self._json_clean(metrics.get("rr_metrics", {}))
         pattern.rejection_reasons_json = self._json_clean(metrics.get("rejection_reasons", []))
         pattern.in_sample_expectancy_r = float(metrics.get("in_sample_expectancy_r", 0.0))

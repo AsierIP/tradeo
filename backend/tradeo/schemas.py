@@ -243,6 +243,11 @@ class DiscoveredPatternOut(BaseModel):
     premium_rr_passed: bool = False
     promotion_status: str = "rejected"
     promotion_reason: str = ""
+    confirmation_status: str = ""
+    confirmation_priority_score: float = 0.0
+    confirmation_reason: str = ""
+    confirmation_next_action: str = ""
+    confirmation_attempts: int = 0
     rr_metrics_json: dict[str, Any] = Field(default_factory=dict)
     rejection_reasons_json: list[str] = Field(default_factory=list)
     in_sample_expectancy_r: float = 0.0

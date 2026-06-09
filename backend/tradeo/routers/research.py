@@ -129,14 +129,13 @@ def list_confirmation_queue(
     _: str = Depends(require_admin),
     db: Session = Depends(get_db),
 ) -> list[DiscoveredPattern]:
-    patterns = (
+    return (
         db.query(DiscoveredPattern)
-        .order_by(DiscoveredPattern.score.desc(), DiscoveredPattern.created_at.desc())
-        .limit(500)
+        .filter(DiscoveredPattern.confirmation_status == "needs_confirmation")
+        .order_by(DiscoveredPattern.confirmation_priority_score.desc(), DiscoveredPattern.score.desc())
+        .limit(limit)
         .all()
     )
-    queued = [pattern for pattern in patterns if (pattern.metrics_json or {}).get("confirmation_recommended")]
-    return queued[:limit]
 
 
 @router.post("/match-current", response_model=NovelPatternMatchResponse)

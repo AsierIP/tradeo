@@ -148,6 +148,7 @@ class ValidationGate:
         candidate.metrics["promotion_status"] = promotion_status
         candidate.metrics["promotion_reason"] = self._promotion_reason(promotion_status, best_rr, best_expectancy, best_pf, oos_positive)
         candidate.metrics["confirmation_recommended"] = bool(confirmation["recommended"])
+        candidate.metrics["confirmation_status"] = "needs_confirmation" if confirmation["recommended"] else ""
         candidate.metrics["confirmation_reason"] = str(confirmation["reason"])
         candidate.metrics["confirmation_priority_score"] = float(confirmation["priority_score"])
         candidate.metrics["confirmation_next_action"] = str(confirmation["next_action"])

@@ -154,6 +154,9 @@ class DiscoveredPatternStatus(str, Enum):
     LAB = "lab"
     LAB_WATCHLIST = "lab_watchlist"
     LAB_CANDIDATE = "lab_candidate"
+    NEEDS_CONFIRMATION = "needs_confirmation"
+    CONFIRMED_CANDIDATE = "confirmed_candidate"
+    FAILED_CONFIRMATION = "failed_confirmation"
     DIRECTOR_REVIEW = "director_review"
     PREMIUM_CANDIDATE = "premium_candidate"
     PAPER_CANDIDATE = "paper_candidate"
@@ -218,6 +221,11 @@ class DiscoveredPattern(Base):
     premium_rr_passed: Mapped[bool] = mapped_column(Boolean, default=False)
     promotion_status: Mapped[str] = mapped_column(String(40), default="rejected", index=True)
     promotion_reason: Mapped[str] = mapped_column(Text, default="")
+    confirmation_status: Mapped[str] = mapped_column(String(40), default="", index=True)
+    confirmation_priority_score: Mapped[float] = mapped_column(Float, default=0.0)
+    confirmation_reason: Mapped[str] = mapped_column(Text, default="")
+    confirmation_next_action: Mapped[str] = mapped_column(Text, default="")
+    confirmation_attempts: Mapped[int] = mapped_column(Integer, default=0)
     rr_metrics_json: Mapped[dict[str, Any]] = mapped_column(json_type(), default=dict)
     rejection_reasons_json: Mapped[list[str]] = mapped_column(json_type(), default=list)
     in_sample_expectancy_r: Mapped[float] = mapped_column(Float, default=0.0)
