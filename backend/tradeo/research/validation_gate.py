@@ -84,6 +84,10 @@ class ValidationGate:
         hit_rate = float(metrics.get("hit_4r_rate", 0.0))
         if hit_rate < 0.08:
             warnings.append("tasa de 4R baja; puede requerir filtro posterior de entrada")
+        operational = metrics.get("operational_trigger", {})
+        trigger_rate = float(operational.get("trigger_rate", 0.0)) if isinstance(operational, dict) else 0.0
+        if trigger_rate < 0.25:
+            warnings.append("baja tasa de trigger operativo; requiere filtro de entrada estricto")
         if candidate.symbol_count <= 3:
             warnings.append("posible dependencia de pocos símbolos")
         if candidate.year_count <= 1:

@@ -23,6 +23,7 @@ class ClusterResearchEngine:
     out_of_sample_pct: float = 0.25
     rr_levels: list[float] | None = None
     min_samples: int = 100
+    event_ledger_limit: int = 250
 
     def discover(self, samples: list[WindowSample]) -> list[ClusterCandidate]:
         candidates: list[ClusterCandidate] = []
@@ -97,6 +98,15 @@ class ClusterResearchEngine:
             metrics["holdout_start"] = holdout_samples[0].end if holdout_samples else None
             metrics["model_fit_sample_count"] = len(train_samples)
             metrics["model_holdout_sample_count"] = len(holdout_samples)
+            metrics["operational_trigger"] = self._operational_trigger_metrics(cluster_samples, side)
+            metrics["event_ledger"] = self._event_ledger(
+                cluster_samples,
+                train_samples=cluster_train_samples,
+                holdout_samples=cluster_holdout_samples,
+                side=side,
+                rr=float(metrics.get("best_rr", self.target_r)),
+            )
+            metrics["event_ledger_count"] = len(metrics["event_ledger"])
             score = self._candidate_score(metrics)
             feature_summary = self._feature_summary(cluster_samples)
             centroid = np.nan_to_num(centroid_scaled, nan=0, posinf=0, neginf=0).round(6).tolist()
@@ -183,6 +193,9 @@ class ClusterResearchEngine:
             "profit_factor": round(profit_factor, 5),
             "avg_mfe_r": round(avg_mfe, 5),
             "avg_mae_r": round(avg_mae, 5),
+            "avg_execution_cost_r": float(best_rr_metrics.get("avg_execution_cost_r", 0.0))
+            if isinstance(best_rr_metrics, dict)
+            else 0.0,
             "mfe_mae_ratio": round(float(avg_mfe / max(avg_mae, 1e-9)), 5),
             "reward_risk_estimate": round(float(np.quantile(mfe, 0.60) / max(np.quantile(mae, 0.60), 1e-9)), 5)
             if len(mfe) and len(mae)
@@ -297,6 +310,55 @@ class ClusterResearchEngine:
             "win_rate": round(float(np.mean(outcomes > 0)), 5),
         }
 
+    def _operational_trigger_metrics(self, samples: list[WindowSample], side: Side) -> dict[str, float | int]:
+        key = f"{side}_entry_trigger_score"
+        scores = np.asarray([float(sample.features.get(key, 0.0)) for sample in samples], dtype=float)
+        if len(scores) == 0:
+            return {"sample_count": 0, "avg_score": 0.0, "trigger_rate": 0.0}
+        return {
+            "sample_count": int(len(scores)),
+            "avg_score": round(float(np.mean(scores)), 5),
+            "trigger_rate": round(float(np.mean(scores >= 0.58)), 5),
+        }
+
+    def _event_ledger(
+        self,
+        samples: list[WindowSample],
+        *,
+        train_samples: list[WindowSample],
+        holdout_samples: list[WindowSample],
+        side: Side,
+        rr: float,
+    ) -> list[dict[str, object]]:
+        train_ids = {id(sample) for sample in train_samples}
+        holdout_ids = {id(sample) for sample in holdout_samples}
+        ledger: list[dict[str, object]] = []
+        for sample in sorted(samples, key=lambda s: s.end)[: self.event_ledger_limit]:
+            result_r, target_bar, stop_bar = RewardRiskAnalyzer._simulate_sample(sample, side, rr)
+            if id(sample) in train_ids:
+                split = "train"
+            elif id(sample) in holdout_ids:
+                split = "holdout"
+            else:
+                split = "assigned"
+            ledger.append(
+                {
+                    "symbol": sample.symbol,
+                    "window_end": sample.end,
+                    "forward_end": sample.outcome.forward_end,
+                    "year": sample.year,
+                    "split": split,
+                    "side": side,
+                    "rr": round(float(rr), 5),
+                    "result_r": round(float(result_r), 5),
+                    "target_bar": target_bar,
+                    "stop_bar": stop_bar,
+                    "execution_cost_r": round(float(sample.outcome.execution_cost_r), 5),
+                    "entry_trigger_score": round(float(sample.features.get(f"{side}_entry_trigger_score", 0.0)), 5),
+                }
+            )
+        return ledger
+
     @staticmethod
     def _split_metrics(samples: list[WindowSample], side: Side, rr: float) -> dict[str, float | int]:
         outcomes = np.asarray([RewardRiskAnalyzer._simulate_sample(s, side, rr)[0] for s in samples], dtype=float)
@@ -348,10 +410,20 @@ class ClusterResearchEngine:
         stability = float(metrics.get("stability_score", 0.0))
         oos = max(0.0, float(metrics.get("out_of_sample_expectancy_r", 0.0)))
         rr = min(float(metrics.get("best_rr", metrics.get("reward_risk_estimate", 0.0))), 8.0) / 8.0
+        operational = metrics.get("operational_trigger", {})
+        trigger_rate = float(operational.get("trigger_rate", 0.0)) if isinstance(operational, dict) else 0.0
         lift = min(max(0.0, float(metrics.get("expectancy_lift_r", 0.0))), 2.0)
         adjusted_p = min(max(float(metrics.get("adjusted_p_value", 1.0)), 0.0), 1.0)
         confidence = 1.0 - adjusted_p
-        raw_score = expectancy * 0.30 + pf * 0.16 + hit * 0.14 + stability * 0.14 + oos * 0.10 + rr * 0.06
+        raw_score = (
+            expectancy * 0.28
+            + pf * 0.15
+            + hit * 0.13
+            + stability * 0.13
+            + oos * 0.10
+            + rr * 0.06
+            + trigger_rate * 0.05
+        )
         return raw_score * (0.45 + 0.55 * confidence) + lift * 0.05
 
     @staticmethod

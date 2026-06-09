@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import numpy as np
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from tradeo.db.models import DiscoveredPattern
 from tradeo.db.session import Base
+from tradeo.research.novel_pattern_matcher import NovelPatternMatcher
 from tradeo.research.novel_pattern_registry import NovelPatternRegistry
 from tradeo.research.types import ClusterCandidate
 
@@ -59,3 +61,15 @@ def test_registry_dedupes_similar_centroids() -> None:
     assert second.metrics["registry_deduped"] is True
     assert second.metrics["registry_canonical_pattern_key"] == "novel_long_w20_a"
     assert db.query(DiscoveredPattern).count() == 1
+
+
+def test_matcher_scales_legacy_centroid_prefix() -> None:
+    vector = np.asarray([1.0, 2.0, 99.0], dtype=np.float32)
+    centroid = np.asarray([1.0, 2.0], dtype=float)
+    mean = np.asarray([0.0, 1.0], dtype=float)
+    scale = np.asarray([1.0, 2.0], dtype=float)
+
+    scaled = NovelPatternMatcher._scaled_vector_for_pattern(vector, centroid, mean, scale)
+
+    assert scaled is not None
+    assert scaled.tolist() == [1.0, 0.5]

@@ -59,6 +59,44 @@ class PatternEmbeddingEngine:
         last_quarter_return = float(close[-1] / close[max(0, len(close) * 3 // 4)] - 1)
         volume_trend = self._slope(volume_rel)
         atr_pct = float(atr(df, 14).iloc[-1] / close[-1]) if len(df) >= 15 and close[-1] else 0.0
+        sma20 = float(np.mean(close[-min(20, len(close)) :]))
+        sma50 = float(np.mean(close[-min(50, len(close)) :]))
+        trend_regime = self._trend_regime(close[-1], sma20, sma50)
+        atr_series = atr(df, 14).bfill().fillna(0.0) if len(df) >= 15 else pd.Series([0.0] * len(df), index=df.index)
+        median_atr_pct = float(np.median(atr_series.tail(50) / np.maximum(df["close"].tail(50).astype(float), 1e-9)))
+        volatility_regime = float(atr_pct / max(median_atr_pct, 1e-9)) if median_atr_pct > 0 else 1.0
+        previous_close = float(close[-2]) if len(close) >= 2 else float(close[-1])
+        gap_pct = float(open_[-1] / max(previous_close, 1e-9) - 1.0)
+        lookback = min(20, max(2, len(close) - 1))
+        previous_high = float(np.max(high[-lookback - 1 : -1])) if len(high) > 1 else float(high[-1])
+        previous_low = float(np.min(low[-lookback - 1 : -1])) if len(low) > 1 else float(low[-1])
+        breakout_strength = float(close[-1] / max(previous_high, 1e-9) - 1.0)
+        breakdown_strength = float(previous_low / max(close[-1], 1e-9) - 1.0)
+        avg_dollar_volume = float(np.mean(close[-lookback:] * volume[-lookback:]))
+        liquidity_score = float(min(1.0, np.log1p(max(avg_dollar_volume, 0.0)) / np.log1p(50_000_000.0)))
+        distance_sma20_atr = float((close[-1] - sma20) / max(float(atr_series.iloc[-1]), close[-1] * 0.01, 1e-9))
+        long_trigger_score = self._entry_trigger_score(
+            side="long",
+            close=float(close[-1]),
+            open_=float(open_[-1]),
+            high=float(high[-1]),
+            low=float(low[-1]),
+            previous_close=previous_close,
+            previous_high=previous_high,
+            previous_low=previous_low,
+            sma20=sma20,
+        )
+        short_trigger_score = self._entry_trigger_score(
+            side="short",
+            close=float(close[-1]),
+            open_=float(open_[-1]),
+            high=float(high[-1]),
+            low=float(low[-1]),
+            previous_close=previous_close,
+            previous_high=previous_high,
+            previous_low=previous_low,
+            sma20=sma20,
+        )
 
         channels = [
             price_norm,
@@ -83,6 +121,15 @@ class PatternEmbeddingEngine:
                 last_quarter_return,
                 volume_trend,
                 atr_pct,
+                trend_regime,
+                min(volatility_regime, 5.0),
+                gap_pct,
+                breakout_strength,
+                breakdown_strength,
+                liquidity_score,
+                distance_sma20_atr,
+                long_trigger_score,
+                short_trigger_score,
             ],
             dtype=float,
         )
@@ -98,6 +145,16 @@ class PatternEmbeddingEngine:
             "last_quarter_return": last_quarter_return,
             "volume_trend": float(volume_trend),
             "atr_pct": atr_pct,
+            "trend_regime": trend_regime,
+            "volatility_regime": volatility_regime,
+            "gap_pct": gap_pct,
+            "breakout_strength": breakout_strength,
+            "breakdown_strength": breakdown_strength,
+            "avg_dollar_volume": avg_dollar_volume,
+            "liquidity_score": liquidity_score,
+            "distance_sma20_atr": distance_sma20_atr,
+            "long_entry_trigger_score": long_trigger_score,
+            "short_entry_trigger_score": short_trigger_score,
             "range_pct_mean": float(np.mean(range_pct) * 0.35),
             "volume_rel_last": float(volume_rel[-1] * 5.0),
         }
@@ -129,6 +186,43 @@ class PatternEmbeddingEngine:
             return float(np.polyfit(x, values, 1)[0])
         except Exception:  # noqa: BLE001
             return 0.0
+
+    @staticmethod
+    def _trend_regime(close: float, sma20: float, sma50: float) -> float:
+        if close >= sma20 >= sma50:
+            return 1.0
+        if close <= sma20 <= sma50:
+            return -1.0
+        return 0.0
+
+    @staticmethod
+    def _entry_trigger_score(
+        *,
+        side: str,
+        close: float,
+        open_: float,
+        high: float,
+        low: float,
+        previous_close: float,
+        previous_high: float,
+        previous_low: float,
+        sma20: float,
+    ) -> float:
+        if side == "short":
+            breakout = close <= previous_low * 1.005
+            reclaim = high >= previous_low and close < previous_low * 1.01 and close < open_
+            momentum = close < previous_close and close < sma20
+        else:
+            breakout = close >= previous_high * 0.995
+            reclaim = low <= previous_high and close > previous_high * 0.99 and close > open_
+            momentum = close > previous_close and close > sma20
+        if breakout:
+            return 1.0
+        if reclaim:
+            return 0.78
+        if momentum:
+            return 0.58
+        return 0.0
 
     @staticmethod
     def _winsorize(values: np.ndarray, low_q: float, high_q: float) -> np.ndarray:

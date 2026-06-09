@@ -67,8 +67,11 @@ def test_window_sampler_generates_forward_labeled_samples() -> None:
     first = samples[0]
     assert first.vector.shape[0] > 50
     assert first.outcome.risk_proxy > 0
+    assert first.outcome.execution_cost_r > 0
     assert 20 in first.outcome.forward_returns
     assert "close_norm" in first.chart
+    assert "long_entry_trigger_score" in first.features
+    assert "liquidity_score" in first.features
 
 
 def test_cluster_engine_returns_candidates_or_empty_without_crashing() -> None:
@@ -90,6 +93,8 @@ def test_cluster_engine_returns_candidates_or_empty_without_crashing() -> None:
         assert candidate.sample_count > 0
         assert candidate.metrics["sample_count"] == candidate.sample_count
         assert candidate.side in {"long", "short"}
+        assert "operational_trigger" in candidate.metrics
+        assert "event_ledger_count" in candidate.metrics
 
 
 def test_cluster_engine_fits_scaler_on_train_only() -> None:

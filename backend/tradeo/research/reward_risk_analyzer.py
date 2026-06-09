@@ -45,6 +45,7 @@ class RewardRiskAnalyzer:
         stop_bars: list[int] = []
         mfe: list[float] = []
         mae: list[float] = []
+        costs: list[float] = []
         for sample in samples:
             result, target_bar, stop_bar = self._simulate_sample(sample, side, rr)
             results.append(result)
@@ -54,6 +55,7 @@ class RewardRiskAnalyzer:
                 stop_bars.append(stop_bar)
             mfe.append(sample.outcome.mfe_for(side))
             mae.append(sample.outcome.mae_for(side))
+            costs.append(max(0.0, float(sample.outcome.execution_cost_r)))
 
         arr = np.asarray(results, dtype=float)
         wins = arr[arr > 0]
@@ -78,6 +80,7 @@ class RewardRiskAnalyzer:
             "avg_mfe_r": round(avg_mfe, 5),
             "avg_mae_r": round(avg_mae, 5),
             "mfe_mae_ratio": round(avg_mfe / max(avg_mae, 1e-9), 5),
+            "avg_execution_cost_r": round(float(np.mean(costs)), 5) if costs else 0.0,
             "max_drawdown_r": round(self._max_drawdown(arr), 5),
             "avg_bars_to_target": round(float(np.mean(target_bars)), 3) if target_bars else 0.0,
             "avg_bars_to_stop": round(float(np.mean(stop_bars)), 3) if stop_bars else 0.0,
@@ -93,26 +96,28 @@ class RewardRiskAnalyzer:
         closes = sample.outcome.forward_closes
         if not highs or not lows or not closes:
             fallback = max(-1.0, min(rr, sample.outcome.outcome_for(side)))
+            fallback -= max(0.0, float(sample.outcome.execution_cost_r))
             return float(fallback), None, None
+        cost_r = max(0.0, float(sample.outcome.execution_cost_r))
 
         if side == "long":
             target = entry + risk * rr
             stop = entry - risk
             for idx, (high, low) in enumerate(zip(highs, lows, strict=False), start=1):
                 if float(low) <= stop:
-                    return -1.0, None, idx
+                    return -1.0 - cost_r, None, idx
                 if float(high) >= target:
-                    return float(rr), idx, None
-            return float(max(-1.0, min(rr, (closes[-1] - entry) / risk))), None, None
+                    return float(rr) - cost_r, idx, None
+            return float(max(-1.0, min(rr, (closes[-1] - entry) / risk)) - cost_r), None, None
 
         target = entry - risk * rr
         stop = entry + risk
         for idx, (high, low) in enumerate(zip(highs, lows, strict=False), start=1):
             if float(high) >= stop:
-                return -1.0, None, idx
+                return -1.0 - cost_r, None, idx
             if float(low) <= target:
-                return float(rr), idx, None
-        return float(max(-1.0, min(rr, (entry - closes[-1]) / risk))), None, None
+                return float(rr) - cost_r, idx, None
+        return float(max(-1.0, min(rr, (entry - closes[-1]) / risk)) - cost_r), None, None
 
     @staticmethod
     def _max_drawdown(results: np.ndarray) -> float:

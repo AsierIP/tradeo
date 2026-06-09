@@ -32,6 +32,7 @@ class ForwardOutcome:
     forward_highs: list[float] = field(default_factory=list)
     forward_lows: list[float] = field(default_factory=list)
     forward_closes: list[float] = field(default_factory=list)
+    execution_cost_r: float = 0.0
 
     def outcome_for(self, side: Side) -> float:
         return self.long_outcome_r if side == "long" else self.short_outcome_r

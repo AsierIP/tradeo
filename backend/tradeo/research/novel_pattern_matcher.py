@@ -82,9 +82,9 @@ class NovelPatternMatcher:
                         continue
                     window = df.iloc[-pattern.window_size :]
                     vector, features, chart = engine.embed(window)
-                    if len(vector) != len(centroid):
+                    scaled = self._scaled_vector_for_pattern(vector, centroid, scaler_mean, scaler_scale)
+                    if scaled is None:
                         continue
-                    scaled = (vector - scaler_mean) / np.where(scaler_scale == 0, 1.0, scaler_scale)
                     normalized_distance = float(
                         np.linalg.norm(scaled - centroid) / max(1.0, np.sqrt(len(centroid)))
                     )
@@ -299,6 +299,22 @@ class NovelPatternMatcher:
         if not isinstance(mean, list) or not isinstance(scale, list):
             return None, None
         return np.asarray(mean, dtype=float), np.asarray(scale, dtype=float)
+
+    @staticmethod
+    def _scaled_vector_for_pattern(
+        vector: np.ndarray,
+        centroid: np.ndarray,
+        scaler_mean: np.ndarray,
+        scaler_scale: np.ndarray,
+    ) -> np.ndarray | None:
+        if len(centroid) == 0 or len(vector) < len(centroid):
+            return None
+        if len(scaler_mean) < len(centroid) or len(scaler_scale) < len(centroid):
+            return None
+        vector_prefix = vector[: len(centroid)]
+        mean_prefix = scaler_mean[: len(centroid)]
+        scale_prefix = scaler_scale[: len(centroid)]
+        return (vector_prefix - mean_prefix) / np.where(scale_prefix == 0, 1.0, scale_prefix)
 
     def _prices(self, pattern: DiscoveredPattern, df, *, reward_risk: float) -> dict[str, float]:
         entry = float(df["close"].iloc[-1])

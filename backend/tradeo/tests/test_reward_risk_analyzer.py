@@ -6,7 +6,7 @@ from tradeo.research.reward_risk_analyzer import RewardRiskAnalyzer
 from tradeo.research.types import ForwardOutcome, WindowSample
 
 
-def _sample(highs: list[float], lows: list[float], closes: list[float]) -> WindowSample:
+def _sample(highs: list[float], lows: list[float], closes: list[float], cost_r: float = 0.0) -> WindowSample:
     return WindowSample(
         symbol="TST",
         timeframe="1d",
@@ -33,6 +33,7 @@ def _sample(highs: list[float], lows: list[float], closes: list[float]) -> Windo
             forward_highs=highs,
             forward_lows=lows,
             forward_closes=closes,
+            execution_cost_r=cost_r,
         ),
     )
 
@@ -66,3 +67,13 @@ def test_best_rr_uses_edge_score_not_highest_rr() -> None:
     ]
     result = RewardRiskAnalyzer([2.0, 5.0], min_samples=1).analyze(samples, "long")
     assert result["best_rr"] == 2.0
+
+
+def test_simulation_subtracts_execution_cost_r() -> None:
+    sample = _sample([130.0], [99.0], [130.0], cost_r=0.15)
+    result, target_bar, stop_bar = RewardRiskAnalyzer._simulate_sample(sample, "long", 3.0)
+    assert result == 2.85
+    assert target_bar == 1
+    assert stop_bar is None
+    metrics = RewardRiskAnalyzer([3.0], min_samples=1).metrics_for_rr([sample], "long", 3.0)
+    assert metrics["avg_execution_cost_r"] == 0.15

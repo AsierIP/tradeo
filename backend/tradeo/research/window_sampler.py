@@ -62,7 +62,8 @@ class WindowSampler:
                     entry * self.min_risk_pct,
                     0.01,
                 )
-                outcome = self._forward_outcome(entry, risk_proxy, future, forward_bars)
+                execution_cost_r = self._execution_cost_r(window, entry=entry, risk_proxy=risk_proxy)
+                outcome = self._forward_outcome(entry, risk_proxy, future, forward_bars, execution_cost_r)
                 vector, features, chart = self.embedding_engine.embed(window)
                 start_idx = window.index[0]
                 end_idx = window.index[-1]
@@ -91,6 +92,7 @@ class WindowSampler:
         risk_proxy: float,
         future: pd.DataFrame,
         forward_bars: list[int],
+        execution_cost_r: float = 0.0,
     ) -> ForwardOutcome:
         closes = future["close"].astype(float).to_numpy()
         highs = future["high"].astype(float).to_numpy()
@@ -122,7 +124,18 @@ class WindowSampler:
             forward_highs=np.round(highs.astype(float), 6).tolist(),
             forward_lows=np.round(lows.astype(float), 6).tolist(),
             forward_closes=np.round(closes.astype(float), 6).tolist(),
+            execution_cost_r=round(float(execution_cost_r), 5),
         )
+
+    @staticmethod
+    def _execution_cost_r(window: pd.DataFrame, *, entry: float, risk_proxy: float) -> float:
+        latest = window.iloc[-1]
+        range_pct = float((latest["high"] - latest["low"]) / max(entry, 1e-9))
+        avg_dollar_volume = float((window["close"] * window["volume"]).tail(20).mean())
+        liquidity_penalty_pct = 0.0015 if avg_dollar_volume < 5_000_000 else 0.0008
+        spread_proxy_pct = min(0.02, max(0.0005, range_pct * 0.08))
+        roundtrip_cost = entry * (liquidity_penalty_pct + spread_proxy_pct)
+        return max(0.0, float(roundtrip_cost / max(risk_proxy, 1e-9)))
 
     def _path_outcome(self, entry: float, risk: float, future: pd.DataFrame, side: str) -> tuple[float, bool]:
         if side == "long":
