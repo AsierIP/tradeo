@@ -17,7 +17,7 @@ def module_overview(db: Session, module: EntryModule, *, limit: int = 80) -> dic
         if _signal_module(signal) == module
     ][:limit]
     signal_ids = {signal.id for signal in signals}
-    trades = [
+    all_trades = [
         trade
         for trade in (
             db.query(Trade)
@@ -28,12 +28,14 @@ def module_overview(db: Session, module: EntryModule, *, limit: int = 80) -> dic
         )
         if _trade_module(trade) == module or (trade.signal_id in signal_ids)
     ][:limit]
+    signal_trade_statuses = _signal_trade_statuses(all_trades)
+    trades = [trade for trade in all_trades if _status_value(trade.status) != "cancelled"]
     pnl_points = _pnl_points(list(reversed(trades)))
     total_pnl = pnl_points[-1]["total_pnl_usd"] if pnl_points else 0.0
     closed_trades = [trade for trade in trades if _status_value(trade.status) == "closed"]
     return {
         "module": module,
-        "signals": [_signal_to_dict(signal) for signal in signals],
+        "signals": [_signal_to_dict(signal, signal_trade_statuses.get(signal.id)) for signal in signals],
         "trades": [_trade_to_dict(trade) for trade in trades],
         "pnl_points": pnl_points,
         "stats": {
@@ -108,7 +110,79 @@ def _status_value(status: Any) -> str:
     return str(status.value if hasattr(status, "value") else status)
 
 
-def _signal_to_dict(signal: Signal) -> dict[str, Any]:
+def _signal_trade_statuses(trades: list[Trade]) -> dict[int, dict[str, Any]]:
+    status_by_signal: dict[int, dict[str, Any]] = {}
+    for trade in trades:
+        if trade.signal_id is None:
+            continue
+        trade_status = _status_value(trade.status)
+        current = status_by_signal.get(trade.signal_id)
+        if trade_status in {"open", "closed"}:
+            metadata = trade.metadata_json or {}
+            execution_mode = str(metadata.get("execution_mode") or "")
+            if trade_status == "open" and execution_mode == "ibkr":
+                status_by_signal[trade.signal_id] = {
+                    "status": "order_submitted",
+                    "reason_code": "ibkr_order_submitted_waiting_fill",
+                    "reason": "IBKR bracket was accepted; fill status still needs broker reconciliation",
+                    "retryable": False,
+                    "next_action": "monitor_order_fill",
+                }
+                continue
+            status_by_signal[trade.signal_id] = {
+                "status": "executed",
+                "reason_code": f"trade_{trade_status}",
+                "reason": f"Trade is {trade_status}",
+                "retryable": False,
+                "next_action": "monitor_trade" if trade_status == "open" else "review_closed_trade",
+            }
+        elif current is None:
+            outcome = (trade.metadata_json or {}).get("execution_outcome") or {}
+            status_by_signal[trade.signal_id] = {
+                "status": outcome.get("status", "order_cancelled"),
+                "reason_code": outcome.get("reason_code", "order_cancelled"),
+                "reason": outcome.get("reason", "Order was cancelled before becoming an active trade"),
+                "retryable": bool(outcome.get("retryable", True)),
+                "next_action": outcome.get("next_action", "retry_order_submission"),
+            }
+    return status_by_signal
+
+
+def _signal_execution_outcome(signal: Signal, trade_status: dict[str, Any] | None = None) -> dict[str, Any]:
+    if trade_status:
+        return trade_status
+    metadata = signal.metadata_json or {}
+    if isinstance(metadata.get("execution_outcome"), dict):
+        return metadata["execution_outcome"]
+    signal_status = _status_value(signal.status)
+    if signal_status == "expired":
+        return {
+            "status": "entry_expired",
+            "reason_code": "entry_price_missed_or_signal_expired",
+            "reason": "Entry signal expired before execution",
+            "retryable": False,
+            "next_action": "discard_signal",
+        }
+    if signal.human_approved or signal_status == "executed":
+        return {
+            "status": "retry_order_submission",
+            "reason_code": "no_trade_recorded",
+            "reason": "Signal was approved for execution but no active or closed trade exists",
+            "retryable": True,
+            "next_action": "retry_order_submission",
+        }
+    return {
+        "status": signal_status,
+        "reason_code": "not_submitted",
+        "reason": "Signal is stored but order execution was not requested",
+        "retryable": False,
+        "next_action": "wait_for_execution_approval",
+    }
+
+
+def _signal_to_dict(signal: Signal, trade_status: dict[str, Any] | None = None) -> dict[str, Any]:
+    outcome = _signal_execution_outcome(signal, trade_status)
+    display_status = str(outcome.get("status") or _status_value(signal.status))
     return {
         "id": signal.id,
         "symbol": signal.symbol,
@@ -124,7 +198,11 @@ def _signal_to_dict(signal: Signal) -> dict[str, Any]:
         "risk_usd": signal.risk_usd,
         "suggested_qty": signal.suggested_qty,
         "strategy_version": signal.strategy_version,
-        "status": _status_value(signal.status),
+        "status": display_status,
+        "execution_reason_code": outcome.get("reason_code"),
+        "execution_reason": outcome.get("reason"),
+        "retryable": bool(outcome.get("retryable", False)),
+        "next_action": outcome.get("next_action"),
         "supervisor_notes": signal.supervisor_notes,
         "human_approved": signal.human_approved,
         "created_at": signal.created_at.isoformat() if signal.created_at else "",

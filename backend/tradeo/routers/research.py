@@ -9,6 +9,7 @@ from tradeo.db.models import DiscoveredPattern, DiscoveredPatternExample, Discov
 from tradeo.db.session import get_db
 from tradeo.research.novel_pattern_matcher import NovelPatternMatcher
 from tradeo.research.novel_pattern_registry import NovelPatternRegistry
+from tradeo.services.director_review_gate import DirectorReviewGate
 from tradeo.schemas import (
     DiscoveredPatternDetailOut,
     DiscoveredPatternExampleOut,
@@ -161,3 +162,11 @@ def list_discovery_runs(
     db: Session = Depends(get_db),
 ) -> list[DiscoveryRun]:
     return db.query(DiscoveryRun).order_by(DiscoveryRun.started_at.desc()).limit(limit).all()
+
+
+@router.post("/director-review/refresh")
+def refresh_director_review_candidates(
+    _: str = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    return DirectorReviewGate().refresh(db)

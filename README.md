@@ -86,6 +86,103 @@ make down              # parar
 8. `AuditAgent` genera paquetes de revisión para supervisión externa.
 9. `ImprovementAgent` muta parámetros en laboratorio y solo propone candidatos si pasan gates.
 
+## Flujo exacto hasta operar en live
+
+Tradeo usa una cadena de promoción cerrada. Ningún patrón descubierto por Research puede llegar a live directamente.
+
+```text
+Research -> Lab -> Director review -> Producción -> Fox Hunter -> Live
+```
+
+### 1. Research descubre patrones
+
+`PatternDiscoveryLabAgent` trabaja con barras diarias (`1d`) de IBKR, ventanas OHLCV y clustering local. Para que un patrón salga de Research debe superar gates estadísticos de descubrimiento:
+
+- muestras históricas suficientes;
+- diversidad de símbolos y años;
+- expectancy y profit factor positivos;
+- validación out-of-sample;
+- estabilidad mínima;
+- drawdown dentro de límites;
+- R:R compatible con la política del sistema.
+
+Aunque las métricas de Research sean buenas, el patrón solo puede quedar en estados de laboratorio como:
+
+- `lab`
+- `lab_watchlist`
+- `lab_candidate`
+
+Research no puede marcar nada como `production`.
+
+### 2. Lab valida entradas reales/paper
+
+El módulo Laboratorio (`PatternEntryScanner`) toma patrones validados por Research y busca señales de entrada actuales. Lab no debe crear señales fuera de la sesión regular USA; si el mercado está cerrado queda en `market_closed`.
+
+Cuando Lab encuentra una señal:
+
+- crea una señal paper/auditable;
+- si la ejecución paper está activada, intenta enviar bracket a IBKR Paper;
+- separa los motivos exactos de no ejecución: no enviado, fallo IBKR, bracket no aceptado, orden enviada esperando fill, señal expirada, etc.;
+- no promueve el patrón por sí mismo.
+
+Lab es el entorno donde se comprueba si el patrón funciona con entradas y salidas operables, no solo con simulación Research.
+
+### 3. Gate de 10 casos Lab cerrados
+
+Cuando un patrón acumula al menos 10 operaciones Lab cerradas (`entrada + salida`), `DirectorReviewGate` calcula su rendimiento real/paper:
+
+- `closed_lab_trades`
+- `lab_expectancy_r`
+- `lab_profit_factor`
+- `lab_win_rate`
+- `research_expectancy_r`
+- `research_profit_factor`
+- delta de expectancy Lab vs Research;
+- delta de profit factor Lab vs Research.
+
+Si llega a ese mínimo, el patrón se marca como:
+
+```text
+director_review
+```
+
+Esto significa: "listo para que Director lo audite como posible candidato a Producción". No significa que pueda operar live.
+
+### 4. Director decide Producción
+
+Solo Director puede pasar un patrón de `director_review` a:
+
+```text
+production
+```
+
+Director debe revisar el paquete auditado, comprobar que las operaciones Lab son suficientes y comparar el rendimiento observado contra lo que prometía Research. Si no hay trades/fills suficientes, costes realistas, OOS limpio o evidencia operable, el patrón no debe promoverse.
+
+### 5. Fox Hunter opera solo Producción
+
+Fox Hunter es el clon operativo de Lab para patrones ya aprobados. Usa el mismo tipo de matcher/scanner, pero filtra exclusivamente patrones:
+
+```text
+production
+```
+
+Fox no mira `lab_candidate`, `director_review`, `paper_candidate` ni otros estados intermedios para operar. Si encuentra una entrada en un patrón `production`, puede crear la señal live/paper según configuración, pero live sigue bloqueado por las gates globales.
+
+### 6. Live sigue bloqueado por seguridad
+
+Aunque un patrón esté en `production`, live requiere además:
+
+- `TRADEO_TRADING_MODE=live`;
+- `TRADEO_LIVE_TRADING_ENABLED=true`;
+- frase de confirmación exacta;
+- `TRADEO_IBKR_READONLY=false`;
+- kill switch apagado;
+- puerto IBKR live correcto;
+- límites de riesgo aprobados;
+- aprobación humana por señal cuando aplique.
+
+Si cualquiera de esas condiciones falla, no hay operación live.
+
 ## Gates de automejora
 
 Una variante de estrategia solo puede pasar a candidata de laboratorio si cumple:
@@ -172,7 +269,7 @@ El JSON/Markdown resultante queda en `reports/`. Pégalo en ChatGPT o envíalo a
 
 Tradeo incluye una ampliación de descubrimiento de patrones no predefinidos. El `PatternDiscoveryLabAgent` extrae ventanas OHLCV, genera embeddings locales, agrupa formas similares con clustering y valida si esos grupos precedieron movimientos favorables con R:R mínimo 1:4.
 
-Este laboratorio no opera dinero real. Todo candidato queda en `lab` o `rejected` y requiere revisión posterior, backtest dedicado, paper trading y aprobación antes de tocar el motor operativo.
+Este laboratorio no opera dinero real. Todo candidato queda en estados de laboratorio o revisión (`lab`, `lab_watchlist`, `lab_candidate`, `director_review`) hasta que Director lo promueva explícitamente a `production`.
 
 Comandos:
 

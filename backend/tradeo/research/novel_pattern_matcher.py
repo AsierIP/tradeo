@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import math
 from typing import Any, Literal
 
 import numpy as np
+import pandas as pd
 from loguru import logger
 from sqlalchemy.orm import Session
 
@@ -59,6 +61,8 @@ class NovelPatternMatcher:
         threshold = similarity_threshold or settings.discovery_match_similarity_threshold
         matches: list[dict[str, Any]] = []
         engine = PatternEmbeddingEngine()
+        required_bars_by_timeframe = self._required_bars_by_timeframe(patterns)
+        data_cache: dict[tuple[str, str], pd.DataFrame | None] = {}
         for pattern in patterns:
             scaler_mean, scaler_scale = self._scaler(pattern)
             centroid = np.asarray(pattern.centroid_json, dtype=float)
@@ -66,13 +70,14 @@ class NovelPatternMatcher:
                 continue
             for symbol in symbols:
                 try:
-                    df = normalize_ohlcv(
-                        self.provider.fetch_ohlcv(
-                            symbol,
-                            period=settings.discovery_period,
-                            interval=pattern.timeframe,
-                        )
+                    df = self._current_data(
+                        symbol,
+                        pattern.timeframe,
+                        required_bars=required_bars_by_timeframe[pattern.timeframe],
+                        cache=data_cache,
                     )
+                    if df is None:
+                        continue
                     if len(df) < pattern.window_size + 20:
                         continue
                     window = df.iloc[-pattern.window_size :]
@@ -166,6 +171,7 @@ class NovelPatternMatcher:
             DiscoveredPatternStatus.LAB,
             DiscoveredPatternStatus.LAB_WATCHLIST,
             DiscoveredPatternStatus.LAB_CANDIDATE,
+            DiscoveredPatternStatus.DIRECTOR_REVIEW,
             DiscoveredPatternStatus.PREMIUM_CANDIDATE,
             DiscoveredPatternStatus.PAPER_CANDIDATE,
         ]
@@ -206,6 +212,60 @@ class NovelPatternMatcher:
             "stop_price": round(stop, 4),
             "target_price": round(target, 4),
         }
+
+    @staticmethod
+    def _required_bars_by_timeframe(patterns: list[DiscoveredPattern]) -> dict[str, int]:
+        required: dict[str, int] = {}
+        for pattern in patterns:
+            current = required.get(pattern.timeframe, 0)
+            required[pattern.timeframe] = max(current, int(pattern.window_size) + 30)
+        return required
+
+    def _current_data(
+        self,
+        symbol: str,
+        timeframe: str,
+        *,
+        required_bars: int,
+        cache: dict[tuple[str, str], pd.DataFrame | None],
+    ) -> pd.DataFrame | None:
+        key = (symbol.upper(), timeframe)
+        if key in cache:
+            return cache[key].copy() if cache[key] is not None else None
+        assert self.provider is not None
+        period = self._current_match_period(timeframe, required_bars=required_bars)
+        try:
+            df = normalize_ohlcv(
+                self.provider.fetch_ohlcv(
+                    symbol,
+                    period=period,
+                    interval=timeframe,
+                )
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("current data fetch failed for {} / {}: {}", symbol, timeframe, exc)
+            cache[key] = None
+            return None
+        cache[key] = df
+        return df.copy()
+
+    @staticmethod
+    def _current_match_period(timeframe: str, *, required_bars: int) -> str:
+        interval = timeframe.lower().strip()
+        if interval in {"1d", "1 day"}:
+            calendar_days = math.ceil(required_bars * 7 / 5) + 10
+            months = max(3, math.ceil(calendar_days / 30))
+            return f"{months}mo"
+        if interval in {"1wk", "1 week"}:
+            months = max(12, math.ceil(required_bars * 7 / 30))
+            return f"{months}mo"
+        if interval in {"1h", "30m", "30 mins", "15m", "15 mins"}:
+            days = max(10, math.ceil(required_bars / 6) + 5)
+            return f"{days}d"
+        if interval in {"5m", "5 mins", "1m", "1 min"}:
+            days = max(3, math.ceil(required_bars / 60) + 2)
+            return f"{days}d"
+        return "6mo"
 
     @staticmethod
     def _store_matches(db: Session, matches: list[dict[str, Any]]) -> None:

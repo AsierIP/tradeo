@@ -11,6 +11,8 @@ from tradeo.db.models import AuditLog, Signal, SignalStatus, Trade, TradeStatus
 from tradeo.research.novel_pattern_matcher import NovelPatternMatcher
 from tradeo.schemas import PatternCandidate
 from tradeo.services.ibkr_broker import IBKRBroker
+from tradeo.services.market_session import market_session_status
+from tradeo.services.order_outcomes import mark_signal_order_failure
 from tradeo.services.risk_manager import RiskManager
 
 EntryModule = Literal["laboratory", "fox_hunter"]
@@ -59,6 +61,13 @@ class PatternEntryScanner:
             store_signals=store_signals,
             execute_orders=execute_orders,
         )
+        session = market_session_status()
+        if self._requires_market_hours(module) and not bool(session["regular_session_open"]):
+            result = self._market_closed_result(module, resolved, session)
+            from tradeo.services.runtime_status import write_entry_scan_status
+
+            write_entry_scan_status(module, result, settings)
+            return result
         assert self.matcher is not None
         match_result = self.matcher.match_current(
             db,
@@ -122,8 +131,16 @@ class PatternEntryScanner:
                 orders_submitted += 1
                 trade_ids.append(trade.id)
             except Exception as exc:  # noqa: BLE001
+                outcome = mark_signal_order_failure(signal, str(exc))
                 order_errors.append(
-                    {"signal_id": signal.id, "symbol": signal.symbol, "error": str(exc)}
+                    {
+                        "signal_id": signal.id,
+                        "symbol": signal.symbol,
+                        "error": str(exc),
+                        "reason_code": outcome["reason_code"],
+                        "retryable": outcome["retryable"],
+                        "next_action": outcome["next_action"],
+                    }
                 )
                 db.add(
                     AuditLog(
@@ -131,12 +148,12 @@ class PatternEntryScanner:
                         action="entry_order_submission_failed",
                         entity_type="signal",
                         entity_id=str(signal.id),
-                        details_json={"error": str(exc), "match": match},
+                        details_json={"error": str(exc), "outcome": outcome, "match": match},
                     )
                 )
                 db.commit()
 
-        return {
+        result = {
             "module": module,
             "patterns_checked": match_result["patterns_checked"],
             "symbols_checked": match_result["symbols_checked"],
@@ -153,9 +170,14 @@ class PatternEntryScanner:
             "similarity_threshold": match_result["similarity_threshold"],
             "generated_at": datetime.now(timezone.utc).isoformat(),
         }
+        from tradeo.services.runtime_status import write_entry_scan_status
+
+        write_entry_scan_status(module, result, settings)
+        return result
 
     def status(self, db: Session) -> dict[str, Any]:
         from tradeo.db.models import DiscoveredPattern, DiscoveredPatternStatus
+        from tradeo.services.runtime_status import entry_scan_status, worker_runtime_status
 
         lab_statuses = NovelPatternMatcher._statuses_for_module("laboratory")
         laboratory_patterns = (
@@ -172,21 +194,89 @@ class PatternEntryScanner:
         )
         settings = self.settings
         assert settings is not None
+        worker_status = worker_runtime_status(settings)
+        session = market_session_status()
+        market_open = bool(session["regular_session_open"])
+        laboratory_market_ok = market_open or not settings.laboratory_market_hours_only
+        fox_market_ok = market_open or not settings.fox_hunter_market_hours_only
+        laboratory_ok = (
+            settings.scheduler_enabled
+            and settings.laboratory_scanner_enabled
+            and bool(worker_status["ok"])
+            and laboratory_market_ok
+        )
+        fox_hunter_ok = (
+            settings.scheduler_enabled
+            and settings.fox_hunter_enabled
+            and bool(worker_status["ok"])
+            and fox_market_ok
+        )
+        laboratory_state = "ok" if laboratory_ok else "market_closed" if not laboratory_market_ok else "stopped"
+        fox_state = "ok" if fox_hunter_ok else "market_closed" if not fox_market_ok else "stopped"
+        laboratory_entry_status = entry_scan_status("laboratory", settings)
+        fox_entry_status = entry_scan_status("fox_hunter", settings)
         return {
             "research": {"purpose": "discover_new_patterns"},
             "laboratory": {
                 "purpose": "paper_validate_research_patterns",
                 "enabled": settings.laboratory_scanner_enabled,
+                "operational_ok": laboratory_ok,
+                "state": laboratory_state,
+                "market_session": session,
+                "worker": worker_status,
                 "auto_submit_paper_orders": settings.laboratory_auto_submit_paper_orders,
                 "eligible_patterns": laboratory_patterns,
+                "symbols_checked": laboratory_entry_status["symbols_checked"],
+                "last_symbols_checked": laboratory_entry_status["last_symbols_checked"],
             },
             "fox_hunter": {
                 "purpose": "live_trade_production_patterns",
                 "enabled": settings.fox_hunter_enabled,
+                "operational_ok": fox_hunter_ok,
+                "state": fox_state,
+                "market_session": session,
+                "worker": worker_status,
                 "auto_submit_live_orders": settings.fox_hunter_auto_submit_live_orders,
                 "eligible_patterns": production_patterns,
+                "symbols_checked": fox_entry_status["symbols_checked"],
+                "last_symbols_checked": fox_entry_status["last_symbols_checked"],
                 "live_armed": settings.live_armed,
             },
+        }
+
+    def _requires_market_hours(self, module: EntryModule) -> bool:
+        settings = self.settings
+        assert settings is not None
+        return (
+            settings.laboratory_market_hours_only
+            if module == "laboratory"
+            else settings.fox_hunter_market_hours_only
+        )
+
+    @staticmethod
+    def _market_closed_result(
+        module: EntryModule,
+        resolved: dict[str, Any],
+        session: dict[str, object],
+    ) -> dict[str, Any]:
+        return {
+            "module": module,
+            "patterns_checked": 0,
+            "symbols_checked": 0,
+            "matches_found": 0,
+            "signals_created": 0,
+            "orders_submitted": 0,
+            "skipped_duplicates": 0,
+            "rejected_by_risk": 0,
+            "order_errors": [],
+            "signal_ids": [],
+            "trade_ids": [],
+            "store_signals": resolved["store_signals"],
+            "execute_orders": resolved["execute_orders"],
+            "similarity_threshold": resolved["similarity_threshold"],
+            "skipped_reason": "market_closed",
+            "market_session": session,
+            "generated_at": datetime.now(timezone.utc).isoformat(),
         }
 
     def _resolved_options(self, module: EntryModule, **overrides: Any) -> dict[str, Any]:

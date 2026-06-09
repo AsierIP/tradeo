@@ -10,6 +10,7 @@ from tradeo.db.session import get_db
 from tradeo.schemas import TradeOut
 from tradeo.services.ibkr_broker import IBKRBroker, IBKRSafetyError
 from tradeo.services.ibkr_data_provider import inspect_ibkr_connection
+from tradeo.services.order_outcomes import mark_signal_order_failure
 
 router = APIRouter(prefix="/ibkr", tags=["ibkr"])
 
@@ -82,6 +83,10 @@ def ibkr_submit_signal_bracket(
             reason=(request.reason if request else "manual"),
         )
     except IBKRSafetyError as exc:
+        mark_signal_order_failure(signal, str(exc))
+        db.commit()
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except Exception as exc:  # noqa: BLE001
+        mark_signal_order_failure(signal, str(exc))
+        db.commit()
         raise HTTPException(status_code=502, detail=str(exc)) from exc

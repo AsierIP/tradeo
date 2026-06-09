@@ -19,8 +19,10 @@ class FixtureProvider:
     def __init__(self, symbol: str = "LABX") -> None:
         self.symbol = symbol
         self.df = fixture_ohlcv(symbol, bars=260)
+        self.fetch_calls: list[tuple[str, str, str]] = []
 
     def fetch_ohlcv(self, symbol: str, period: str = "2y", interval: str = "1d"):
+        self.fetch_calls.append((symbol.upper(), period, interval))
         return self.df.copy()
 
 
@@ -69,13 +71,16 @@ def add_pattern(
 
 
 def scanner(provider: FixtureProvider, **settings_overrides) -> PatternEntryScanner:
-    settings = Settings(
-        min_avg_dollar_volume=0,
-        max_atr_pct=1.0,
-        laboratory_auto_submit_paper_orders=False,
-        fox_hunter_enabled=False,
-        **settings_overrides,
-    )
+    defaults = {
+        "min_avg_dollar_volume": 0,
+        "max_atr_pct": 1.0,
+        "laboratory_auto_submit_paper_orders": False,
+        "laboratory_market_hours_only": False,
+        "fox_hunter_enabled": False,
+        "fox_hunter_market_hours_only": False,
+    }
+    defaults.update(settings_overrides)
+    settings = Settings(**defaults)
     matcher = NovelPatternMatcher(provider=provider, settings=settings)
     return PatternEntryScanner(settings=settings, matcher=matcher)
 
@@ -102,10 +107,73 @@ def test_laboratory_scanner_creates_paper_signal_for_validated_lab_pattern() -> 
     assert signal.metadata_json["entry_module"] == "laboratory"
 
 
+def test_laboratory_scanner_marks_ibkr_bracket_failure_retryable(monkeypatch) -> None:
+    db = session_factory()
+    provider = FixtureProvider()
+    add_pattern(db, provider, status=DiscoveredPatternStatus.LAB_CANDIDATE)
+
+    class BrokenBroker:
+        def __init__(self, settings) -> None:
+            self.settings = settings
+
+        def submit_signal_bracket(self, db, signal, *, reason: str = "manual"):
+            raise RuntimeError("IBKR did not acknowledge every bracket leg with a permId")
+
+    monkeypatch.setattr("tradeo.services.pattern_entry_scanner.IBKRBroker", BrokenBroker)
+
+    result = scanner(provider, ibkr_readonly=False).scan(
+        db,
+        module="laboratory",
+        symbols=[provider.symbol],
+        store_signals=True,
+        execute_orders=True,
+    )
+
+    signal = db.get(Signal, result["signal_ids"][0])
+    outcome = signal.metadata_json["execution_outcome"]
+    assert result["orders_submitted"] == 0
+    assert result["order_errors"][0]["reason_code"] == "ibkr_bracket_not_accepted"
+    assert result["order_errors"][0]["retryable"] is True
+    assert outcome["status"] == "retry_order_submission"
+    assert outcome["next_action"] == "retry_order_submission"
+
+
+def test_laboratory_scanner_skips_signal_creation_when_market_closed(monkeypatch) -> None:
+    db = session_factory()
+    provider = FixtureProvider()
+    add_pattern(db, provider, status=DiscoveredPatternStatus.LAB_CANDIDATE)
+
+    monkeypatch.setattr(
+        "tradeo.services.pattern_entry_scanner.market_session_status",
+        lambda: {
+            "market": "us_equities",
+            "timezone": "America/New_York",
+            "regular_session_open": False,
+            "state": "market_closed",
+            "checked_at": "2026-06-09T01:30:00-04:00",
+            "regular_hours": "09:30-16:00",
+        },
+    )
+
+    result = scanner(provider, laboratory_market_hours_only=True).scan(
+        db,
+        module="laboratory",
+        symbols=[provider.symbol],
+        store_signals=True,
+        execute_orders=False,
+    )
+
+    assert result["skipped_reason"] == "market_closed"
+    assert result["symbols_checked"] == 0
+    assert result["signals_created"] == 0
+    assert db.query(Signal).count() == 0
+
+
 def test_fox_hunter_ignores_lab_patterns_and_uses_production_only() -> None:
     db = session_factory()
     provider = FixtureProvider("FOXX")
     add_pattern(db, provider, status=DiscoveredPatternStatus.LAB_CANDIDATE)
+    add_pattern(db, provider, status=DiscoveredPatternStatus.DIRECTOR_REVIEW)
     production = add_pattern(db, provider, status=DiscoveredPatternStatus.PRODUCTION)
 
     result = scanner(provider).scan(
@@ -146,3 +214,22 @@ def test_laboratory_refuses_live_port_execution() -> None:
         assert "refuses live IBKR ports" in str(exc)
     else:
         raise AssertionError("Laboratory must not execute through live IBKR ports")
+
+
+def test_laboratory_matcher_reuses_symbol_data_across_patterns() -> None:
+    db = session_factory()
+    provider = FixtureProvider()
+    add_pattern(db, provider, status=DiscoveredPatternStatus.LAB_CANDIDATE)
+    add_pattern(db, provider, status=DiscoveredPatternStatus.LAB_WATCHLIST)
+
+    result = scanner(provider).scan(
+        db,
+        module="laboratory",
+        symbols=[provider.symbol],
+        store_signals=False,
+        execute_orders=False,
+    )
+
+    assert result["patterns_checked"] == 2
+    assert result["matches_found"] == 2
+    assert provider.fetch_calls == [(provider.symbol, "3mo", "1d")]

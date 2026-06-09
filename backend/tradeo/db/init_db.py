@@ -19,7 +19,14 @@ def _migrate_discovered_patterns() -> None:
     if "discovered_patterns" not in inspector.get_table_names():
         return
     if engine.dialect.name == "postgresql":
-        enum_values = ["LAB_WATCHLIST", "LAB_CANDIDATE", "PREMIUM_CANDIDATE", "PAPER_CANDIDATE", "PRODUCTION"]
+        enum_values = [
+            "LAB_WATCHLIST",
+            "LAB_CANDIDATE",
+            "DIRECTOR_REVIEW",
+            "PREMIUM_CANDIDATE",
+            "PAPER_CANDIDATE",
+            "PRODUCTION",
+        ]
         with engine.begin() as conn:
             for value in enum_values:
                 conn.execute(

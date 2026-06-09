@@ -18,7 +18,9 @@ from tradeo.services.pattern_entry_scanner import (
     PatternEntryScanner,
     PatternEntryScannerSafetyError,
 )
+from tradeo.services.director_review_gate import DirectorReviewGate
 from tradeo.services.reports import ReportService
+from tradeo.services.runtime_status import write_worker_heartbeat
 from tradeo.services.scanner import MarketScanner
 from tradeo.services.self_improvement import SelfImprovementEngine
 from tradeo.services.watchdog import SystemWatchdog
@@ -140,7 +142,9 @@ def laboratory_entry_job() -> None:
             logger.info("laboratory entry scanner skipped: laboratory_scanner_enabled=false")
             return
         result = PatternEntryScanner(settings=settings).scan(db, module="laboratory")
+        review_result = DirectorReviewGate().refresh(db)
         logger.info("laboratory entry scanner result: {}", result)
+        logger.info("director review gate result: {}", review_result)
     except PatternEntryScannerSafetyError as exc:
         logger.warning("laboratory entry scanner blocked by safety gate: {}", exc)
     except Exception as exc:  # noqa: BLE001
@@ -182,6 +186,7 @@ def watchdog_job() -> None:
 
 def main() -> None:
     settings = get_settings()
+    write_worker_heartbeat(settings)
     init_db()
     db = SessionLocal()
     try:
@@ -256,6 +261,7 @@ def main() -> None:
     logger.info("Tradeo worker started. scheduler_enabled={}", settings.scheduler_enabled)
     try:
         while True:
+            write_worker_heartbeat(settings)
             time.sleep(5)
     except KeyboardInterrupt:
         scheduler.shutdown()
