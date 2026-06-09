@@ -220,6 +220,12 @@ class DiscoveredPatternOut(BaseModel):
     timeframe: str
     window_size: int
     cluster_id: int
+    pattern_family_key: str = ""
+    canonical_pattern_key: str = ""
+    variant_key: str = ""
+    variant_count: int = 1
+    drift_status: str = "stable"
+    drift_score: float = 0.0
     sample_count: int
     symbol_count: int
     year_count: int

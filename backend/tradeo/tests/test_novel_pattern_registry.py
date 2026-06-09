@@ -37,6 +37,8 @@ def _candidate(pattern_key: str, centroid: list[float], score: float = 0.8) -> C
             "reward_risk_estimate": 3.0,
             "expectancy_r": 0.4,
             "profit_factor": 2.1,
+            "best_expectancy_r": 0.4,
+            "best_profit_factor": 2.1,
             "win_rate": 0.48,
             "stability_score": 0.62,
             "out_of_sample_expectancy_r": 0.2,
@@ -52,12 +54,18 @@ def test_registry_dedupes_similar_centroids() -> None:
     registry = NovelPatternRegistry(similarity_threshold=0.99)
     first = _candidate("novel_long_w20_a", [0.0, 0.0, 0.0])
     second = _candidate("novel_long_w20_b", [0.001, 0.0, 0.0], score=0.9)
+    second.metrics["best_expectancy_r"] = 0.2
 
     stored_first = registry.store_candidates(db, [first])[0]
     stored_second = registry.store_candidates(db, [second])[0]
 
     assert stored_first.id == stored_second.id
     assert stored_second.pattern_key == "novel_long_w20_a"
+    assert stored_second.pattern_family_key.startswith("family_long_1d_w20_")
+    assert stored_second.canonical_pattern_key == "novel_long_w20_a"
+    assert stored_second.variant_key == "novel_long_w20_b"
+    assert stored_second.variant_count == 2
+    assert stored_second.drift_status == "degrading"
     assert second.metrics["registry_deduped"] is True
     assert second.metrics["registry_canonical_pattern_key"] == "novel_long_w20_a"
     assert db.query(DiscoveredPattern).count() == 1

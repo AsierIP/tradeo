@@ -94,3 +94,33 @@ Checklist de auditoria:
 - Revisar que ningun `needs_confirmation` pueda alimentar Fox/produccion.
 - Exigir nuevo run ampliado antes de cambiar a `confirmed_candidate`.
 - Si el re-run falla, marcar `failed_confirmation` y conservar evidencia.
+
+## 4. Familias, Variantes Y Drift
+
+Estado: implementado.
+
+Cambios:
+
+- `NovelPatternRegistry` mantiene:
+  - `pattern_family_key`
+  - `canonical_pattern_key`
+  - `variant_key`
+  - `variant_count`
+  - `drift_status`
+  - `drift_score`
+- Patrones con centroides similares se fusionan en una familia canonica.
+- Cada nuevo candidato similar queda registrado como variante del canonico.
+- Si la nueva evidencia baja materialmente la expectancy frente al canonico, se marca `degrading`.
+- Si mejora materialmente, se marca `improving`; si no, `stable`.
+
+Lectura para Director:
+
+- Una familia acumula evidencia de multiples runs sin inflar el numero de patrones.
+- `variant_count` alto con `stable/improving` aumenta confianza.
+- `degrading` indica que nuevos datos erosionan el edge y debe bloquear escalado.
+
+Checklist de auditoria:
+
+- No contar variantes similares como patrones independientes.
+- Revisar familias con `drift_status=degrading`.
+- Confirmar que el patron canonico conserva lineage de variantes.

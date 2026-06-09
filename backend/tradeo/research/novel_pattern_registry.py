@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from hashlib import blake2b
 from typing import Any
 
 import numpy as np
@@ -46,9 +47,11 @@ class NovelPatternRegistry:
 
     def upsert_candidate(self, db: Session, candidate: ClusterCandidate, run_id: int | None = None) -> DiscoveredPattern:
         pattern = db.query(DiscoveredPattern).filter(DiscoveredPattern.pattern_key == candidate.pattern_key).one_or_none()
+        is_variant = False
         if pattern is None:
             pattern, similarity = self._find_similar_pattern(db, candidate)
             if pattern is not None:
+                is_variant = True
                 candidate.metrics["registry_deduped"] = True
                 candidate.metrics["registry_similarity"] = round(similarity, 6)
                 candidate.metrics["registry_canonical_pattern_key"] = pattern.pattern_key
@@ -60,6 +63,7 @@ class NovelPatternRegistry:
                 candidate.metrics["registry_canonical_pattern_key"] = candidate.pattern_key
                 candidate.metrics["registry_candidate_pattern_key"] = candidate.pattern_key
         metrics = candidate.metrics
+        drift = self._drift(pattern, candidate, is_variant=is_variant)
         pattern.run_id = run_id
         pattern.name = candidate.name
         status = str(metrics.get("promotion_status", "lab" if candidate.validation_passed else "rejected"))
@@ -74,6 +78,20 @@ class NovelPatternRegistry:
         pattern.timeframe = candidate.timeframe
         pattern.window_size = candidate.window_size
         pattern.cluster_id = candidate.cluster_id
+        if not pattern.pattern_family_key:
+            pattern.pattern_family_key = self._family_key(candidate)
+        if not pattern.canonical_pattern_key:
+            pattern.canonical_pattern_key = pattern.pattern_key
+        pattern.variant_key = candidate.pattern_key
+        pattern.variant_count = max(1, int(pattern.variant_count or 1)) + (1 if is_variant else 0)
+        pattern.drift_status = str(drift["status"])
+        pattern.drift_score = float(drift["score"])
+        metrics["pattern_family_key"] = pattern.pattern_family_key
+        metrics["canonical_pattern_key"] = pattern.canonical_pattern_key
+        metrics["variant_key"] = pattern.variant_key
+        metrics["variant_count"] = pattern.variant_count
+        metrics["drift_status"] = pattern.drift_status
+        metrics["drift_score"] = pattern.drift_score
         pattern.sample_count = candidate.sample_count
         pattern.symbol_count = candidate.symbol_count
         pattern.year_count = candidate.year_count
@@ -146,6 +164,29 @@ class NovelPatternRegistry:
             )
         )
         return pattern
+
+    def _family_key(self, candidate: ClusterCandidate) -> str:
+        digest = blake2b(digest_size=8)
+        digest.update(f"{candidate.side}|{candidate.timeframe}|{candidate.window_size}|".encode())
+        centroid = np.asarray(candidate.centroid, dtype=np.float32)
+        digest.update(np.round(centroid, 2).tobytes())
+        return f"family_{candidate.side}_{candidate.timeframe}_w{candidate.window_size}_{digest.hexdigest()}"
+
+    @staticmethod
+    def _drift(pattern: DiscoveredPattern, candidate: ClusterCandidate, *, is_variant: bool) -> dict[str, float | str]:
+        if not is_variant and not pattern.id:
+            return {"status": "stable", "score": 0.0}
+        old_expectancy = float(pattern.best_expectancy_r or pattern.expectancy_r or 0.0)
+        new_expectancy = float(candidate.metrics.get("best_expectancy_r", candidate.metrics.get("expectancy_r", 0.0)))
+        delta = new_expectancy - old_expectancy
+        score = delta / max(abs(old_expectancy), 0.25)
+        if score <= -0.25:
+            status = "degrading"
+        elif score >= 0.25:
+            status = "improving"
+        else:
+            status = "stable"
+        return {"status": status, "score": round(float(score), 5)}
 
     def _find_similar_pattern(
         self,
