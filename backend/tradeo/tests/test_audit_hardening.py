@@ -108,6 +108,39 @@ def test_director_gate_blocks_zero_trade_promotions_and_unproven_oos_fit() -> No
     assert any("train-only fit evidence" in blocker for blocker in blockers)
 
 
+def test_export_filters_fills_to_exported_paper_trade_ids() -> None:
+    exporter = _load_audit_exporter()
+    overview = {
+        "trades": [
+            {
+                "id": 1,
+                "symbol": "AAA",
+                "side": "long",
+                "qty": 1,
+                "entry": 10.0,
+                "opened_at": "2026-06-09T10:00:00+00:00",
+                "status": "open",
+                "metadata_json": {"execution_mode": "paper"},
+            },
+            {
+                "id": 2,
+                "symbol": "BBB",
+                "side": "long",
+                "qty": 1,
+                "entry": 20.0,
+                "opened_at": "2026-06-09T10:00:00+00:00",
+                "status": "open",
+                "metadata_json": {"execution_mode": "paper"},
+            },
+        ]
+    }
+
+    fills = exporter.build_ib_fills(overview, exported_trade_ids={"2"})
+
+    assert [row["trade_id"] for row in fills] == ["2"]
+    assert fills[0]["ticker"] == "BBB"
+
+
 def test_normalize_ohlcv_rejects_invalid_market_bars() -> None:
     df = pd.DataFrame(
         {
@@ -142,9 +175,25 @@ def test_normalize_ohlcv_rejects_duplicate_timestamps() -> None:
 
 
 def _load_director_gate():
-    path = Path(__file__).resolve().parents[3] / "research" / "audit_bridge" / "director_gate.py"
+    path = _repo_root() / "research" / "audit_bridge" / "director_gate.py"
     spec = importlib.util.spec_from_file_location("director_gate", path)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def _load_audit_exporter():
+    path = _repo_root() / "research" / "audit_bridge" / "export_audit_package.py"
+    spec = importlib.util.spec_from_file_location("export_audit_package", path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _repo_root() -> Path:
+    for parent in Path(__file__).resolve().parents:
+        if (parent / "research" / "audit_bridge").exists():
+            return parent
+    raise AssertionError("could not locate repo root")

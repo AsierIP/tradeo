@@ -292,7 +292,12 @@ def main() -> int:
     pattern_catalog_rows = build_pattern_catalog(patterns, examples_by_pattern, context)
     event_rows = build_pattern_events(patterns, examples_by_pattern, matches, context)
     paper_trade_rows = build_paper_trades(patterns, laboratory_overview)
-    fill_rows = build_ib_fills(laboratory_overview)
+    exported_trade_ids = {
+        str(row.get("trade_id") or "")
+        for row in paper_trade_rows
+        if str(row.get("trade_id") or "").strip()
+    }
+    fill_rows = build_ib_fills(laboratory_overview, exported_trade_ids=exported_trade_ids)
     experiment_rows = build_experiment_registry(patterns, examples_by_pattern, runs, context)
     metrics_pattern_rows = build_metrics_by_pattern(patterns, examples_by_pattern, paper_trade_rows)
     metrics_ticker_rows = build_metrics_by_ticker(examples_by_pattern)
@@ -739,8 +744,9 @@ def build_paper_trades(patterns: list[dict[str, Any]], laboratory_overview: dict
     return rows
 
 
-def build_ib_fills(laboratory_overview: dict[str, Any]) -> list[dict[str, Any]]:
+def build_ib_fills(laboratory_overview: dict[str, Any], *, exported_trade_ids: set[str] | None = None) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
+    allowed_trade_ids = exported_trade_ids if exported_trade_ids is not None else None
     for trade in laboratory_overview.get("trades", []):
         if not isinstance(trade, dict):
             continue
@@ -748,6 +754,8 @@ def build_ib_fills(laboratory_overview: dict[str, Any]) -> list[dict[str, Any]]:
         if str(metadata.get("execution_mode") or "") not in {"ibkr", "paper"}:
             continue
         trade_id = str(trade.get("id") or "")
+        if allowed_trade_ids is not None and trade_id not in allowed_trade_ids:
+            continue
         entry_price = safe_float(metadata.get("entry_fill_price"), safe_float(trade.get("entry"), 0.0))
         opened_at = normalize_ts(metadata.get("entry_fill_time") or trade.get("opened_at"))
         if entry_price > 0 and opened_at:
