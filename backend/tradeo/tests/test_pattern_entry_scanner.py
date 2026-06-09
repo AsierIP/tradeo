@@ -462,4 +462,7 @@ def test_laboratory_matcher_reuses_symbol_data_across_patterns() -> None:
 
     assert result["patterns_checked"] == 2
     assert result["matches_found"] == 2
-    assert provider.fetch_calls == [(provider.symbol, "3mo", "1d")]
+    assert provider.fetch_calls.count(("SPY", "3mo", "1d")) == 1
+    assert provider.fetch_calls.count(("QQQ", "3mo", "1d")) == 1
+    assert provider.fetch_calls.count((provider.symbol, "3mo", "1d")) == 1
+    assert len(provider.fetch_calls) == 3
