@@ -103,6 +103,7 @@ class NovelPatternMatcher:
                         similarity * 0.55 + pattern.score * 0.30 + pattern.stability_score * 0.15,
                         6,
                     )
+                    entry_gate = self._entry_gate(pattern.side, df, score=score, settings=settings)
                     match_status = (
                         "production_entry_candidate"
                         if module == "fox_hunter"
@@ -120,6 +121,9 @@ class NovelPatternMatcher:
                         "side": pattern.side,
                         "similarity": round(similarity, 6),
                         "score": score,
+                        "entry_score": entry_gate["entry_score"],
+                        "entry_gate_passed": entry_gate["passed"],
+                        "entry_trigger": entry_gate["trigger"],
                         "entry_price": prices["entry_price"],
                         "stop_price": prices["stop_price"],
                         "target_price": prices["target_price"],
@@ -137,6 +141,7 @@ class NovelPatternMatcher:
                             "pattern_profit_factor": pattern.profit_factor,
                             "pattern_stability_score": pattern.stability_score,
                             "features": features,
+                            "entry_gate": entry_gate,
                         },
                     }
                     matches.append(match)
@@ -187,6 +192,82 @@ class NovelPatternMatcher:
             "Match de patrón de Laboratorio; requiere paper validation "
             "y auditoría de Director."
         )
+
+    @staticmethod
+    def _entry_gate(side: str, df: pd.DataFrame, *, score: float, settings: Settings) -> dict[str, Any]:
+        latest = df.iloc[-1]
+        previous = df.iloc[-21:-1] if len(df) >= 21 else df.iloc[:-1]
+        if previous.empty:
+            return {
+                "passed": False,
+                "trigger": "insufficient_history",
+                "entry_score": 0.0,
+                "reason": "not enough bars for entry trigger",
+            }
+        close = float(latest["close"])
+        open_ = float(latest["open"])
+        high = float(latest["high"])
+        low = float(latest["low"])
+        prev_close = float(previous["close"].iloc[-1])
+        prev_high = float(previous["high"].max())
+        prev_low = float(previous["low"].min())
+        avg_volume = float(previous["volume"].tail(20).mean())
+        volume_ratio = float(latest["volume"] / max(avg_volume, 1.0))
+        sma20 = float(df["close"].tail(20).mean())
+        atr_value = float(atr(df, 14).iloc[-1]) if len(df) >= 15 else max(close * 0.02, 0.01)
+        extension_atr = abs(close - sma20) / max(atr_value, 0.01)
+        extension_score = max(0.0, min(1.0, 1.0 - extension_atr / settings.entry_max_extension_atr))
+        volume_score = max(0.0, min(1.0, (volume_ratio - 0.8) / 1.2))
+
+        if side.lower() == "short":
+            breakout = close <= prev_low * 1.005
+            reclaim = high >= prev_low and close < prev_low * 1.01 and close < open_
+            momentum = close < prev_close and close < sma20
+        else:
+            breakout = close >= prev_high * 0.995
+            reclaim = low <= prev_high and close > prev_high * 0.99 and close > open_
+            momentum = close > prev_close and close > sma20
+
+        if breakout:
+            trigger = "breakout"
+            trigger_score = 1.0
+        elif reclaim:
+            trigger = "pullback_reclaim"
+            trigger_score = 0.78
+        elif momentum:
+            trigger = "momentum_close"
+            trigger_score = 0.58
+        else:
+            trigger = "no_operational_trigger"
+            trigger_score = 0.0
+
+        entry_score = round(
+            score * 0.45 + trigger_score * 0.25 + volume_score * 0.15 + extension_score * 0.15,
+            6,
+        )
+        volume_confirmed = volume_ratio >= settings.entry_min_volume_ratio
+        not_extended = extension_atr <= settings.entry_max_extension_atr
+        passed = (
+            trigger_score > 0
+            and entry_score >= settings.entry_min_score
+            and volume_confirmed
+            and not_extended
+        )
+        return {
+            "passed": passed,
+            "trigger": trigger,
+            "entry_score": entry_score,
+            "trigger_score": round(trigger_score, 4),
+            "volume_ratio": round(volume_ratio, 4),
+            "volume_confirmed": volume_confirmed,
+            "extension_atr": round(extension_atr, 4),
+            "not_extended": not_extended,
+            "prev_high_20": round(prev_high, 4),
+            "prev_low_20": round(prev_low, 4),
+            "sma20": round(sma20, 4),
+            "close": round(close, 4),
+            "reason": "entry gate passed" if passed else "entry gate failed",
+        }
 
     @staticmethod
     def _scaler(pattern: DiscoveredPattern) -> tuple[np.ndarray | None, np.ndarray | None]:

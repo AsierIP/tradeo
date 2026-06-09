@@ -25,6 +25,14 @@ class FixtureProvider:
     def __init__(self, symbol: str = "LFOX") -> None:
         self.symbol = symbol
         self.df = fixture_ohlcv(symbol, bars=260)
+        breakout_close = float(self.df["high"].iloc[-21:-1].max()) * 1.01
+        self.df.iloc[-1, self.df.columns.get_loc("close")] = breakout_close
+        self.df.iloc[-1, self.df.columns.get_loc("open")] = breakout_close * 0.99
+        self.df.iloc[-1, self.df.columns.get_loc("high")] = breakout_close * 1.01
+        self.df.iloc[-1, self.df.columns.get_loc("low")] = breakout_close * 0.98
+        self.df.iloc[-1, self.df.columns.get_loc("volume")] = (
+            float(self.df["volume"].iloc[-21:-1].mean()) * 2.0
+        )
 
     def fetch_ohlcv(self, symbol: str, period: str = "2y", interval: str = "1d"):
         return self.df.copy()
@@ -45,6 +53,7 @@ def settings() -> Settings:
         laboratory_auto_submit_paper_orders=False,
         fox_hunter_auto_submit_live_orders=False,
         fox_hunter_enabled=True,
+        entry_max_extension_atr=99.0,
     )
 
 

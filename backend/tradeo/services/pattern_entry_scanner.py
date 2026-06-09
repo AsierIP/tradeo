@@ -81,12 +81,27 @@ class PatternEntryScanner:
         signals_created = 0
         orders_submitted = 0
         skipped_duplicates = 0
+        rejected_by_entry_gate = 0
         rejected_by_risk = 0
         order_errors: list[dict[str, Any]] = []
         signal_ids: list[int] = []
         trade_ids: list[int] = []
 
         for match in match_result["matches"]:
+            entry_gate = ((match.get("metrics") or {}).get("entry_gate") or {})
+            if settings.entry_gate_enabled and not bool(entry_gate.get("passed", False)):
+                rejected_by_entry_gate += 1
+                db.add(
+                    AuditLog(
+                        actor=module,
+                        action="entry_match_rejected_by_entry_gate",
+                        entity_type="discovered_pattern_match",
+                        entity_id=str(match.get("pattern_id", "")),
+                        details_json={"match": match, "entry_gate": entry_gate},
+                    )
+                )
+                db.commit()
+                continue
             if self._has_active_exposure(db, match):
                 skipped_duplicates += 1
                 continue
@@ -161,6 +176,7 @@ class PatternEntryScanner:
             "signals_created": signals_created,
             "orders_submitted": orders_submitted,
             "skipped_duplicates": skipped_duplicates,
+            "rejected_by_entry_gate": rejected_by_entry_gate,
             "rejected_by_risk": rejected_by_risk,
             "order_errors": order_errors,
             "signal_ids": signal_ids,
@@ -267,6 +283,7 @@ class PatternEntryScanner:
             "signals_created": 0,
             "orders_submitted": 0,
             "skipped_duplicates": 0,
+            "rejected_by_entry_gate": 0,
             "rejected_by_risk": 0,
             "order_errors": [],
             "signal_ids": [],
@@ -348,7 +365,7 @@ class PatternEntryScanner:
             rule_score=float(match["similarity"]),
             ml_score=float(metrics.get("pattern_score", 0.0)),
             vision_score=float(metrics.get("pattern_stability_score", 0.0)),
-            composite_score=float(match["score"]),
+            composite_score=float(match.get("entry_score") or match["score"]),
             features=features,
             notes=[str(match.get("notes", ""))],
         )
@@ -428,6 +445,7 @@ class PatternEntryScanner:
                 "pattern_status": match.get("pattern_status"),
                 "pattern_promotion_status": match.get("pattern_promotion_status"),
                 "match": match,
+                "entry_gate": match.get("metrics", {}).get("entry_gate"),
                 "risk": risk.model_dump(mode="json"),
                 "director_audit_required": True,
             },

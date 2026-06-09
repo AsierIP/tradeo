@@ -103,6 +103,10 @@ class Settings(BaseSettings):
     discovery_match_max_patterns: int = 25
     discovery_match_similarity_threshold: float = 0.45
     discovery_match_max_results: int = 100
+    entry_gate_enabled: bool = True
+    entry_min_score: float = 0.50
+    entry_min_volume_ratio: float = 1.05
+    entry_max_extension_atr: float = 2.75
 
     # Laboratory scans validated Research patterns in paper mode. It may create
     # auditable paper signals continuously, but it never sends IB orders unless

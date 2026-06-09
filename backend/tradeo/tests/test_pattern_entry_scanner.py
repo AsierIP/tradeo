@@ -78,6 +78,7 @@ def scanner(provider: FixtureProvider, **settings_overrides) -> PatternEntryScan
         "laboratory_market_hours_only": False,
         "fox_hunter_enabled": False,
         "fox_hunter_market_hours_only": False,
+        "entry_gate_enabled": False,
     }
     defaults.update(settings_overrides)
     settings = Settings(**defaults)
@@ -136,6 +137,60 @@ def test_laboratory_scanner_marks_ibkr_bracket_failure_retryable(monkeypatch) ->
     assert result["order_errors"][0]["retryable"] is True
     assert outcome["status"] == "retry_order_submission"
     assert outcome["next_action"] == "retry_order_submission"
+
+
+def test_laboratory_scanner_rejects_match_without_entry_trigger() -> None:
+    db = session_factory()
+    provider = FixtureProvider()
+    add_pattern(db, provider, status=DiscoveredPatternStatus.LAB_CANDIDATE)
+
+    class NoTriggerMatcher:
+        def match_current(self, *args, **kwargs):
+            return {
+                "patterns_checked": 1,
+                "symbols_checked": 1,
+                "matches": [
+                    {
+                        "module": "laboratory",
+                        "pattern_id": 1,
+                        "pattern_name": "no_trigger_pattern",
+                        "pattern_key": "no_trigger_key",
+                        "pattern_status": "lab_candidate",
+                        "pattern_promotion_status": "lab_candidate",
+                        "symbol": provider.symbol,
+                        "timeframe": "1d",
+                        "side": "long",
+                        "similarity": 0.9,
+                        "score": 0.9,
+                        "entry_score": 0.2,
+                        "entry_gate_passed": False,
+                        "entry_trigger": "no_operational_trigger",
+                        "entry_price": 10.0,
+                        "stop_price": 9.0,
+                        "target_price": 14.0,
+                        "reward_risk": 4.0,
+                        "metrics": {
+                            "features": {"avg_dollar_volume": 10_000_000, "atr_pct": 0.04},
+                            "entry_gate": {
+                                "passed": False,
+                                "trigger": "no_operational_trigger",
+                                "entry_score": 0.2,
+                            },
+                        },
+                    }
+                ],
+                "stored_matches": 1,
+                "similarity_threshold": 0.45,
+            }
+
+    result = PatternEntryScanner(
+        settings=scanner(provider, entry_gate_enabled=True).settings,
+        matcher=NoTriggerMatcher(),
+    ).scan(db, module="laboratory", symbols=[provider.symbol], store_signals=True)
+
+    assert result["rejected_by_entry_gate"] == 1
+    assert result["signals_created"] == 0
+    assert db.query(Signal).count() == 0
 
 
 def test_laboratory_scanner_skips_signal_creation_when_market_closed(monkeypatch) -> None:
