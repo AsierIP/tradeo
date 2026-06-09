@@ -75,6 +75,15 @@ class ValidationGate:
         if metrics.get("statistical_edge_passed") is False:
             lift = float(metrics.get("expectancy_lift_r", 0.0))
             warnings.append(f"edge vs baseline débil: lift={lift:.2f}R")
+        fold_count = int(metrics.get("walk_forward_fold_count", 0))
+        if fold_count:
+            fold_rate = float(metrics.get("walk_forward_positive_fold_rate", 0.0))
+            if fold_rate < s.discovery_min_walk_forward_positive_rate:
+                reasons.append(
+                    f"walk-forward inestable: {fold_rate:.2f} < {s.discovery_min_walk_forward_positive_rate:.2f}"
+                )
+        else:
+            warnings.append("walk-forward sin folds suficientes")
         oos_positive = float(metrics.get("out_of_sample_expectancy_r", 0.0)) > 0
         if not oos_positive:
             warnings.append("out-of-sample expectancy no positiva")

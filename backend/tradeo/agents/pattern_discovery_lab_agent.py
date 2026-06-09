@@ -82,6 +82,8 @@ class PatternDiscoveryLabAgent:
                 out_of_sample_pct=settings.discovery_out_of_sample_pct,
                 rr_levels=params["rr_levels"],
                 min_samples=settings.discovery_min_samples,
+                walk_forward_folds=settings.discovery_walk_forward_folds,
+                walk_forward_embargo_samples=settings.discovery_walk_forward_embargo_samples,
             )
             raw_candidates = engine.discover(samples)
             candidates = ValidationGate(settings).evaluate_many(raw_candidates)
@@ -178,6 +180,8 @@ class PatternDiscoveryLabAgent:
             "candidate_reward_risk": s.discovery_candidate_reward_risk,
             "premium_reward_risk": s.discovery_premium_reward_risk,
             "max_drawdown_r": s.discovery_max_drawdown_r,
+            "walk_forward_folds": s.discovery_walk_forward_folds,
+            "walk_forward_embargo_samples": s.discovery_walk_forward_embargo_samples,
         }
 
     @staticmethod
@@ -267,6 +271,11 @@ class PatternDiscoveryLabAgent:
             "registry_canonical_pattern_key": metrics.get("registry_canonical_pattern_key"),
             "operational_trigger": metrics.get("operational_trigger", {}),
             "event_ledger_count": metrics.get("event_ledger_count", 0),
+            "walk_forward_fold_count": metrics.get("walk_forward_fold_count", 0),
+            "walk_forward_positive_fold_rate": metrics.get("walk_forward_positive_fold_rate", 0.0),
+            "walk_forward_avg_expectancy_r": metrics.get("walk_forward_avg_expectancy_r", 0.0),
+            "walk_forward_min_expectancy_r": metrics.get("walk_forward_min_expectancy_r", 0.0),
+            "walk_forward_folds": metrics.get("walk_forward_folds", []),
             "out_of_sample_expectancy_r": metrics.get("out_of_sample_expectancy_r"),
             "out_of_sample_profit_factor": metrics.get("out_of_sample_profit_factor"),
             "out_of_sample_win_rate": metrics.get("out_of_sample_win_rate"),
@@ -354,6 +363,7 @@ class PatternDiscoveryLabAgent:
                     f"- Score: {pattern['score']}",
                     f"- Best R:R: {pattern.get('best_rr')} · Expectancy: {pattern.get('best_expectancy_r')}R · PF: {pattern.get('best_profit_factor')} · Win rate: {pattern.get('best_win_rate')}",
                     f"- Coste medio: {pattern.get('avg_execution_cost_r')}R · trigger operativo: {pattern.get('operational_trigger')}",
+                    f"- Walk-forward: {pattern.get('walk_forward_positive_fold_rate')} positive fold rate · avg {pattern.get('walk_forward_avg_expectancy_r')}R · min {pattern.get('walk_forward_min_expectancy_r')}R",
                     f"- R:R estimado: {pattern['reward_risk_estimate']} · Hit 4R: {pattern['hit_4r_rate']} · DD: {pattern.get('best_max_drawdown_r')}R",
                     f"- OOS expectancy: {pattern['out_of_sample_expectancy_r']}R · estabilidad: {pattern['stability_score']}",
                     f"- Razones/avisos: {', '.join(pattern.get('validation_reasons') or ['sin incidencias'])}",

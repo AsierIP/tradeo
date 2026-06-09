@@ -24,6 +24,8 @@ class ClusterResearchEngine:
     rr_levels: list[float] | None = None
     min_samples: int = 100
     event_ledger_limit: int = 250
+    walk_forward_folds: int = 4
+    walk_forward_embargo_samples: int = 5
 
     def discover(self, samples: list[WindowSample]) -> list[ClusterCandidate]:
         candidates: list[ClusterCandidate] = []
@@ -93,11 +95,19 @@ class ClusterResearchEngine:
             metrics["embedding_length"] = int(matrix_all.shape[1])
             metrics["scaler_mean"] = np.nan_to_num(scaler.mean_, nan=0, posinf=0, neginf=0).round(6).tolist()
             metrics["scaler_scale"] = np.nan_to_num(scaler.scale_, nan=1, posinf=1, neginf=1).round(6).tolist()
-            metrics["validation_method"] = "train_fit_forward_holdout"
+            metrics["validation_method"] = "train_fit_forward_holdout_walk_forward_embargo"
             metrics["train_cutoff"] = train_samples[-1].end if train_samples else None
             metrics["holdout_start"] = holdout_samples[0].end if holdout_samples else None
             metrics["model_fit_sample_count"] = len(train_samples)
             metrics["model_holdout_sample_count"] = len(holdout_samples)
+            walk_forward = self._walk_forward_metrics(cluster_samples, side)
+            metrics["walk_forward_folds"] = walk_forward["folds"]
+            metrics["walk_forward_fold_count"] = walk_forward["fold_count"]
+            metrics["walk_forward_positive_fold_rate"] = walk_forward["positive_fold_rate"]
+            metrics["walk_forward_avg_expectancy_r"] = walk_forward["avg_expectancy_r"]
+            metrics["walk_forward_min_expectancy_r"] = walk_forward["min_expectancy_r"]
+            metrics["walk_forward_pooled"] = walk_forward["pooled"]
+            metrics["walk_forward_embargo_samples"] = self.walk_forward_embargo_samples
             metrics["operational_trigger"] = self._operational_trigger_metrics(cluster_samples, side)
             metrics["event_ledger"] = self._event_ledger(
                 cluster_samples,
@@ -310,6 +320,90 @@ class ClusterResearchEngine:
             "win_rate": round(float(np.mean(outcomes > 0)), 5),
         }
 
+    def _walk_forward_metrics(self, samples: list[WindowSample], side: Side) -> dict[str, object]:
+        ordered = sorted(samples, key=lambda s: s.end)
+        if len(ordered) < 12 or self.walk_forward_folds <= 0:
+            return self._empty_walk_forward()
+
+        embargo = max(0, int(self.walk_forward_embargo_samples))
+        min_train = max(6, min(len(ordered) // 2, self.min_samples))
+        if min_train + embargo + 3 >= len(ordered):
+            min_train = max(6, len(ordered) // 2)
+        remaining = len(ordered) - min_train - embargo
+        if remaining < 3:
+            return self._empty_walk_forward()
+
+        fold_count = min(max(1, self.walk_forward_folds), remaining)
+        validation_size = max(3, remaining // fold_count)
+        folds: list[dict[str, object]] = []
+        validation_samples_all: list[WindowSample] = []
+        for fold_idx in range(fold_count):
+            train_end = min_train + fold_idx * validation_size
+            validation_start = train_end + embargo
+            validation_end = min(len(ordered), validation_start + validation_size)
+            train = ordered[:train_end]
+            validation = ordered[validation_start:validation_end]
+            if len(train) < 6 or len(validation) < 3:
+                continue
+            rr_analysis = RewardRiskAnalyzer(
+                rr_levels=self.rr_levels or [1.5, 2.0, 2.5, 3.0, 4.0, 5.0],
+                min_samples=self.min_samples,
+            ).analyze(train, side)
+            rr = float(rr_analysis.get("best_rr", self.target_r))
+            train_metrics = self._split_metrics(train, side, rr)
+            validation_metrics = self._split_metrics(validation, side, rr)
+            validation_samples_all.extend(validation)
+            folds.append(
+                {
+                    "fold": len(folds) + 1,
+                    "train_start": train[0].end,
+                    "train_end": train[-1].end,
+                    "validation_start": validation[0].end,
+                    "validation_end": validation[-1].end,
+                    "embargo_samples": embargo,
+                    "train_sample_count": len(train),
+                    "validation_sample_count": len(validation),
+                    "best_rr": round(rr, 5),
+                    "train_expectancy_r": train_metrics["expectancy_r"],
+                    "train_profit_factor": train_metrics["profit_factor"],
+                    "validation_expectancy_r": validation_metrics["expectancy_r"],
+                    "validation_profit_factor": validation_metrics["profit_factor"],
+                    "validation_win_rate": validation_metrics["win_rate"],
+                    "validation_max_drawdown_r": validation_metrics["max_drawdown_r"],
+                }
+            )
+
+        if not folds:
+            return self._empty_walk_forward()
+        validation_expectancies = [float(fold["validation_expectancy_r"]) for fold in folds]
+        pooled_rr = float(folds[-1]["best_rr"])
+        pooled = self._split_metrics(validation_samples_all, side, pooled_rr)
+        return {
+            "folds": folds,
+            "fold_count": len(folds),
+            "positive_fold_rate": round(float(np.mean(np.asarray(validation_expectancies) > 0)), 5),
+            "avg_expectancy_r": round(float(np.mean(validation_expectancies)), 5),
+            "min_expectancy_r": round(float(np.min(validation_expectancies)), 5),
+            "pooled": pooled,
+        }
+
+    @staticmethod
+    def _empty_walk_forward() -> dict[str, object]:
+        return {
+            "folds": [],
+            "fold_count": 0,
+            "positive_fold_rate": 0.0,
+            "avg_expectancy_r": 0.0,
+            "min_expectancy_r": 0.0,
+            "pooled": {
+                "sample_count": 0,
+                "expectancy_r": 0.0,
+                "profit_factor": 0.0,
+                "win_rate": 0.0,
+                "max_drawdown_r": 0.0,
+            },
+        }
+
     def _operational_trigger_metrics(self, samples: list[WindowSample], side: Side) -> dict[str, float | int]:
         key = f"{side}_entry_trigger_score"
         scores = np.asarray([float(sample.features.get(key, 0.0)) for sample in samples], dtype=float)
@@ -412,6 +506,7 @@ class ClusterResearchEngine:
         rr = min(float(metrics.get("best_rr", metrics.get("reward_risk_estimate", 0.0))), 8.0) / 8.0
         operational = metrics.get("operational_trigger", {})
         trigger_rate = float(operational.get("trigger_rate", 0.0)) if isinstance(operational, dict) else 0.0
+        walk_forward_rate = float(metrics.get("walk_forward_positive_fold_rate", 0.0))
         lift = min(max(0.0, float(metrics.get("expectancy_lift_r", 0.0))), 2.0)
         adjusted_p = min(max(float(metrics.get("adjusted_p_value", 1.0)), 0.0), 1.0)
         confidence = 1.0 - adjusted_p
@@ -423,6 +518,7 @@ class ClusterResearchEngine:
             + oos * 0.10
             + rr * 0.06
             + trigger_rate * 0.05
+            + walk_forward_rate * 0.04
         )
         return raw_score * (0.45 + 0.55 * confidence) + lift * 0.05
 
