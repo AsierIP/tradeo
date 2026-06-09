@@ -3,8 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+import numpy as np
 from sqlalchemy.orm import Session
 
+from tradeo.core.config import get_settings
 from tradeo.db.models import (
     DiscoveredPattern,
     DiscoveredPatternExample,
@@ -19,6 +21,11 @@ class NovelPatternRegistry:
     """Persistence layer for newly discovered LAB patterns."""
 
     max_examples_per_pattern: int = 11
+    similarity_threshold: float | None = None
+
+    def __post_init__(self) -> None:
+        if self.similarity_threshold is None:
+            self.similarity_threshold = get_settings().discovery_registry_similarity_threshold
 
     def store_candidates(
         self,
@@ -40,7 +47,18 @@ class NovelPatternRegistry:
     def upsert_candidate(self, db: Session, candidate: ClusterCandidate, run_id: int | None = None) -> DiscoveredPattern:
         pattern = db.query(DiscoveredPattern).filter(DiscoveredPattern.pattern_key == candidate.pattern_key).one_or_none()
         if pattern is None:
-            pattern = DiscoveredPattern(pattern_key=candidate.pattern_key)
+            pattern, similarity = self._find_similar_pattern(db, candidate)
+            if pattern is not None:
+                candidate.metrics["registry_deduped"] = True
+                candidate.metrics["registry_similarity"] = round(similarity, 6)
+                candidate.metrics["registry_canonical_pattern_key"] = pattern.pattern_key
+                candidate.metrics["registry_candidate_pattern_key"] = candidate.pattern_key
+            else:
+                pattern = DiscoveredPattern(pattern_key=candidate.pattern_key)
+                candidate.metrics["registry_deduped"] = False
+                candidate.metrics["registry_similarity"] = 0.0
+                candidate.metrics["registry_canonical_pattern_key"] = candidate.pattern_key
+                candidate.metrics["registry_candidate_pattern_key"] = candidate.pattern_key
         metrics = candidate.metrics
         pattern.run_id = run_id
         pattern.name = candidate.name
@@ -120,6 +138,43 @@ class NovelPatternRegistry:
             )
         )
         return pattern
+
+    def _find_similar_pattern(
+        self,
+        db: Session,
+        candidate: ClusterCandidate,
+    ) -> tuple[DiscoveredPattern | None, float]:
+        threshold = float(self.similarity_threshold or 1.0)
+        patterns = (
+            db.query(DiscoveredPattern)
+            .filter(DiscoveredPattern.side == candidate.side)
+            .filter(DiscoveredPattern.timeframe == candidate.timeframe)
+            .filter(DiscoveredPattern.window_size == candidate.window_size)
+            .order_by(DiscoveredPattern.score.desc())
+            .limit(250)
+            .all()
+        )
+        best_pattern: DiscoveredPattern | None = None
+        best_similarity = 0.0
+        for pattern in patterns:
+            similarity = self._centroid_similarity(candidate.centroid, pattern.centroid_json)
+            if similarity > best_similarity:
+                best_pattern = pattern
+                best_similarity = similarity
+        if best_pattern is not None and best_similarity >= threshold:
+            return best_pattern, best_similarity
+        return None, 0.0
+
+    @staticmethod
+    def _centroid_similarity(left: list[float], right: list[float]) -> float:
+        if not left or not right or len(left) != len(right):
+            return 0.0
+        left_arr = np.asarray(left, dtype=float)
+        right_arr = np.asarray(right, dtype=float)
+        if not np.isfinite(left_arr).all() or not np.isfinite(right_arr).all():
+            return 0.0
+        distance = float(np.linalg.norm(left_arr - right_arr) / max(1.0, np.sqrt(len(left_arr))))
+        return float(1.0 / (1.0 + distance))
 
     @staticmethod
     def list_patterns(
