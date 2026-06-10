@@ -17,7 +17,7 @@ from tradeo.research.novel_pattern_matcher import NovelPatternMatcher
 from tradeo.research.pattern_embedding_engine import PatternEmbeddingEngine
 from tradeo.services.director_review_gate import DirectorProductionGate, DirectorReviewGate
 from tradeo.services.evidence import EvidenceQuality, EvidenceType, FillProvenance
-from tradeo.services.pattern_entry_scanner import PatternEntryScanner
+from tradeo.modules.shared.entry_scanner import PatternEntryScanner
 from tradeo.tests.fixtures import fixture_ohlcv
 
 

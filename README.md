@@ -24,6 +24,7 @@ Tradeo
 ├── backend/                FastAPI + SQLAlchemy
 │   └── tradeo/
 │       ├── agents/         Agentes especializados
+│       ├── modules/        Research, Laboratorio, FoxHunter y shared
 │       ├── services/       Detector, riesgo, backtest, broker, reportes
 │       ├── routers/        API privada
 │       ├── tasks/          Worker programado
@@ -116,7 +117,7 @@ Research no puede marcar nada como `production`.
 
 ### 2. Lab valida entradas reales/paper
 
-El módulo Laboratorio (`PatternEntryScanner`) toma patrones validados por Research y busca señales de entrada actuales. Lab no debe crear señales fuera de la sesión regular USA; si el mercado está cerrado queda en `market_closed`.
+El módulo Laboratorio (`tradeo.modules.laboratory`) toma patrones validados por Research y busca señales de entrada actuales. Lab no debe crear señales fuera de la sesión regular USA; si el mercado está cerrado queda en `market_closed`.
 
 Cuando Lab encuentra una señal:
 
@@ -160,7 +161,7 @@ Director debe revisar el paquete auditado, comprobar que las operaciones Lab son
 
 ### 5. Fox Hunter opera solo Producción
 
-Fox Hunter es el clon operativo de Lab para patrones ya aprobados. Usa el mismo tipo de matcher/scanner, pero filtra exclusivamente patrones:
+Fox Hunter (`tradeo.modules.fox_hunter`) es el clon operativo de Lab para patrones ya aprobados. Usa el mismo motor compartido de entrada, pero filtra exclusivamente patrones:
 
 ```text
 production

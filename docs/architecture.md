@@ -32,6 +32,15 @@ FastAPI expone una API privada bajo `/api`:
 - `/api/self-improvement/run` laboratorio de automejora;
 - `/api/risk/kill-switch` auditoría de kill switch.
 
+Los dominios principales viven bajo `backend/tradeo/modules/`:
+
+- `research`: descubrimiento, hipótesis y validación científica;
+- `laboratory`: validación paper de patrones de Research;
+- `fox_hunter`: vigilancia de patrones en producción y ejecución live gated;
+- `shared`: mecánicas comunes de entrada que deben ser idénticas entre Lab y FoxHunter.
+
+Detalle de fronteras: `docs/module_boundaries.md`.
+
 ### Worker
 
 Proceso separado con APScheduler:

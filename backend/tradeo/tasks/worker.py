@@ -15,7 +15,7 @@ from tradeo.db.session import SessionLocal
 from tradeo.research.autonomous_research_director import ResearchDirector
 from tradeo.research.novel_pattern_matcher import NovelPatternMatcher
 from tradeo.schemas import ScanRequest
-from tradeo.services.pattern_entry_scanner import (
+from tradeo.modules.shared.entry_scanner import (
     PatternEntryScanner,
     PatternEntryScannerSafetyError,
 )

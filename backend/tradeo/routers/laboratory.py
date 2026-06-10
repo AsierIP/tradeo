@@ -5,13 +5,11 @@ from sqlalchemy.orm import Session
 
 from tradeo.core.security import require_admin
 from tradeo.db.session import get_db
+from tradeo.modules.laboratory.diagnostics import laboratory_diagnostics
+from tradeo.modules.laboratory.scanner import LaboratoryScanner
+from tradeo.modules.shared.entry_scanner import PatternEntryScannerSafetyError
 from tradeo.schemas import LabDiagnosticsResponse, PatternEntryScanRequest, PatternEntryScanResponse
-from tradeo.services.lab_diagnostics import laboratory_diagnostics
 from tradeo.services.module_dashboard import module_overview
-from tradeo.services.pattern_entry_scanner import (
-    PatternEntryScanner,
-    PatternEntryScannerSafetyError,
-)
 
 router = APIRouter(prefix="/laboratory", tags=["laboratory"])
 
@@ -21,7 +19,7 @@ def laboratory_status(
     _: str = Depends(require_admin),
     db: Session = Depends(get_db),
 ) -> dict[str, object]:
-    return PatternEntryScanner().status(db)["laboratory"]
+    return LaboratoryScanner().status(db)
 
 
 @router.get("/overview")
@@ -49,9 +47,8 @@ def scan_laboratory(
 ) -> PatternEntryScanResponse:
     request = request or PatternEntryScanRequest()
     try:
-        result = PatternEntryScanner().scan(
+        result = LaboratoryScanner().scan(
             db,
-            module="laboratory",
             symbols=request.symbols,
             limit=request.limit,
             max_patterns=request.max_patterns,

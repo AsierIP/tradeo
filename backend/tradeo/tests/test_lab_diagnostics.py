@@ -17,7 +17,7 @@ from tradeo.db.models import (
 )
 from tradeo.db.session import Base
 from tradeo.services.evidence import EvidenceQuality, EvidenceType, FillProvenance
-from tradeo.services.lab_diagnostics import laboratory_diagnostics
+from tradeo.modules.laboratory.diagnostics import laboratory_diagnostics
 
 
 def session_factory():
