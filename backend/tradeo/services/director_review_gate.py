@@ -48,10 +48,13 @@ class DirectorReviewGate:
     # more than this median slippage_R to execute is not an executable edge.
     max_median_slippage_r: float = 0.10
     min_slippage_samples: int = 5
+    min_effective_lab_trades: int = 25
 
     @classmethod
     def from_settings(cls, settings: Settings) -> "DirectorReviewGate":
         return cls(
+            min_lab_symbols=settings.director_min_symbols,
+            min_lab_trading_days=settings.director_min_days,
             sequential_evaluation_enabled=settings.director_sequential_evaluation_enabled,
             posterior_min_probability=settings.director_posterior_min_probability,
             posterior_min_edge_r=settings.director_posterior_min_edge_r,
@@ -59,6 +62,7 @@ class DirectorReviewGate:
             sprt_beta=settings.director_sprt_beta,
             max_median_slippage_r=settings.director_max_median_slippage_r,
             min_slippage_samples=settings.director_min_slippage_samples,
+            min_effective_lab_trades=settings.director_min_eff_trades,
         )
 
     def refresh(self, db: Session) -> dict[str, Any]:
@@ -260,6 +264,12 @@ class DirectorReviewGate:
             ),
             "closed_lab_trades": len(trades),
             "paper_fill_trades": len(trades),
+            "effective_lab_trades": len(trades),
+            "min_effective_lab_trades": self.min_effective_lab_trades,
+            "effective_lab_trades_note": (
+                "Conservative lower-bound proxy: only normal IBKR paper fills count until "
+                "per-trade uniqueness weights are persisted."
+            ),
             "director_review_trigger_trades": len(trades),
             "min_closed_lab_trades": self.min_closed_lab_trades,
             "review_trigger_min_closed_lab_trades": self.min_closed_lab_trades,
@@ -545,6 +555,8 @@ class DirectorReviewGate:
         blockers: list[str] = []
         if closed_trades < self.min_closed_lab_trades:
             blockers.append(f"closed_lab_trades_below_{self.min_closed_lab_trades}")
+        if closed_trades < self.min_effective_lab_trades:
+            blockers.append(f"effective_lab_trades_below_{self.min_effective_lab_trades}")
         if unique_symbols < self.min_lab_symbols:
             blockers.append(f"unique_lab_symbols_below_{self.min_lab_symbols}")
         if unique_days < self.min_lab_trading_days:

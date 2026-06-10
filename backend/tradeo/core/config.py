@@ -47,6 +47,8 @@ class Settings(BaseSettings):
     preferred_reward_risk: float = 3.0
     premium_reward_risk: float = 4.0
     max_position_value_pct: float = 0.45
+    max_adv_participation_pct: float = 0.005
+    max_open_positions_per_pattern_family: int = 2
 
     allow_longs: bool = True
     allow_shorts: bool = True
@@ -194,6 +196,9 @@ class Settings(BaseSettings):
     director_posterior_min_edge_r: float = 0.10
     director_sprt_alpha: float = 0.05
     director_sprt_beta: float = 0.20
+    director_min_eff_trades: int = 25
+    director_min_symbols: int = 8
+    director_min_days: int = 10
     # Implementation shortfall gate (informe §4.6): median slippage_R over real
     # broker fills must stay below this for the pattern's edge to count as
     # executable.
@@ -216,6 +221,8 @@ class Settings(BaseSettings):
     health_monitor_min_trades: int = 8
     health_monitor_cusum_k: float = 0.5
     health_monitor_cusum_h: float = 4.0
+    health_monitor_shortfall_cusum_k: float = 0.025
+    health_monitor_shortfall_cusum_h: float = 0.20
     health_monitor_block_decaying: bool = True
 
     openai_api_key: str | None = None

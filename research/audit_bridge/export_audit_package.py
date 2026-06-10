@@ -422,7 +422,12 @@ def main() -> int:
     }
     fill_rows = build_ib_fills(laboratory_overview, exported_trade_ids=exported_trade_ids)
     experiment_rows = build_experiment_registry(patterns, examples_by_pattern, runs, context)
-    metrics_pattern_rows = build_metrics_by_pattern(patterns, examples_by_pattern, paper_trade_rows)
+    metrics_pattern_rows = build_metrics_by_pattern(
+        patterns,
+        examples_by_pattern,
+        paper_trade_rows,
+        event_rows=event_rows,
+    )
     metrics_ticker_rows = build_metrics_by_ticker(examples_by_pattern)
     metrics_period_rows = build_metrics_by_period(examples_by_pattern)
     metrics_regime_rows = build_metrics_by_regime(patterns, event_rows, paper_trade_rows)
@@ -1242,10 +1247,13 @@ def build_metrics_by_pattern(
     patterns: list[dict[str, Any]],
     examples_by_pattern: dict[int, list[dict[str, Any]]],
     paper_trade_rows: list[dict[str, Any]],
+    *,
+    event_rows: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     trades_by_pattern: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for trade in paper_trade_rows:
         trades_by_pattern[str(trade.get("pattern_id") or "")].append(trade)
+    sample_counts, independent_counts = event_sample_counts(event_rows or [])
     rows = []
     for pattern in patterns:
         examples = examples_by_pattern.get(int(pattern["id"]), [])
@@ -1262,10 +1270,12 @@ def build_metrics_by_pattern(
         avg_win = metrics.get("avg_win_r", "")
         avg_loss = metrics.get("avg_loss_r", "")
         payoff = round(float(avg_win) / float(avg_loss), 6) if trades and avg_win not in ("", 0) and avg_loss not in ("", 0) else ""
+        exported_event_count = sample_counts.get(audit_id, len(examples))
+        verified_independent_count = independent_counts.get(audit_id, 0)
         rows.append({
             "pattern_id": audit_id,
-            "sample_count": pattern.get("sample_count", ""),
-            "independent_sample_count": pattern.get("sample_count", ""),
+            "sample_count": exported_event_count,
+            "independent_sample_count": verified_independent_count,
             "trade_count": trade_count,
             "ticker_count": pattern.get("symbol_count", ""),
             "sector_count": "",
@@ -1298,10 +1308,27 @@ def build_metrics_by_pattern(
             "notes": (
                 "Operational columns use closed paper trades only; research R metrics remain in experiment_registry.csv."
                 if trades
-                else "No closed_lab_trades/paper trades; operational performance columns intentionally blank."
+                else (
+                    "No closed_lab_trades/paper trades; operational performance columns intentionally blank. "
+                    f"Exported events={exported_event_count}; verified independent events={verified_independent_count}; "
+                    f"raw pattern sample_count={pattern.get('sample_count', '')}."
+                )
             ),
         })
     return rows
+
+
+def event_sample_counts(event_rows: list[dict[str, Any]]) -> tuple[dict[str, int], dict[str, int]]:
+    sample_counts: dict[str, int] = defaultdict(int)
+    independent_counts: dict[str, int] = defaultdict(int)
+    for row in event_rows:
+        pid = str(row.get("pattern_id") or "")
+        if not pid:
+            continue
+        sample_counts[pid] += 1
+        if str(row.get("is_independent_sample") or "").strip().lower() == "true":
+            independent_counts[pid] += 1
+    return dict(sample_counts), dict(independent_counts)
 
 
 def build_metrics_by_regime(
