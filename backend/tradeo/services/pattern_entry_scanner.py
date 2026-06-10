@@ -7,14 +7,16 @@ from typing import Any, Literal
 from sqlalchemy.orm import Session, joinedload
 
 from tradeo.core.config import Settings, get_settings
-from tradeo.db.models import AuditLog, Signal, SignalStatus, Trade, TradeStatus
+from tradeo.db.models import AuditLog, DiscoveredPattern, Signal, SignalStatus, Trade, TradeStatus
 from tradeo.research.novel_pattern_matcher import NovelPatternMatcher
 from tradeo.schemas import PatternCandidate
+from tradeo.services.evidence import EvidenceQuality, EvidenceType, is_director_review_paper_fill_evidence
 from tradeo.services.ibkr_broker import IBKRBroker
 from tradeo.services.lab_paper_observations import LAB_SHADOW_EXECUTION_MODE, LabPaperObservationService
 from tradeo.services.market_session import market_session_status
 from tradeo.services.order_outcomes import mark_signal_order_failure
 from tradeo.services.opportunity_ranking import rank_entry_matches
+from tradeo.services.production_manifest import production_manifest_is_active
 from tradeo.services.risk_manager import RiskManager
 from tradeo.services.signal_quality import build_entry_quality, build_signal_snapshot
 
@@ -92,6 +94,8 @@ class PatternEntryScanner:
             result["paper_observations_opened"] = 0
             result["paper_observations_closed"] = observation_lifecycle["closed_observations"]
             result["paper_observation_trade_ids"] = []
+            result["shadow_no_order_observations_opened"] = 0
+            result["shadow_no_order_trade_ids"] = []
             result["paper_observation_lifecycle"] = observation_lifecycle
             from tradeo.services.runtime_status import write_entry_scan_status
 
@@ -114,6 +118,7 @@ class PatternEntryScanner:
         rejected_by_entry_gate = 0
         rejected_by_entry_quality = 0
         rejected_by_risk = 0
+        rejected_by_production_manifest = 0
         near_miss_shadow_observations_opened = 0
         order_errors: list[dict[str, Any]] = []
         signal_ids: list[int] = []
@@ -122,6 +127,8 @@ class PatternEntryScanner:
         paper_observation_trade_ids: list[int] = []
         near_miss_trade_ids: list[int] = []
         paper_observations_opened = 0
+        shadow_no_order_observations_opened = 0
+        shadow_no_order_trade_ids: list[int] = []
 
         all_ranked_matches = rank_entry_matches(
             match_result["matches"],
@@ -131,6 +138,22 @@ class PatternEntryScanner:
         ranked_matches = self._select_best_variant_per_exposure(all_ranked_matches)
 
         for match in ranked_matches:
+            if module == "fox_hunter" and not self._fox_match_has_active_manifest(db, match):
+                rejected_by_production_manifest += 1
+                db.add(
+                    AuditLog(
+                        actor=module,
+                        action="entry_match_rejected_by_production_manifest",
+                        entity_type="discovered_pattern_match",
+                        entity_id=str(match.get("pattern_id", "")),
+                        details_json={
+                            "match": match,
+                            "reason": "active_production_manifest_required",
+                        },
+                    )
+                )
+                db.commit()
+                continue
             entry_gate = ((match.get("metrics") or {}).get("entry_gate") or {})
             if settings.entry_gate_enabled and not bool(entry_gate.get("passed", False)):
                 rejected_by_entry_gate += 1
@@ -237,7 +260,9 @@ class PatternEntryScanner:
                     )
                     if observation is not None:
                         paper_observations_opened += 1
+                        shadow_no_order_observations_opened += 1
                         paper_observation_trade_ids.append(observation.id)
+                        shadow_no_order_trade_ids.append(observation.id)
                 continue
 
             try:
@@ -284,6 +309,7 @@ class PatternEntryScanner:
             "rejected_by_entry_gate": rejected_by_entry_gate,
             "rejected_by_entry_quality": rejected_by_entry_quality,
             "rejected_by_risk": rejected_by_risk,
+            "rejected_by_production_manifest": rejected_by_production_manifest,
             "near_miss_shadow_observations_opened": near_miss_shadow_observations_opened,
             "order_errors": order_errors,
             "signal_ids": signal_ids,
@@ -293,6 +319,8 @@ class PatternEntryScanner:
             "paper_observations_closed": observation_lifecycle["closed_observations"],
             "paper_observation_trade_ids": paper_observation_trade_ids,
             "near_miss_trade_ids": near_miss_trade_ids,
+            "shadow_no_order_observations_opened": shadow_no_order_observations_opened,
+            "shadow_no_order_trade_ids": shadow_no_order_trade_ids,
             "paper_observation_lifecycle": observation_lifecycle,
             "top_opportunities": self._top_opportunities(ranked_matches),
             "store_signals": resolved["store_signals"],
@@ -316,12 +344,28 @@ class PatternEntryScanner:
             .filter(DiscoveredPattern.status.in_(lab_statuses))
             .count()
         )
+        legacy_runtime_blocked_patterns = (
+            db.query(DiscoveredPattern)
+            .filter(DiscoveredPattern.validation_passed.is_(True))
+            .filter(
+                DiscoveredPattern.status.in_(
+                    [
+                        DiscoveredPatternStatus.PREMIUM_CANDIDATE,
+                        DiscoveredPatternStatus.PAPER_CANDIDATE,
+                    ]
+                )
+            )
+            .count()
+        )
         production_patterns = (
             db.query(DiscoveredPattern)
             .filter(DiscoveredPattern.validation_passed.is_(True))
             .filter(DiscoveredPattern.status == DiscoveredPatternStatus.PRODUCTION)
-            .count()
+            .all()
         )
+        production_manifest_patterns = [
+            pattern for pattern in production_patterns if production_manifest_is_active(pattern)
+        ]
         settings = self.settings
         assert settings is not None
         worker_status = worker_runtime_status(settings)
@@ -345,6 +389,18 @@ class PatternEntryScanner:
         fox_state = "ok" if fox_hunter_ok else "market_closed" if not fox_market_ok else "stopped"
         laboratory_entry_status = entry_scan_status("laboratory", settings)
         fox_entry_status = entry_scan_status("fox_hunter", settings)
+        paper_order_safety_ok = (
+            not settings.kill_switch_enabled
+            and settings.trading_mode == "paper"
+            and not settings.live_armed
+            and int(settings.ibkr_port) not in {7496, 4001}
+        )
+        paper_orders_allowed = settings.laboratory_auto_submit_paper_orders and paper_order_safety_ok
+        live_orders_allowed = (
+            settings.fox_hunter_auto_submit_live_orders
+            and settings.live_armed
+            and not settings.kill_switch_enabled
+        )
         return {
             "research": {"purpose": "discover_new_patterns"},
             "laboratory": {
@@ -355,7 +411,14 @@ class PatternEntryScanner:
                 "market_session": session,
                 "worker": worker_status,
                 "auto_submit_paper_orders": settings.laboratory_auto_submit_paper_orders,
+                "paper_orders_allowed": paper_orders_allowed,
+                "paper_order_safety_ok": paper_order_safety_ok,
+                "blocked_but_healthy": laboratory_ok and not paper_orders_allowed,
+                "execution_block_reason": None
+                if paper_orders_allowed
+                else self._paper_order_block_reason(settings, paper_order_safety_ok),
                 "eligible_patterns": laboratory_patterns,
+                "legacy_runtime_blocked_patterns": legacy_runtime_blocked_patterns,
                 "symbols_checked": laboratory_entry_status["symbols_checked"],
                 "last_symbols_checked": laboratory_entry_status["last_symbols_checked"],
             },
@@ -367,12 +430,45 @@ class PatternEntryScanner:
                 "market_session": session,
                 "worker": worker_status,
                 "auto_submit_live_orders": settings.fox_hunter_auto_submit_live_orders,
-                "eligible_patterns": production_patterns,
+                "live_orders_allowed": live_orders_allowed,
+                "blocked_but_healthy": fox_hunter_ok and not live_orders_allowed,
+                "execution_block_reason": None
+                if live_orders_allowed
+                else self._live_order_block_reason(settings),
+                "eligible_patterns": len(production_manifest_patterns),
+                "production_status_patterns": len(production_patterns),
+                "production_manifest_required": True,
+                "production_manifest_blocked_patterns": len(production_patterns)
+                - len(production_manifest_patterns),
                 "symbols_checked": fox_entry_status["symbols_checked"],
                 "last_symbols_checked": fox_entry_status["last_symbols_checked"],
                 "live_armed": settings.live_armed,
             },
         }
+
+    @staticmethod
+    def _paper_order_block_reason(settings: Settings, paper_order_safety_ok: bool) -> str:
+        if not settings.laboratory_auto_submit_paper_orders:
+            return "paper_auto_submit_disabled"
+        if settings.kill_switch_enabled:
+            return "kill_switch_enabled"
+        if settings.trading_mode != "paper":
+            return "trading_mode_not_paper"
+        if settings.live_armed:
+            return "live_armed_blocks_laboratory"
+        if not paper_order_safety_ok:
+            return "ibkr_live_port_blocked"
+        return "unknown"
+
+    @staticmethod
+    def _live_order_block_reason(settings: Settings) -> str:
+        if not settings.fox_hunter_auto_submit_live_orders:
+            return "live_auto_submit_disabled"
+        if not settings.live_armed:
+            return "live_armed_false"
+        if settings.kill_switch_enabled:
+            return "kill_switch_enabled"
+        return "unknown"
 
     def _requires_market_hours(self, module: EntryModule) -> bool:
         settings = self.settings
@@ -402,6 +498,7 @@ class PatternEntryScanner:
             "rejected_by_entry_gate": 0,
             "rejected_by_entry_quality": 0,
             "rejected_by_risk": 0,
+            "rejected_by_production_manifest": 0,
             "near_miss_shadow_observations_opened": 0,
             "order_errors": [],
             "signal_ids": [],
@@ -411,6 +508,8 @@ class PatternEntryScanner:
             "paper_observations_closed": 0,
             "paper_observation_trade_ids": [],
             "near_miss_trade_ids": [],
+            "shadow_no_order_observations_opened": 0,
+            "shadow_no_order_trade_ids": [],
             "paper_observation_lifecycle": {
                 "open_observations": 0,
                 "closed_observations": 0,
@@ -478,6 +577,17 @@ class PatternEntryScanner:
             raise PatternEntryScannerSafetyError(
                 "Fox Hunter live execution requires live_armed=true"
             )
+
+    @staticmethod
+    def _fox_match_has_active_manifest(db: Session, match: dict[str, Any]) -> bool:
+        try:
+            pattern_id = int(match.get("pattern_id") or 0)
+        except (TypeError, ValueError):
+            return False
+        pattern = db.get(DiscoveredPattern, pattern_id)
+        if pattern is None:
+            return False
+        return production_manifest_is_active(pattern)
 
     def _candidate_from_match(self, match: dict[str, Any]) -> PatternCandidate:
         metrics = match.get("metrics") or {}
@@ -649,6 +759,11 @@ class PatternEntryScanner:
                 continue
             metadata = signal.metadata_json or {}
             if metadata.get("entry_module") != module:
+                continue
+            if not is_director_review_paper_fill_evidence(
+                trade.metadata_json or {},
+                trade_status=trade.status,
+            ):
                 continue
             variant = str(metadata.get("entry_variant_id") or "*")
             regime_key = str((metadata.get("regime") or {}).get("regime_key") or "*")
@@ -859,6 +974,8 @@ class PatternEntryScanner:
         metrics["would_have_failed_entry_gate"] = True
         metrics["paper_only"] = True
         metrics["no_ibkr_order"] = True
+        metrics["evidence_type"] = EvidenceType.NEAR_MISS_SHADOW.value
+        metrics["evidence_quality"] = EvidenceQuality.NORMAL.value
         enriched["metrics"] = metrics
         enriched["near_miss"] = True
         enriched["near_miss_shadow"] = True
@@ -871,6 +988,8 @@ class PatternEntryScanner:
         enriched["paper_only"] = True
         enriched["no_ibkr_order"] = True
         enriched["observation_only"] = True
+        enriched["evidence_type"] = EvidenceType.NEAR_MISS_SHADOW.value
+        enriched["evidence_quality"] = EvidenceQuality.NORMAL.value
         enriched["notes"] = (
             f"{enriched.get('notes', '')} Near-miss Lab shadow observation; "
             "entry gate failed only on soft volume confirmation."
@@ -1001,6 +1120,11 @@ class PatternEntryScanner:
             execution_requested=execute_orders,
             market_session=market_session,
         )
+        evidence_type = self._signal_evidence_type(
+            module,
+            match=match,
+            execute_orders=execute_orders,
+        )
         signal = Signal(
             symbol=candidate.symbol,
             pattern=candidate.pattern,
@@ -1019,11 +1143,14 @@ class PatternEntryScanner:
             supervisor_notes=str(match.get("notes", "")),
             human_approved=human_approved,
             metadata_json={
+                "evidence_type": evidence_type,
+                "evidence_quality": EvidenceQuality.NORMAL.value,
                 "entry_module": module,
                 "pattern_id": match["pattern_id"],
                 "pattern_key": match["pattern_key"],
                 "pattern_status": match.get("pattern_status"),
                 "pattern_promotion_status": match.get("pattern_promotion_status"),
+                "production_manifest": match.get("production_manifest"),
                 "entry_variant_id": match.get("entry_variant_id"),
                 "entry_variant": match.get("entry_variant"),
                 "entry_audit": match.get("entry_audit"),
@@ -1045,8 +1172,8 @@ class PatternEntryScanner:
                 "entry_gate_rejection_reasons": match.get("entry_gate_rejection_reasons") or [],
                 "entry_gate_reason": match.get("entry_gate_reason"),
                 "would_have_failed_entry_gate": bool(match.get("would_have_failed_entry_gate")),
-                "observation_only": bool(match.get("observation_only")),
-                "execution_mode": LAB_SHADOW_EXECUTION_MODE if match.get("near_miss") else None,
+                "observation_only": module == "laboratory" and not execute_orders,
+                "execution_mode": self._signal_execution_mode(module, execute_orders=execute_orders),
                 "paper_only": module == "laboratory" and not execute_orders,
                 "no_ibkr_order": module == "laboratory" and not execute_orders,
                 "execution_outcome": (
@@ -1079,6 +1206,31 @@ class PatternEntryScanner:
         db.commit()
         db.refresh(signal)
         return signal
+
+    @staticmethod
+    def _signal_execution_mode(module: EntryModule, *, execute_orders: bool) -> str | None:
+        if module == "laboratory" and not execute_orders:
+            return LAB_SHADOW_EXECUTION_MODE
+        if execute_orders:
+            return "ibkr"
+        return None
+
+    @staticmethod
+    def _signal_evidence_type(
+        module: EntryModule,
+        *,
+        match: dict[str, Any],
+        execute_orders: bool,
+    ) -> str | None:
+        if module == "laboratory":
+            if match.get("near_miss"):
+                return EvidenceType.NEAR_MISS_SHADOW.value
+            if not execute_orders:
+                return EvidenceType.SHADOW_NO_ORDER.value
+            return EvidenceType.IBKR_PAPER_ORDER.value
+        if execute_orders:
+            return EvidenceType.LIVE_ORDER.value
+        return None
 
     @staticmethod
     def _execution_reason(module: EntryModule) -> str:

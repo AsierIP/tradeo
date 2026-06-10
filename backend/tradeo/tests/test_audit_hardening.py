@@ -141,7 +141,7 @@ def test_export_filters_fills_to_exported_paper_trade_ids() -> None:
                 "qty": 1,
                 "entry": 20.0,
                 "opened_at": "2026-06-09T10:00:00+00:00",
-                "status": "open",
+                "status": "closed",
                 "metadata_json": {"execution_mode": "paper"},
             },
         ]
@@ -151,6 +151,95 @@ def test_export_filters_fills_to_exported_paper_trade_ids() -> None:
 
     assert [row["trade_id"] for row in fills] == ["2"]
     assert fills[0]["ticker"] == "BBB"
+
+
+def test_export_excludes_shadow_observations_from_paper_trades() -> None:
+    exporter = _load_audit_exporter()
+    patterns = [{"id": 1, "name": "SHADOW_PATTERN"}]
+    overview = {
+        "signals": [
+            {
+                "id": 10,
+                "entry": 100,
+                "created_at": "2026-06-09T10:00:00+00:00",
+                "risk_usd": 100,
+                "metadata_json": {"pattern_id": 1},
+            }
+        ],
+        "trades": [
+            {
+                "id": 20,
+                "signal_id": 10,
+                "symbol": "AAA",
+                "pattern": "SHADOW_PATTERN",
+                "side": "long",
+                "qty": 1,
+                "entry": 100,
+                "opened_at": "2026-06-09T10:00:00+00:00",
+                "closed_at": "2026-06-09T11:00:00+00:00",
+                "status": "closed",
+                "pnl_usd": 10,
+                "r_multiple": 1.0,
+                "metadata_json": {
+                    "execution_mode": "lab_shadow_observation",
+                    "evidence_type": "near_miss_shadow",
+                    "evidence_quality": "standard",
+                    "observation_only": True,
+                    "no_ibkr_order": True,
+                    "near_miss": True,
+                },
+            }
+        ],
+    }
+
+    rows = exporter.build_paper_trades(patterns, overview)
+    fills = exporter.build_ib_fills(overview, exported_trade_ids={"20"})
+
+    assert rows == []
+    assert fills == []
+
+
+def test_export_marks_real_paper_fills_with_evidence_contract() -> None:
+    exporter = _load_audit_exporter()
+    patterns = [{"id": 1, "name": "PAPER_PATTERN"}]
+    overview = {
+        "signals": [
+            {
+                "id": 10,
+                "entry": 100,
+                "created_at": "2026-06-09T10:00:00+00:00",
+                "risk_usd": 100,
+                "metadata_json": {"pattern_id": 1},
+            }
+        ],
+        "trades": [
+            {
+                "id": 20,
+                "signal_id": 10,
+                "symbol": "AAA",
+                "pattern": "PAPER_PATTERN",
+                "side": "long",
+                "qty": 1,
+                "entry": 100,
+                "opened_at": "2026-06-09T10:00:00+00:00",
+                "closed_at": "2026-06-09T11:00:00+00:00",
+                "status": "closed",
+                "pnl_usd": 10,
+                "r_multiple": 1.0,
+                "metadata_json": {
+                    "execution_mode": "paper",
+                    "evidence_type": "ibkr_paper_fill",
+                    "evidence_quality": "standard",
+                },
+            }
+        ],
+    }
+
+    rows = exporter.build_paper_trades(patterns, overview)
+
+    assert len(rows) == 1
+    assert rows[0]["evidence_type"] == "ibkr_paper_fill"
+    assert rows[0]["evidence_quality"] == "standard"
 
 
 def test_export_leaves_operational_metrics_empty_without_closed_lab_trades() -> None:
@@ -271,6 +360,34 @@ def test_audit_validator_rejects_orphan_fills_and_empty_bucket_without_reason(tm
     assert any("order_id_hash appears to contain raw numeric order id" in error for error in errors)
     assert any("account_id_redacted must be true" in error for error in errors)
     assert any("metrics_by_regime.csv: empty breakdown requires non-empty empty_reason" in error for error in errors)
+
+
+def test_audit_validator_rejects_shadow_evidence_as_paper_trade(tmp_path: Path) -> None:
+    validator = _load_audit_validator()
+    package = _write_minimal_audit_package(tmp_path, validator, duplicate_repeated_rows=2)
+    rows = list(csv.DictReader((package / "paper_trades.csv").open(newline="", encoding="utf-8")))
+    rows[0]["evidence_type"] = "near_miss_shadow"
+    rows[0]["notes"] = "execution_mode=lab_shadow_observation; no_ibkr_order=true"
+    _write_csv(package / "paper_trades.csv", validator.CSV_COLUMNS["paper_trades.csv"], rows)
+
+    errors, _ = validator.validate_package(package)
+
+    assert any("evidence_type must be ibkr_paper_fill" in error for error in errors)
+    assert any("shadow/no-broker evidence cannot be exported as paper trade" in error for error in errors)
+
+
+def test_audit_validator_requires_global_experiment_scope(tmp_path: Path) -> None:
+    validator = _load_audit_validator()
+    package = _write_minimal_audit_package(tmp_path, validator, duplicate_repeated_rows=2)
+    rows = list(csv.DictReader((package / "experiment_registry.csv").open(newline="", encoding="utf-8")))
+    rows[0]["global_trial_count"] = ""
+    rows[0]["fit_scope"] = ""
+    _write_csv(package / "experiment_registry.csv", validator.CSV_COLUMNS["experiment_registry.csv"], rows)
+
+    errors, _ = validator.validate_package(package)
+
+    assert any("global_trial_count is required" in error for error in errors)
+    assert any("fit_scope is required" in error for error in errors)
 
 
 def test_normalize_ohlcv_rejects_invalid_market_bars() -> None:
@@ -504,6 +621,8 @@ def _write_minimal_audit_package(tmp_path: Path, validator, *, duplicate_repeate
         "trade_id": "T1",
         "event_id": "EVT_1",
         "pattern_id": "PATTERN_000001",
+        "evidence_type": "ibkr_paper_fill",
+        "evidence_quality": "standard",
         "ticker": "AAA",
         "side": "long",
         "quantity": "1",
@@ -582,6 +701,13 @@ def _write_minimal_audit_package(tmp_path: Path, validator, *, duplicate_repeate
         "sharpe": "",
         "sortino": "",
         "max_drawdown": "0",
+        "candidate_trial_count": "12",
+        "global_trial_count": "24",
+        "adjusted_p_value": "0.08",
+        "wrc_p_value": "0.2",
+        "spa_p_value": "0.18",
+        "fit_scope": "{\"scaler\":\"train_only\"}",
+        "score_input_scope": "{\"descriptive_all_fields_used\":false}",
         "notes": "",
     }
     metric = {

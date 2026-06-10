@@ -74,12 +74,22 @@ class ValidationGate:
             )
         wrc_p = metrics.get("wrc_p_value")
         if wrc_p is not None and float(wrc_p) > s.discovery_max_adjusted_p_value:
+            wrc_label = (
+                "White Reality Check"
+                if bool(metrics.get("reality_check_formal_test", False))
+                else "bootstrap reality proxy WRC-like"
+            )
             reasons.append(
-                f"White Reality Check insuficiente: p={float(wrc_p):.2f} > {s.discovery_max_adjusted_p_value:.2f}"
+                f"{wrc_label} insuficiente: p={float(wrc_p):.2f} > {s.discovery_max_adjusted_p_value:.2f}"
             )
         spa_p = metrics.get("spa_p_value")
         if spa_p is not None and float(spa_p) > s.discovery_max_adjusted_p_value:
-            reasons.append(f"SPA insuficiente: p={float(spa_p):.2f} > {s.discovery_max_adjusted_p_value:.2f}")
+            spa_label = (
+                "SPA formal"
+                if bool(metrics.get("reality_check_formal_test", False))
+                else "bootstrap reality proxy SPA-like"
+            )
+            reasons.append(f"{spa_label} insuficiente: p={float(spa_p):.2f} > {s.discovery_max_adjusted_p_value:.2f}")
         if metrics.get("statistical_edge_passed") is False:
             lift = float(metrics.get("expectancy_lift_r", 0.0))
             warnings.append(f"edge vs baseline débil: lift={lift:.2f}R")

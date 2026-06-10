@@ -24,6 +24,13 @@ BRIDGE = ROOT / "research" / "audit_bridge"
 REQUEST_ROOT = BRIDGE / "requests" / AUDIT_ID
 CONFIG_ROOT = REQUEST_ROOT / "config_snapshot"
 LOCAL_TZ = ZoneInfo("Europe/Madrid")
+EVIDENCE_NEAR_MISS_SHADOW = "near_miss_shadow"
+EVIDENCE_SHADOW_NO_ORDER = "shadow_no_order"
+EVIDENCE_IBKR_PAPER_ORDER = "ibkr_paper_order"
+EVIDENCE_IBKR_PAPER_FILL = "ibkr_paper_fill"
+EVIDENCE_QUALITY_STANDARD = "standard"
+EVIDENCE_QUALITY_DEGRADED = "degraded"
+LAB_SHADOW_EXECUTION_MODE = "lab_shadow_observation"
 
 PATTERN_CATALOG_COLUMNS = [
     "pattern_id",
@@ -94,6 +101,8 @@ PAPER_TRADES_COLUMNS = [
     "trade_id",
     "event_id",
     "pattern_id",
+    "evidence_type",
+    "evidence_quality",
     "ticker",
     "side",
     "quantity",
@@ -174,6 +183,13 @@ EXPERIMENT_COLUMNS = [
     "sharpe",
     "sortino",
     "max_drawdown",
+    "candidate_trial_count",
+    "global_trial_count",
+    "adjusted_p_value",
+    "wrc_p_value",
+    "spa_p_value",
+    "fit_scope",
+    "score_input_scope",
     "notes",
 ]
 
@@ -532,6 +548,58 @@ def safe_float(value: Any, default: float = 0.0) -> float:
         return default
 
 
+def truthy(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value or "").strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def trade_is_closed(trade: dict[str, Any], metadata: dict[str, Any]) -> bool:
+    status = str(trade.get("status") or metadata.get("status") or "").strip().lower()
+    if status in {"closed", "filled", "done", "executed"}:
+        return True
+    return bool(trade.get("closed_at") or metadata.get("exit_fill_time"))
+
+
+def trade_evidence_type(trade: dict[str, Any], metadata: dict[str, Any]) -> str:
+    explicit = trade.get("evidence_type") or metadata.get("evidence_type")
+    if explicit:
+        return str(explicit)
+    execution_mode = str(metadata.get("execution_mode") or trade.get("execution_mode") or "").strip().lower()
+    if execution_mode == LAB_SHADOW_EXECUTION_MODE or truthy(metadata.get("observation_only")) or truthy(metadata.get("no_ibkr_order")):
+        return EVIDENCE_NEAR_MISS_SHADOW if truthy(metadata.get("near_miss")) else EVIDENCE_SHADOW_NO_ORDER
+    if execution_mode in {"ibkr", "ibkr_paper", "paper"}:
+        return EVIDENCE_IBKR_PAPER_FILL if trade_is_closed(trade, metadata) else EVIDENCE_IBKR_PAPER_ORDER
+    if trade.get("broker_order_id") or metadata.get("broker_order_id") or metadata.get("parent_order_id"):
+        return EVIDENCE_IBKR_PAPER_FILL if trade_is_closed(trade, metadata) else EVIDENCE_IBKR_PAPER_ORDER
+    return ""
+
+
+def trade_evidence_quality(metadata: dict[str, Any]) -> str:
+    explicit = metadata.get("evidence_quality")
+    if explicit:
+        return str(explicit)
+    if truthy(metadata.get("fallback_used")) or metadata.get("fallback_source"):
+        return EVIDENCE_QUALITY_DEGRADED
+    return EVIDENCE_QUALITY_STANDARD
+
+
+def is_exportable_paper_fill_trade(trade: dict[str, Any], metadata: dict[str, Any]) -> bool:
+    evidence_type = trade_evidence_type(trade, metadata)
+    evidence_quality = trade_evidence_quality(metadata)
+    if evidence_type != EVIDENCE_IBKR_PAPER_FILL:
+        return False
+    if evidence_quality == EVIDENCE_QUALITY_DEGRADED:
+        return False
+    if not trade_is_closed(trade, metadata):
+        return False
+    return not (
+        truthy(metadata.get("observation_only"))
+        or truthy(metadata.get("no_ibkr_order"))
+        or truthy(metadata.get("near_miss"))
+    )
+
+
 def min_max_times(examples: list[dict[str, Any]]) -> tuple[str, str]:
     values = sorted(normalize_ts(e.get("window_end")) for e in examples if e.get("window_end"))
     if not values:
@@ -548,9 +616,20 @@ def best_rr_metrics(pattern: dict[str, Any]) -> dict[str, Any]:
     return {}
 
 
+def pattern_research_metrics(pattern: dict[str, Any]) -> dict[str, Any]:
+    metrics = pattern.get("metrics_json")
+    return metrics if isinstance(metrics, dict) else {}
+
+
+def metric_value(pattern: dict[str, Any], metrics: dict[str, Any], key: str, default: Any = "") -> Any:
+    if key in metrics:
+        return metrics.get(key)
+    return pattern.get(key, default)
+
+
 def status_for_experiment(pattern: dict[str, Any]) -> str:
     if pattern.get("validation_passed"):
-        return "active" if pattern.get("status") in {"lab_watchlist", "paper_candidate"} else "detected"
+        return "active" if pattern.get("status") in {"lab", "lab_watchlist", "lab_candidate", "director_review"} else "detected"
     if pattern.get("status") == "rejected":
         return "discarded"
     return "pending_review"
@@ -742,6 +821,10 @@ def build_paper_trades(patterns: list[dict[str, Any]], laboratory_overview: dict
         signal = signals.get(int(trade.get("signal_id") or 0), {})
         metadata = trade.get("metadata_json") or {}
         signal_metadata = signal.get("metadata_json") or {}
+        evidence_type = trade_evidence_type(trade, metadata)
+        evidence_quality = trade_evidence_quality(metadata)
+        if not is_exportable_paper_fill_trade(trade, metadata):
+            continue
         pattern_ref = audit_pattern_id(signal_metadata, trade, pattern_by_name)
         if not pattern_ref:
             continue
@@ -759,6 +842,8 @@ def build_paper_trades(patterns: list[dict[str, Any]], laboratory_overview: dict
                 "trade_id": trade.get("id"),
                 "event_id": event_id,
                 "pattern_id": pattern_ref,
+                "evidence_type": evidence_type,
+                "evidence_quality": evidence_quality,
                 "ticker": trade.get("symbol", ""),
                 "side": trade.get("side", ""),
                 "quantity": trade.get("qty", ""),
@@ -811,7 +896,7 @@ def build_ib_fills(laboratory_overview: dict[str, Any], *, exported_trade_ids: s
         if not isinstance(trade, dict):
             continue
         metadata = trade.get("metadata_json") or {}
-        if str(metadata.get("execution_mode") or "") not in {"ibkr", "paper"}:
+        if not is_exportable_paper_fill_trade(trade, metadata):
             continue
         trade_id = str(trade.get("id") or "")
         if allowed_trade_ids is not None and trade_id not in allowed_trade_ids:
@@ -891,6 +976,7 @@ def build_experiment_registry(
         first_seen, last_seen = min_max_times(examples)
         run = run_by_id.get(pattern.get("run_id")) or {}
         params = run.get("params_json") or {}
+        research_metrics = pattern_research_metrics(pattern)
         rr_metrics = pattern.get("rr_metrics_json") or {}
         if not rr_metrics:
             rr_metrics = {"best": best_rr_metrics(pattern)}
@@ -929,6 +1015,13 @@ def build_experiment_registry(
                 "sharpe": "",
                 "sortino": "",
                 "max_drawdown": metrics.get("max_drawdown_r", pattern.get("best_max_drawdown_r", "")) if isinstance(metrics, dict) else "",
+                "candidate_trial_count": metric_value(pattern, research_metrics, "candidate_trial_count"),
+                "global_trial_count": metric_value(pattern, research_metrics, "global_trial_count"),
+                "adjusted_p_value": metric_value(pattern, research_metrics, "adjusted_p_value"),
+                "wrc_p_value": metric_value(pattern, research_metrics, "wrc_p_value"),
+                "spa_p_value": metric_value(pattern, research_metrics, "spa_p_value"),
+                "fit_scope": metric_value(pattern, research_metrics, "fit_scope", {}),
+                "score_input_scope": metric_value(pattern, research_metrics, "score_input_scope", {}),
                 "notes": "Research variant metrics are in R units; no paper trade PnL exists yet.",
             })
     return rows

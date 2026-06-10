@@ -7,6 +7,7 @@ from typing import Any
 from sqlalchemy.orm import Session, joinedload
 
 from tradeo.db.models import AuditLog, DiscoveredPattern, DiscoveredPatternMatch, Signal, Trade
+from tradeo.services.evidence import is_paper_order_or_fill_evidence
 
 REJECTION_ACTIONS = {
     "entry_match_rejected_by_entry_gate": "entry_gate",
@@ -300,6 +301,11 @@ def _paper_history_index(db: Session) -> dict[str, Any]:
             metadata = trade.metadata_json or {}
             if not _is_laboratory_trade_metadata(metadata):
                 continue
+        if not is_paper_order_or_fill_evidence(
+            trade.metadata_json or {},
+            trade_status=trade.status,
+        ):
+            continue
         pattern_id = _safe_int(metadata.get("pattern_id"))
         if pattern_id is not None:
             by_id[pattern_id].append(trade)

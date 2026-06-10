@@ -21,6 +21,11 @@ from tradeo.services.entry_variants import (
     classify_regime,
 )
 from tradeo.services.provider_factory import get_market_data_provider
+from tradeo.services.production_manifest import (
+    production_manifest_for_pattern,
+    production_manifest_is_active,
+)
+from tradeo.services.state_policy import LAB_RUNTIME_STATES, PRODUCTION_RUNTIME_STATES
 from tradeo.services.technical_indicators import atr, normalize_ohlcv
 
 
@@ -52,14 +57,21 @@ class NovelPatternMatcher:
         settings = self.settings
         assert settings is not None
         statuses = self._statuses_for_module(module)
-        patterns = (
+        pattern_limit = max_patterns or settings.discovery_match_max_patterns
+        pattern_query = (
             db.query(DiscoveredPattern)
             .filter(DiscoveredPattern.validation_passed.is_(True))
             .filter(DiscoveredPattern.status.in_(statuses))
             .order_by(DiscoveredPattern.score.desc())
-            .limit(max_patterns or settings.discovery_match_max_patterns)
-            .all()
         )
+        if module == "fox_hunter":
+            patterns = [
+                pattern
+                for pattern in pattern_query.all()
+                if production_manifest_is_active(pattern)
+            ][:pattern_limit]
+        else:
+            patterns = pattern_query.limit(pattern_limit).all()
         if symbols is None:
             symbols = pick_symbols(limit=limit or settings.discovery_match_symbol_limit)
         else:
@@ -180,6 +192,11 @@ class NovelPatternMatcher:
                                 "pattern_key": pattern.pattern_key,
                                 "pattern_status": pattern.status.value,
                                 "pattern_promotion_status": pattern.promotion_status,
+                                "production_manifest": (
+                                    production_manifest_for_pattern(pattern)
+                                    if module == "fox_hunter"
+                                    else None
+                                ),
                                 "symbol": symbol,
                                 "timeframe": pattern.timeframe,
                                 "side": pattern.side,
@@ -261,15 +278,8 @@ class NovelPatternMatcher:
     @staticmethod
     def _statuses_for_module(module: str) -> list[DiscoveredPatternStatus]:
         if module == "fox_hunter":
-            return [DiscoveredPatternStatus.PRODUCTION]
-        return [
-            DiscoveredPatternStatus.LAB,
-            DiscoveredPatternStatus.LAB_WATCHLIST,
-            DiscoveredPatternStatus.LAB_CANDIDATE,
-            DiscoveredPatternStatus.DIRECTOR_REVIEW,
-            DiscoveredPatternStatus.PREMIUM_CANDIDATE,
-            DiscoveredPatternStatus.PAPER_CANDIDATE,
-        ]
+            return list(PRODUCTION_RUNTIME_STATES)
+        return list(LAB_RUNTIME_STATES)
 
     @staticmethod
     def _notes_for_module(module: str) -> str:

@@ -156,6 +156,10 @@ type ModuleTrade = Summary['open_trades'][number] & {
   pnl_usd: number
   r_multiple: number
   broker_order_id?: string | null
+  evidence_type?: string
+  execution_class?: string | null
+  evidence_quality?: string
+  counts_as_execution_fill?: boolean
 }
 type ModuleOverview = {
   module: 'laboratory' | 'fox_hunter'
@@ -169,19 +173,45 @@ type ModuleOverview = {
     executed: number
     blocked_or_expired: number
     closed_trades: number
+    all_closed_trades?: number
+    shadow_closed?: number
+    near_miss_closed?: number
+    ibkr_paper_filled?: number
+    live?: number
+    live_filled?: number
+    degraded_closed?: number
     total_pnl_usd: number
     total_r: number
     avg_quality_score: number
     top_reason_code: string
   }>
   pnl_points: Array<{ timestamp: string; total_pnl_usd: number; trade_pnl_usd: number; symbol?: string; status?: string }>
+  shadow_pnl_points?: Array<{ timestamp: string; total_pnl_usd: number; trade_pnl_usd: number; symbol?: string; status?: string }>
+  evidence_summary?: {
+    shadow_closed: number
+    near_miss_closed: number
+    ibkr_paper_filled: number
+    live_filled: number
+    degraded_closed: number
+  }
   stats: {
     signals: number
     trades: number
     open_trades: number
     closed_trades: number
+    all_closed_trades?: number
+    execution_closed_trades?: number
+    shadow_closed_trades?: number
+    near_miss_closed_trades?: number
+    ibkr_paper_filled_trades?: number
+    live_trades?: number
+    live_filled_trades?: number
+    degraded_closed_trades?: number
+    pnl_basis?: string
+    shadow_only?: boolean
     total_pnl_usd: number
     total_r: number
+    shadow_total_r?: number
     win_rate: number
     funnel?: {
       detected: number
@@ -199,6 +229,14 @@ type ModuleStatus = {
   market_session?: { regular_session_open?: boolean; state?: string; checked_at?: string }
   auto_submit_paper_orders?: boolean
   auto_submit_live_orders?: boolean
+  paper_orders_allowed?: boolean
+  live_orders_allowed?: boolean
+  blocked_but_healthy?: boolean
+  execution_block_reason?: string | null
+  production_manifest_required?: boolean
+  production_status_patterns?: number
+  production_manifest_blocked_patterns?: number
+  legacy_runtime_blocked_patterns?: number
   eligible_patterns: number
   symbols_checked?: number
   last_symbols_checked?: number
@@ -355,6 +393,18 @@ function missingToPromoteLabel(row: LabOpportunityDiagnostic) {
   return row.missing_to_promote.slice(0, 3).join(', ')
 }
 
+function evidenceLabel(trade: ModuleTrade) {
+  const type = trade.evidence_type || 'unknown'
+  const quality = trade.evidence_quality === 'degraded' ? ' degradada' : ''
+  if (type === 'near_miss_shadow') return `near-miss shadow${quality}`
+  if (type === 'shadow_no_order') return `shadow sin orden${quality}`
+  if (type === 'ibkr_paper_fill') return `IBKR paper fill${quality}`
+  if (type === 'ibkr_paper_order') return `IBKR paper order${quality}`
+  if (type === 'live_fill') return `live fill${quality}`
+  if (type === 'live_order') return `live order${quality}`
+  return `${type}${quality}`
+}
+
 function explainAcceptedPattern(pattern: DiscoveredPattern) {
   const lines = [
     `Lo acepto porque, en las pruebas, su mejor punto esta en ${pattern.best_rr.toFixed(1)}R: por cada 1R que arriesga, intenta sacar ${pattern.best_rr.toFixed(1)}R.`,
@@ -464,8 +514,13 @@ function OperationsModule({
   const pnl = overview?.pnl_points?.length ? overview.pnl_points : [{ timestamp: '', total_pnl_usd: 0, trade_pnl_usd: 0 }]
   const stats = overview?.stats || { signals: 0, trades: 0, open_trades: 0, closed_trades: 0, total_pnl_usd: 0, total_r: 0, win_rate: 0 }
   const funnel = stats.funnel || { detected: stats.signals, actionable: 0, submitted: 0, executed: 0, blocked_or_expired: 0 }
+  const paperFills = stats.ibkr_paper_filled_trades ?? overview?.evidence_summary?.ibkr_paper_filled ?? 0
+  const liveFills = stats.live_trades ?? stats.live_filled_trades ?? overview?.evidence_summary?.live_filled ?? 0
+  const shadowClosed = stats.shadow_closed_trades ?? overview?.evidence_summary?.shadow_closed ?? 0
+  const nearMissClosed = stats.near_miss_closed_trades ?? overview?.evidence_summary?.near_miss_closed ?? 0
   const operationalOk = Boolean(status?.operational_ok)
   const operationalTone = status?.state === 'market_closed' ? 'warn' : operationalOk ? '' : 'bad'
+  const blockedHealthy = Boolean(status?.blocked_but_healthy)
   return (
     <section className="card full module-card">
       <div className="section-head module-head">
@@ -476,6 +531,13 @@ function OperationsModule({
         </div>
         <div className="module-actions">
           <div className="pill"><span className={`dot ${operationalTone}`} />{status?.state || 'status'}</div>
+          {blockedHealthy && <div className="pill" title={status?.execution_block_reason || undefined}><span className="dot warn" />blocked-but-healthy</div>}
+          {typeof status?.paper_orders_allowed === 'boolean' && (
+            <div className="pill">paper_orders_allowed: {status.paper_orders_allowed ? 'true' : 'false'}</div>
+          )}
+          {typeof status?.live_orders_allowed === 'boolean' && (
+            <div className="pill">live_orders_allowed: {status.live_orders_allowed ? 'true' : 'false'}</div>
+          )}
         </div>
       </div>
 
@@ -485,15 +547,18 @@ function OperationsModule({
         <div><strong>{stats.signals}</strong><span>señales</span></div>
         <div><strong>{funnel.actionable}</strong><span>accionables</span></div>
         <div><strong>{stats.open_trades}</strong><span>operaciones abiertas</span></div>
-        <div><strong>{formatMoney(stats.total_pnl_usd)}</strong><span>beneficio total</span></div>
-        <div><strong>{(stats.win_rate * 100).toFixed(1)}%</strong><span>win rate cerrado</span></div>
+        <div><strong>{paperFills}/{liveFills}</strong><span>paper/live fills</span></div>
+        <div><strong>{shadowClosed}</strong><span>shadow cerradas</span></div>
+        <div><strong>{nearMissClosed}</strong><span>near-miss cerradas</span></div>
+        <div><strong>{formatMoney(stats.total_pnl_usd)}</strong><span>PnL fills</span></div>
+        <div><strong>{(stats.win_rate * 100).toFixed(1)}%</strong><span>win rate fills</span></div>
       </div>
 
       {diagnostics && <LabDiagnosticsPanel diagnostics={diagnostics} />}
 
       <div className="module-split">
         <section className="module-panel">
-          <h3>Beneficio total</h3>
+          <h3>PnL fills paper/live</h3>
           <ResponsiveContainer width="100%" height={250}>
             <AreaChart data={pnl}>
               <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
@@ -509,7 +574,7 @@ function OperationsModule({
           <div className="table-scroll compact-scroll">
             <table>
               <thead>
-                <tr><th>Símbolo</th><th>Lado</th><th>Qty</th><th>Entrada</th><th>Salida</th><th>PnL</th><th>R</th><th>Estado</th><th>Apertura</th></tr>
+                <tr><th>Símbolo</th><th>Lado</th><th>Qty</th><th>Entrada</th><th>Salida</th><th>PnL</th><th>R</th><th>Evidencia</th><th>Estado</th><th>Apertura</th></tr>
               </thead>
               <tbody>
                 {trades.map((t) => (
@@ -521,11 +586,12 @@ function OperationsModule({
                     <td>{t.exit_price ?? '-'}</td>
                     <td className={t.pnl_usd > 0 ? 'positive' : t.pnl_usd < 0 ? 'negative' : ''}>{formatMoney(t.pnl_usd)}</td>
                     <td>{t.r_multiple.toFixed(2)}R</td>
+                    <td>{evidenceLabel(t)}</td>
                     <td><StatusBadge status={t.status} /></td>
                     <td>{shortDateTime(t.opened_at)}</td>
                   </tr>
                 ))}
-                {!trades.length && <tr><td colSpan={9}>Sin operaciones todavía.</td></tr>}
+                {!trades.length && <tr><td colSpan={10}>Sin operaciones todavía.</td></tr>}
               </tbody>
             </table>
           </div>
@@ -537,7 +603,7 @@ function OperationsModule({
         <div className="table-scroll compact-scroll">
           <table>
             <thead>
-              <tr><th>Patrón</th><th>Señales</th><th>Acc.</th><th>Enviadas</th><th>Ejecutadas</th><th>Bloq/Exp</th><th>Calidad</th><th>R</th><th>PnL</th><th>Motivo</th></tr>
+              <tr><th>Patrón</th><th>Señales</th><th>Acc.</th><th>Enviadas</th><th>Ejecutadas</th><th>Bloq/Exp</th><th>Shadow</th><th>Near</th><th>IBKR</th><th>Live</th><th>Calidad</th><th>R</th><th>PnL</th><th>Motivo</th></tr>
             </thead>
             <tbody>
               {patternOutcomes.map((p) => (
@@ -548,13 +614,17 @@ function OperationsModule({
                   <td>{p.submitted}</td>
                   <td>{p.executed}</td>
                   <td>{p.blocked_or_expired}</td>
+                  <td>{p.shadow_closed || 0}</td>
+                  <td>{p.near_miss_closed || 0}</td>
+                  <td>{p.ibkr_paper_filled || 0}</td>
+                  <td>{p.live ?? p.live_filled ?? 0}</td>
                   <td>{(p.avg_quality_score * 100).toFixed(0)}%</td>
                   <td>{p.total_r.toFixed(2)}R</td>
                   <td className={p.total_pnl_usd > 0 ? 'positive' : p.total_pnl_usd < 0 ? 'negative' : ''}>{formatMoney(p.total_pnl_usd)}</td>
                   <td>{p.top_reason_code}</td>
                 </tr>
               ))}
-              {!patternOutcomes.length && <tr><td colSpan={10}>Sin outcomes todavía.</td></tr>}
+              {!patternOutcomes.length && <tr><td colSpan={14}>Sin outcomes todavía.</td></tr>}
             </tbody>
           </table>
         </div>

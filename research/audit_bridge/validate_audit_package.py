@@ -66,8 +66,9 @@ CSV_COLUMNS = {
     ],
     "paper_trades.csv": [
         "trade_id", "event_id", "pattern_id", "ticker", "side", "quantity", "entry_signal_time",
-        "entry_order_time", "entry_fill_time", "entry_signal_price", "entry_order_type",
-        "entry_limit_price", "entry_fill_price", "exit_signal_time", "exit_order_time",
+        "evidence_type", "evidence_quality", "entry_order_time", "entry_fill_time",
+        "entry_signal_price", "entry_order_type", "entry_limit_price", "entry_fill_price",
+        "exit_signal_time", "exit_order_time",
         "exit_fill_time", "exit_order_type", "exit_limit_price", "exit_fill_price",
         "exit_reason", "gross_pnl", "commission", "estimated_spread_cost",
         "estimated_slippage", "other_fees", "net_pnl", "return_pct", "mae", "mfe",
@@ -85,7 +86,8 @@ CSV_COLUMNS = {
         "in_sample_end", "out_of_sample_start", "out_of_sample_end", "paper_live_start",
         "paper_live_end", "number_of_assets_tested", "number_of_events", "number_of_trades",
         "gross_pnl", "net_pnl", "winrate", "profit_factor", "sharpe", "sortino",
-        "max_drawdown", "notes",
+        "max_drawdown", "candidate_trial_count", "global_trial_count", "adjusted_p_value",
+        "wrc_p_value", "spa_p_value", "fit_scope", "score_input_scope", "notes",
     ],
     "metrics_by_pattern.csv": [
         "pattern_id", "sample_count", "independent_sample_count", "trade_count", "ticker_count",
@@ -201,6 +203,8 @@ def validate_package(package: Path) -> tuple[list[str], dict[str, list[dict[str,
 
     check_sensitive_values(package, errors)
     check_references(csv_rows, errors)
+    check_evidence_contract(csv_rows, errors)
+    check_experiment_contract(csv_rows, errors)
     check_pnl(csv_rows.get("paper_trades.csv", []), errors)
     check_manifest_counts(manifest, csv_rows, errors)
     check_duplicate_reporting(manifest, csv_rows.get("pattern_events.csv", []), errors)
@@ -359,6 +363,27 @@ def check_references(csv_rows: dict[str, list[dict[str, str]]], errors: list[str
         order_id_hash = str(row.get("order_id_hash", "")).strip()
         if order_id_hash and order_id_hash.isdigit():
             errors.append(f"ib_fills.csv:{idx}: order_id_hash appears to contain raw numeric order id")
+
+
+def check_evidence_contract(csv_rows: dict[str, list[dict[str, str]]], errors: list[str]) -> None:
+    for idx, row in enumerate(csv_rows.get("paper_trades.csv", []), start=2):
+        evidence_type = str(row.get("evidence_type", "")).strip()
+        evidence_quality = str(row.get("evidence_quality", "")).strip()
+        if evidence_type != "ibkr_paper_fill":
+            errors.append(f"paper_trades.csv:{idx}: evidence_type must be ibkr_paper_fill")
+        if evidence_quality not in {"standard", "normal"}:
+            errors.append(f"paper_trades.csv:{idx}: evidence_quality must be standard")
+        notes = str(row.get("notes", "")).lower()
+        if "lab_shadow_observation" in notes or "near_miss" in notes or "no_ibkr_order" in notes:
+            errors.append(f"paper_trades.csv:{idx}: shadow/no-broker evidence cannot be exported as paper trade")
+
+
+def check_experiment_contract(csv_rows: dict[str, list[dict[str, str]]], errors: list[str]) -> None:
+    required_fields = ("global_trial_count", "fit_scope", "score_input_scope")
+    for idx, row in enumerate(csv_rows.get("experiment_registry.csv", []), start=2):
+        for field in required_fields:
+            if not str(row.get(field, "")).strip():
+                errors.append(f"experiment_registry.csv:{idx}: {field} is required")
 
 
 def check_pnl(rows: list[dict[str, str]], errors: list[str]) -> None:

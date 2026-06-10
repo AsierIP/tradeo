@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from tradeo.core.config import Settings, get_settings
 from tradeo.db.models import AuditLog, Signal, SignalStatus, Trade, TradeStatus
+from tradeo.services.evidence import EvidenceQuality, EvidenceType
 
 
 class IBKRSafetyError(RuntimeError):
@@ -357,10 +358,17 @@ class IBKRBroker:
             perm_ids = [t.orderStatus.permId for t in trades]
             now = datetime.now(timezone.utc)
             signal_metadata = signal.metadata_json or {}
+            evidence_type = (
+                EvidenceType.LIVE_ORDER.value
+                if self.settings.trading_mode == "live"
+                else EvidenceType.IBKR_PAPER_ORDER.value
+            )
             execution_observation = {
                 "source": "ibkr_order_submission",
                 "truth_status": "orders_accepted_waiting_fill_reconciliation",
                 "submitted_at": now.isoformat(),
+                "evidence_type": evidence_type,
+                "evidence_quality": EvidenceQuality.NORMAL.value,
                 "entry_variant_id": signal_metadata.get("entry_variant_id"),
                 "regime_key": (signal_metadata.get("regime") or {}).get("regime_key"),
                 "order_ids": order_ids,
@@ -379,6 +387,8 @@ class IBKRBroker:
                 opened_at=now,
                 broker_order_id=str(parent_order.orderId),
                 metadata_json={
+                    "evidence_type": evidence_type,
+                    "evidence_quality": EvidenceQuality.NORMAL.value,
                     "execution_mode": "ibkr",
                     "ibkr_mode": self.settings.trading_mode,
                     "source_signal": signal.id,
@@ -405,7 +415,12 @@ class IBKRBroker:
                 },
             )
             signal.status = SignalStatus.EXECUTED
-            signal.metadata_json = {**signal_metadata, "execution_observation": execution_observation}
+            signal.metadata_json = {
+                **signal_metadata,
+                "evidence_type": evidence_type,
+                "evidence_quality": EvidenceQuality.NORMAL.value,
+                "execution_observation": execution_observation,
+            }
             db.add(trade)
             db.add(
                 AuditLog(

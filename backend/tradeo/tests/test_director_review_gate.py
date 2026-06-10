@@ -15,6 +15,7 @@ from tradeo.db.models import (
 )
 from tradeo.db.session import Base
 from tradeo.services.director_review_gate import DirectorReviewGate
+from tradeo.services.evidence import EvidenceQuality, EvidenceType
 
 
 def session_factory():
@@ -50,8 +51,17 @@ def add_closed_lab_trade(
     symbol: str | None = None,
     entry_variant_id: str | None = None,
     regime_key: str | None = None,
+    signal_metadata: dict | None = None,
+    trade_metadata: dict | None = None,
 ) -> None:
     trade_time = datetime(2026, 1, 5, 16, 0, tzinfo=timezone.utc) + timedelta(days=index)
+    metadata = {
+        "entry_module": "laboratory",
+        "pattern_id": pattern.id,
+        "entry_variant_id": entry_variant_id,
+        "regime": {"regime_key": regime_key} if regime_key else {},
+    }
+    metadata.update(signal_metadata or {})
     signal = Signal(
         symbol=symbol or f"T{index}",
         pattern=pattern.name,
@@ -67,15 +77,12 @@ def add_closed_lab_trade(
         strategy_version=f"laboratory_pattern_{pattern.id}",
         status=SignalStatus.EXECUTED,
         human_approved=True,
-        metadata_json={
-            "entry_module": "laboratory",
-            "pattern_id": pattern.id,
-            "entry_variant_id": entry_variant_id,
-            "regime": {"regime_key": regime_key} if regime_key else {},
-        },
+        metadata_json=metadata,
     )
     db.add(signal)
     db.flush()
+    trade_meta = {"execution_mode": "ibkr", "ibkr_mode": "paper"}
+    trade_meta.update(trade_metadata or {})
     db.add(
         Trade(
             signal_id=signal.id,
@@ -91,7 +98,7 @@ def add_closed_lab_trade(
             closed_at=trade_time + timedelta(minutes=30),
             pnl_usd=10.0 * r_multiple,
             r_multiple=r_multiple,
-            metadata_json={"execution_mode": "ibkr", "ibkr_mode": "paper"},
+            metadata_json=trade_meta,
         )
     )
     db.commit()
@@ -129,12 +136,14 @@ def test_director_review_gate_marks_candidate_after_ten_closed_lab_trades() -> N
     assert result["marked_for_director_review"] == 1
     assert pattern.status == DiscoveredPatternStatus.DIRECTOR_REVIEW
     assert pattern.promotion_status == "director_review"
+    assert "not production approval" in pattern.promotion_reason
     assert pattern.metrics_json["lab_execution"]["eligible_for_director_review"] is True
     assert pattern.metrics_json["lab_execution"]["lab_expectancy_r"] == 0.4
     assert pattern.metrics_json["lab_execution"]["research_expectancy_r"] == 0.4
     assert pattern.metrics_json["lab_execution"]["unique_lab_symbols"] == 10
     assert pattern.metrics_json["lab_execution"]["unique_lab_days"] == 10
     assert pattern.metrics_json["lab_execution"]["trades_remaining_for_director_review"] == 0
+    assert pattern.metrics_json["lab_execution"]["director_review_trigger_trades"] == 10
 
 
 def test_director_review_gate_blocks_low_diversity_lab_results() -> None:
@@ -150,6 +159,81 @@ def test_director_review_gate_blocks_low_diversity_lab_results() -> None:
     assert pattern.status == DiscoveredPatternStatus.LAB_CANDIDATE
     assert pattern.metrics_json["lab_execution"]["eligible_for_director_review"] is False
     assert "unique_lab_symbols_below_3" in pattern.metrics_json["lab_execution"]["promotion_blockers"]
+
+
+def test_director_review_gate_ignores_shadow_and_near_miss_no_order_observations() -> None:
+    db = session_factory()
+    pattern = add_pattern(db)
+    for index in range(10):
+        near_miss = index % 2 == 0
+        add_closed_lab_trade(
+            db,
+            pattern,
+            index,
+            trade_metadata={
+                "execution_mode": "lab_shadow_observation",
+                "evidence_type": (
+                    EvidenceType.NEAR_MISS_SHADOW.value
+                    if near_miss
+                    else EvidenceType.SHADOW_NO_ORDER.value
+                ),
+                "evidence_quality": EvidenceQuality.NORMAL.value,
+                "observation_only": True,
+                "no_ibkr_order": True,
+                "near_miss": near_miss,
+                "near_miss_shadow": near_miss,
+            },
+            signal_metadata={
+                "paper_only": True,
+                "no_ibkr_order": True,
+                "near_miss": near_miss,
+                "near_miss_shadow": near_miss,
+            },
+        )
+
+    result = DirectorReviewGate(min_closed_lab_trades=10).refresh(db)
+    db.refresh(pattern)
+    lab_execution = pattern.metrics_json["lab_execution"]
+
+    assert result["marked_for_director_review"] == 0
+    assert pattern.status == DiscoveredPatternStatus.LAB_CANDIDATE
+    assert lab_execution["closed_lab_trades"] == 0
+    assert lab_execution["excluded_lab_evidence_trades"] == 10
+    assert lab_execution["excluded_evidence_type_counts"] == {
+        EvidenceType.NEAR_MISS_SHADOW.value: 5,
+        EvidenceType.SHADOW_NO_ORDER.value: 5,
+    }
+    assert "closed_lab_trades_below_10" in lab_execution["promotion_blockers"]
+
+
+def test_director_review_gate_ignores_degraded_fallback_evidence() -> None:
+    db = session_factory()
+    pattern = add_pattern(db)
+    for index in range(9):
+        add_closed_lab_trade(db, pattern, index)
+    add_closed_lab_trade(
+        db,
+        pattern,
+        9,
+        trade_metadata={
+            "evidence_type": EvidenceType.IBKR_PAPER_FILL.value,
+            "evidence_quality": EvidenceQuality.DEGRADED.value,
+            "fallback_used": True,
+            "fallback_source": "signal.metadata_json.signal_snapshot.features.last_close",
+        },
+    )
+
+    result = DirectorReviewGate(min_closed_lab_trades=10).refresh(db)
+    db.refresh(pattern)
+    lab_execution = pattern.metrics_json["lab_execution"]
+
+    assert result["marked_for_director_review"] == 0
+    assert lab_execution["closed_lab_trades"] == 9
+    assert lab_execution["excluded_lab_evidence_trades"] == 1
+    assert lab_execution["excluded_evidence_quality_counts"] == {
+        EvidenceQuality.DEGRADED.value: 1,
+    }
+    assert lab_execution["trades_remaining_for_director_review"] == 1
 
 
 def test_director_review_gate_explains_missing_bucket_data_when_no_trades() -> None:
@@ -213,3 +297,72 @@ def test_director_review_gate_ranks_entry_variant_and_regime_buckets() -> None:
         recommendation["action"] == "gate_by_regime_until_confirmed"
         for recommendation in lab_execution["director_recommendations"]
     )
+
+
+def test_director_review_gate_excludes_shadow_near_miss_and_degraded_fallback() -> None:
+    db = session_factory()
+    pattern = add_pattern(db)
+    for index in range(9):
+        add_closed_lab_trade(db, pattern, index, r_multiple=1.0)
+
+    trade_time = datetime(2026, 2, 1, 16, 0, tzinfo=timezone.utc)
+    signal = Signal(
+        symbol="SHDW",
+        pattern=pattern.name,
+        side="long",
+        entry=10.0,
+        stop=9.0,
+        target=14.0,
+        reward_risk=4.0,
+        confidence=0.7,
+        composite_score=0.7,
+        risk_usd=10.0,
+        suggested_qty=1,
+        strategy_version=f"laboratory_pattern_{pattern.id}",
+        status=SignalStatus.EXECUTED,
+        human_approved=False,
+        metadata_json={
+            "entry_module": "laboratory",
+            "pattern_id": pattern.id,
+            "evidence_type": EvidenceType.NEAR_MISS_SHADOW.value,
+            "near_miss": True,
+            "no_ibkr_order": True,
+            "observation_only": True,
+        },
+    )
+    db.add(signal)
+    db.flush()
+    db.add(
+        Trade(
+            signal_id=signal.id,
+            symbol="SHDW",
+            pattern=pattern.name,
+            side="long",
+            qty=1,
+            entry=10.0,
+            stop=9.0,
+            target=14.0,
+            status=TradeStatus.CLOSED,
+            opened_at=trade_time,
+            closed_at=trade_time + timedelta(minutes=30),
+            pnl_usd=100.0,
+            r_multiple=10.0,
+            metadata_json={
+                "evidence_type": EvidenceType.NEAR_MISS_SHADOW.value,
+                "evidence_quality": EvidenceQuality.NORMAL.value,
+                "no_ibkr_order": True,
+                "observation_only": True,
+                "near_miss": True,
+            },
+        )
+    )
+    db.commit()
+
+    result = DirectorReviewGate(min_closed_lab_trades=10).refresh(db)
+    db.refresh(pattern)
+
+    assert result["marked_for_director_review"] == 0
+    assert pattern.metrics_json["lab_execution"]["paper_fill_trades"] == 9
+    assert pattern.metrics_json["lab_execution"]["closed_lab_trades"] == 9
+    assert "closed_lab_trades_below_10" in pattern.metrics_json["lab_execution"]["promotion_blockers"]
+    assert pattern.status == DiscoveredPatternStatus.LAB_CANDIDATE

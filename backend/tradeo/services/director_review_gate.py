@@ -6,6 +6,14 @@ from typing import Any, Callable
 from sqlalchemy.orm import Session, joinedload
 
 from tradeo.db.models import AuditLog, DiscoveredPattern, DiscoveredPatternStatus, Trade, TradeStatus
+from tradeo.services.evidence import (
+    EvidenceQuality,
+    PAPER_FILL_EVIDENCE_TYPES,
+    evidence_quality_from_metadata,
+    evidence_type_from_metadata,
+)
+from tradeo.services.production_manifest import build_production_manifest
+from tradeo.services.state_policy import REVIEW_TRIGGER_STATES
 
 
 @dataclass(slots=True)
@@ -23,8 +31,7 @@ class DirectorReviewGate:
         patterns = (
             db.query(DiscoveredPattern)
             .filter(DiscoveredPattern.validation_passed.is_(True))
-            .filter(DiscoveredPattern.status != DiscoveredPatternStatus.PRODUCTION)
-            .filter(DiscoveredPattern.status != DiscoveredPatternStatus.REJECTED)
+            .filter(DiscoveredPattern.status.in_(list(REVIEW_TRIGGER_STATES)))
             .all()
         )
         closed_trades = (
@@ -38,10 +45,12 @@ class DirectorReviewGate:
         for pattern in patterns:
             trades = self._closed_lab_trades_for_pattern(closed_trades, pattern.id)
             baseline_trades = self._baseline_lab_trades_for_pattern(closed_trades, pattern.id)
+            excluded_trades = self._excluded_lab_trades_for_pattern(closed_trades, pattern.id)
             metrics = self._store_lab_execution_metrics(
                 pattern,
                 trades,
                 baseline_trades=baseline_trades,
+                excluded_trades=excluded_trades,
             )
             blockers = list(metrics["promotion_blockers"])
             if blockers:
@@ -60,8 +69,8 @@ class DirectorReviewGate:
             pattern.status = DiscoveredPatternStatus.DIRECTOR_REVIEW
             pattern.promotion_status = DiscoveredPatternStatus.DIRECTOR_REVIEW.value
             pattern.promotion_reason = (
-                f"Lab closed trades reached Director review threshold: "
-                f"{len(trades)} >= {self.min_closed_lab_trades}"
+                "Director review trigger reached, not production approval: "
+                f"{len(trades)} normal IBKR paper fills >= {self.min_closed_lab_trades}"
             )
             db.add(
                 AuditLog(
@@ -81,6 +90,8 @@ class DirectorReviewGate:
         db.commit()
         return {
             "min_closed_lab_trades": self.min_closed_lab_trades,
+            "review_trigger_min_closed_lab_trades": self.min_closed_lab_trades,
+            "gate_scope": "director_review_trigger_not_production_approval",
             "patterns_checked": len(patterns),
             "marked_for_director_review": len(marked),
             "marked": marked,
@@ -97,9 +108,18 @@ class DirectorReviewGate:
             pattern = DirectorReviewGate._lab_pattern_id_for_trade(trade)
             if pattern is None:
                 continue
-            if pattern == pattern_id:
+            if pattern == pattern_id and DirectorReviewGate._counts_as_paper_fill(trade):
                 matched.append(trade)
         return matched
+
+    @staticmethod
+    def _excluded_lab_trades_for_pattern(trades: list[Trade], pattern_id: int) -> list[Trade]:
+        excluded: list[Trade] = []
+        for trade in trades:
+            pattern = DirectorReviewGate._lab_pattern_id_for_trade(trade)
+            if pattern == pattern_id and not DirectorReviewGate._counts_as_paper_fill(trade):
+                excluded.append(trade)
+        return excluded
 
     @staticmethod
     def _lab_pattern_id_for_trade(trade: Trade) -> int | None:
@@ -114,12 +134,39 @@ class DirectorReviewGate:
         except (TypeError, ValueError):
             return None
 
+    @staticmethod
+    def _counts_as_paper_fill(trade: Trade) -> bool:
+        metadata = trade.metadata_json or {}
+        signal_metadata = trade.signal.metadata_json if trade.signal is not None else {}
+        evidence_type = evidence_type_from_metadata(
+            metadata,
+            status=DirectorReviewGate._status_value(trade.status),
+            signal_metadata=signal_metadata,
+            broker_order_id=trade.broker_order_id,
+        )
+        evidence_quality = evidence_quality_from_metadata(metadata)
+        return (
+            evidence_type in PAPER_FILL_EVIDENCE_TYPES
+            and evidence_quality == EvidenceQuality.NORMAL.value
+            and not bool(metadata.get("no_ibkr_order") or metadata.get("observation_only"))
+            and not bool(signal_metadata.get("no_ibkr_order") or signal_metadata.get("observation_only"))
+            and not bool(metadata.get("near_miss") or signal_metadata.get("near_miss"))
+        )
+
+    @staticmethod
+    def _status_value(status: Any) -> str:
+        return str(status.value if hasattr(status, "value") else status)
+
     @classmethod
     def _baseline_lab_trades_for_pattern(cls, trades: list[Trade], pattern_id: int) -> list[Trade]:
         baseline: list[Trade] = []
         for trade in trades:
             lab_pattern_id = cls._lab_pattern_id_for_trade(trade)
-            if lab_pattern_id is not None and lab_pattern_id != pattern_id:
+            if (
+                lab_pattern_id is not None
+                and lab_pattern_id != pattern_id
+                and cls._counts_as_paper_fill(trade)
+            ):
                 baseline.append(trade)
         return baseline
 
@@ -129,6 +176,7 @@ class DirectorReviewGate:
         trades: list[Trade],
         *,
         baseline_trades: list[Trade],
+        excluded_trades: list[Trade],
     ) -> dict[str, Any]:
         r_values = [float(trade.r_multiple or 0.0) for trade in trades]
         wins = [r for r in r_values if r > 0]
@@ -164,8 +212,21 @@ class DirectorReviewGate:
             research_expectancy=research_expectancy,
         )
         metrics = {
+            "gate_scope": "director_review_trigger",
+            "not_production_approval": True,
+            "production_gate_required": "DirectorProductionGate",
+            "evidence_count_policy": (
+                "Only normal ibkr_paper_fill evidence counts. Shadow, near-miss, "
+                "no_ibkr_order and degraded fallback rows are excluded."
+            ),
             "closed_lab_trades": len(trades),
+            "paper_fill_trades": len(trades),
+            "director_review_trigger_trades": len(trades),
             "min_closed_lab_trades": self.min_closed_lab_trades,
+            "review_trigger_min_closed_lab_trades": self.min_closed_lab_trades,
+            "excluded_lab_evidence_trades": len(excluded_trades),
+            "excluded_evidence_type_counts": self._evidence_type_counts(excluded_trades),
+            "excluded_evidence_quality_counts": self._evidence_quality_counts(excluded_trades),
             "trades_remaining_for_director_review": max(
                 0, self.min_closed_lab_trades - len(trades)
             ),
@@ -225,6 +286,31 @@ class DirectorReviewGate:
         return metrics
 
     @staticmethod
+    def _evidence_type_counts(trades: list[Trade]) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for trade in trades:
+            signal_metadata = trade.signal.metadata_json if trade.signal is not None else {}
+            evidence_type = (
+                evidence_type_from_metadata(
+                    trade.metadata_json or {},
+                    status=DirectorReviewGate._status_value(trade.status),
+                    signal_metadata=signal_metadata,
+                    broker_order_id=trade.broker_order_id,
+                )
+                or "unknown"
+            )
+            counts[evidence_type] = counts.get(evidence_type, 0) + 1
+        return counts
+
+    @staticmethod
+    def _evidence_quality_counts(trades: list[Trade]) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for trade in trades:
+            quality = evidence_quality_from_metadata(trade.metadata_json or {})
+            counts[quality] = counts.get(quality, 0) + 1
+        return counts
+
+    @staticmethod
     def _bucket_metrics(trades: list[Trade], key_fn: Callable[[Trade], str]) -> dict[str, dict[str, Any]]:
         buckets: dict[str, list[float]] = {}
         for trade in trades:
@@ -248,7 +334,7 @@ class DirectorReviewGate:
             return ""
         return (
             "no_closed_lab_trades: bucket performance is empty because there are no closed "
-            f"laboratory paper trades yet; missing {required_data}."
+            f"normal IBKR paper fill evidence rows yet; missing {required_data}."
         )
 
     @staticmethod
@@ -300,8 +386,8 @@ class DirectorReviewGate:
                     "priority": "high",
                     "trades_remaining": trades_remaining,
                     "reason": (
-                        f"needs {trades_remaining} more closed laboratory paper trades "
-                        "before Director review can rely on execution evidence"
+                        f"needs {trades_remaining} more normal IBKR paper fills before "
+                        "Director review can rely on execution evidence; this is not production approval"
                     ),
                 }
             )
@@ -311,8 +397,8 @@ class DirectorReviewGate:
                     "action": "keep_research_only",
                     "priority": "high",
                     "reason": (
-                        "no closed_lab_trades exist, so by_regime and by_entry_variant "
-                        "performance cannot be ranked yet"
+                        "no closed_lab_trades normal IBKR paper fill evidence exists, so by_regime "
+                        "and by_entry_variant performance cannot be ranked yet"
                     ),
                 }
             )
@@ -380,7 +466,10 @@ class DirectorReviewGate:
                 {
                     "action": "prepare_director_packet",
                     "priority": "medium",
-                    "reason": "minimum paper evidence is present; still requires Director audit, not live trading",
+                    "reason": (
+                        "minimum review-trigger paper evidence is present; this is not production "
+                        "approval and still requires Director audit"
+                    ),
                 }
             )
         return recommendations
@@ -415,6 +504,133 @@ class DirectorReviewGate:
         if research_expectancy > 0 and expectancy < research_expectancy * self.min_research_expectancy_ratio:
             blockers.append("lab_expectancy_degraded_vs_research")
         return blockers
+
+
+@dataclass(slots=True)
+class DirectorProductionGate:
+    """Hard production approval gate.
+
+    DirectorReviewGate is only a review trigger. This gate is the first runtime
+    path allowed to create a production manifest.
+    """
+
+    min_paper_fills: int = 30
+    min_fill_symbols: int = 3
+    min_fill_trading_days: int = 10
+    max_drawdown_r: float = 4.0
+    min_profit_factor: float = 1.3
+    min_expectancy_r: float = 0.05
+
+    def evaluate_pattern(
+        self,
+        pattern: DiscoveredPattern,
+        closed_trades: list[Trade],
+    ) -> dict[str, Any]:
+        fills = [
+            trade
+            for trade in closed_trades
+            if DirectorReviewGate._lab_pattern_id_for_trade(trade) == pattern.id
+            and DirectorReviewGate._counts_as_paper_fill(trade)
+        ]
+        r_values = [float(trade.r_multiple or 0.0) for trade in fills]
+        wins = [r for r in r_values if r > 0]
+        losses = [abs(r) for r in r_values if r < 0]
+        loss = sum(losses)
+        profit_factor = sum(wins) / loss if loss > 0 else sum(wins) if wins else 0.0
+        expectancy = sum(r_values) / len(r_values) if r_values else 0.0
+        unique_symbols = len({trade.symbol for trade in fills})
+        unique_days = len(
+            {
+                (trade.closed_at or trade.opened_at).date().isoformat()
+                for trade in fills
+                if trade.closed_at or trade.opened_at
+            }
+        )
+        max_drawdown = _max_drawdown_r(r_values)
+        blockers: list[str] = []
+        if len(fills) < self.min_paper_fills:
+            blockers.append(f"ibkr_paper_fills_below_{self.min_paper_fills}")
+        if unique_symbols < self.min_fill_symbols:
+            blockers.append(f"fill_symbols_below_{self.min_fill_symbols}")
+        if unique_days < self.min_fill_trading_days:
+            blockers.append(f"fill_days_below_{self.min_fill_trading_days}")
+        if max_drawdown > self.max_drawdown_r:
+            blockers.append(f"paper_fill_drawdown_above_{self.max_drawdown_r}r")
+        if expectancy < self.min_expectancy_r:
+            blockers.append(f"paper_fill_expectancy_below_{self.min_expectancy_r}r")
+        if profit_factor < self.min_profit_factor:
+            blockers.append(f"paper_fill_profit_factor_below_{self.min_profit_factor}")
+        return {
+            "gate_scope": "director_production_gate",
+            "approved_for_production": not blockers,
+            "blockers": blockers,
+            "ibkr_paper_fills": len(fills),
+            "min_paper_fills": self.min_paper_fills,
+            "unique_fill_symbols": unique_symbols,
+            "min_fill_symbols": self.min_fill_symbols,
+            "unique_fill_days": unique_days,
+            "min_fill_trading_days": self.min_fill_trading_days,
+            "paper_fill_expectancy_r": round(expectancy, 4),
+            "paper_fill_profit_factor": round(profit_factor, 4),
+            "paper_fill_max_drawdown_r": round(max_drawdown, 4),
+            "evidence_types_accepted": sorted(PAPER_FILL_EVIDENCE_TYPES),
+        }
+
+    def approve_pattern(
+        self,
+        db: Session,
+        *,
+        pattern: DiscoveredPattern,
+        reviewer: str = "director",
+    ) -> dict[str, Any]:
+        closed_trades = (
+            db.query(Trade)
+            .options(joinedload(Trade.signal))
+            .filter(Trade.status == TradeStatus.CLOSED)
+            .all()
+        )
+        decision = self.evaluate_pattern(pattern, closed_trades)
+        if not bool(decision["approved_for_production"]):
+            pattern.metrics_json = {
+                **(pattern.metrics_json or {}),
+                "production_gate": decision,
+            }
+            db.add(pattern)
+            db.commit()
+            return decision
+        manifest = build_production_manifest(
+            pattern,
+            reviewer=reviewer,
+            evidence_packet=decision,
+        )
+        previous_status = (
+            pattern.status.value if hasattr(pattern.status, "value") else str(pattern.status)
+        )
+        pattern.status = DiscoveredPatternStatus.PRODUCTION
+        pattern.promotion_status = DiscoveredPatternStatus.PRODUCTION.value
+        pattern.promotion_reason = "DirectorProductionGate approved normal IBKR paper fill evidence"
+        pattern.metrics_json = {
+            **(pattern.metrics_json or {}),
+            "production_gate": decision,
+            "production_manifest": manifest,
+        }
+        db.add(
+            AuditLog(
+                actor="director_production_gate",
+                action="pattern_production_manifest_approved",
+                entity_type="discovered_pattern",
+                entity_id=str(pattern.id),
+                details_json={
+                    "previous_status": previous_status,
+                    "new_status": DiscoveredPatternStatus.PRODUCTION.value,
+                    "production_gate": decision,
+                    "production_manifest": manifest,
+                },
+            )
+        )
+        db.add(pattern)
+        db.commit()
+        return {**decision, "production_manifest": manifest}
 
 
 def _max_drawdown_r(r_values: list[float]) -> float:

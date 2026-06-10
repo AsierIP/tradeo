@@ -6,6 +6,13 @@ from typing import Any, Literal
 from sqlalchemy.orm import Session, joinedload
 
 from tradeo.db.models import Signal, Trade
+from tradeo.services.evidence import (
+    EvidenceQuality,
+    FILL_EVIDENCE_TYPES,
+    SHADOW_EVIDENCE_TYPES,
+    evidence_quality_from_metadata,
+    evidence_type_from_metadata,
+)
 
 EntryModule = Literal["laboratory", "fox_hunter"]
 
@@ -30,27 +37,52 @@ def module_overview(db: Session, module: EntryModule, *, limit: int = 80) -> dic
     ][:limit]
     signal_trade_statuses = _signal_trade_statuses(all_trades)
     trades = [trade for trade in all_trades if _status_value(trade.status) != "cancelled"]
-    pnl_points = _pnl_points(list(reversed(trades)))
+    execution_trades = [trade for trade in trades if _is_normal_fill_evidence(trade)]
+    pnl_points = _pnl_points(list(reversed(execution_trades)))
     total_pnl = pnl_points[-1]["total_pnl_usd"] if pnl_points else 0.0
-    closed_trades = [trade for trade in trades if _status_value(trade.status) == "closed"]
+    all_closed_trades = [trade for trade in trades if _status_value(trade.status) == "closed"]
+    execution_closed_trades = [
+        trade for trade in all_closed_trades if _is_normal_fill_evidence(trade)
+    ]
     signal_payloads = [_signal_to_dict(signal, signal_trade_statuses.get(signal.id)) for signal in signals]
     trade_payloads = [_trade_to_dict(trade) for trade in trades]
+    evidence_summary = _evidence_summary(trades)
     return {
         "module": module,
         "signals": signal_payloads,
         "trades": trade_payloads,
         "pattern_outcomes": _pattern_outcomes(signal_payloads, trade_payloads),
         "pnl_points": pnl_points,
+        "shadow_pnl_points": _pnl_points(
+            list(reversed([trade for trade in trades if _is_shadow_evidence(trade)]))
+        ),
+        "evidence_summary": evidence_summary,
         "stats": {
             "signals": len(signals),
             "trades": len(trades),
             "open_trades": sum(1 for trade in trades if _status_value(trade.status) == "open"),
-            "closed_trades": len(closed_trades),
+            "closed_trades": len(execution_closed_trades),
+            "all_closed_trades": len(all_closed_trades),
+            "execution_closed_trades": len(execution_closed_trades),
+            "shadow_closed_trades": evidence_summary["shadow_closed"],
+            "near_miss_closed_trades": evidence_summary["near_miss_closed"],
+            "ibkr_paper_filled_trades": evidence_summary["ibkr_paper_filled"],
+            "live_trades": evidence_summary["live_filled"],
+            "live_filled_trades": evidence_summary["live_filled"],
+            "degraded_closed_trades": evidence_summary["degraded_closed"],
             "total_pnl_usd": total_pnl,
-            "total_r": round(sum(float(trade.r_multiple or 0.0) for trade in closed_trades), 4),
+            "total_r": round(sum(float(trade.r_multiple or 0.0) for trade in execution_closed_trades), 4),
+            "shadow_total_r": round(
+                sum(float(trade.r_multiple or 0.0) for trade in all_closed_trades if _is_shadow_evidence(trade)),
+                4,
+            ),
+            "pnl_basis": "operational_fills_only",
+            "shadow_only": len(execution_closed_trades) == 0
+            and (evidence_summary["shadow_closed"] > 0 or evidence_summary["near_miss_closed"] > 0),
             "win_rate": (
-                sum(1 for trade in closed_trades if float(trade.pnl_usd or 0.0) > 0) / len(closed_trades)
-                if closed_trades
+                sum(1 for trade in execution_closed_trades if float(trade.pnl_usd or 0.0) > 0)
+                / len(execution_closed_trades)
+                if execution_closed_trades
                 else 0.0
             ),
             "funnel": _signal_funnel(signal_payloads),
@@ -121,6 +153,21 @@ def _signal_trade_statuses(trades: list[Trade]) -> dict[int, dict[str, Any]]:
             continue
         trade_status = _status_value(trade.status)
         current = status_by_signal.get(trade.signal_id)
+        evidence_type = _trade_evidence_type(trade)
+        if evidence_type in SHADOW_EVIDENCE_TYPES:
+            is_closed = trade_status == "closed"
+            status_by_signal[trade.signal_id] = {
+                "status": _execution_class_from_evidence(evidence_type, trade_status),
+                "reason_code": evidence_type,
+                "reason": (
+                    "Lab shadow observation closed without broker order"
+                    if is_closed
+                    else "Lab shadow observation is open without broker order"
+                ),
+                "retryable": False,
+                "next_action": "review_shadow_outcome" if is_closed else "collect_shadow_outcome",
+            }
+            continue
         if trade_status in {"open", "closed"}:
             metadata = trade.metadata_json or {}
             execution_mode = str(metadata.get("execution_mode") or "")
@@ -228,6 +275,8 @@ def _signal_to_dict(signal: Signal, trade_status: dict[str, Any] | None = None) 
 
 
 def _trade_to_dict(trade: Trade) -> dict[str, Any]:
+    evidence_type = _trade_evidence_type(trade)
+    evidence_quality = evidence_quality_from_metadata(trade.metadata_json or {})
     return {
         "id": trade.id,
         "signal_id": trade.signal_id,
@@ -245,8 +294,75 @@ def _trade_to_dict(trade: Trade) -> dict[str, Any]:
         "pnl_usd": trade.pnl_usd,
         "r_multiple": trade.r_multiple,
         "broker_order_id": trade.broker_order_id,
+        "evidence_type": evidence_type,
+        "execution_class": _execution_class_from_evidence(evidence_type, _status_value(trade.status)),
+        "evidence_quality": evidence_quality,
+        "counts_as_execution_fill": (
+            evidence_type in FILL_EVIDENCE_TYPES
+            and evidence_quality == EvidenceQuality.NORMAL.value
+        ),
         "metadata_json": trade.metadata_json or {},
     }
+
+
+def _trade_evidence_type(trade: Trade) -> str:
+    return evidence_type_from_metadata(
+        trade.metadata_json or {},
+        status=_status_value(trade.status),
+        signal_metadata=(trade.signal.metadata_json if trade.signal is not None else {}) or {},
+        broker_order_id=trade.broker_order_id,
+    )
+
+
+def _execution_class_from_evidence(evidence_type: str | None, status: str) -> str:
+    if evidence_type == "near_miss_shadow":
+        return "near_miss_closed" if status == "closed" else "near_miss_open"
+    if evidence_type == "shadow_no_order":
+        return "shadow_closed" if status == "closed" else "shadow_open"
+    if evidence_type == "ibkr_paper_fill":
+        return "ibkr_paper_filled"
+    if evidence_type == "ibkr_paper_order":
+        return "ibkr_paper_order"
+    if evidence_type in {"live_fill", "live_order"}:
+        return "live"
+    return "unknown"
+
+
+def _is_normal_fill_evidence(trade: Trade) -> bool:
+    return (
+        _trade_evidence_type(trade) in FILL_EVIDENCE_TYPES
+        and evidence_quality_from_metadata(trade.metadata_json or {}) == EvidenceQuality.NORMAL.value
+    )
+
+
+def _is_shadow_evidence(trade: Trade) -> bool:
+    return _trade_evidence_type(trade) in SHADOW_EVIDENCE_TYPES
+
+
+def _evidence_summary(trades: list[Trade]) -> dict[str, int]:
+    summary = {
+        "shadow_closed": 0,
+        "near_miss_closed": 0,
+        "ibkr_paper_filled": 0,
+        "live_filled": 0,
+        "degraded_closed": 0,
+    }
+    for trade in trades:
+        if _status_value(trade.status) != "closed":
+            continue
+        evidence_type = _trade_evidence_type(trade)
+        evidence_quality = evidence_quality_from_metadata(trade.metadata_json or {})
+        if evidence_type == "near_miss_shadow":
+            summary["near_miss_closed"] += 1
+        elif evidence_type == "shadow_no_order":
+            summary["shadow_closed"] += 1
+        elif evidence_type == "ibkr_paper_fill":
+            summary["ibkr_paper_filled"] += 1
+        elif evidence_type == "live_fill":
+            summary["live_filled"] += 1
+        if evidence_quality == EvidenceQuality.DEGRADED.value:
+            summary["degraded_closed"] += 1
+    return summary
 
 
 def _entry_quality_score(signal: Signal, entry_quality: dict[str, Any]) -> float:
@@ -326,13 +442,29 @@ def _pattern_outcomes(
     for trade in trades:
         pattern = str(trade.get("pattern") or "unknown")
         row = _pattern_row(rows, pattern)
+        evidence_type = str(trade.get("evidence_type") or "")
+        evidence_quality = str(trade.get("evidence_quality") or "")
+        counts_as_execution = bool(trade.get("counts_as_execution_fill"))
         row["trades"] += 1
         if str(trade.get("status")) == "open":
             row["open_trades"] += 1
         if str(trade.get("status")) == "closed":
+            row["all_closed_trades"] += 1
+            if evidence_type == "near_miss_shadow":
+                row["near_miss_closed"] += 1
+            elif evidence_type == "shadow_no_order":
+                row["shadow_closed"] += 1
+            elif evidence_type == "ibkr_paper_fill":
+                row["ibkr_paper_filled"] += 1
+            elif evidence_type == "live_fill":
+                row["live_filled"] += 1
+                row["live"] += 1
+            if evidence_quality == "degraded":
+                row["degraded_closed"] += 1
+        if counts_as_execution:
             row["closed_trades"] += 1
-        row["total_pnl_usd"] += float(trade.get("pnl_usd") or 0.0)
-        row["total_r"] += float(trade.get("r_multiple") or 0.0)
+            row["total_pnl_usd"] += float(trade.get("pnl_usd") or 0.0)
+            row["total_r"] += float(trade.get("r_multiple") or 0.0)
     outcomes = []
     for row in rows.values():
         signals_count = max(1, int(row["signals"]))
@@ -361,6 +493,13 @@ def _pattern_row(rows: dict[str, dict[str, Any]], pattern: str) -> dict[str, Any
             "trades": 0,
             "open_trades": 0,
             "closed_trades": 0,
+            "all_closed_trades": 0,
+            "shadow_closed": 0,
+            "near_miss_closed": 0,
+            "ibkr_paper_filled": 0,
+            "live": 0,
+            "live_filled": 0,
+            "degraded_closed": 0,
             "total_pnl_usd": 0.0,
             "total_r": 0.0,
             "_quality_sum": 0.0,

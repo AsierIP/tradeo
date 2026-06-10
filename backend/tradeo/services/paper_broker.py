@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 
 from tradeo.db.models import AuditLog, Signal, SignalStatus, Trade, TradeStatus
+from tradeo.services.evidence import EvidenceQuality, EvidenceType
 
 
 class PaperBroker:
@@ -30,7 +31,13 @@ class PaperBroker:
             target=signal.target,
             status=TradeStatus.OPEN,
             opened_at=datetime.now(timezone.utc),
-            metadata_json={"execution_mode": "paper", "source_signal": signal.id},
+            metadata_json={
+                "evidence_type": EvidenceType.SHADOW_NO_ORDER.value,
+                "evidence_quality": EvidenceQuality.NORMAL.value,
+                "execution_mode": "paper",
+                "source_signal": signal.id,
+                "no_ibkr_order": True,
+            },
         )
         signal.status = SignalStatus.EXECUTED
         db.add(trade)

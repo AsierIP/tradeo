@@ -1,14 +1,17 @@
 from __future__ import annotations
 
+from dataclasses import FrozenInstanceError
 from datetime import date, timedelta
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from tradeo.core.config import Settings
 from tradeo.research.adversarial_research import AdversarialResearchEngine
 from tradeo.research.causal_invariance import CausalInvariantTester
 from tradeo.research.foundation_teacher import FoundationChartTeacher
+from tradeo.research.hypothesis_engine import HypothesisEngine
 from tradeo.research.market_replay import MarketReplayConfig, MarketReplayEngine
 from tradeo.research.research_director import ResearchDirector
 from tradeo.research.types import ClusterCandidate, ForwardOutcome, WindowSample
@@ -227,8 +230,52 @@ def test_research_director_writes_memory_graph_papers_and_agenda(tmp_path: Path)
     assert Path(summary["artifact_json_path"]).exists()
     assert Path(summary["artifact_markdown_path"]).exists()
     assert candidate.metrics["research_hypothesis"]["falsifiable"] is True
+    assert candidate.metrics["research_hypothesis"]["edge_claim"] == "NO_DEMOSTRADO"
+    package = candidate.metrics["research_hypothesis_package"]
+    assert package["selection_split"]
+    assert package["fit_scope"]["descriptive_all_feeds_scores"] is False
+    assert package["train_metrics"]
+    assert package["out_of_sample_metrics"]
+    assert package["walk_forward_metrics"]
+    assert package["global_trial_count"] >= 1
+    assert package["nested_discovery_replay"]["status"] == "blocked_contract"
+    assert package["nested_discovery_replay"]["blocking"] is True
+    assert candidate.metrics["global_experiment_registry"]["global_trial_count"] >= 1
+    assert Path(summary["global_experiment_registry"]["path"]).exists()
     assert candidate.metrics["research_memory"]["family_key"].startswith("family_long_1d_w20_")
     assert candidate.metrics["pattern_lifecycle"]["paper_live_auto_promotion"] is False
     assert candidate.metrics["research_paper_report_path"]
     assert Path(str(candidate.metrics["research_paper_report_path"])).exists()
     assert candidate.metrics["active_learning"]["experiments"]
+
+
+def test_hypothesis_engine_emits_immutable_package() -> None:
+    samples = [_sample(i, symbol=f"S{i % 4}", year=2021 + i % 2) for i in range(12)]
+    candidate = _candidate(
+        samples,
+        {
+            "best_rr": 3.0,
+            "best_expectancy_r": 0.35,
+            "best_profit_factor": 2.0,
+            "in_sample_expectancy_r": 0.31,
+            "in_sample_profit_factor": 1.9,
+            "out_of_sample_expectancy_r": 0.12,
+            "walk_forward_positive_fold_rate": 0.75,
+            "event_ledger_sha256": "abc123",
+            "global_trial_count": 17,
+            "selection_split": {"train_end": "2024-01-01", "holdout_start": "2024-02-01"},
+            "fit_scope": {"descriptive_all_feeds_scores": False},
+            "train_metrics": {"expectancy_r": 0.31},
+            "out_of_sample_metrics": {"expectancy_r": 0.12},
+            "walk_forward_metrics": {"positive_fold_rate": 0.75},
+            "nested_discovery_replay": {"status": "blocked_contract", "blocking": True},
+        },
+    )
+
+    package = HypothesisEngine().build_package(candidate)
+
+    assert package.edge_claim == "NO_DEMOSTRADO"
+    assert package.global_trial_count == 17
+    assert package.event_ledger_hash == "abc123"
+    with pytest.raises(FrozenInstanceError):
+        package.edge_claim = "DEMOSTRADO"  # type: ignore[misc]

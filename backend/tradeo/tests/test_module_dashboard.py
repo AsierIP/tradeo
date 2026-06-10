@@ -5,6 +5,7 @@ from sqlalchemy.orm import sessionmaker
 
 from tradeo.db.models import Signal, SignalStatus, Trade, TradeStatus
 from tradeo.db.session import Base
+from tradeo.services.evidence import EvidenceType
 from tradeo.services.module_dashboard import module_overview
 
 
@@ -311,3 +312,68 @@ def test_expired_signal_is_discarded_not_retried_for_module_dashboard() -> None:
     assert lab["signals"][0]["execution_reason_code"] == "entry_price_missed_or_signal_expired"
     assert lab["signals"][0]["retryable"] is False
     assert lab["signals"][0]["next_action"] == "discard_signal"
+
+
+def test_shadow_closed_trade_is_separated_from_execution_pnl() -> None:
+    db = session_factory()
+    signal = Signal(
+        symbol="SHDW",
+        pattern="research_match_shadow",
+        side="long",
+        entry=10.0,
+        stop=9.0,
+        target=14.0,
+        reward_risk=4.0,
+        confidence=0.55,
+        composite_score=0.55,
+        risk_usd=30.0,
+        suggested_qty=10,
+        strategy_version="laboratory_pattern_1",
+        status=SignalStatus.WATCHLIST,
+        metadata_json={
+            "entry_module": "laboratory",
+            "evidence_type": EvidenceType.NEAR_MISS_SHADOW.value,
+            "near_miss": True,
+            "no_ibkr_order": True,
+            "observation_only": True,
+        },
+    )
+    db.add(signal)
+    db.flush()
+    db.add(
+        Trade(
+            signal_id=signal.id,
+            symbol="SHDW",
+            pattern="research_match_shadow",
+            side="long",
+            qty=10,
+            entry=10.0,
+            stop=9.0,
+            target=14.0,
+            status=TradeStatus.CLOSED,
+            pnl_usd=999.0,
+            r_multiple=9.99,
+            metadata_json={
+                "evidence_type": EvidenceType.NEAR_MISS_SHADOW.value,
+                "near_miss": True,
+                "no_ibkr_order": True,
+                "observation_only": True,
+            },
+        )
+    )
+    db.commit()
+
+    lab = module_overview(db, "laboratory")
+
+    assert lab["stats"]["closed_trades"] == 0
+    assert lab["stats"]["all_closed_trades"] == 1
+    assert lab["stats"]["execution_closed_trades"] == 0
+    assert lab["stats"]["near_miss_closed_trades"] == 1
+    assert lab["stats"]["shadow_closed_trades"] == 0
+    assert lab["stats"]["shadow_only"] is True
+    assert lab["stats"]["total_pnl_usd"] == 0.0
+    assert lab["stats"]["total_r"] == 0
+    assert lab["trades"][0]["counts_as_execution_fill"] is False
+    assert lab["pattern_outcomes"][0]["near_miss_closed"] == 1
+    assert lab["pattern_outcomes"][0]["shadow_closed"] == 0
+    assert lab["pattern_outcomes"][0]["total_pnl_usd"] == 0.0

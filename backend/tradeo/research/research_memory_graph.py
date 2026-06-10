@@ -88,6 +88,8 @@ class ResearchMemoryGraph:
             "last_run_id": run_id,
             "last_seen_at": now,
             "score": round(float(candidate.score), 5),
+            "lab_priority_score": float(metrics.get("lab_priority_score", candidate.score) or 0.0),
+            "score_scope": "train_oos_walk_forward_no_descriptive_all",
             "best_expectancy_r": round(current_expectancy, 5),
             "replay_expectancy_r": self._nested_float(metrics, "market_replay", "expected_expectancy_r"),
             "challenge_score": self._nested_float(metrics, "adversarial_challenge", "challenge_score"),
@@ -111,6 +113,7 @@ class ResearchMemoryGraph:
                 "best_score": 0.0,
                 "best_expectancy_r": 0.0,
                 "best_pattern_key": "",
+                "best_pattern_selection_scope": "lab_priority_score_no_descriptive_all",
                 "decay_score": 0.0,
                 "state": "discovered",
             },
@@ -124,6 +127,7 @@ class ResearchMemoryGraph:
         if float(candidate.score) >= float(family.get("best_score", 0.0)):
             family["best_score"] = round(float(candidate.score), 5)
             family["best_pattern_key"] = candidate.pattern_key
+            family["best_pattern_selection_scope"] = "lab_priority_score_no_descriptive_all"
         if current_expectancy >= float(family.get("best_expectancy_r", -1e9)):
             family["best_expectancy_r"] = round(current_expectancy, 5)
         family["decay_score"] = round(
@@ -134,10 +138,16 @@ class ResearchMemoryGraph:
         self._merge_regimes(family, metrics)
         metrics["research_memory"] = {
             "family_key": family_key,
+            "family_id": family_key,
+            "variant_id": str(metrics.get("variant_id") or metrics.get("variant_key") or candidate.pattern_key),
             "known_variant_count": int(family["variant_count"]),
             "family_state": family["state"],
             "family_decay_score": family["decay_score"],
             "best_pattern_key": family.get("best_pattern_key", candidate.pattern_key),
+            "best_pattern_selection_scope": family.get(
+                "best_pattern_selection_scope",
+                "lab_priority_score_no_descriptive_all",
+            ),
             "graph_path": str(self.path),
         }
 

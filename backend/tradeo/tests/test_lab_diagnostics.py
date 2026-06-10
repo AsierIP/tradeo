@@ -16,6 +16,7 @@ from tradeo.db.models import (
     TradeStatus,
 )
 from tradeo.db.session import Base
+from tradeo.services.evidence import EvidenceQuality, EvidenceType
 from tradeo.services.lab_diagnostics import laboratory_diagnostics
 
 
@@ -97,10 +98,64 @@ def add_closed_paper_trade(db, pattern: DiscoveredPattern) -> None:
     db.commit()
 
 
+def add_closed_shadow_observation(db, pattern: DiscoveredPattern) -> None:
+    signal = Signal(
+        symbol="SHDW",
+        pattern=pattern.name,
+        side="long",
+        entry=10.0,
+        stop=9.0,
+        target=14.0,
+        reward_risk=4.0,
+        confidence=0.7,
+        composite_score=0.7,
+        risk_usd=10.0,
+        suggested_qty=1,
+        strategy_version=f"laboratory_pattern_{pattern.id}",
+        status=SignalStatus.EXECUTED,
+        human_approved=False,
+        metadata_json={
+            "entry_module": "laboratory",
+            "pattern_id": pattern.id,
+            "paper_only": True,
+            "no_ibkr_order": True,
+        },
+    )
+    db.add(signal)
+    db.flush()
+    db.add(
+        Trade(
+            signal_id=signal.id,
+            symbol="SHDW",
+            pattern=pattern.name,
+            side="long",
+            qty=1,
+            entry=10.0,
+            stop=9.0,
+            target=14.0,
+            status=TradeStatus.CLOSED,
+            opened_at=datetime(2026, 6, 8, 15, 0, tzinfo=timezone.utc),
+            closed_at=datetime(2026, 6, 8, 16, 0, tzinfo=timezone.utc),
+            pnl_usd=12.0,
+            r_multiple=1.2,
+            metadata_json={
+                "execution_mode": "lab_shadow_observation",
+                "evidence_type": EvidenceType.SHADOW_NO_ORDER.value,
+                "evidence_quality": EvidenceQuality.NORMAL.value,
+                "paper_only": True,
+                "no_ibkr_order": True,
+                "observation_only": True,
+            },
+        )
+    )
+    db.commit()
+
+
 def test_laboratory_diagnostics_combines_candidates_rejections_and_paper_history() -> None:
     db = session_factory()
     pattern = add_pattern(db)
     add_closed_paper_trade(db, pattern)
+    add_closed_shadow_observation(db, pattern)
     entry_gate = {
         "passed": False,
         "trigger": "momentum_close",

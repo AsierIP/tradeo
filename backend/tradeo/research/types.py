@@ -106,3 +106,83 @@ class ClusterCandidate:
     metrics: dict[str, Any]
     feature_summary: dict[str, Any]
     examples: list[dict[str, Any]]
+
+
+def freeze_json(value: Any) -> Any:
+    """Return a tuple-only representation for immutable research packages."""
+    if isinstance(value, dict):
+        return tuple((str(key), freeze_json(value[key])) for key in sorted(value, key=str))
+    if isinstance(value, list | tuple):
+        return tuple(freeze_json(item) for item in value)
+    if isinstance(value, np.generic):
+        return value.item()
+    return value
+
+
+def thaw_json(value: Any) -> Any:
+    if isinstance(value, tuple):
+        if all(isinstance(item, tuple) and len(item) == 2 and isinstance(item[0], str) for item in value):
+            return {key: thaw_json(child) for key, child in value}
+        return [thaw_json(item) for item in value]
+    return value
+
+
+@dataclass(frozen=True, slots=True)
+class HypothesisPackage:
+    """Immutable research handoff for a candidate hypothesis.
+
+    The package deliberately keeps `edge_claim` at NO_DEMOSTRADO. Any later
+    paper/live promotion must be backed by separate Director evidence.
+    """
+
+    version: str
+    pattern_key: str
+    family_id: str
+    variant_id: str
+    edge_claim: Literal["NO_DEMOSTRADO"]
+    falsifiable: bool
+    thesis: str
+    rule: str
+    causal_mechanism: str
+    works_when: tuple[str, ...]
+    fails_when: tuple[str, ...]
+    kill_conditions: tuple[str, ...]
+    selection_split: Any
+    fit_scope: Any
+    train_metrics: Any
+    out_of_sample_metrics: Any
+    walk_forward_metrics: Any
+    global_trial_count: int
+    event_ledger_hash: str
+    nested_discovery_replay: Any
+    evidence_accumulated: Any
+    falsification_tests: tuple[str, ...]
+    current_verdict: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "version": self.version,
+            "pattern_key": self.pattern_key,
+            "family_id": self.family_id,
+            "variant_id": self.variant_id,
+            "edge_claim": self.edge_claim,
+            "falsifiable": self.falsifiable,
+            "thesis": self.thesis,
+            "rule": self.rule,
+            "causal_mechanism": self.causal_mechanism,
+            "works_when": list(self.works_when),
+            "fails_when": list(self.fails_when),
+            "kill_conditions": list(self.kill_conditions),
+            "kill_criteria": list(self.kill_conditions),
+            "selection_split": thaw_json(self.selection_split),
+            "fit_scope": thaw_json(self.fit_scope),
+            "train_metrics": thaw_json(self.train_metrics),
+            "out_of_sample_metrics": thaw_json(self.out_of_sample_metrics),
+            "walk_forward_metrics": thaw_json(self.walk_forward_metrics),
+            "global_trial_count": self.global_trial_count,
+            "event_ledger_hash": self.event_ledger_hash,
+            "nested_discovery_replay": thaw_json(self.nested_discovery_replay),
+            "evidence_accumulated": thaw_json(self.evidence_accumulated),
+            "falsification_tests": list(self.falsification_tests),
+            "current_verdict": self.current_verdict,
+        }
