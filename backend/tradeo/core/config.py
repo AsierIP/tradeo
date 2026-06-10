@@ -81,7 +81,12 @@ class Settings(BaseSettings):
     # LAB candidates and compact review artifacts for supervisor/API review.
     discovery_enabled: bool = True
     discovery_scheduler_enabled: bool = True
-    discovery_scan_minutes: int = 90
+    # >= 1440 means "one run per completed daily bar": the worker switches from an
+    # interval to a post-close cron trigger. Intraday reruns over the same daily
+    # bar only inflate N_trials without adding information (P0-8).
+    discovery_scan_minutes: int = 1440
+    discovery_post_close_hour_utc: int = 22
+    discovery_post_close_minute_utc: int = 15
     discovery_period: str = "5y"
     discovery_interval: str = "1d"
     discovery_limit_default: int = 80
@@ -94,6 +99,16 @@ class Settings(BaseSettings):
     discovery_min_cluster_size: int = 60
     discovery_max_clusters_per_window: int = 12
     discovery_min_samples: int = 100
+    # Gate over the effective sample size (sum of average-uniqueness weights of
+    # deduplicated occurrences). Raw overlapping windows overstate evidence by
+    # 4-10x (P0-1); n_eff is what the statistics actually see.
+    discovery_min_effective_samples: float = 60.0
+    # Run-level Benjamini-Hochberg FDR over the permutation p-values of every
+    # cluster evaluated in the run, accepted and rejected alike (P0-2).
+    discovery_fdr_q: float = 0.05
+    # Family-deflated Sharpe gate for lab_candidate. Uses N_trials accumulated in
+    # the global experiment registry so mining more makes the bar rise.
+    discovery_min_dsr: float = 0.95
     discovery_min_symbols: int = 8
     discovery_min_years: int = 2
     discovery_min_reward_risk: float = 2.5
@@ -123,6 +138,15 @@ class Settings(BaseSettings):
     discovery_match_symbol_limit: int = 80
     discovery_match_max_patterns: int = 25
     discovery_match_similarity_threshold: float = 0.45
+    # Never match against a live (incomplete) daily bar: in-session bars carry
+    # partial volume and provisional high/low, which breaks Research<->Lab
+    # feature parity (P0-3). The matcher drops today's bar before the close.
+    discovery_match_complete_bars_only: bool = True
+    # Per-pattern similarity threshold derived from the intra-cluster similarity
+    # distribution (tau = this percentile of member distances to the centroid).
+    # The global similarity threshold remains as a safety floor only (P0-4).
+    discovery_match_per_pattern_threshold: bool = True
+    discovery_match_tau_percentile: float = 92.5
     discovery_match_max_results: int = 100
     discovery_registry_similarity_threshold: float = 0.96
     research_director_enabled: bool = True

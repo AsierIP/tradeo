@@ -25,6 +25,7 @@ from tradeo.modules.fox_hunter.production_manifest import (
     production_manifest_for_pattern,
     production_manifest_is_active,
 )
+from tradeo.services.market_session import REGULAR_CLOSE, US_EQUITY_TZ
 from tradeo.services.state_policy import LAB_RUNTIME_STATES, PRODUCTION_RUNTIME_STATES
 from tradeo.services.technical_indicators import atr, normalize_ohlcv
 
@@ -145,7 +146,8 @@ class NovelPatternMatcher:
                             np.linalg.norm(scaled - centroid) / max(1.0, np.sqrt(len(centroid)))
                         )
                         similarity = float(1.0 / (1.0 + normalized_distance))
-                        if similarity < threshold:
+                        effective_threshold = self._effective_threshold(pattern, threshold)
+                        if similarity < effective_threshold:
                             continue
                         features = dict(features)
                         features["avg_dollar_volume"] = float(
@@ -201,6 +203,7 @@ class NovelPatternMatcher:
                                 "timeframe": pattern.timeframe,
                                 "side": pattern.side,
                                 "similarity": round(similarity, 6),
+                                "similarity_threshold_used": round(effective_threshold, 6),
                                 "score": score,
                                 "entry_score": entry_gate["entry_score"],
                                 "entry_gate_passed": entry_gate["passed"],
@@ -481,6 +484,26 @@ class NovelPatternMatcher:
             "target_price": round(target, 4),
         }
 
+    def _effective_threshold(self, pattern: DiscoveredPattern, floor: float) -> float:
+        """Per-pattern similarity threshold; the global config value is a floor.
+
+        A single global threshold misfits every cluster at once: compact clusters
+        accept spurious matches and loose clusters never fire (P0-4). Research
+        persists match_tau_similarity (the intra-cluster similarity percentile),
+        and the matcher requires the stricter of the two.
+        """
+        settings = self.settings
+        if settings is None or not settings.discovery_match_per_pattern_threshold:
+            return floor
+        tau = (pattern.metrics_json or {}).get("match_tau_similarity")
+        try:
+            tau = float(tau)
+        except (TypeError, ValueError):
+            return floor
+        if not math.isfinite(tau) or tau <= 0.0:
+            return floor
+        return max(floor, tau)
+
     @staticmethod
     def _required_bars_by_timeframe(patterns: list[DiscoveredPattern]) -> dict[str, int]:
         required: dict[str, int] = {}
@@ -514,8 +537,37 @@ class NovelPatternMatcher:
             logger.warning("current data fetch failed for {} / {}: {}", symbol, timeframe, exc)
             cache[key] = None
             return None
+        if self.settings and self.settings.discovery_match_complete_bars_only:
+            df = self._drop_incomplete_daily_bar(df, timeframe)
         cache[key] = df
         return df.copy()
+
+    @staticmethod
+    def _drop_incomplete_daily_bar(
+        df: pd.DataFrame,
+        timeframe: str,
+        now: datetime | None = None,
+    ) -> pd.DataFrame:
+        """Drop today's daily bar while the US session has not closed (P0-3).
+
+        Patterns were trained on completed bars; an in-session daily bar carries
+        partial volume and provisional high/low/close, so matching against it
+        breaks Research<->Lab feature parity. Before the 16:00 New York close
+        the operative window must end on yesterday's bar.
+        """
+        if timeframe.lower().strip() not in {"1d", "1 day"} or df.empty:
+            return df
+        current = now or datetime.now(US_EQUITY_TZ)
+        local = current.astimezone(US_EQUITY_TZ) if current.tzinfo else current.replace(tzinfo=US_EQUITY_TZ)
+        if local.time() >= REGULAR_CLOSE:
+            return df
+        try:
+            last_date = pd.Timestamp(df.index[-1]).date()
+        except (TypeError, ValueError):
+            return df
+        if last_date >= local.date():
+            return df.iloc[:-1]
+        return df
 
     @staticmethod
     def _current_match_period(timeframe: str, *, required_bars: int) -> str:

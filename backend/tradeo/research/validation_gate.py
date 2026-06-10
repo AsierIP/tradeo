@@ -39,8 +39,23 @@ class ValidationGate:
         premium_passed = self._quality_pass(premium, s.discovery_min_expectancy_r, s.discovery_min_profit_factor)
         train_sample_count = int(metrics.get("train_sample_count", candidate.sample_count))
 
+        quant = metrics.get("quant_validation", {})
+        if not isinstance(quant, dict):
+            quant = {}
+        effective_samples = metrics.get("effective_sample_count")
         if candidate.sample_count < s.discovery_min_samples:
             reasons.append(f"muestras insuficientes: {candidate.sample_count} < {s.discovery_min_samples}")
+        if effective_samples is not None and float(effective_samples) < s.discovery_min_effective_samples:
+            reasons.append(
+                "muestras efectivas insuficientes (solapamiento/pseudo-replicacion): "
+                f"n_eff={float(effective_samples):.1f} < {s.discovery_min_effective_samples:g}"
+            )
+        if metrics.get("fdr_passed") is False:
+            reasons.append(
+                f"no supera BH-FDR del run (q={float(metrics.get('fdr_q', s.discovery_fdr_q)):g}, "
+                f"p={float(metrics.get('null_p_value', 1.0)):.4f}, "
+                f"tests={int(metrics.get('fdr_test_count', 0) or 0)})"
+            )
         if train_sample_count < s.discovery_min_samples:
             reasons.append(f"muestras train insuficientes: {train_sample_count} < {s.discovery_min_samples}")
         if candidate.symbol_count < s.discovery_min_symbols:
@@ -237,6 +252,32 @@ class ValidationGate:
                 promotion_status = "lab_watchlist"
             elif best_expectancy > 0:
                 promotion_status = "lab"
+
+        if promotion_status == "lab_candidate":
+            # lab_candidate is the highest discovery state, so it additionally
+            # requires the family-deflated Sharpe and a strictly positive
+            # stationary-bootstrap CI on the deduplicated, uniqueness-weighted
+            # expectancy. Failures downgrade instead of rejecting: the evidence
+            # is weak, not contradicted.
+            dsr_family = metrics.get("dsr_family")
+            if dsr_family is None:
+                promotion_status = "lab_watchlist"
+                warnings.append(
+                    "lab_candidate bloqueado: DSR de familia no calculable (faltan trials o sr_std del ledger)"
+                )
+            elif float(dsr_family) < s.discovery_min_dsr:
+                promotion_status = "lab_watchlist"
+                warnings.append(
+                    f"lab_candidate bloqueado: DSR familia {float(dsr_family):.3f} < {s.discovery_min_dsr:g} "
+                    f"(N_trials={int(metrics.get('dsr_family_n_trials', 0) or 0)})"
+                )
+            stationary_ci_low = quant.get("expectancy_ci95_low")
+            if stationary_ci_low is not None and float(stationary_ci_low) <= 0.0:
+                promotion_status = "lab_watchlist"
+                warnings.append(
+                    "lab_candidate bloqueado: IC95 stationary-bootstrap del expectancy ponderado "
+                    f"no positivo (low={float(stationary_ci_low):.3f}R)"
+                )
 
         candidate.validation_passed = promotion_status != "rejected"
         candidate.validation_reasons = warnings if candidate.validation_passed else reasons + warnings

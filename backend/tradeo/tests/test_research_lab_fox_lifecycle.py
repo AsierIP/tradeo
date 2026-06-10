@@ -57,6 +57,11 @@ def settings() -> Settings:
         entry_min_regime_score=0.0,
         entry_min_quality_score=0.0,
         entry_cooldown_minutes=0,
+        # El fixture termina en la barra de "hoy"; la guarda de vela viva la
+        # descartaria en horario de sesion y haria el test dependiente del reloj.
+        # La guarda tiene tests deterministas propios en
+        # test_quant_validation_integration.py.
+        discovery_match_complete_bars_only=False,
         artifacts_dir="/tmp/tradeo-test-artifacts",
     )
 

@@ -42,6 +42,12 @@ def test_validation_gate_never_promotes_research_metric_to_paper_candidate() -> 
             "out_of_sample_expectancy_r": 0.35,
             "out_of_sample_profit_factor": 1.8,
             "hit_4r_rate": 0.15,
+            # lab_candidate exige ademas la evidencia del nucleo quant: DSR de
+            # familia >= 0.95 e IC95 stationary-bootstrap positivo sobre n_eff.
+            "dsr_family": 0.97,
+            "dsr_family_n_trials": 500,
+            "effective_sample_count": 90.0,
+            "quant_validation": {"n_eff": 90.0, "expectancy_ci95_low": 0.08},
         },
         feature_summary={},
         examples=[],

@@ -241,14 +241,30 @@ def main() -> None:
             id="weekly_self_improvement",
         )
         if settings.discovery_scheduler_enabled:
-            scheduler.add_job(
-                discovery_job,
-                "interval",
-                minutes=settings.discovery_scan_minutes,
-                id="pattern_discovery_lab",
-                max_instances=1,
-                coalesce=True,
-            )
+            if settings.discovery_scan_minutes >= 1440:
+                # Daily data only gains information once per completed session.
+                # Re-running intraday multiplies N_trials and burns IBKR pacing
+                # without new bars, so schedule a single post-close run instead.
+                scheduler.add_job(
+                    discovery_job,
+                    CronTrigger(
+                        hour=settings.discovery_post_close_hour_utc,
+                        minute=settings.discovery_post_close_minute_utc,
+                        day_of_week="mon-fri",
+                    ),
+                    id="pattern_discovery_lab",
+                    max_instances=1,
+                    coalesce=True,
+                )
+            else:
+                scheduler.add_job(
+                    discovery_job,
+                    "interval",
+                    minutes=settings.discovery_scan_minutes,
+                    id="pattern_discovery_lab",
+                    max_instances=1,
+                    coalesce=True,
+                )
         if settings.discovery_match_enabled:
             scheduler.add_job(
                 novel_match_job,

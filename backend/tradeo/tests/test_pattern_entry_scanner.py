@@ -252,6 +252,9 @@ def scanner(provider: FixtureProvider, **settings_overrides) -> PatternEntryScan
         "entry_gate_enabled": False,
         "entry_min_quality_score": 0.0,
         "entry_cooldown_minutes": 0,
+        # Fixtures terminan en la barra de "hoy": sin esto el resultado del
+        # matcher dependeria de si el test corre antes o despues del cierre NY.
+        "discovery_match_complete_bars_only": False,
         "artifacts_dir": "/tmp/tradeo-test-artifacts",
     }
     defaults.update(settings_overrides)

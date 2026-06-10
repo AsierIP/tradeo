@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 from loguru import logger
 from sqlalchemy.orm import Session
 
@@ -18,6 +19,11 @@ from tradeo.research.cluster_research_engine import ClusterResearchEngine
 from tradeo.research.autonomous_research_director import ResearchDirector as PersistentResearchDirector
 from tradeo.research.global_experiment_registry import GlobalExperimentRegistry
 from tradeo.research.novel_pattern_registry import NovelPatternRegistry
+from tradeo.research.quant_validation import (
+    benjamini_hochberg,
+    deflated_sharpe_ratio,
+    probabilistic_sharpe_ratio,
+)
 from tradeo.research.research_director import ResearchDirector as CandidateResearchDirector
 from tradeo.research.validation_gate import ValidationGate
 from tradeo.research.window_sampler import WindowSampler
@@ -94,8 +100,10 @@ class PatternDiscoveryLabAgent:
                 cost_stress_multipliers=settings.discovery_cost_stress_multiplier_list,
                 required_cost_stress_multiplier=settings.discovery_required_cost_stress_multiplier,
                 event_ledger_limit=0,
+                match_tau_percentile=settings.discovery_match_tau_percentile,
             )
             raw_candidates = engine.discover(samples)
+            self._apply_run_level_inference(raw_candidates)
             candidates = ValidationGate(settings).evaluate_many(raw_candidates)
             accepted = [c for c in candidates if c.validation_passed]
             rejected = [c for c in candidates if not c.validation_passed]
@@ -211,6 +219,79 @@ class PatternDiscoveryLabAgent:
             )
             db.commit()
             raise
+
+    def _apply_run_level_inference(self, candidates: list[Any]) -> None:
+        """Run-level selective inference: BH-FDR + family-deflated Sharpe.
+
+        Per-candidate p-values already exist (stratified permutation vs null
+        baselines), but each one ignores how many sibling hypotheses this run
+        tested. Benjamini-Hochberg is applied over every cluster evaluated in
+        the run — accepted and rejected alike — and the DSR is deflated with the
+        N_trials accumulated in the global experiment registry, so the bar for
+        lab_candidate rises automatically as more mining happens.
+        """
+        settings = self.settings
+        assert settings is not None
+        if not candidates:
+            return
+        pvals: list[float] = []
+        indexed: list[Any] = []
+        for candidate in candidates:
+            p = candidate.metrics.get("null_p_value")
+            try:
+                p = float(p)
+            except (TypeError, ValueError):
+                p = float("nan")
+            if np.isfinite(p):
+                pvals.append(min(max(p, 0.0), 1.0))
+                indexed.append(candidate)
+        if pvals:
+            passed_mask, cutoff = benjamini_hochberg(pvals, q=settings.discovery_fdr_q)
+            for candidate, passed in zip(indexed, passed_mask, strict=True):
+                candidate.metrics["fdr_q"] = settings.discovery_fdr_q
+                candidate.metrics["fdr_passed"] = bool(passed)
+                candidate.metrics["fdr_cutoff_p"] = float(cutoff) if np.isfinite(cutoff) else None
+                candidate.metrics["fdr_test_count"] = len(pvals)
+
+        registry_payload = GlobalExperimentRegistry(
+            settings.reports_path / "research" / "global_experiment_registry.json"
+        ).load()
+        prior_trials = int(registry_payload.get("global_trial_count", 0) or 0)
+        trials_by_window: dict[int, int] = {}
+        for candidate in candidates:
+            window = int(getattr(candidate, "window_size", 0))
+            count = int(candidate.metrics.get("real_variant_count", 1) or 1)
+            trials_by_window[window] = max(trials_by_window.get(window, 0), count)
+        run_trials = sum(trials_by_window.values())
+        n_trials_total = max(1, prior_trials + run_trials)
+
+        sharpes = np.asarray(
+            [float(c.metrics.get("trade_sharpe", 0.0) or 0.0) for c in candidates], dtype=float
+        )
+        sharpes = sharpes[np.isfinite(sharpes)]
+        sr_std = float(np.std(sharpes, ddof=1)) if sharpes.size >= 3 else 0.0
+
+        for candidate in candidates:
+            quant = candidate.metrics.get("quant_validation", {})
+            if not isinstance(quant, dict):
+                quant = {}
+            n_eff = float(quant.get("n_eff", 0.0) or 0.0)
+            sr = float(quant.get("sharpe_per_trade", candidate.metrics.get("trade_sharpe", 0.0)) or 0.0)
+            skew = float(quant.get("skew", 0.0) or 0.0)
+            kurt = float(quant.get("kurtosis", 3.0) or 3.0)
+            if n_eff > 1 and sr_std > 0 and n_trials_total > 1:
+                dsr, sr_star = deflated_sharpe_ratio(sr, n_eff, skew, kurt, n_trials_total, sr_std)
+            elif n_eff > 1:
+                dsr = probabilistic_sharpe_ratio(sr, 0.0, n_eff, skew, kurt)
+                sr_star = 0.0
+            else:
+                dsr, sr_star = float("nan"), 0.0
+            candidate.metrics["dsr_family"] = round(float(dsr), 5) if np.isfinite(dsr) else None
+            candidate.metrics["dsr_family_sr_star"] = round(float(sr_star), 5)
+            candidate.metrics["dsr_family_n_trials"] = n_trials_total
+            candidate.metrics["dsr_family_sr_std"] = round(sr_std, 5)
+            candidate.metrics["dsr_family_prior_registry_trials"] = prior_trials
+            candidate.metrics["dsr_family_run_trials"] = run_trials
 
     def _resolve_params(self, request: DiscoveryRunRequest) -> dict[str, Any]:
         s = self.settings
@@ -374,6 +455,18 @@ class PatternDiscoveryLabAgent:
             "purged_cv_avg_expectancy_r": metrics.get("purged_cv_avg_expectancy_r", 0.0),
             "purged_cv_min_expectancy_r": metrics.get("purged_cv_min_expectancy_r", 0.0),
             "multiple_testing_trials": metrics.get("multiple_testing_trials"),
+            "quant_validation": metrics.get("quant_validation", {}),
+            "effective_sample_count": metrics.get("effective_sample_count"),
+            "unique_event_count": metrics.get("unique_event_count"),
+            "fdr_q": metrics.get("fdr_q"),
+            "fdr_passed": metrics.get("fdr_passed"),
+            "fdr_cutoff_p": metrics.get("fdr_cutoff_p"),
+            "fdr_test_count": metrics.get("fdr_test_count"),
+            "dsr_family": metrics.get("dsr_family"),
+            "dsr_family_n_trials": metrics.get("dsr_family_n_trials"),
+            "dsr_family_sr_star": metrics.get("dsr_family_sr_star"),
+            "match_tau_similarity": metrics.get("match_tau_similarity"),
+            "match_tau_percentile": metrics.get("match_tau_percentile"),
             "statistical_edge_passed": metrics.get("statistical_edge_passed"),
             "null_method": metrics.get("null_method"),
             "null_strata_count": metrics.get("null_strata_count"),
