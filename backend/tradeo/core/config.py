@@ -162,16 +162,16 @@ class Settings(BaseSettings):
     entry_variant_max_per_pattern_symbol: int = 3
     entry_exploration_rate: float = 0.15
 
-    # Laboratory scans validated Research patterns in paper mode. It may create
-    # auditable paper signals continuously, but it never sends IB orders unless
-    # explicitly enabled.
+    # Laboratory scans validated Research patterns in paper mode. Paper order
+    # submission is enabled by default, but still passes through entry/risk,
+    # paper-mode, kill-switch, live-armed and IBKR live-port safety gates.
     laboratory_scanner_enabled: bool = True
     laboratory_scan_minutes: int = 5
     laboratory_symbol_limit: int = 80
     laboratory_max_patterns: int = 25
     laboratory_similarity_threshold: float = 0.45
     laboratory_store_signals: bool = True
-    laboratory_auto_submit_paper_orders: bool = False
+    laboratory_auto_submit_paper_orders: bool = True
     laboratory_market_hours_only: bool = True
 
     # Fox Hunter scans production patterns. Live order submission requires both
