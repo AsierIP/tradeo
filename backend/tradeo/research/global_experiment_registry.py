@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import hashlib
 import json
+import os
+import shutil
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -10,12 +13,15 @@ import numpy as np
 
 from tradeo.research.types import ClusterCandidate
 
+REGISTRY_HASH_ALGORITHM = "sha256_canonical_v1"
+
 
 @dataclass(slots=True)
 class GlobalExperimentRegistry:
     """Append-only-ish registry of discovery trials across research runs."""
 
     path: Path
+    hash_algorithm: str = REGISTRY_HASH_ALGORITHM
 
     def load(self) -> dict[str, Any]:
         if not self.path.exists():
@@ -26,10 +32,11 @@ class GlobalExperimentRegistry:
             return self._empty()
         if not isinstance(payload, dict):
             return self._empty()
-        payload.setdefault("schema_version", 1)
+        payload.setdefault("schema_version", 2)
         payload.setdefault("global_trial_count", 0)
         payload.setdefault("runs", [])
         payload.setdefault("experiments", [])
+        payload.setdefault("hash_algorithm", self.hash_algorithm)
         return payload
 
     def register(
@@ -40,6 +47,9 @@ class GlobalExperimentRegistry:
         params: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         payload = self.load()
+        payload["schema_version"] = 2
+        payload["hash_algorithm"] = self.hash_algorithm
+        previous_registry_hash = self.registry_hash(payload) if self.path.exists() else ""
         now = datetime.now(timezone.utc).isoformat()
         payload["updated_at"] = now
         experiments = payload.setdefault("experiments", [])
@@ -50,6 +60,7 @@ class GlobalExperimentRegistry:
         }
         global_trial_count = int(payload.get("global_trial_count", 0) or 0)
         added = 0
+        candidate_updates: list[tuple[ClusterCandidate, str, int, int]] = []
         for rank, candidate in enumerate(sorted(candidates, key=lambda c: c.score, reverse=True), start=1):
             trial_count = self._candidate_trial_count(candidate)
             variant_id = self._variant_id(candidate)
@@ -77,40 +88,80 @@ class GlobalExperimentRegistry:
                 experiments.append(row)
                 existing[experiment_id] = row
                 added += 1
-            candidate.metrics["global_trial_count"] = int(row.get("global_trial_count_after", global_trial_count) or 0)
-            candidate.metrics["global_experiment_registry"] = {
-                "path": str(self.path),
-                "experiment_id": experiment_id,
-                "candidate_trial_count": trial_count,
-                "global_trial_count": candidate.metrics["global_trial_count"],
-                "edge_claim": "NO_DEMOSTRADO",
-            }
+            candidate_global_count = int(row.get("global_trial_count_after", global_trial_count) or 0)
+            candidate_updates.append((candidate, experiment_id, trial_count, candidate_global_count))
         payload["global_trial_count"] = global_trial_count
-        self._merge_run(payload, run_id=run_id, now=now, candidates=candidates, params=params or {})
+        run_manifest = self._merge_run(
+            payload,
+            run_id=run_id,
+            now=now,
+            candidates=candidates,
+            params=params or {},
+            added=added,
+            previous_registry_hash=previous_registry_hash,
+            experiment_ids=[experiment_id for _, experiment_id, _, _ in candidate_updates],
+        )
         payload["summary"] = {
             "run_count": len(payload.get("runs", [])),
             "experiment_count": len(experiments),
             "global_trial_count": global_trial_count,
             "new_experiments": added,
+            "latest_run_manifest_hash": run_manifest["run_manifest_hash"],
         }
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(json.dumps(self._json_clean(payload), indent=2, sort_keys=True), encoding="utf-8")
+        payload["latest_run_manifest"] = run_manifest
+        payload["registry_hash"] = self.registry_hash(payload)
+        backup_path = self._backup_existing()
+        self._atomic_write(payload)
+        for candidate, experiment_id, trial_count, candidate_global_count in candidate_updates:
+            candidate.metrics["global_trial_count"] = candidate_global_count
+            candidate.metrics["global_experiment_registry"] = {
+                "path": str(self.path),
+                "experiment_id": experiment_id,
+                "candidate_trial_count": trial_count,
+                "global_trial_count": candidate_global_count,
+                "edge_claim": "NO_DEMOSTRADO",
+                "hash_algorithm": self.hash_algorithm,
+                "previous_registry_hash": previous_registry_hash,
+                "registry_hash": payload["registry_hash"],
+                "run_manifest_hash": run_manifest["run_manifest_hash"],
+                "hash_chain_valid": True,
+            }
         return {
             "path": str(self.path),
             "new_experiments": added,
             "experiment_count": len(experiments),
             "global_trial_count": global_trial_count,
+            "hash_algorithm": self.hash_algorithm,
+            "previous_registry_hash": previous_registry_hash,
+            "registry_hash": payload["registry_hash"],
+            "run_manifest_hash": run_manifest["run_manifest_hash"],
+            "backup_path": str(backup_path) if backup_path is not None else "",
         }
 
-    @staticmethod
     def _merge_run(
+        self,
         payload: dict[str, Any],
         *,
         run_id: int | str,
         now: str,
         candidates: list[ClusterCandidate],
         params: dict[str, Any],
-    ) -> None:
+        added: int,
+        previous_registry_hash: str,
+        experiment_ids: list[str],
+    ) -> dict[str, Any]:
+        run_manifest = {
+            "run_id": run_id,
+            "registered_at": now,
+            "candidate_count": len(candidates),
+            "new_experiments": added,
+            "experiment_count": len(payload.get("experiments", [])),
+            "global_trial_count": int(payload.get("global_trial_count", 0) or 0),
+            "previous_registry_hash": previous_registry_hash,
+            "experiment_ids": sorted(experiment_ids),
+        }
+        run_manifest_hash = self.hash_payload(run_manifest)
+        run_manifest["run_manifest_hash"] = run_manifest_hash
         runs = [row for row in payload.setdefault("runs", []) if str(row.get("run_id")) != str(run_id)]
         runs.append(
             {
@@ -118,9 +169,13 @@ class GlobalExperimentRegistry:
                 "registered_at": now,
                 "candidate_count": len(candidates),
                 "params": params,
+                "new_experiments": added,
+                "previous_registry_hash": previous_registry_hash,
+                "run_manifest_hash": run_manifest_hash,
             }
         )
         payload["runs"] = runs[-500:]
+        return run_manifest
 
     @staticmethod
     def _candidate_trial_count(candidate: ClusterCandidate) -> int:
@@ -152,13 +207,53 @@ class GlobalExperimentRegistry:
     @staticmethod
     def _empty() -> dict[str, Any]:
         return {
-            "schema_version": 1,
+            "schema_version": 2,
             "updated_at": "",
             "global_trial_count": 0,
+            "hash_algorithm": REGISTRY_HASH_ALGORITHM,
+            "registry_hash": "",
             "runs": [],
             "experiments": [],
             "summary": {},
         }
+
+    def _backup_existing(self) -> Path | None:
+        if not self.path.exists():
+            return None
+        backup_dir = self.path.parent / ".backups"
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+        backup = backup_dir / f"{self.path.name}.{timestamp}.bak"
+        counter = 1
+        while backup.exists():
+            backup = backup_dir / f"{self.path.name}.{timestamp}.{counter}.bak"
+            counter += 1
+        shutil.copy2(self.path, backup)
+        return backup
+
+    def _atomic_write(self, payload: dict[str, Any]) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        temp_path = self.path.with_name(f".{self.path.name}.{os.getpid()}.tmp")
+        try:
+            temp_path.write_text(
+                json.dumps(self._json_clean(payload), indent=2, sort_keys=True),
+                encoding="utf-8",
+            )
+            os.replace(temp_path, self.path)
+        finally:
+            if temp_path.exists():
+                temp_path.unlink()
+
+    def registry_hash(self, payload: dict[str, Any]) -> str:
+        clean = self._json_clean(payload)
+        if isinstance(clean, dict):
+            clean = {key: value for key, value in clean.items() if key != "registry_hash"}
+        return self.hash_payload(clean)
+
+    @staticmethod
+    def hash_payload(payload: Any) -> str:
+        raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
     @staticmethod
     def _json_clean(value: Any) -> Any:

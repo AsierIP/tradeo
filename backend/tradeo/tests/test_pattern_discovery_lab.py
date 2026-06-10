@@ -606,3 +606,56 @@ def test_global_experiment_registry_accumulates_trials_once_per_experiment(tmp_p
     assert duplicate["global_trial_count"] == 12
     assert second["global_trial_count"] == 24
     assert candidate.metrics["global_experiment_registry"]["edge_claim"] == "NO_DEMOSTRADO"
+
+
+def test_global_experiment_registry_hash_chain_atomic_write_and_backup(tmp_path: Path) -> None:
+    first_candidate = ClusterCandidate(
+        pattern_key="pattern-a",
+        name="pattern-a",
+        side="long",
+        timeframe="1d",
+        window_size=20,
+        cluster_id=1,
+        centroid=[],
+        sample_count=10,
+        symbol_count=3,
+        year_count=2,
+        score=0.8,
+        validation_passed=True,
+        validation_reasons=[],
+        metrics={"real_variant_count": 2, "fit_scope": {"scaler": "train_only"}},
+        feature_summary={},
+        examples=[],
+    )
+    second_candidate = ClusterCandidate(
+        pattern_key="pattern-b",
+        name="pattern-b",
+        side="long",
+        timeframe="1d",
+        window_size=20,
+        cluster_id=2,
+        centroid=[],
+        sample_count=12,
+        symbol_count=4,
+        year_count=2,
+        score=0.9,
+        validation_passed=True,
+        validation_reasons=[],
+        metrics={"real_variant_count": 3, "fit_scope": {"scaler": "train_only"}},
+        feature_summary={},
+        examples=[],
+    )
+    registry = GlobalExperimentRegistry(tmp_path / "global_experiment_registry.json")
+
+    first = registry.register([first_candidate], run_id=1, params={"interval": "1d"})
+    first_payload = registry.load()
+    second = registry.register([second_candidate], run_id=2, params={"interval": "1d"})
+    second_payload = registry.load()
+
+    assert first_payload["registry_hash"] == first["registry_hash"]
+    assert second_payload["latest_run_manifest"]["previous_registry_hash"] == first["registry_hash"]
+    assert second_payload["latest_run_manifest"]["run_manifest_hash"] == second["run_manifest_hash"]
+    assert second_payload["registry_hash"] == registry.registry_hash(second_payload)
+    assert second_candidate.metrics["global_experiment_registry"]["registry_hash"] == second["registry_hash"]
+    assert list((tmp_path / ".backups").glob("global_experiment_registry.json.*.bak"))
+    assert list(tmp_path.glob(".global_experiment_registry.json.*.tmp")) == []

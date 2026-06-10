@@ -142,7 +142,15 @@ def test_export_filters_fills_to_exported_paper_trade_ids() -> None:
                 "entry": 20.0,
                 "opened_at": "2026-06-09T10:00:00+00:00",
                 "status": "closed",
-                "metadata_json": {"execution_mode": "paper"},
+                "metadata_json": {
+                    "execution_mode": "paper",
+                    "evidence_type": "ibkr_paper_fill",
+                    "evidence_quality": "standard",
+                    "fill_provenance": "broker_execution",
+                    "broker_fill_id": "fill-2-entry",
+                    "broker_execution_time": "2026-06-09T10:01:00+00:00",
+                    "commission": "1",
+                },
             },
         ]
     }
@@ -230,6 +238,10 @@ def test_export_marks_real_paper_fills_with_evidence_contract() -> None:
                     "execution_mode": "paper",
                     "evidence_type": "ibkr_paper_fill",
                     "evidence_quality": "standard",
+                    "fill_provenance": "broker_execution",
+                    "broker_fill_id": "fill-20-entry",
+                    "broker_execution_time": "2026-06-09T10:01:00+00:00",
+                    "commission": "1",
                 },
             }
         ],
@@ -240,6 +252,46 @@ def test_export_marks_real_paper_fills_with_evidence_contract() -> None:
     assert len(rows) == 1
     assert rows[0]["evidence_type"] == "ibkr_paper_fill"
     assert rows[0]["evidence_quality"] == "standard"
+
+
+def test_export_rejects_closed_paper_trade_without_broker_provenance() -> None:
+    exporter = _load_audit_exporter()
+    patterns = [{"id": 1, "name": "PAPER_PATTERN"}]
+    overview = {
+        "signals": [
+            {
+                "id": 10,
+                "entry": 100,
+                "created_at": "2026-06-09T10:00:00+00:00",
+                "risk_usd": 100,
+                "metadata_json": {"pattern_id": 1},
+            }
+        ],
+        "trades": [
+            {
+                "id": 20,
+                "signal_id": 10,
+                "symbol": "AAA",
+                "pattern": "PAPER_PATTERN",
+                "side": "long",
+                "qty": 1,
+                "entry": 100,
+                "opened_at": "2026-06-09T10:00:00+00:00",
+                "closed_at": "2026-06-09T11:00:00+00:00",
+                "status": "closed",
+                "pnl_usd": 10,
+                "r_multiple": 1.0,
+                "metadata_json": {
+                    "execution_mode": "paper",
+                    "evidence_type": "ibkr_paper_fill",
+                    "evidence_quality": "standard",
+                },
+            }
+        ],
+    }
+
+    assert exporter.build_paper_trades(patterns, overview) == []
+    assert exporter.build_ib_fills(overview, exported_trade_ids={"20"}) == []
 
 
 def test_export_leaves_operational_metrics_empty_without_closed_lab_trades() -> None:
@@ -316,9 +368,14 @@ def test_audit_validator_accepts_manifest_gate_buckets_and_reported_duplicates(t
     validator = _load_audit_validator()
     package = _write_minimal_audit_package(tmp_path, validator, duplicate_repeated_rows=2)
 
-    errors, _ = validator.validate_package(package)
+    errors, rows = validator.validate_package(package)
+    report = validator.validation_report(package, errors, rows)
 
     assert errors == []
+    assert report["schema_valid"] is True
+    assert report["package_valid"] is True
+    assert report["director_gate_status"] == "blocked"
+    assert report["promotion_allowed"] is False
 
 
 def test_audit_validator_rejects_orphan_fills_and_empty_bucket_without_reason(tmp_path: Path) -> None:
@@ -584,6 +641,12 @@ def _write_minimal_audit_package(tmp_path: Path, validator, *, duplicate_repeate
             "duplicate_group_id": "DUP_1",
             "is_independent_sample": "true",
             "data_available_at_signal": "true",
+            "available_data_cutoff_ts": "2026-06-09T00:00:00+00:00",
+            "decision_ts": "2026-06-09T00:00:00+00:00",
+            "entry_eligible_ts": "2026-06-10T00:00:00+00:00",
+            "label_generated_ts": "2026-06-10T00:00:00+00:00",
+            "source_bar_hash": "source_hash_1",
+            "split_id": "test_split",
             "features_used_json": "{}",
             "notes": "",
         },
@@ -613,6 +676,12 @@ def _write_minimal_audit_package(tmp_path: Path, validator, *, duplicate_repeate
             "duplicate_group_id": "DUP_1",
             "is_independent_sample": "true",
             "data_available_at_signal": "true",
+            "available_data_cutoff_ts": "2026-06-10T00:00:00+00:00",
+            "decision_ts": "2026-06-10T00:00:00+00:00",
+            "entry_eligible_ts": "2026-06-11T00:00:00+00:00",
+            "label_generated_ts": "2026-06-11T00:00:00+00:00",
+            "source_bar_hash": "source_hash_2",
+            "split_id": "test_split",
             "features_used_json": "{}",
             "notes": "",
         },
@@ -708,6 +777,18 @@ def _write_minimal_audit_package(tmp_path: Path, validator, *, duplicate_repeate
         "spa_p_value": "0.18",
         "fit_scope": "{\"scaler\":\"train_only\"}",
         "score_input_scope": "{\"descriptive_all_fields_used\":false}",
+        "event_ledger_hash": "event-ledger-hash",
+        "nested_discovery_replay_status": "blocked_contract",
+        "nested_discovery_replay_implemented": "false",
+        "nested_discovery_replay_passed": "false",
+        "edge_claim": "NO_DEMOSTRADO",
+        "drift_status": "stable",
+        "active_blockers": "",
+        "registry_path": "reports/research/global_experiment_registry.json",
+        "registry_hash": "registry-hash",
+        "registry_previous_hash": "previous-registry-hash",
+        "registry_run_manifest_hash": "run-manifest-hash",
+        "registry_hash_chain_valid": "true",
         "notes": "",
     }
     metric = {
@@ -838,8 +919,16 @@ def _write_minimal_audit_package(tmp_path: Path, validator, *, duplicate_repeate
     (package / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
     gate = {
         "status": "blocked",
+        "schema_valid": True,
+        "package_valid": True,
+        "director_gate_status": "blocked",
+        "promotion_allowed": False,
         "summary": {
             "director_gate": "blocked",
+            "director_gate_status": "blocked",
+            "schema_valid": True,
+            "package_valid": True,
+            "promotion_allowed": False,
             "by_regime": {"available": True, "buckets": [{"pattern_id": "PATTERN_000001"}], "empty_reason": ""},
             "by_entry_variant": {"available": True, "buckets": [{"pattern_id": "PATTERN_000001"}], "empty_reason": ""},
         },

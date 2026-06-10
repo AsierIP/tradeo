@@ -163,6 +163,12 @@ type ModuleTrade = Summary['open_trades'][number] & {
 }
 type ModuleOverview = {
   module: 'laboratory' | 'fox_hunter'
+  data_scope?: string
+  query_limit?: number
+  summary_limit?: number
+  pnl_basis?: string
+  director_source?: boolean
+  scope_note?: string
   signals: ModuleSignal[]
   trades: ModuleTrade[]
   pattern_outcomes: Array<{
@@ -518,6 +524,12 @@ function OperationsModule({
   const liveFills = stats.live_trades ?? stats.live_filled_trades ?? overview?.evidence_summary?.live_filled ?? 0
   const shadowClosed = stats.shadow_closed_trades ?? overview?.evidence_summary?.shadow_closed ?? 0
   const nearMissClosed = stats.near_miss_closed_trades ?? overview?.evidence_summary?.near_miss_closed ?? 0
+  const scopeLabel = overview?.data_scope || 'scope pendiente'
+  const fillScopeLabel = overview?.query_limit && overview?.summary_limit
+    ? `${overview.summary_limit}/${overview.query_limit}`
+    : 'scope'
+  const scopeNote = overview?.scope_note || 'Dashboard operativo; no fuente Director.'
+  const pnlBasis = overview?.pnl_basis || stats.pnl_basis || 'operational_fills_only'
   const operationalOk = Boolean(status?.operational_ok)
   const operationalTone = status?.state === 'market_closed' ? 'warn' : operationalOk ? '' : 'bad'
   const blockedHealthy = Boolean(status?.blocked_but_healthy)
@@ -538,6 +550,7 @@ function OperationsModule({
           {typeof status?.live_orders_allowed === 'boolean' && (
             <div className="pill">live_orders_allowed: {status.live_orders_allowed ? 'true' : 'false'}</div>
           )}
+          <div className="pill" title={`${scopeNote} PnL: ${pnlBasis}`}>scope: {scopeLabel} · no Director</div>
         </div>
       </div>
 
@@ -547,7 +560,7 @@ function OperationsModule({
         <div><strong>{stats.signals}</strong><span>señales</span></div>
         <div><strong>{funnel.actionable}</strong><span>accionables</span></div>
         <div><strong>{stats.open_trades}</strong><span>operaciones abiertas</span></div>
-        <div><strong>{paperFills}/{liveFills}</strong><span>paper/live fills</span></div>
+        <div><strong>{paperFills}/{liveFills}</strong><span title={scopeNote}>paper/live fills · {fillScopeLabel}</span></div>
         <div><strong>{shadowClosed}</strong><span>shadow cerradas</span></div>
         <div><strong>{nearMissClosed}</strong><span>near-miss cerradas</span></div>
         <div><strong>{formatMoney(stats.total_pnl_usd)}</strong><span>PnL fills</span></div>

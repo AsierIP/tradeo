@@ -45,6 +45,19 @@ REQUIRED_LOOKAHEAD_COLUMNS = {
     "split_id",
 }
 
+SCIENTIFIC_EXPERIMENT_COLUMNS = {
+    "event_ledger_hash",
+    "nested_discovery_replay_status",
+    "nested_discovery_replay_implemented",
+    "nested_discovery_replay_passed",
+    "edge_claim",
+    "drift_status",
+    "active_blockers",
+    "registry_hash",
+    "registry_run_manifest_hash",
+    "registry_hash_chain_valid",
+}
+
 TRAIN_ONLY_EVIDENCE_COLUMNS = {
     "fit_scope",
     "fit_on_train_only",
@@ -209,6 +222,12 @@ def evaluate(
     missing_lookahead_columns = sorted(REQUIRED_LOOKAHEAD_COLUMNS - event_columns)
     if missing_lookahead_columns:
         blockers.append("event ledger lacks anti-lookahead cutoff columns: " + ", ".join(missing_lookahead_columns))
+    else:
+        blank_lookahead_rows = count_rows_missing_any(events, REQUIRED_LOOKAHEAD_COLUMNS)
+        if blank_lookahead_rows:
+            blockers.append(
+                f"{blank_lookahead_rows} event rows have blank anti-lookahead contract values."
+            )
 
     close_entry_patterns = [
         row.get("pattern_id", "")
@@ -292,6 +311,13 @@ def evaluate(
             f"{len(experiments)} experiment variants were exported without multiple-testing adjusted evidence."
         )
 
+    scientific_contracts = scientific_contract_status(
+        experiments=experiments,
+        trades=trades,
+        fills=fills,
+    )
+    blockers.extend(scientific_contracts["blockers"])
+
     by_regime = bucket_breakdown(
         metrics_by_regime,
         bucket_column="market_regime",
@@ -342,14 +368,152 @@ def evaluate(
         "missing_lookahead_columns": missing_lookahead_columns,
         "research_metric_column_offenders": len(research_metric_offenders),
         "train_only_evidence_missing": train_only_evidence_missing,
+        "scientific_contracts": scientific_contracts,
         "by_regime": by_regime,
         "by_entry_variant": by_entry_variant,
         "actionable_recommendations": actionable_recommendations,
         "pattern_recommendation_count": len(pattern_recommendations),
         "pattern_recommendations": pattern_recommendations,
         "director_gate": "blocked" if blockers else "passed",
+        "director_gate_status": "blocked" if blockers else "passed",
+        "schema_valid": True,
+        "package_valid": True,
+        "promotion_allowed": not blockers,
+        "active_blocker_count": len(blockers),
     }
     return blockers, summary
+
+
+def scientific_contract_status(
+    *,
+    experiments: list[dict[str, str]],
+    trades: list[dict[str, str]],
+    fills: list[dict[str, str]],
+) -> dict[str, Any]:
+    blockers: list[str] = []
+    experiment_columns = set().union(*(row.keys() for row in experiments)) if experiments else set()
+    missing_columns = sorted(SCIENTIFIC_EXPERIMENT_COLUMNS - experiment_columns)
+    if experiments and missing_columns:
+        blockers.append("experiment_registry.csv lacks scientific contract columns: " + ", ".join(missing_columns))
+
+    event_ledger_missing = count_blank(experiments, "event_ledger_hash")
+    if experiments and event_ledger_missing:
+        blockers.append(f"{event_ledger_missing} experiment rows lack event_ledger_hash.")
+
+    nested_missing = 0
+    nested_not_passed = 0
+    for row in experiments:
+        implemented = truthy(row.get("nested_discovery_replay_implemented"))
+        passed = truthy(row.get("nested_discovery_replay_passed")) or (
+            str(row.get("nested_discovery_replay_status") or "").strip().lower() == "passed"
+        )
+        if not any(
+            str(row.get(column) or "").strip()
+            for column in (
+                "nested_discovery_replay_status",
+                "nested_discovery_replay_implemented",
+                "nested_discovery_replay_passed",
+            )
+        ):
+            nested_missing += 1
+        elif not implemented or not passed:
+            nested_not_passed += 1
+    if nested_missing:
+        blockers.append(f"{nested_missing} experiment rows lack nested_discovery_replay evidence.")
+    if nested_not_passed:
+        blockers.append(f"{nested_not_passed} experiment rows have nested_discovery_replay not implemented/passed.")
+
+    inflated_edge_claims = [
+        row.get("experiment_id", "")
+        for row in experiments
+        if str(row.get("edge_claim") or "").strip()
+        and str(row.get("edge_claim") or "").strip() != "NO_DEMOSTRADO"
+    ]
+    if inflated_edge_claims:
+        blockers.append("edge_claim is inflated before paper/live proof; offenders: " + preview(inflated_edge_claims))
+    edge_claim_missing = count_blank(experiments, "edge_claim")
+    if experiments and edge_claim_missing:
+        blockers.append(f"{edge_claim_missing} experiment rows lack edge_claim=NO_DEMOSTRADO.")
+
+    degrading = [
+        row.get("experiment_id", "")
+        for row in experiments
+        if str(row.get("drift_status") or "").strip().lower() in {"degrading", "regressing", "deteriorating"}
+    ]
+    if degrading:
+        blockers.append("drift_status is degrading; offenders: " + preview(degrading))
+
+    active_blocker_rows = [
+        row.get("experiment_id", "")
+        for row in experiments
+        if has_active_blocker_text(row.get("active_blockers"))
+    ]
+    if active_blocker_rows:
+        blockers.append("experiment rows report active blockers: " + preview(active_blocker_rows))
+
+    registry_hash_missing = count_blank(experiments, "registry_hash")
+    registry_run_manifest_missing = count_blank(experiments, "registry_run_manifest_hash")
+    registry_chain_invalid = [
+        row.get("experiment_id", "")
+        for row in experiments
+        if row.get("registry_hash_chain_valid") and not truthy(row.get("registry_hash_chain_valid"))
+    ]
+    if experiments and registry_hash_missing:
+        blockers.append(f"{registry_hash_missing} experiment rows lack registry_hash.")
+    if experiments and registry_run_manifest_missing:
+        blockers.append(f"{registry_run_manifest_missing} experiment rows lack registry_run_manifest_hash.")
+    if registry_chain_invalid:
+        blockers.append("registry hash chain is invalid; offenders: " + preview(registry_chain_invalid))
+
+    fill_trade_ids = {str(row.get("trade_id") or "").strip() for row in fills if row.get("trade_id")}
+    trade_ids = [str(row.get("trade_id") or "").strip() for row in trades if row.get("trade_id")]
+    missing_fill_rows = [trade_id for trade_id in trade_ids if trade_id and trade_id not in fill_trade_ids]
+    cost_missing_rows = [
+        row.get("trade_id", "")
+        for row in trades
+        if any(not str(row.get(field) or "").strip() for field in ("commission", "estimated_spread_cost"))
+    ]
+    slippage_missing_rows = [
+        row.get("trade_id", "")
+        for row in trades
+        if not str(row.get("estimated_slippage") or "").strip()
+    ]
+    if missing_fill_rows:
+        blockers.append("paper trades lack reconciled fill rows; offenders: " + preview(missing_fill_rows))
+    if cost_missing_rows:
+        blockers.append("paper trades lack commission/spread cost provenance; offenders: " + preview(cost_missing_rows))
+    if slippage_missing_rows:
+        blockers.append("paper trades lack slippage provenance; offenders: " + preview(slippage_missing_rows))
+
+    return {
+        "blockers": blockers,
+        "event_ledger_hash_rows": len(experiments) - event_ledger_missing if experiments else 0,
+        "nested_replay_passed_rows": len(experiments) - nested_missing - nested_not_passed if experiments else 0,
+        "registry_hash_rows": len(experiments) - registry_hash_missing if experiments else 0,
+        "registry_run_manifest_hash_rows": (
+            len(experiments) - registry_run_manifest_missing if experiments else 0
+        ),
+        "paper_trades_with_fill_rows": len(trade_ids) - len(missing_fill_rows),
+        "paper_trades": len(trade_ids),
+        "promotion_allowed": not blockers,
+    }
+
+
+def count_blank(rows: list[dict[str, str]], column: str) -> int:
+    return sum(1 for row in rows if not str(row.get(column) or "").strip())
+
+
+def count_rows_missing_any(rows: list[dict[str, str]], columns: set[str]) -> int:
+    return sum(
+        1
+        for row in rows
+        if any(not str(row.get(column) or "").strip() for column in columns)
+    )
+
+
+def has_active_blocker_text(value: str | None) -> bool:
+    text = str(value or "").strip()
+    return bool(text and text not in {"[]", "{}", "null", "None", "none"})
 
 
 def research_metrics_in_operational_columns(metrics: list[dict[str, str]]) -> list[str]:
@@ -643,10 +807,20 @@ def nonzero_or_nonblank(value: str | None) -> bool:
 
 
 def result_payload(package: Path, status: str, blockers: list[str], summary: dict[str, Any]) -> dict[str, Any]:
+    package_valid = status != "invalid"
+    promotion_allowed = bool(package_valid and status == "passed" and not blockers)
+    summary.setdefault("schema_valid", package_valid)
+    summary.setdefault("package_valid", package_valid)
+    summary.setdefault("director_gate_status", status)
+    summary.setdefault("promotion_allowed", promotion_allowed)
     payload = {
         "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "package": str(package),
         "status": status,
+        "schema_valid": package_valid,
+        "package_valid": package_valid,
+        "director_gate_status": status,
+        "promotion_allowed": promotion_allowed,
         "blockers": blockers,
         "summary": summary,
     }

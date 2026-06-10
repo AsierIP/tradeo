@@ -8,19 +8,23 @@ from sqlalchemy.orm import Session, joinedload
 from tradeo.db.models import Signal, Trade
 from tradeo.services.evidence import (
     EvidenceQuality,
-    FILL_EVIDENCE_TYPES,
     SHADOW_EVIDENCE_TYPES,
+    evidence_metadata_with_stored_columns,
     evidence_quality_from_metadata,
     evidence_type_from_metadata,
+    is_strong_fill_evidence,
 )
 
 EntryModule = Literal["laboratory", "fox_hunter"]
+
+MODULE_DASHBOARD_QUERY_LIMIT = 500
+PNL_BASIS = "operational_fills_only"
 
 
 def module_overview(db: Session, module: EntryModule, *, limit: int = 80) -> dict[str, Any]:
     signals = [
         signal
-        for signal in db.query(Signal).order_by(Signal.created_at.desc()).limit(500).all()
+        for signal in db.query(Signal).order_by(Signal.created_at.desc()).limit(MODULE_DASHBOARD_QUERY_LIMIT).all()
         if _signal_module(signal) == module
     ][:limit]
     signal_ids = {signal.id for signal in signals}
@@ -30,7 +34,7 @@ def module_overview(db: Session, module: EntryModule, *, limit: int = 80) -> dic
             db.query(Trade)
             .options(joinedload(Trade.signal))
             .order_by(Trade.opened_at.desc())
-            .limit(500)
+            .limit(MODULE_DASHBOARD_QUERY_LIMIT)
             .all()
         )
         if _trade_module(trade) == module or (trade.signal_id in signal_ids)
@@ -49,6 +53,14 @@ def module_overview(db: Session, module: EntryModule, *, limit: int = 80) -> dic
     evidence_summary = _evidence_summary(trades)
     return {
         "module": module,
+        "data_scope": f"last_{MODULE_DASHBOARD_QUERY_LIMIT}_query/limit_{limit}",
+        "query_limit": MODULE_DASHBOARD_QUERY_LIMIT,
+        "summary_limit": limit,
+        "pnl_basis": PNL_BASIS,
+        "director_source": False,
+        "scope_note": (
+            "Operational dashboard summary only; Director review must use audit/export sources."
+        ),
         "signals": signal_payloads,
         "trades": trade_payloads,
         "pattern_outcomes": _pattern_outcomes(signal_payloads, trade_payloads),
@@ -76,7 +88,7 @@ def module_overview(db: Session, module: EntryModule, *, limit: int = 80) -> dic
                 sum(float(trade.r_multiple or 0.0) for trade in all_closed_trades if _is_shadow_evidence(trade)),
                 4,
             ),
-            "pnl_basis": "operational_fills_only",
+            "pnl_basis": PNL_BASIS,
             "shadow_only": len(execution_closed_trades) == 0
             and (evidence_summary["shadow_closed"] > 0 or evidence_summary["near_miss_closed"] > 0),
             "win_rate": (
@@ -275,8 +287,9 @@ def _signal_to_dict(signal: Signal, trade_status: dict[str, Any] | None = None) 
 
 
 def _trade_to_dict(trade: Trade) -> dict[str, Any]:
+    metadata = _trade_evidence_metadata(trade)
     evidence_type = _trade_evidence_type(trade)
-    evidence_quality = evidence_quality_from_metadata(trade.metadata_json or {})
+    evidence_quality = evidence_quality_from_metadata(metadata)
     return {
         "id": trade.id,
         "signal_id": trade.signal_id,
@@ -297,17 +310,14 @@ def _trade_to_dict(trade: Trade) -> dict[str, Any]:
         "evidence_type": evidence_type,
         "execution_class": _execution_class_from_evidence(evidence_type, _status_value(trade.status)),
         "evidence_quality": evidence_quality,
-        "counts_as_execution_fill": (
-            evidence_type in FILL_EVIDENCE_TYPES
-            and evidence_quality == EvidenceQuality.NORMAL.value
-        ),
+        "counts_as_execution_fill": _is_normal_fill_evidence(trade),
         "metadata_json": trade.metadata_json or {},
     }
 
 
 def _trade_evidence_type(trade: Trade) -> str:
     return evidence_type_from_metadata(
-        trade.metadata_json or {},
+        _trade_evidence_metadata(trade),
         status=_status_value(trade.status),
         signal_metadata=(trade.signal.metadata_json if trade.signal is not None else {}) or {},
         broker_order_id=trade.broker_order_id,
@@ -329,9 +339,11 @@ def _execution_class_from_evidence(evidence_type: str | None, status: str) -> st
 
 
 def _is_normal_fill_evidence(trade: Trade) -> bool:
-    return (
-        _trade_evidence_type(trade) in FILL_EVIDENCE_TYPES
-        and evidence_quality_from_metadata(trade.metadata_json or {}) == EvidenceQuality.NORMAL.value
+    return is_strong_fill_evidence(
+        _trade_evidence_metadata(trade),
+        trade_status=_status_value(trade.status),
+        signal_metadata=(trade.signal.metadata_json if trade.signal is not None else {}) or {},
+        broker_order_id=trade.broker_order_id,
     )
 
 
@@ -351,18 +363,27 @@ def _evidence_summary(trades: list[Trade]) -> dict[str, int]:
         if _status_value(trade.status) != "closed":
             continue
         evidence_type = _trade_evidence_type(trade)
-        evidence_quality = evidence_quality_from_metadata(trade.metadata_json or {})
+        metadata = _trade_evidence_metadata(trade)
+        evidence_quality = evidence_quality_from_metadata(metadata)
         if evidence_type == "near_miss_shadow":
             summary["near_miss_closed"] += 1
         elif evidence_type == "shadow_no_order":
             summary["shadow_closed"] += 1
-        elif evidence_type == "ibkr_paper_fill":
+        elif evidence_type == "ibkr_paper_fill" and _is_normal_fill_evidence(trade):
             summary["ibkr_paper_filled"] += 1
-        elif evidence_type == "live_fill":
+        elif evidence_type == "live_fill" and _is_normal_fill_evidence(trade):
             summary["live_filled"] += 1
         if evidence_quality == EvidenceQuality.DEGRADED.value:
             summary["degraded_closed"] += 1
     return summary
+
+
+def _trade_evidence_metadata(trade: Trade) -> dict[str, Any]:
+    return evidence_metadata_with_stored_columns(
+        trade.metadata_json or {},
+        evidence_type=trade.evidence_type,
+        evidence_quality=trade.evidence_quality,
+    )
 
 
 def _entry_quality_score(signal: Signal, entry_quality: dict[str, Any]) -> float:
@@ -454,9 +475,9 @@ def _pattern_outcomes(
                 row["near_miss_closed"] += 1
             elif evidence_type == "shadow_no_order":
                 row["shadow_closed"] += 1
-            elif evidence_type == "ibkr_paper_fill":
+            elif evidence_type == "ibkr_paper_fill" and counts_as_execution:
                 row["ibkr_paper_filled"] += 1
-            elif evidence_type == "live_fill":
+            elif evidence_type == "live_fill" and counts_as_execution:
                 row["live_filled"] += 1
                 row["live"] += 1
             if evidence_quality == "degraded":

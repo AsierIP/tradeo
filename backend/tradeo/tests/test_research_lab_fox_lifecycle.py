@@ -16,7 +16,7 @@ from tradeo.db.session import Base
 from tradeo.research.novel_pattern_matcher import NovelPatternMatcher
 from tradeo.research.pattern_embedding_engine import PatternEmbeddingEngine
 from tradeo.services.director_review_gate import DirectorProductionGate, DirectorReviewGate
-from tradeo.services.evidence import EvidenceQuality, EvidenceType
+from tradeo.services.evidence import EvidenceQuality, EvidenceType, FillProvenance
 from tradeo.services.pattern_entry_scanner import PatternEntryScanner
 from tradeo.tests.fixtures import fixture_ohlcv
 
@@ -84,7 +84,32 @@ def add_research_approved_pattern(db, provider: FixtureProvider) -> DiscoveredPa
         best_rr=4.0,
         validation_passed=True,
         centroid_json=vector.tolist(),
-        metrics_json={"scaler_mean": [0.0] * len(vector), "scaler_scale": [1.0] * len(vector)},
+        metrics_json={
+            "scaler_mean": [0.0] * len(vector),
+            "scaler_scale": [1.0] * len(vector),
+            "nested_discovery_replay": {
+                "implemented": True,
+                "passed": True,
+                "blocking": False,
+            },
+            "director_gate_status": "passed",
+            "event_ledger_hash": "event-ledger-hash",
+            "evidence_packet": {
+                "id": "test-evidence-packet",
+                "hash": "test-evidence-packet-hash",
+            },
+            "execution_provenance": {
+                "costs_reconciled": True,
+                "slippage_reconciled": True,
+                "fills_reconciled": True,
+            },
+            "edge_claim": "NO_DEMOSTRADO",
+            "global_experiment_registry": {
+                "registry_hash": "registry-hash",
+                "run_manifest_hash": "run-manifest-hash",
+                "hash_chain_valid": True,
+            },
+        },
     )
     db.add(pattern)
     db.commit()
@@ -101,6 +126,7 @@ def close_lab_trade(db, signal: Signal, index: int, r_multiple: float = 1.0) -> 
         {
             "evidence_type": EvidenceType.IBKR_PAPER_FILL.value,
             "evidence_quality": EvidenceQuality.NORMAL.value,
+            "fill_provenance": FillProvenance.BROKER_EXECUTION.value,
         }
     )
     signal.metadata_json = signal_metadata
@@ -117,11 +143,17 @@ def close_lab_trade(db, signal: Signal, index: int, r_multiple: float = 1.0) -> 
             status=TradeStatus.CLOSED,
             pnl_usd=100.0 * r_multiple,
             r_multiple=r_multiple,
+            evidence_type=EvidenceType.IBKR_PAPER_FILL.value,
+            evidence_quality=EvidenceQuality.NORMAL.value,
             metadata_json={
                 "execution_mode": "ibkr",
                 "ibkr_mode": "paper",
                 "evidence_type": EvidenceType.IBKR_PAPER_FILL.value,
                 "evidence_quality": EvidenceQuality.NORMAL.value,
+                "fill_provenance": FillProvenance.BROKER_EXECUTION.value,
+                "broker_execution_hash": f"lifecycle-fill-{index}",
+                "broker_execution_time": f"2026-01-{index + 1:02d}T16:00:00+00:00",
+                "commission": 0.0,
                 "case": index,
             },
         )
@@ -186,6 +218,34 @@ def test_research_to_lab_to_director_to_fox_lifecycle() -> None:
     assert pattern.metrics_json["lab_execution"]["closed_lab_trades"] == 10
     assert pattern.metrics_json["lab_execution"]["lab_expectancy_r"] == 1.0
     assert pattern.metrics_json["lab_execution"]["research_expectancy_r"] == 0.4
+    pattern.metrics_json = {
+        **(pattern.metrics_json or {}),
+        "nested_discovery_replay": {
+            "status": "passed",
+            "implemented": True,
+            "passed": True,
+            "blocking": False,
+        },
+        "director_gate_status": "passed",
+        "director_gate": {"status": "passed", "blockers": []},
+        "event_ledger_sha256": "event-ledger-hash",
+        "production_evidence_packet": {"id": "lifecycle-packet", "hash": "packet-hash"},
+        "execution_provenance": {
+            "costs_reconciled": True,
+            "slippage_reconciled": True,
+            "fills_reconciled": True,
+        },
+        "edge_claim": "NO_DEMOSTRADO",
+        "global_experiment_registry": {
+            "path": "reports/research/global_experiment_registry.json",
+            "registry_hash": "registry-hash",
+            "previous_registry_hash": "previous-registry-hash",
+            "run_manifest_hash": "run-manifest-hash",
+            "hash_chain_valid": True,
+        },
+    }
+    db.add(pattern)
+    db.commit()
 
     production_result = DirectorProductionGate(
         min_paper_fills=10,

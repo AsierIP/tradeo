@@ -11,7 +11,57 @@ from tradeo.services.strategy_config import load_strategy_config
 
 def init_db() -> None:
     Base.metadata.create_all(bind=engine)
+    _migrate_trades_evidence_columns()
     _migrate_discovered_patterns()
+
+
+def _migrate_trades_evidence_columns() -> None:
+    inspector = inspect(engine)
+    if "trades" not in inspector.get_table_names():
+        return
+    existing = {col["name"] for col in inspector.get_columns("trades")}
+    columns = {
+        "evidence_type": "VARCHAR(40)",
+        "evidence_quality": "VARCHAR(40)",
+    }
+    with engine.begin() as conn:
+        for name, ddl in columns.items():
+            if name not in existing:
+                conn.execute(text(f"ALTER TABLE trades ADD COLUMN {name} {ddl}"))
+        if engine.dialect.name == "postgresql":
+            conn.execute(
+                text(
+                    "UPDATE trades "
+                    "SET evidence_type = NULLIF(metadata_json ->> 'evidence_type', '') "
+                    "WHERE evidence_type IS NULL "
+                    "AND NULLIF(metadata_json ->> 'evidence_type', '') IS NOT NULL"
+                )
+            )
+            conn.execute(
+                text(
+                    "UPDATE trades "
+                    "SET evidence_quality = NULLIF(metadata_json ->> 'evidence_quality', '') "
+                    "WHERE evidence_quality IS NULL "
+                    "AND NULLIF(metadata_json ->> 'evidence_quality', '') IS NOT NULL"
+                )
+            )
+        else:
+            conn.execute(
+                text(
+                    "UPDATE trades "
+                    "SET evidence_type = NULLIF(json_extract(metadata_json, '$.evidence_type'), '') "
+                    "WHERE evidence_type IS NULL "
+                    "AND NULLIF(json_extract(metadata_json, '$.evidence_type'), '') IS NOT NULL"
+                )
+            )
+            conn.execute(
+                text(
+                    "UPDATE trades "
+                    "SET evidence_quality = NULLIF(json_extract(metadata_json, '$.evidence_quality'), '') "
+                    "WHERE evidence_quality IS NULL "
+                    "AND NULLIF(json_extract(metadata_json, '$.evidence_quality'), '') IS NOT NULL"
+                )
+            )
 
 
 def _migrate_discovered_patterns() -> None:

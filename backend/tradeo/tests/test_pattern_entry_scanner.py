@@ -19,7 +19,7 @@ from tradeo.db.models import (
 from tradeo.db.session import Base
 from tradeo.research.novel_pattern_matcher import NovelPatternMatcher
 from tradeo.research.pattern_embedding_engine import PatternEmbeddingEngine
-from tradeo.services.evidence import EvidenceQuality, EvidenceType
+from tradeo.services.evidence import EvidenceQuality, EvidenceType, FillProvenance
 from tradeo.services.lab_paper_observations import LAB_SHADOW_EXECUTION_MODE, LabPaperObservationService
 from tradeo.services.pattern_entry_scanner import (
     PatternEntryScanner,
@@ -860,7 +860,7 @@ def test_laboratory_scanner_prefers_entry_variant_with_paper_history() -> None:
     )
     db.add(historical_signal)
     db.flush()
-    for _ in range(10):
+    for index in range(10):
         db.add(
             Trade(
                 signal_id=historical_signal.id,
@@ -874,11 +874,17 @@ def test_laboratory_scanner_prefers_entry_variant_with_paper_history() -> None:
                 status=TradeStatus.CLOSED,
                 pnl_usd=20.0,
                 r_multiple=2.0,
+                evidence_type=EvidenceType.IBKR_PAPER_FILL.value,
+                evidence_quality=EvidenceQuality.NORMAL.value,
                 metadata_json={
                     "execution_mode": "ibkr",
                     "ibkr_mode": "paper",
                     "evidence_type": EvidenceType.IBKR_PAPER_FILL.value,
                     "evidence_quality": EvidenceQuality.NORMAL.value,
+                    "fill_provenance": FillProvenance.BROKER_EXECUTION.value,
+                    "broker_execution_hash": f"scanner-history-fill-{index}",
+                    "broker_execution_time": f"2026-01-{index + 1:02d}T16:00:00+00:00",
+                    "commission": 0.0,
                 },
             )
         )
