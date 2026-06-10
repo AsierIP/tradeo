@@ -5,12 +5,10 @@ from sqlalchemy.orm import Session
 
 from tradeo.core.security import require_admin
 from tradeo.db.session import get_db
+from tradeo.modules.fox_hunter.scanner import FoxHunterScanner
+from tradeo.modules.shared.entry_scanner import PatternEntryScannerSafetyError
 from tradeo.schemas import PatternEntryScanRequest, PatternEntryScanResponse
 from tradeo.services.module_dashboard import module_overview
-from tradeo.services.pattern_entry_scanner import (
-    PatternEntryScanner,
-    PatternEntryScannerSafetyError,
-)
 
 router = APIRouter(prefix="/fox-hunter", tags=["fox-hunter"])
 
@@ -20,7 +18,7 @@ def fox_hunter_status(
     _: str = Depends(require_admin),
     db: Session = Depends(get_db),
 ) -> dict[str, object]:
-    return PatternEntryScanner().status(db)["fox_hunter"]
+    return FoxHunterScanner().status(db)
 
 
 @router.get("/overview")
@@ -39,9 +37,8 @@ def scan_fox_hunter(
 ) -> PatternEntryScanResponse:
     request = request or PatternEntryScanRequest()
     try:
-        result = PatternEntryScanner().scan(
+        result = FoxHunterScanner().scan(
             db,
-            module="fox_hunter",
             symbols=request.symbols,
             limit=request.limit,
             max_patterns=request.max_patterns,

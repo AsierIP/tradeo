@@ -20,12 +20,12 @@ from tradeo.db.session import Base
 from tradeo.research.novel_pattern_matcher import NovelPatternMatcher
 from tradeo.research.pattern_embedding_engine import PatternEmbeddingEngine
 from tradeo.services.evidence import EvidenceQuality, EvidenceType, FillProvenance
-from tradeo.services.lab_paper_observations import LAB_SHADOW_EXECUTION_MODE, LabPaperObservationService
-from tradeo.services.pattern_entry_scanner import (
+from tradeo.modules.fox_hunter.production_manifest import build_production_manifest
+from tradeo.modules.laboratory.paper_observations import LAB_SHADOW_EXECUTION_MODE, LabPaperObservationService
+from tradeo.modules.shared.entry_scanner import (
     PatternEntryScanner,
     PatternEntryScannerSafetyError,
 )
-from tradeo.services.production_manifest import build_production_manifest
 from tradeo.tests.fixtures import fixture_ohlcv
 
 
@@ -330,7 +330,7 @@ def test_laboratory_volume_near_miss_opens_shadow_observation_without_ibkr(monke
         def submit_signal_bracket(self, db, signal, *, reason: str = "manual"):
             raise AssertionError("near-miss shadow observations must not call IBKR")
 
-    monkeypatch.setattr("tradeo.services.pattern_entry_scanner.IBKRBroker", FailBroker)
+    monkeypatch.setattr("tradeo.modules.shared.entry_scanner.IBKRBroker", FailBroker)
     match = near_miss_volume_payload(
         pattern_id=pattern.id,
         pattern_name=pattern.name,
@@ -631,7 +631,7 @@ def test_laboratory_scanner_marks_ibkr_bracket_failure_retryable(monkeypatch) ->
         def submit_signal_bracket(self, db, signal, *, reason: str = "manual"):
             raise RuntimeError("IBKR did not acknowledge every bracket leg with a permId")
 
-    monkeypatch.setattr("tradeo.services.pattern_entry_scanner.IBKRBroker", BrokenBroker)
+    monkeypatch.setattr("tradeo.modules.shared.entry_scanner.IBKRBroker", BrokenBroker)
 
     result = scanner(provider, ibkr_readonly=False).scan(
         db,
@@ -997,7 +997,7 @@ def test_laboratory_scanner_skips_signal_creation_when_market_closed(monkeypatch
     add_pattern(db, provider, status=DiscoveredPatternStatus.LAB_CANDIDATE)
 
     monkeypatch.setattr(
-        "tradeo.services.pattern_entry_scanner.market_session_status",
+        "tradeo.modules.shared.entry_scanner.market_session_status",
         lambda: {
             "market": "us_equities",
             "timezone": "America/New_York",

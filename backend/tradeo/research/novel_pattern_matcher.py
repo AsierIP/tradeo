@@ -21,7 +21,7 @@ from tradeo.services.entry_variants import (
     classify_regime,
 )
 from tradeo.services.provider_factory import get_market_data_provider
-from tradeo.services.production_manifest import (
+from tradeo.modules.fox_hunter.production_manifest import (
     production_manifest_for_pattern,
     production_manifest_is_active,
 )

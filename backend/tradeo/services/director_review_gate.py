@@ -13,7 +13,7 @@ from tradeo.services.evidence import (
     evidence_type_from_metadata,
     is_director_review_paper_fill_evidence,
 )
-from tradeo.services.production_manifest import build_production_manifest
+from tradeo.modules.fox_hunter.production_manifest import build_production_manifest
 from tradeo.services.state_policy import REVIEW_TRIGGER_STATES
 
 
