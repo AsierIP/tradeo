@@ -184,6 +184,22 @@ class PatternEntryScanner:
             if self._has_active_exposure(db, match, module=module):
                 skipped_duplicates += 1
                 continue
+            if self._has_duplicate_signal(db, match, module=module):
+                skipped_duplicates += 1
+                db.add(
+                    AuditLog(
+                        actor=module,
+                        action="entry_match_skipped_idempotent",
+                        entity_type="discovered_pattern_match",
+                        entity_id=str(match.get("pattern_id", "")),
+                        details_json={
+                            "signal_idempotency_key": self._signal_idempotency_key(module, match),
+                            "reason": "signal_already_exists_for_pattern_symbol_variant_bar",
+                        },
+                    )
+                )
+                db.commit()
+                continue
             if self._has_recent_signal(db, match, module=module):
                 skipped_cooldown += 1
                 db.add(
@@ -647,6 +663,42 @@ class PatternEntryScanner:
         )
         return any(cls._trade_belongs_to_module(trade, module) for trade in active_trades)
 
+    @staticmethod
+    def _signal_idempotency_key(module: EntryModule, match: dict[str, Any]) -> str:
+        """Stable identity of a signal: same pattern, symbol, variant and bar.
+
+        Cooldowns only guard a time window; a worker restart or a re-scan of the
+        same completed bar can still emit the same economic signal twice. The
+        key pins the signal to (pattern, symbol, variant, bar_ts) so re-scans of
+        an unchanged bar are no-ops.
+        """
+        return "|".join(
+            (
+                str(module),
+                str(match.get("pattern_id") or ""),
+                str(match.get("symbol") or "").upper(),
+                str(match.get("timeframe") or ""),
+                str(match.get("entry_variant_id") or ""),
+                str(match.get("window_end") or ""),
+            )
+        )
+
+    def _has_duplicate_signal(self, db: Session, match: dict[str, Any], *, module: EntryModule) -> bool:
+        if not str(match.get("window_end") or ""):
+            return False
+        key = self._signal_idempotency_key(module, match)
+        existing = (
+            db.query(Signal)
+            .filter(Signal.symbol == str(match["symbol"]))
+            .filter(Signal.pattern == str(match["pattern_name"]))
+            .all()
+        )
+        for signal in existing:
+            metadata = signal.metadata_json or {}
+            if str(metadata.get("signal_idempotency_key") or "") == key:
+                return True
+        return False
+
     def _has_recent_signal(self, db: Session, match: dict[str, Any], *, module: EntryModule) -> bool:
         settings = self.settings
         assert settings is not None
@@ -805,6 +857,8 @@ class PatternEntryScanner:
             return None
         entry_gate = ((match.get("metrics") or {}).get("entry_gate") or {})
         if self._has_active_exposure(db, match, module="laboratory"):
+            return None
+        if self._has_duplicate_signal(db, match, module="laboratory"):
             return None
         if self._has_recent_signal(db, match, module="laboratory"):
             return None
@@ -1158,6 +1212,8 @@ class PatternEntryScanner:
                 "evidence_type": evidence_type,
                 "evidence_quality": EvidenceQuality.NORMAL.value,
                 "entry_module": module,
+                "signal_idempotency_key": self._signal_idempotency_key(module, match),
+                "bar_window_end": str(match.get("window_end") or ""),
                 "pattern_id": match["pattern_id"],
                 "pattern_key": match["pattern_key"],
                 "pattern_status": match.get("pattern_status"),

@@ -10,10 +10,20 @@ import numpy as np
 from sklearn.cluster import MiniBatchKMeans
 from sklearn.preprocessing import StandardScaler
 
+import pandas as pd
+
 from tradeo.research.adversarial_research import AdversarialResearchEngine
 from tradeo.research.causal_invariance import CausalInvariantTester
 from tradeo.research.foundation_teacher import FoundationChartTeacher
 from tradeo.research.market_replay import MarketReplayEngine
+from tradeo.research.quant_validation import (
+    average_uniqueness_weights,
+    newey_west_tstat,
+    profit_factor as weighted_profit_factor,
+    sample_skew_kurt,
+    select_nonoverlapping_events,
+    stationary_bootstrap_ci,
+)
 from tradeo.research.reward_risk_analyzer import RewardRiskAnalyzer
 from tradeo.research.types import ClusterCandidate, Side, WindowSample
 
@@ -34,6 +44,8 @@ class ClusterResearchEngine:
     walk_forward_embargo_samples: int = 5
     cost_stress_multipliers: list[float] | None = None
     required_cost_stress_multiplier: float = 2.0
+    match_tau_percentile: float = 92.5
+    quant_bootstrap_draws: int = 500
 
     def discover(self, samples: list[WindowSample]) -> list[ClusterCandidate]:
         candidates: list[ClusterCandidate] = []
@@ -173,6 +185,14 @@ class ClusterResearchEngine:
                 required_multiplier=self.required_cost_stress_multiplier,
             )
             best_rr = float(metrics.get("best_rr", self.target_r))
+            quant = self._quant_validation_metrics(cluster_train_samples, side=side, rr=best_rr)
+            metrics["quant_validation"] = quant
+            metrics["effective_sample_count"] = quant.get("n_eff", 0.0)
+            metrics["unique_event_count"] = quant.get("n_unique", 0)
+            metrics["match_tau_percentile"] = round(float(self.match_tau_percentile), 3)
+            metrics["match_tau_similarity"] = self._match_tau_similarity(
+                cluster_vectors, centroid_scaled
+            )
             metrics["foundation_teacher"] = FoundationChartTeacher().analyze(
                 cluster_samples,
                 side=side,
@@ -1590,6 +1610,122 @@ class ClusterResearchEngine:
                 }
             )
         return examples
+
+    def _quant_validation_metrics(
+        self,
+        samples: list[WindowSample],
+        *,
+        side: Side,
+        rr: float,
+    ) -> dict[str, object]:
+        """Dedup + uniqueness-weighted inference over the cluster's train events.
+
+        Overlapping windows from a stride sampler pseudo-replicate the same market
+        episode. Here every occurrence's outcome span is placed on a shared
+        calendar-day axis, occurrences of the same symbol that overlap in time are
+        deduplicated, and the survivors get Lopez de Prado average-uniqueness
+        weights so n_eff (= sum of weights) reflects the information actually
+        available. Expectancy/PF are weight-corrected and uncertainty comes from a
+        stationary block bootstrap plus a Newey-West t-stat, both of which respect
+        the residual autocorrelation that an iid bootstrap ignores.
+        """
+        empty = {
+            "n_raw": len(samples),
+            "n_unique": 0,
+            "n_eff": 0.0,
+            "expectancy_r_weighted": 0.0,
+            "profit_factor_weighted": 0.0,
+            "expectancy_ci95_low": 0.0,
+            "expectancy_ci95_high": 0.0,
+            "newey_west_t": 0.0,
+            "sharpe_per_trade": 0.0,
+            "skew": 0.0,
+            "kurtosis": 3.0,
+            "horizon_bars": 0,
+            "method": "dedup_uniqueness_stationary_bootstrap_newey_west",
+        }
+        if not samples:
+            return empty
+        spans: list[tuple[int, int]] = []
+        horizons: list[int] = []
+        for sample in samples:
+            entry_day = pd.Timestamp(sample.end).toordinal() + 1
+            exit_day = max(entry_day, pd.Timestamp(sample.outcome.forward_end).toordinal())
+            spans.append((entry_day, exit_day))
+            if sample.outcome.forward_returns:
+                horizons.append(max(int(h) for h in sample.outcome.forward_returns))
+        horizon_bars = max(horizons) if horizons else 10
+        starts = np.asarray([s for s, _ in spans], dtype=int)
+        ends = np.asarray([e for _, e in spans], dtype=int)
+
+        kept: list[int] = []
+        by_symbol: dict[str, list[int]] = {}
+        for idx, sample in enumerate(samples):
+            by_symbol.setdefault(sample.symbol, []).append(idx)
+        for indices in by_symbol.values():
+            idx_arr = np.asarray(indices, dtype=int)
+            local_keep = select_nonoverlapping_events(starts[idx_arr], ends[idx_arr])
+            kept.extend(int(idx_arr[i]) for i in local_keep)
+        kept_arr = np.asarray(sorted(kept), dtype=int)
+        if kept_arr.size == 0:
+            return empty
+
+        weights, n_eff = average_uniqueness_weights(starts[kept_arr], ends[kept_arr])
+        order = np.argsort(starts[kept_arr], kind="stable")
+        kept_sorted = kept_arr[order]
+        weights_sorted = weights[order]
+        outcomes = np.asarray(
+            [RewardRiskAnalyzer._simulate_sample(samples[int(i)], side, rr)[0] for i in kept_sorted],
+            dtype=float,
+        )
+        weight_sum = float(weights_sorted.sum())
+        mean_w = float(np.sum(weights_sorted * outcomes) / weight_sum) if weight_sum > 0 else 0.0
+        pf_w = weighted_profit_factor(outcomes, weights_sorted)
+        seed = self._null_seed(side, rr, kept_sorted.size, len(samples)) ^ 0x51A7B007
+        ci_lo, ci_hi, _, _ = stationary_bootstrap_ci(
+            outcomes,
+            np.mean,
+            n_boot=max(100, int(self.quant_bootstrap_draws)),
+            mean_block=horizon_bars,
+            rng=seed,
+        )
+        nw_t, _ = newey_west_tstat(outcomes, lags=horizon_bars)
+        sd = float(np.std(outcomes, ddof=1)) if outcomes.size > 1 else 0.0
+        sharpe = float(np.mean(outcomes) / sd) if sd > 1e-12 else 0.0
+        skew, kurt = sample_skew_kurt(outcomes)
+        return {
+            "n_raw": len(samples),
+            "n_unique": int(kept_sorted.size),
+            "n_eff": round(float(n_eff), 4),
+            "expectancy_r_weighted": round(mean_w, 5),
+            "profit_factor_weighted": round(float(pf_w), 5) if math.isfinite(pf_w) else pf_w,
+            "expectancy_ci95_low": round(float(ci_lo), 5) if math.isfinite(ci_lo) else 0.0,
+            "expectancy_ci95_high": round(float(ci_hi), 5) if math.isfinite(ci_hi) else 0.0,
+            "newey_west_t": round(float(nw_t), 5) if math.isfinite(nw_t) else 0.0,
+            "sharpe_per_trade": round(sharpe, 5),
+            "skew": round(float(skew), 5),
+            "kurtosis": round(float(kurt), 5),
+            "horizon_bars": int(horizon_bars),
+            "method": "dedup_uniqueness_stationary_bootstrap_newey_west",
+        }
+
+    def _match_tau_similarity(self, cluster_vectors: np.ndarray, centroid: np.ndarray) -> float:
+        """Per-pattern matcher threshold from the intra-cluster similarity spread.
+
+        Uses the same normalized-distance -> similarity mapping as
+        NovelPatternMatcher so the persisted tau is directly comparable at match
+        time. tau is the similarity such that match_tau_percentile% of real
+        cluster members would pass; the global config threshold stays as a floor.
+        """
+        if cluster_vectors.size == 0:
+            return 0.0
+        distances = np.linalg.norm(cluster_vectors - centroid, axis=1) / max(
+            1.0, math.sqrt(cluster_vectors.shape[1])
+        )
+        similarities = 1.0 / (1.0 + distances)
+        pct = min(max(float(self.match_tau_percentile), 50.0), 100.0)
+        tau = float(np.quantile(similarities, 1.0 - pct / 100.0))
+        return round(tau, 6)
 
     @staticmethod
     def _pattern_key(window_size: int, cluster_id: int, side: str, centroid: Iterable[float]) -> str:
