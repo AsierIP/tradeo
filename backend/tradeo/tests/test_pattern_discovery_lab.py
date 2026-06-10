@@ -142,6 +142,11 @@ def test_cluster_engine_returns_candidates_or_empty_without_crashing() -> None:
         assert "regime_profile" in candidate.metrics
         assert "novelty_score" in candidate.metrics
         assert "expected_information_gain" in candidate.metrics
+        assert candidate.metrics["feature_parity_contract"]["research_lab_shared_path"] is True
+        assert candidate.metrics["feature_parity_contract"]["contract_id"].startswith("tradeo.pattern_embedding")
+        assert "medoid" in candidate.metrics["cluster_signature"]
+        assert "similarity_distribution" in candidate.metrics["cluster_signature"]
+        assert "concentration_checks" in candidate.metrics
 
 
 def test_cluster_engine_fits_scaler_on_train_only() -> None:
@@ -180,6 +185,8 @@ def test_cluster_engine_fits_scaler_on_train_only() -> None:
     assert "overfit_score" in candidates[0].metrics
     assert "selection_split" in candidates[0].metrics
     assert candidates[0].metrics["fit_scope"]["descriptive_all_feeds_scores"] is False
+    assert candidates[0].metrics["feature_parity_contract"]["research_path"].startswith("WindowSampler")
+    assert candidates[0].metrics["cluster_stability"]["concentration_passed"] in {True, False}
     assert "train_metrics" in candidates[0].metrics
     assert "out_of_sample_metrics" in candidates[0].metrics
     assert "walk_forward_metrics" in candidates[0].metrics
@@ -191,6 +198,27 @@ def test_cluster_engine_fits_scaler_on_train_only() -> None:
     mutated["descriptive_all_profit_factor"] = 999.0
     assert ClusterResearchEngine._candidate_score(mutated) == ClusterResearchEngine._candidate_score(candidates[0].metrics)
     assert abs(float(candidates[0].metrics["scaler_mean"][0])) < 0.01
+
+
+def test_cluster_signature_records_medoid_and_concentration() -> None:
+    samples = [
+        _research_sample(i, vector_value=0.01 * i, highs=[104.0], lows=[99.0], closes=[103.0])
+        for i in range(6)
+    ]
+    vectors = np.asarray([[0.0, 0.0], [0.1, 0.0], [0.2, 0.0], [0.3, 0.0], [0.4, 0.0], [0.5, 0.0]])
+    signature = ClusterResearchEngine._cluster_signature(
+        samples,
+        vectors,
+        np.asarray([0.2, 0.0]),
+        "long",
+    )
+
+    assert signature["medoid"]["window_end"] == samples[2].end
+    assert signature["similarity_distribution"]["p50"] > 0
+    checks = signature["concentration_checks"]
+    assert checks["passed"] is False
+    assert checks["max_symbol_share"] == 1.0
+    assert "symbol_concentration_gt_40pct" in checks["reasons"]
 
 
 def test_cluster_engine_selects_best_rr_from_train_only() -> None:

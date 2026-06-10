@@ -62,6 +62,12 @@ class ValidationGate:
             reasons.append(f"poca diversidad de símbolos: {candidate.symbol_count} < {s.discovery_min_symbols}")
         if candidate.year_count < s.discovery_min_years:
             reasons.append(f"poca diversidad temporal: {candidate.year_count} < {s.discovery_min_years}")
+        concentration = metrics.get("concentration_checks")
+        if isinstance(concentration, dict) and concentration.get("passed") is False:
+            reasons.append(
+                "concentracion excesiva del cluster: "
+                + ", ".join(str(reason) for reason in concentration.get("reasons", [])[:3])
+            )
         if best_expectancy <= 0:
             reasons.append("sin expectancy positiva en ningún R:R evaluado")
         if best_pf <= 1:

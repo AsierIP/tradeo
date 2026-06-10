@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import ClassVar
 
 import numpy as np
 import pandas as pd
@@ -18,6 +19,24 @@ class PatternEmbeddingEngine:
     """
 
     points_per_channel: int = 24
+    CONTRACT_ID: ClassVar[str] = "tradeo.pattern_embedding.v2.legacy_prefix_stable"
+
+    def contract(self, *, vector_length: int | None = None) -> dict[str, object]:
+        return {
+            "contract_id": self.CONTRACT_ID,
+            "engine": "PatternEmbeddingEngine",
+            "points_per_channel": int(self.points_per_channel),
+            "legacy_prefix_stable": True,
+            "research_lab_shared_path": True,
+            "vector_length": int(vector_length) if vector_length is not None else None,
+            "normalization": {
+                "price": "close/first_close_minus_1",
+                "returns": "winsorized_log_returns",
+                "volume": "volume/median_volume_clipped",
+                "range": "high_low_pct_clipped",
+            },
+            "matcher_scaling": "train_fit_standard_scaler_prefix",
+        }
 
     def embed(
         self,
