@@ -1078,6 +1078,11 @@ class ClusterResearchEngine:
                     "fill_probability": round(float((sample.outcome.execution or {}).get("fill_probability", 0.0)), 5),
                     "max_size_usd": round(float((sample.outcome.execution or {}).get("max_size_usd", 0.0)), 2),
                     "entry_trigger_score": round(float(sample.features.get(f"{side}_entry_trigger_score", 0.0)), 5),
+                    "data_lineage": {
+                        "adjusted": sample.features.get("data_adjusted"),
+                        "what_to_show": sample.features.get("data_what_to_show"),
+                        "bar_complete": sample.features.get("data_bar_complete"),
+                    },
                 }
             )
         return ledger
@@ -1468,11 +1473,22 @@ class ClusterResearchEngine:
         }
         sorted_buckets = dict(sorted(bucket_counts.items(), key=lambda item: item[1], reverse=True)[:12])
         dominant_parts = dominant.split("|")
+        total = sum(bucket_counts.values()) or 1
+        regime_count = len(bucket_counts)
+        dominant_share = bucket_counts.get(dominant, 0) / total
         return {
             "dominant_regime": dominant,
             "preferred_regime_keys": [dominant],
             "bucket_counts": sorted_buckets,
             "buckets": sorted_buckets,
+            "regime_count": regime_count,
+            "dominant_share": round(float(dominant_share), 6),
+            "regime_specific": regime_count < 2 or dominant_share >= 0.75,
+            "research_gate": (
+                "regime_specific"
+                if regime_count < 2 or dominant_share >= 0.75
+                else "multi_regime_observed"
+            ),
             "top_trend_regime": dominant_parts[1] if len(dominant_parts) > 1 else "",
             "top_market_regime": dominant_parts[2] if len(dominant_parts) > 2 else "",
             "feature_means": means,

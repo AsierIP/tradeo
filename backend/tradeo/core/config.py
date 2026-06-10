@@ -55,7 +55,15 @@ class Settings(BaseSettings):
 
     market_data_provider: str = "ibkr"
     allow_synthetic_market_data: bool = False
+    market_data_cache_enabled: bool = True
+    market_data_cache_dir: str = "/app/data/ohlcv_cache"
+    market_data_adjusted: bool = True
+    market_data_what_to_show: str = "ADJUSTED_LAST"
     universe_file: str = "/app/data/universe_us_mid_small.csv"
+    universe_snapshot_monthly: bool = True
+    universe_snapshot_dir: str = "/app/data/universe_snapshots"
+    universe_point_in_time_available: bool = False
+    survivorship_cap_state: str = "lab_watchlist"
     strategy_config_file: str = "/app/config/strategy_cup_v0.json"
     reports_dir: str = "/app/reports"
     artifacts_dir: str = "/app/artifacts"
@@ -299,6 +307,18 @@ class Settings(BaseSettings):
     @property
     def artifacts_path(self) -> Path:
         path = Path(self.artifacts_dir)
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    @property
+    def market_data_cache_path(self) -> Path:
+        path = Path(self.market_data_cache_dir)
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    @property
+    def universe_snapshot_path(self) -> Path:
+        path = Path(self.universe_snapshot_dir)
         path.mkdir(parents=True, exist_ok=True)
         return path
 

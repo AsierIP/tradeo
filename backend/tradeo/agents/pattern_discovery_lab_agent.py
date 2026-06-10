@@ -30,6 +30,7 @@ from tradeo.research.window_sampler import WindowSampler
 from tradeo.schemas import DiscoveryRunRequest, DiscoveryRunResponse
 from tradeo.services.data_provider import MarketDataProvider, pick_symbols
 from tradeo.services.provider_factory import get_market_data_provider
+from tradeo.services.universe_snapshot import UniverseSnapshotService
 
 
 @dataclass(slots=True)
@@ -62,6 +63,7 @@ class PatternDiscoveryLabAgent:
 
         try:
             symbols = self._resolve_symbols(request, params)
+            universe_snapshot = self._build_universe_snapshot(warnings)
             samples = []
             sampler = WindowSampler(target_r=settings.discovery_min_reward_risk)
             benchmark_frames = self._benchmark_frames(params, warnings)
@@ -103,6 +105,19 @@ class PatternDiscoveryLabAgent:
                 match_tau_percentile=settings.discovery_match_tau_percentile,
             )
             raw_candidates = engine.discover(samples)
+            data_manifest = self._data_manifest(run.id, symbols, warnings)
+            for candidate in raw_candidates:
+                candidate.metrics["data_manifest"] = {
+                    "path": data_manifest.get("path"),
+                    "manifest_hash": data_manifest.get("manifest_hash"),
+                    "entry_count": len((data_manifest.get("entries") or {})),
+                    "artifact_format": data_manifest.get("artifact_format"),
+                }
+                candidate.metrics["universe_snapshot"] = universe_snapshot
+                candidate.metrics["universe_point_in_time"] = bool(
+                    universe_snapshot.get("point_in_time", settings.universe_point_in_time_available)
+                )
+                candidate.metrics["survivorship_biased"] = not bool(candidate.metrics["universe_point_in_time"])
             self._apply_run_level_inference(raw_candidates)
             candidates = ValidationGate(settings).evaluate_many(raw_candidates)
             accepted = [c for c in candidates if c.validation_passed]
@@ -145,6 +160,13 @@ class PatternDiscoveryLabAgent:
                     warnings.append(msg)
             duration = round(time.perf_counter() - started, 3)
             summary = self._summary(candidates, samples, warnings)
+            summary["data_manifest"] = {
+                "path": data_manifest.get("path"),
+                "manifest_hash": data_manifest.get("manifest_hash"),
+                "entry_count": len((data_manifest.get("entries") or {})),
+                "artifact_format": data_manifest.get("artifact_format"),
+            }
+            summary["universe_snapshot"] = universe_snapshot
             summary["global_experiment_registry"] = global_registry
             summary["research_director"] = {
                 "candidate_completion": candidate_director_summary,
@@ -182,6 +204,8 @@ class PatternDiscoveryLabAgent:
                         "stored": len(stored),
                         "research_director": summary.get("research_director", {}),
                         "event_ledgers": ledger_artifacts,
+                        "data_manifest": summary.get("data_manifest", {}),
+                        "universe_snapshot": universe_snapshot,
                         "report_path": str(report_path) if report_path else None,
                     },
                 )
@@ -325,6 +349,67 @@ class PatternDiscoveryLabAgent:
         if request.symbols:
             return [s.upper().strip() for s in request.symbols if s.strip()]
         return pick_symbols(limit=params["limit"])
+
+    def _build_universe_snapshot(self, warnings: list[str]) -> dict[str, Any]:
+        settings = self.settings
+        assert settings is not None
+        if not settings.universe_snapshot_monthly:
+            return {
+                "enabled": False,
+                "point_in_time": settings.universe_point_in_time_available,
+                "survivorship_biased": not settings.universe_point_in_time_available,
+            }
+        try:
+            return UniverseSnapshotService(settings).build_monthly_snapshot()
+        except Exception as exc:  # noqa: BLE001
+            msg = f"UniverseSnapshotService failed: {exc}"
+            logger.warning(msg)
+            warnings.append(msg)
+            return {
+                "enabled": True,
+                "error": str(exc),
+                "point_in_time": settings.universe_point_in_time_available,
+                "survivorship_biased": not settings.universe_point_in_time_available,
+            }
+
+    def _data_manifest(self, run_id: int, symbols: list[str], warnings: list[str]) -> dict[str, Any]:
+        provider_manifest = getattr(self.provider, "data_manifest", None)
+        if not callable(provider_manifest):
+            return self._write_data_manifest(
+                run_id,
+                {
+                    "schema_version": 1,
+                    "generated_at": datetime.now(timezone.utc).isoformat(),
+                    "entries": {},
+                    "manifest_hash": "",
+                    "artifact_format": "unavailable",
+                    "reason": "provider_does_not_expose_data_manifest",
+                },
+            )
+        try:
+            payload = provider_manifest(symbols)
+        except Exception as exc:  # noqa: BLE001
+            warnings.append(f"data_manifest failed: {exc}")
+            payload = {
+                "schema_version": 1,
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+                "entries": {},
+                "manifest_hash": "",
+                "artifact_format": "unavailable",
+                "reason": str(exc),
+            }
+        return self._write_data_manifest(run_id, payload)
+
+    def _write_data_manifest(self, run_id: int, payload: dict[str, Any]) -> dict[str, Any]:
+        settings = self.settings
+        assert settings is not None
+        manifest_dir = settings.reports_path / "research" / "data_manifests"
+        manifest_dir.mkdir(parents=True, exist_ok=True)
+        path = manifest_dir / f"discovery_run_{run_id}_data_manifest.json"
+        path.write_text(json.dumps(payload, indent=2, sort_keys=True, default=str), encoding="utf-8")
+        payload = dict(payload)
+        payload["path"] = str(path)
+        return payload
 
     def _benchmark_frames(self, params: dict[str, Any], warnings: list[str]) -> dict[str, Any]:
         frames: dict[str, Any] = {}

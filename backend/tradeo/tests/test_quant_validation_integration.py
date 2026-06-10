@@ -223,6 +223,42 @@ def test_validation_gate_caps_lab_candidate_without_dsr(tmp_path) -> None:
     assert any("DSR familia" in w for w in candidate.metrics["validation_warnings"])
 
 
+def test_validation_gate_caps_lab_candidate_with_survivorship_bias(tmp_path) -> None:
+    settings = Settings(
+        reports_dir=str(tmp_path / "reports"),
+        artifacts_dir=str(tmp_path / "artifacts"),
+        survivorship_cap_state="lab_watchlist",
+    )
+    gate = ValidationGate(settings)
+    candidate = _candidate("survivor", p_value=0.001, sharpe=0.6, n_eff=90.0)
+    candidate.metrics.update(
+        {
+            "fdr_passed": True,
+            "best_rr": 3.0,
+            "best_expectancy_r": 0.5,
+            "best_profit_factor": 2.2,
+            "best_max_drawdown_r": 4.0,
+            "expectancy_r": 0.5,
+            "profit_factor": 2.2,
+            "stability_score": 0.8,
+            "out_of_sample_expectancy_r": 0.3,
+            "out_of_sample_profit_factor": 1.9,
+            "rr_metrics": {"3": {"expectancy_r": 0.5, "profit_factor": 2.2}},
+            "train_sample_count": 150,
+            "dsr_family": 0.99,
+            "dsr_family_n_trials": 5000,
+            "survivorship_biased": True,
+            "universe_point_in_time": False,
+        }
+    )
+
+    gate.evaluate(candidate)
+
+    assert candidate.metrics["promotion_status"] == "lab_watchlist"
+    assert candidate.metrics["survivorship_cap_applied"] is True
+    assert any("universo historico no point-in-time" in w for w in candidate.metrics["validation_warnings"])
+
+
 # ---------------------------------------------------------------------------
 # Matcher: vela viva y umbral por patrón
 # ---------------------------------------------------------------------------

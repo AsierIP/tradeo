@@ -74,6 +74,7 @@ class WindowSampler:
                     execution_metrics,
                 )
                 vector, features, chart = self.embedding_engine.embed(window, benchmark_frames=benchmark_frames)
+                features.update(self._data_lineage_features(window))
                 features.update({f"execution_{k}": float(v) for k, v in execution_metrics.items()})
                 start_idx = window.index[0]
                 end_idx = window.index[-1]
@@ -261,6 +262,18 @@ class WindowSampler:
         if target_bar >= slow_cutoff:
             return "slow_target"
         return "normal_target"
+
+    @staticmethod
+    def _data_lineage_features(window: pd.DataFrame) -> dict[str, object]:
+        latest = window.iloc[-1]
+        lineage: dict[str, object] = {}
+        if "adjusted" in window.columns:
+            lineage["data_adjusted"] = bool(latest["adjusted"])
+        if "what_to_show" in window.columns:
+            lineage["data_what_to_show"] = str(latest["what_to_show"])
+        if "bar_complete" in window.columns:
+            lineage["data_bar_complete"] = bool(latest["bar_complete"])
+        return lineage
 
     @staticmethod
     def _date_str(value: object) -> str:
