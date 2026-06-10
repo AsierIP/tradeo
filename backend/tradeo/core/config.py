@@ -67,6 +67,16 @@ class Settings(BaseSettings):
     min_price: float = 2.0
     max_atr_pct: float = 0.14
 
+    # Per-symbol OHLCV quality gate applied before pattern detection. Symbols
+    # with halted/illiquid bars, frozen feeds, unadjusted splits or calendar
+    # holes are skipped and recorded in AuditLog instead of being sampled.
+    data_quality_filter_enabled: bool = True
+    data_quality_min_bars: int = 60
+    data_quality_max_zero_volume_pct: float = 0.15
+    data_quality_max_stale_close_run: int = 8
+    data_quality_max_single_gap_business_days: int = 5
+    data_quality_max_bar_return_ratio: float = 4.0
+
     # Novel pattern discovery laboratory. This never routes orders; it creates
     # LAB candidates and compact review artifacts for supervisor/API review.
     discovery_enabled: bool = True
