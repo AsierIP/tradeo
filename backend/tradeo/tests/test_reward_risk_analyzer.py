@@ -6,7 +6,13 @@ from tradeo.research.reward_risk_analyzer import RewardRiskAnalyzer
 from tradeo.research.types import ForwardOutcome, WindowSample
 
 
-def _sample(highs: list[float], lows: list[float], closes: list[float], cost_r: float = 0.0) -> WindowSample:
+def _sample(
+    highs: list[float],
+    lows: list[float],
+    closes: list[float],
+    cost_r: float = 0.0,
+    opens: list[float] | None = None,
+) -> WindowSample:
     return WindowSample(
         symbol="TST",
         timeframe="1d",
@@ -33,6 +39,7 @@ def _sample(highs: list[float], lows: list[float], closes: list[float], cost_r: 
             forward_highs=highs,
             forward_lows=lows,
             forward_closes=closes,
+            forward_opens=opens or [100.0 for _ in closes],
             execution_cost_r=cost_r,
             long_gap_adverse_r=0.2,
             long_mfe_before_mae=True,
@@ -80,7 +87,7 @@ def test_simulation_subtracts_execution_cost_r() -> None:
     assert stop_bar is None
     metrics = RewardRiskAnalyzer([3.0], min_samples=1).metrics_for_rr([sample], "long", 3.0)
     assert metrics["avg_execution_cost_r"] == 0.15
-    assert metrics["triple_barrier_labels"] == {"target": 1, "stop": 0, "timeout": 0}
+    assert metrics["triple_barrier_labels"] == {"target": 1, "stop": 0, "timeout": 0, "skipped": 0}
     assert metrics["avg_gap_adverse_r"] == 0.2
     assert metrics["mfe_before_mae_rate"] == 1.0
     assert metrics["avg_fill_probability"] == 0.8
@@ -91,3 +98,12 @@ def test_cost_multiplier_stresses_result_r() -> None:
     sample = _sample([130.0], [99.0], [130.0], cost_r=0.15)
     result, _, _ = RewardRiskAnalyzer._simulate_sample(sample, "long", 3.0, cost_multiplier=2.0)
     assert result == 2.7
+
+
+def test_canonical_outcome_skips_entry_gap_past_target() -> None:
+    sample = _sample([151.0], [149.0], [150.0], opens=[140.0])
+    detail = RewardRiskAnalyzer._simulate_sample_detail(sample, "long", 3.0)
+    result, target_bar, stop_bar = RewardRiskAnalyzer._simulate_sample(sample, "long", 3.0)
+    assert detail["status"] == "skipped"
+    assert detail["reason"] == "gapped_past_target"
+    assert (result, target_bar, stop_bar) == (0.0, None, None)

@@ -6,10 +6,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 from sqlalchemy.orm import Session
 
 from tradeo.core.config import Settings, get_settings
 from tradeo.db.models import AuditLog, StrategyVersion
+from tradeo.research.quant_validation import pbo_cscv
 from tradeo.schemas import SelfImprovementResponse
 from tradeo.services.backtester import Backtester
 from tradeo.services.data_provider import CachedMarketDataProvider, pick_symbols
@@ -33,16 +35,39 @@ class SelfImprovementEngine:
         symbols = pick_symbols(limit=max_symbols)
         candidates = self._mutations(base)
         provider = CachedMarketDataProvider(upstream=get_market_data_provider())
-        accepted: list[dict[str, Any]] = []
-        for cfg in candidates:
+        records: list[dict[str, Any]] = []
+        trial_budget = max(1, int(self.settings.self_improvement_max_trials))
+        candidates = candidates[:trial_budget]
+        trial_count = len(candidates)
+        for trial_index, cfg in enumerate(candidates, start=1):
             detector = CupPatternDetector.from_config(cfg)
             metrics = Backtester(
                 provider=provider,
                 detector=detector,
                 starting_equity=self.settings.initial_capital_usd,
             ).run(symbols, period="3y", interval="1d")
-            record = {"config": cfg, "metrics": metrics.model_dump()}
-            if self._passes_lab_gate(metrics.model_dump()):
+            records.append(
+                {
+                    "config": cfg,
+                    "metrics": metrics.model_dump(),
+                    "trial_accounting": {
+                        "trial_index": trial_index,
+                        "n_trials_this_cycle": trial_count,
+                        "trial_budget": trial_budget,
+                        "counts_toward_family_n_trials": True,
+                    },
+                }
+            )
+        guard_by_index, guard_summary = self._anti_overfit_guards(records)
+        accepted: list[dict[str, Any]] = []
+        for idx, record in enumerate(records):
+            guard = guard_by_index.get(idx, {})
+            record["anti_overfit"] = guard
+            metrics = dict(record["metrics"])
+            metrics["anti_overfit"] = guard
+            metrics["trial_accounting"] = record["trial_accounting"]
+            record["metrics"] = metrics
+            if self._passes_lab_gate(metrics, guard):
                 accepted.append(record)
                 name = f"cup_lab_{datetime.now(timezone.utc):%Y%m%d_%H%M%S}_{len(accepted)}"
                 db.add(
@@ -50,8 +75,8 @@ class SelfImprovementEngine:
                         name=name,
                         state="lab_candidate",
                         parent_name="cup_v0",
-                        params_json=cfg,
-                        metrics_json=metrics.model_dump(),
+                        params_json=record["config"],
+                        metrics_json=metrics,
                     )
                 )
         best = None
@@ -61,23 +86,24 @@ class SelfImprovementEngine:
                 key=lambda x: (x["metrics"]["expectancy_r"], x["metrics"]["profit_factor"]),
                 reverse=True,
             )[0]
-        report_path = self._write_report(candidates, accepted, best)
+        report_path = self._write_report(records, accepted, best, guard_summary)
         db.add(
             AuditLog(
                 actor="self_improvement",
                 action="lab_cycle_completed",
                 entity_type="strategy",
                 details_json={
-                    "generated": len(candidates),
+                    "generated": len(records),
                     "accepted": len(accepted),
                     "report_path": str(report_path),
                     "best": best,
+                    "anti_overfit": guard_summary,
                 },
             )
         )
         db.commit()
         return SelfImprovementResponse(
-            generated=len(candidates),
+            generated=len(records),
             accepted_lab_candidates=len(accepted),
             best_candidate=best,
             report_path=str(report_path),
@@ -112,18 +138,140 @@ class SelfImprovementEngine:
                                     }
                                 )
                                 out.append(cfg)
-        return out[:80]
+        return out[: max(1, int(self.settings.self_improvement_max_trials))]
 
-    def _passes_lab_gate(self, metrics: dict[str, Any]) -> bool:
+    def _passes_lab_gate(self, metrics: dict[str, Any], anti_overfit: dict[str, Any] | None = None) -> bool:
+        guard = anti_overfit or {}
         return (
             metrics.get("total_trades", 0) >= 40
             and metrics.get("profit_factor", 0.0) >= 1.8
             and metrics.get("expectancy_r", 0.0) >= 0.25
             and metrics.get("max_drawdown_pct", 100.0) <= 12.0
+            and bool(guard.get("pbo_passed", False))
+            and bool(guard.get("plateau_passed", False))
         )
 
+    def _anti_overfit_guards(self, records: list[dict[str, Any]]) -> tuple[dict[int, dict[str, Any]], dict[str, Any]]:
+        pbo_report = self._pbo_report(records)
+        out: dict[int, dict[str, Any]] = {}
+        for idx, record in enumerate(records):
+            plateau = self._plateau_report(idx, records)
+            out[idx] = {
+                "pbo": pbo_report,
+                "pbo_passed": bool(pbo_report.get("passed", False)),
+                "plateau": plateau,
+                "plateau_passed": bool(plateau.get("passed", False)),
+                "accepted_only_if_outer_evidence": True,
+            }
+        return out, pbo_report
+
+    def _pbo_report(self, records: list[dict[str, Any]]) -> dict[str, Any]:
+        matrix, periods = self._performance_matrix(records)
+        min_blocks = max(4, int(self.settings.self_improvement_min_pbo_blocks))
+        if matrix.shape[1] < 2 or matrix.shape[0] < min_blocks:
+            return {
+                "method": "cscv_pbo",
+                "passed": False,
+                "blocked": True,
+                "reason": "insufficient_variants_or_periods_for_pbo",
+                "period_count": int(matrix.shape[0]),
+                "variant_count": int(matrix.shape[1]),
+                "required_periods": min_blocks,
+            }
+        n_blocks = min(min_blocks if min_blocks % 2 == 0 else min_blocks - 1, matrix.shape[0])
+        n_blocks = max(4, n_blocks)
+        try:
+            result = pbo_cscv(matrix, n_blocks=n_blocks, rng=17)
+        except ValueError as exc:
+            return {
+                "method": "cscv_pbo",
+                "passed": False,
+                "blocked": True,
+                "reason": str(exc),
+                "period_count": int(matrix.shape[0]),
+                "variant_count": int(matrix.shape[1]),
+            }
+        pbo = float(result["pbo"])
+        return {
+            "method": "cscv_pbo",
+            "passed": pbo < float(self.settings.self_improvement_max_pbo),
+            "blocked": False,
+            "pbo": round(pbo, 5),
+            "max_pbo": float(self.settings.self_improvement_max_pbo),
+            "period_count": len(periods),
+            "variant_count": int(matrix.shape[1]),
+            "n_combinations": int(result["n_combinations"]),
+            "best_counts": np.asarray(result["best_counts"], dtype=int).tolist(),
+        }
+
+    @staticmethod
+    def _performance_matrix(records: list[dict[str, Any]]) -> tuple[np.ndarray, list[str]]:
+        period_values: dict[str, list[float]] = {}
+        for idx, record in enumerate(records):
+            for trade in record.get("metrics", {}).get("trades", []):
+                period = str(trade.get("exit_date", ""))[:7]
+                if not period:
+                    continue
+                period_values.setdefault(period, [0.0 for _ in records])
+                period_values[period][idx] += float(trade.get("r_multiple", 0.0) or 0.0)
+        periods = sorted(period_values)
+        if not periods:
+            return np.zeros((0, len(records)), dtype=float), []
+        matrix = np.asarray([period_values[p] for p in periods], dtype=float)
+        return matrix, periods
+
+    def _plateau_report(self, idx: int, records: list[dict[str, Any]]) -> dict[str, Any]:
+        current = records[idx]
+        cfg = current["config"]
+        pf = float(current.get("metrics", {}).get("profit_factor", 0.0) or 0.0)
+        if pf <= 0:
+            return {"passed": False, "reason": "non_positive_profit_factor", "neighbor_count": 0}
+        neighbors: list[float] = []
+        for j, other in enumerate(records):
+            if j == idx:
+                continue
+            if self._within_parameter_plateau(cfg, other["config"]):
+                neighbors.append(float(other.get("metrics", {}).get("profit_factor", 0.0) or 0.0))
+        if len(neighbors) < 2:
+            return {"passed": False, "reason": "insufficient_neighbor_trials", "neighbor_count": len(neighbors)}
+        neighbor_median = float(np.median(neighbors))
+        threshold = pf * float(self.settings.self_improvement_plateau_pf_fraction)
+        return {
+            "passed": neighbor_median >= threshold,
+            "neighbor_count": len(neighbors),
+            "neighbor_median_profit_factor": round(neighbor_median, 5),
+            "required_profit_factor": round(threshold, 5),
+            "plateau_fraction": float(self.settings.self_improvement_plateau_pf_fraction),
+        }
+
+    @staticmethod
+    def _within_parameter_plateau(left: dict[str, Any], right: dict[str, Any]) -> bool:
+        keys = (
+            "min_depth",
+            "max_depth",
+            "rim_tolerance",
+            "max_handle_depth",
+            "min_breakout_volume_ratio",
+            "min_composite_score",
+        )
+        comparable = 0
+        close = 0
+        for key in keys:
+            if key not in left or key not in right:
+                continue
+            a = float(left[key])
+            b = float(right[key])
+            comparable += 1
+            if abs(a - b) <= max(abs(a), 1e-9) * 0.20:
+                close += 1
+        return comparable > 0 and close == comparable
+
     def _write_report(
-        self, generated: list[dict[str, Any]], accepted: list[dict[str, Any]], best: dict[str, Any] | None
+        self,
+        generated: list[dict[str, Any]],
+        accepted: list[dict[str, Any]],
+        best: dict[str, Any] | None,
+        guard_summary: dict[str, Any],
     ) -> Path:
         now = datetime.now(timezone.utc)
         path = self.settings.reports_path / f"self_improvement_{now:%Y%m%d_%H%M%S}.json"
@@ -138,8 +286,11 @@ class SelfImprovementEngine:
                         "min_profit_factor": 1.8,
                         "min_expectancy_r": 0.25,
                         "max_drawdown_pct": 12.0,
+                        "max_pbo": self.settings.self_improvement_max_pbo,
+                        "plateau_pf_fraction": self.settings.self_improvement_plateau_pf_fraction,
                         "promotion": "requires human/API supervisor approval after paper trading",
                     },
+                    "anti_overfit": guard_summary,
                     "best": best,
                     "accepted": accepted,
                 },

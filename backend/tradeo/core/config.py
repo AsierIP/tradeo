@@ -92,7 +92,7 @@ class Settings(BaseSettings):
     discovery_limit_default: int = 80
     discovery_window_sizes: str = "20,50,100,200"
     discovery_forward_bars: str = "5,10,20"
-    discovery_rr_levels: str = "1.5,2.0,2.5,3.0,4.0,5.0"
+    discovery_rr_levels: str = "2.5,4.0"
     discovery_stride: int = 3
     discovery_max_total_windows: int = 12000
     discovery_max_windows_per_symbol: int = 450
@@ -246,6 +246,11 @@ class Settings(BaseSettings):
     watchdog_stale_discovery_minutes: int = 30
     watchdog_close_stale_discovery_runs: bool = True
 
+    self_improvement_max_trials: int = 80
+    self_improvement_max_pbo: float = 0.10
+    self_improvement_min_pbo_blocks: int = 16
+    self_improvement_plateau_pf_fraction: float = 0.80
+
     @field_validator("market_data_provider")
     @classmethod
     def only_ibkr_market_data(cls, value: str) -> str:
@@ -283,7 +288,7 @@ class Settings(BaseSettings):
     @property
     def discovery_rr_level_list(self) -> list[float]:
         values = sorted({float(x.strip()) for x in self.discovery_rr_levels.split(",") if x.strip()})
-        return values or [1.5, 2.0, 2.5, 3.0, 4.0, 5.0]
+        return values or [2.5, 4.0]
 
     @property
     def discovery_cost_stress_multiplier_list(self) -> list[float]:
