@@ -7,6 +7,7 @@ from tradeo.db.models import AuditLog
 from tradeo.core.config import get_settings
 from tradeo.schemas import ScanRequest, ScanResponse, SupervisorDecision
 from tradeo.services.data_provider import MarketDataProvider, pick_symbols
+from tradeo.services.data_quality import assess_ohlcv_quality_from_settings
 from tradeo.services.pattern_detector import CupPatternDetector
 from tradeo.services.provider_factory import get_market_data_provider
 from tradeo.services.strategy_config import load_strategy_config
@@ -29,6 +30,7 @@ class MarketScanner:
         stored = 0
         rejected = 0
         data_errors = 0
+        data_quality_skips = 0
         for symbol in symbols:
             try:
                 df = self.provider.fetch_ohlcv(symbol, period=period, interval=interval)
@@ -46,6 +48,26 @@ class MarketScanner:
                         )
                     )
                 continue
+            if self.settings.data_quality_filter_enabled:
+                quality = assess_ohlcv_quality_from_settings(df, symbol, interval, self.settings)
+                if not quality.research_grade:
+                    data_quality_skips += 1
+                    logger.warning(
+                        "skipping {}: OHLCV not research grade ({})",
+                        symbol,
+                        ",".join(quality.issues),
+                    )
+                    if store:
+                        db.add(
+                            AuditLog(
+                                actor="scanner",
+                                action="market_data_quality_reject",
+                                entity_type="symbol",
+                                entity_id=symbol,
+                                details_json=quality.to_dict(),
+                            )
+                        )
+                    continue
             candidate = self.detector.detect(symbol, df, timeframe=interval)
             if candidate is None:
                 continue
@@ -64,4 +86,5 @@ class MarketScanner:
             rejected=rejected,
             decisions=decisions,
             data_errors=data_errors,
+            data_quality_skips=data_quality_skips,
         )

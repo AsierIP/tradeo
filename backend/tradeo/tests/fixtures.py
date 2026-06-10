@@ -22,7 +22,7 @@ def fixture_ohlcv(symbol: str, bars: int = 420) -> pd.DataFrame:
     volume = rng.integers(300_000, 3_000_000, bars).astype(float)
     if seed % 3 == 0:
         volume[-1] *= 2.5
-    idx = pd.date_range(end=pd.Timestamp.utcnow().date(), periods=bars, freq="B")
+    idx = pd.date_range(end=pd.Timestamp.now(tz="UTC").date(), periods=bars, freq="B")
     return pd.DataFrame(
         {"open": open_, "high": high, "low": low, "close": price, "volume": volume}, index=idx
     )
