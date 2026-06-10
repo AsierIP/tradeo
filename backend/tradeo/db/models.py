@@ -83,6 +83,8 @@ class Trade(Base):
     pnl_usd: Mapped[float] = mapped_column(Float, default=0.0)
     r_multiple: Mapped[float] = mapped_column(Float, default=0.0)
     broker_order_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    evidence_type: Mapped[str | None] = mapped_column(String(40), nullable=True, index=True)
+    evidence_quality: Mapped[str | None] = mapped_column(String(40), nullable=True, index=True)
     metadata_json: Mapped[dict[str, Any]] = mapped_column(json_type(), default=dict)
 
     signal: Mapped[Signal | None] = relationship(back_populates="trades")

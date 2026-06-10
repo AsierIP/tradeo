@@ -14,8 +14,8 @@ from tradeo.db.models import (
     TradeStatus,
 )
 from tradeo.db.session import Base
-from tradeo.services.director_review_gate import DirectorReviewGate
-from tradeo.services.evidence import EvidenceQuality, EvidenceType
+from tradeo.services.director_review_gate import DirectorProductionGate, DirectorReviewGate
+from tradeo.services.evidence import EvidenceQuality, EvidenceType, FillProvenance
 
 
 def session_factory():
@@ -81,7 +81,16 @@ def add_closed_lab_trade(
     )
     db.add(signal)
     db.flush()
-    trade_meta = {"execution_mode": "ibkr", "ibkr_mode": "paper"}
+    trade_meta = {
+        "execution_mode": "ibkr",
+        "ibkr_mode": "paper",
+        "evidence_type": EvidenceType.IBKR_PAPER_FILL.value,
+        "evidence_quality": EvidenceQuality.NORMAL.value,
+        "fill_provenance": FillProvenance.BROKER_EXECUTION.value,
+        "broker_execution_hash": f"broker-execution-hash-{index}",
+        "broker_execution_time": trade_time.isoformat(),
+        "commission": 0.0,
+    }
     trade_meta.update(trade_metadata or {})
     db.add(
         Trade(
@@ -98,10 +107,42 @@ def add_closed_lab_trade(
             closed_at=trade_time + timedelta(minutes=30),
             pnl_usd=10.0 * r_multiple,
             r_multiple=r_multiple,
+            evidence_type=trade_meta.get("evidence_type"),
+            evidence_quality=trade_meta.get("evidence_quality"),
             metadata_json=trade_meta,
         )
     )
     db.commit()
+
+
+def production_contract_metrics(*, nested: bool = True) -> dict:
+    metrics = {
+        "director_gate_status": "passed",
+        "director_gate": {"status": "passed", "blockers": []},
+        "event_ledger_sha256": "event-ledger-hash",
+        "production_evidence_packet": {"id": "packet-1", "hash": "packet-hash"},
+        "execution_provenance": {
+            "costs_reconciled": True,
+            "slippage_reconciled": True,
+            "fills_reconciled": True,
+        },
+        "edge_claim": "NO_DEMOSTRADO",
+        "global_experiment_registry": {
+            "path": "reports/research/global_experiment_registry.json",
+            "registry_hash": "registry-hash",
+            "previous_registry_hash": "previous-registry-hash",
+            "run_manifest_hash": "run-manifest-hash",
+            "hash_chain_valid": True,
+        },
+    }
+    if nested:
+        metrics["nested_discovery_replay"] = {
+            "status": "passed",
+            "implemented": True,
+            "passed": True,
+            "blocking": False,
+        }
+    return metrics
 
 
 def test_director_review_gate_waits_for_ten_closed_lab_trades() -> None:
@@ -122,6 +163,29 @@ def test_director_review_gate_waits_for_ten_closed_lab_trades() -> None:
     assert pattern.metrics_json["lab_execution"]["by_regime"]
     assert pattern.metrics_json["lab_execution"]["by_regime_empty_reason"] == ""
     assert pattern.metrics_json["lab_execution"]["director_recommendations"][0]["action"] == "collect_closed_lab_trades"
+
+
+def test_director_production_gate_blocks_missing_nested_replay_contract() -> None:
+    db = session_factory()
+    pattern = add_pattern(db)
+    pattern.metrics_json = production_contract_metrics(nested=False)
+    db.add(pattern)
+    db.commit()
+    for index in range(3):
+        add_closed_lab_trade(db, pattern, index)
+
+    closed_trades = db.query(Trade).filter(Trade.status == TradeStatus.CLOSED).all()
+    result = DirectorProductionGate(
+        min_paper_fills=3,
+        min_fill_symbols=1,
+        min_fill_trading_days=1,
+        min_expectancy_r=0.0,
+        min_profit_factor=0.1,
+    ).evaluate_pattern(pattern, closed_trades)
+
+    assert result["approved_for_production"] is False
+    assert "nested_discovery_replay_missing" in result["blockers"]
+    assert result["scientific_contracts"]["director_gate_passed"] is True
 
 
 def test_director_review_gate_marks_candidate_after_ten_closed_lab_trades() -> None:
@@ -234,6 +298,64 @@ def test_director_review_gate_ignores_degraded_fallback_evidence() -> None:
         EvidenceQuality.DEGRADED.value: 1,
     }
     assert lab_execution["trades_remaining_for_director_review"] == 1
+
+
+def test_director_review_gate_does_not_promote_closed_paper_order_without_real_fill() -> None:
+    db = session_factory()
+    pattern = add_pattern(db)
+    for index in range(9):
+        add_closed_lab_trade(db, pattern, index)
+    add_closed_lab_trade(
+        db,
+        pattern,
+        9,
+        trade_metadata={
+            "evidence_type": EvidenceType.IBKR_PAPER_ORDER.value,
+            "evidence_quality": EvidenceQuality.NORMAL.value,
+            "fill_provenance": FillProvenance.SIMULATED_CLOSE.value,
+        },
+    )
+
+    result = DirectorReviewGate(min_closed_lab_trades=10).refresh(db)
+    db.refresh(pattern)
+    lab_execution = pattern.metrics_json["lab_execution"]
+
+    assert result["marked_for_director_review"] == 0
+    assert lab_execution["closed_lab_trades"] == 9
+    assert lab_execution["excluded_lab_evidence_trades"] == 1
+    assert lab_execution["excluded_evidence_type_counts"] == {
+        EvidenceType.IBKR_PAPER_ORDER.value: 1,
+    }
+
+
+def test_director_review_gate_counts_broker_execution_fill_with_hash() -> None:
+    db = session_factory()
+    pattern = add_pattern(db)
+    add_closed_lab_trade(db, pattern, 0)
+    trade = db.query(Trade).one()
+
+    assert DirectorReviewGate._counts_as_paper_fill(trade) is True
+
+
+def test_director_review_gate_rejects_shadow_close_provenance() -> None:
+    db = session_factory()
+    pattern = add_pattern(db)
+    add_closed_lab_trade(
+        db,
+        pattern,
+        0,
+        trade_metadata={
+            "evidence_type": EvidenceType.IBKR_PAPER_FILL.value,
+            "evidence_quality": EvidenceQuality.NORMAL.value,
+            "fill_provenance": FillProvenance.SHADOW_CLOSE.value,
+            "broker_execution_hash": "shadow-hash",
+            "broker_execution_time": "2026-01-05T16:30:00+00:00",
+            "commission": 0.0,
+        },
+    )
+    trade = db.query(Trade).one()
+
+    assert DirectorReviewGate._counts_as_paper_fill(trade) is False
 
 
 def test_director_review_gate_explains_missing_bucket_data_when_no_trades() -> None:

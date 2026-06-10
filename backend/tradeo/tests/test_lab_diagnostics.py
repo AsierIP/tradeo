@@ -16,7 +16,7 @@ from tradeo.db.models import (
     TradeStatus,
 )
 from tradeo.db.session import Base
-from tradeo.services.evidence import EvidenceQuality, EvidenceType
+from tradeo.services.evidence import EvidenceQuality, EvidenceType, FillProvenance
 from tradeo.services.lab_diagnostics import laboratory_diagnostics
 
 
@@ -92,7 +92,18 @@ def add_closed_paper_trade(db, pattern: DiscoveredPattern) -> None:
             closed_at=datetime(2026, 6, 8, 16, 0, tzinfo=timezone.utc),
             pnl_usd=12.0,
             r_multiple=1.2,
-            metadata_json={"execution_mode": "ibkr", "ibkr_mode": "paper"},
+            evidence_type=EvidenceType.IBKR_PAPER_FILL.value,
+            evidence_quality=EvidenceQuality.NORMAL.value,
+            metadata_json={
+                "execution_mode": "ibkr",
+                "ibkr_mode": "paper",
+                "evidence_type": EvidenceType.IBKR_PAPER_FILL.value,
+                "evidence_quality": EvidenceQuality.NORMAL.value,
+                "fill_provenance": FillProvenance.BROKER_EXECUTION.value,
+                "broker_execution_hash": "lab-diagnostics-fill",
+                "broker_execution_time": "2026-06-08T16:00:00+00:00",
+                "commission": 0.0,
+            },
         )
     )
     db.commit()

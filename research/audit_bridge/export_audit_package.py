@@ -30,7 +30,60 @@ EVIDENCE_IBKR_PAPER_ORDER = "ibkr_paper_order"
 EVIDENCE_IBKR_PAPER_FILL = "ibkr_paper_fill"
 EVIDENCE_QUALITY_STANDARD = "standard"
 EVIDENCE_QUALITY_DEGRADED = "degraded"
+FILL_PROVENANCE_BROKER_EXECUTION = "broker_execution"
+FILL_PROVENANCE_BROKER_STATEMENT_IMPORT = "broker_statement_import"
 LAB_SHADOW_EXECUTION_MODE = "lab_shadow_observation"
+REAL_FILL_PROVENANCE = {
+    FILL_PROVENANCE_BROKER_EXECUTION,
+    FILL_PROVENANCE_BROKER_STATEMENT_IMPORT,
+}
+FILL_ID_KEYS = (
+    "fill_id",
+    "broker_fill_id",
+    "ib_fill_id",
+    "execution_id",
+    "exec_id",
+    "ib_exec_id",
+    "broker_execution_id",
+    "execution_hash",
+    "broker_execution_hash",
+    "ib_execution_hash",
+    "fill_id_hash",
+)
+ENTRY_FILL_ID_KEYS = tuple(f"entry_{key}" for key in FILL_ID_KEYS) + FILL_ID_KEYS
+EXIT_FILL_ID_KEYS = tuple(f"exit_{key}" for key in FILL_ID_KEYS) + FILL_ID_KEYS
+BROKER_TIMESTAMP_KEYS = (
+    "broker_execution_time",
+    "ib_execution_time",
+    "broker_executed_at",
+    "execution_time",
+    "executed_at",
+    "fill_time",
+    "broker_fill_time",
+    "statement_execution_time",
+)
+ENTRY_BROKER_TIMESTAMP_KEYS = tuple(f"entry_{key}" for key in BROKER_TIMESTAMP_KEYS) + (
+    "entry_fill_time",
+) + BROKER_TIMESTAMP_KEYS
+EXIT_BROKER_TIMESTAMP_KEYS = tuple(f"exit_{key}" for key in BROKER_TIMESTAMP_KEYS) + (
+    "exit_fill_time",
+) + BROKER_TIMESTAMP_KEYS
+COMMISSION_KEYS = (
+    "commission",
+    "commission_usd",
+    "broker_commission",
+    "ib_commission",
+    "fees",
+    "other_fees",
+)
+EVIDENCE_NESTED_METADATA_KEYS = (
+    "broker_execution",
+    "execution",
+    "execution_report",
+    "execution_observation",
+    "broker_statement",
+    "statement_row",
+)
 
 PATTERN_CATALOG_COLUMNS = [
     "pattern_id",
@@ -190,6 +243,18 @@ EXPERIMENT_COLUMNS = [
     "spa_p_value",
     "fit_scope",
     "score_input_scope",
+    "event_ledger_hash",
+    "nested_discovery_replay_status",
+    "nested_discovery_replay_implemented",
+    "nested_discovery_replay_passed",
+    "edge_claim",
+    "drift_status",
+    "active_blockers",
+    "registry_path",
+    "registry_hash",
+    "registry_previous_hash",
+    "registry_run_manifest_hash",
+    "registry_hash_chain_valid",
     "notes",
 ]
 
@@ -564,14 +629,29 @@ def trade_is_closed(trade: dict[str, Any], metadata: dict[str, Any]) -> bool:
 def trade_evidence_type(trade: dict[str, Any], metadata: dict[str, Any]) -> str:
     explicit = trade.get("evidence_type") or metadata.get("evidence_type")
     if explicit:
-        return str(explicit)
+        explicit_type = str(explicit)
+        if (
+            explicit_type == EVIDENCE_IBKR_PAPER_ORDER
+            and trade_is_closed(trade, metadata)
+            and fill_provenance(metadata) in REAL_FILL_PROVENANCE
+        ):
+            return EVIDENCE_IBKR_PAPER_FILL
+        return explicit_type
     execution_mode = str(metadata.get("execution_mode") or trade.get("execution_mode") or "").strip().lower()
     if execution_mode == LAB_SHADOW_EXECUTION_MODE or truthy(metadata.get("observation_only")) or truthy(metadata.get("no_ibkr_order")):
         return EVIDENCE_NEAR_MISS_SHADOW if truthy(metadata.get("near_miss")) else EVIDENCE_SHADOW_NO_ORDER
     if execution_mode in {"ibkr", "ibkr_paper", "paper"}:
-        return EVIDENCE_IBKR_PAPER_FILL if trade_is_closed(trade, metadata) else EVIDENCE_IBKR_PAPER_ORDER
+        return (
+            EVIDENCE_IBKR_PAPER_FILL
+            if trade_is_closed(trade, metadata) and fill_provenance(metadata) in REAL_FILL_PROVENANCE
+            else EVIDENCE_IBKR_PAPER_ORDER
+        )
     if trade.get("broker_order_id") or metadata.get("broker_order_id") or metadata.get("parent_order_id"):
-        return EVIDENCE_IBKR_PAPER_FILL if trade_is_closed(trade, metadata) else EVIDENCE_IBKR_PAPER_ORDER
+        return (
+            EVIDENCE_IBKR_PAPER_FILL
+            if trade_is_closed(trade, metadata) and fill_provenance(metadata) in REAL_FILL_PROVENANCE
+            else EVIDENCE_IBKR_PAPER_ORDER
+        )
     return ""
 
 
@@ -589,15 +669,53 @@ def is_exportable_paper_fill_trade(trade: dict[str, Any], metadata: dict[str, An
     evidence_quality = trade_evidence_quality(metadata)
     if evidence_type != EVIDENCE_IBKR_PAPER_FILL:
         return False
-    if evidence_quality == EVIDENCE_QUALITY_DEGRADED:
+    if evidence_quality not in {EVIDENCE_QUALITY_STANDARD, "normal"}:
         return False
     if not trade_is_closed(trade, metadata):
         return False
-    return not (
+    if (
         truthy(metadata.get("observation_only"))
         or truthy(metadata.get("no_ibkr_order"))
         or truthy(metadata.get("near_miss"))
+    ):
+        return False
+    return (
+        fill_provenance(metadata) in REAL_FILL_PROVENANCE
+        and has_any_metadata_value(metadata, FILL_ID_KEYS)
+        and has_any_metadata_value(metadata, BROKER_TIMESTAMP_KEYS)
+        and has_any_metadata_value(metadata, COMMISSION_KEYS)
     )
+
+
+def fill_provenance(metadata: dict[str, Any]) -> str:
+    return str(metadata.get("fill_provenance") or "").strip()
+
+
+def has_any_metadata_value(metadata: dict[str, Any], keys: tuple[str, ...]) -> bool:
+    for source in metadata_sources(metadata):
+        for key in keys:
+            value = source.get(key)
+            if value is not None and str(value).strip() != "":
+                return True
+    return False
+
+
+def first_metadata_value(metadata: dict[str, Any], keys: tuple[str, ...]) -> Any:
+    for source in metadata_sources(metadata):
+        for key in keys:
+            value = source.get(key)
+            if value is not None and str(value).strip() != "":
+                return value
+    return ""
+
+
+def metadata_sources(metadata: dict[str, Any]) -> list[dict[str, Any]]:
+    sources: list[dict[str, Any]] = [metadata]
+    for key in EVIDENCE_NESTED_METADATA_KEYS:
+        value = metadata.get(key)
+        if isinstance(value, dict):
+            sources.append(value)
+    return sources
 
 
 def min_max_times(examples: list[dict[str, Any]]) -> tuple[str, str]:
@@ -832,11 +950,13 @@ def build_paper_trades(patterns: list[dict[str, Any]], laboratory_overview: dict
         entry = safe_float(trade.get("entry"), safe_float(signal.get("entry"), 0.0))
         qty = safe_float(trade.get("qty"), 0.0)
         gross_pnl = safe_float(trade.get("pnl_usd"), 0.0)
-        commission = safe_float(metadata.get("commission"), 0.0)
+        commission = safe_float(first_metadata_value(metadata, COMMISSION_KEYS), 0.0)
         estimated_spread = safe_float(metadata.get("estimated_spread_cost"), 0.0)
         estimated_slippage = safe_float(metadata.get("estimated_slippage"), 0.0)
         other_fees = safe_float(metadata.get("other_fees"), 0.0)
         net_pnl = gross_pnl - commission - estimated_spread - estimated_slippage - other_fees
+        entry_fill_time = first_metadata_value(metadata, ENTRY_BROKER_TIMESTAMP_KEYS)
+        exit_fill_time = first_metadata_value(metadata, EXIT_BROKER_TIMESTAMP_KEYS)
         rows.append(
             {
                 "trade_id": trade.get("id"),
@@ -849,14 +969,14 @@ def build_paper_trades(patterns: list[dict[str, Any]], laboratory_overview: dict
                 "quantity": trade.get("qty", ""),
                 "entry_signal_time": signal.get("created_at", ""),
                 "entry_order_time": metadata.get("submitted_at") or trade.get("opened_at", ""),
-                "entry_fill_time": metadata.get("entry_fill_time") or trade.get("opened_at", ""),
+                "entry_fill_time": entry_fill_time,
                 "entry_signal_price": signal.get("entry", entry),
                 "entry_order_type": ((signal_metadata.get("entry_variant") or {}).get("order_style")) or "limit",
                 "entry_limit_price": signal.get("entry", entry),
                 "entry_fill_price": metadata.get("entry_fill_price") or entry,
                 "exit_signal_time": trade.get("closed_at", ""),
                 "exit_order_time": metadata.get("exit_order_time") or trade.get("closed_at", ""),
-                "exit_fill_time": metadata.get("exit_fill_time") or trade.get("closed_at", ""),
+                "exit_fill_time": exit_fill_time,
                 "exit_order_type": metadata.get("exit_order_type") or "bracket_exit",
                 "exit_limit_price": trade.get("target", ""),
                 "exit_fill_price": trade.get("exit_price", ""),
@@ -902,11 +1022,11 @@ def build_ib_fills(laboratory_overview: dict[str, Any], *, exported_trade_ids: s
         if allowed_trade_ids is not None and trade_id not in allowed_trade_ids:
             continue
         entry_price = safe_float(metadata.get("entry_fill_price"), safe_float(trade.get("entry"), 0.0))
-        opened_at = normalize_ts(metadata.get("entry_fill_time") or trade.get("opened_at"))
+        opened_at = normalize_ts(first_metadata_value(metadata, ENTRY_BROKER_TIMESTAMP_KEYS))
         if entry_price > 0 and opened_at:
             rows.append(fill_row(trade, metadata, trade_id=trade_id, suffix="ENTRY", timestamp=opened_at, price=entry_price))
         exit_price = safe_float(metadata.get("exit_fill_price"), safe_float(trade.get("exit_price"), 0.0))
-        closed_at = normalize_ts(metadata.get("exit_fill_time") or trade.get("closed_at"))
+        closed_at = normalize_ts(first_metadata_value(metadata, EXIT_BROKER_TIMESTAMP_KEYS))
         if exit_price > 0 and closed_at:
             rows.append(fill_row(trade, metadata, trade_id=trade_id, suffix="EXIT", timestamp=closed_at, price=exit_price))
     return rows
@@ -923,8 +1043,10 @@ def fill_row(
 ) -> dict[str, Any]:
     order_ids = metadata.get("order_ids") if isinstance(metadata.get("order_ids"), list) else []
     raw_order_id = order_ids[0] if order_ids else metadata.get("parent_order_id", "")
+    fill_keys = ENTRY_FILL_ID_KEYS if suffix == "ENTRY" else EXIT_FILL_ID_KEYS
+    fill_id = first_metadata_value(metadata, fill_keys)
     return {
-        "fill_id_hash": stable_hash({"trade_id": trade_id, "suffix": suffix, "timestamp": timestamp})[:24],
+        "fill_id_hash": stable_hash({"fill_id": fill_id, "trade_id": trade_id, "suffix": suffix})[:24],
         "trade_id": trade_id,
         "order_id_hash": stable_hash({"order_id": raw_order_id})[:24] if raw_order_id else "",
         "ib_execution_time": timestamp,
@@ -933,13 +1055,13 @@ def fill_row(
         "side": trade.get("side", ""),
         "quantity": trade.get("qty", ""),
         "price": round(price, 4),
-        "commission": metadata.get("commission", ""),
+        "commission": first_metadata_value(metadata, COMMISSION_KEYS),
         "liquidity_flag": metadata.get("liquidity_flag", ""),
         "exchange": "SMART/IBKR",
         "order_type": metadata.get("entry_order_type") or "bracket",
         "account_id_redacted": "true",
         "raw_status": trade.get("status", ""),
-        "notes": f"{suffix.lower()} fill reconstructed from paper trade record",
+        "notes": f"{suffix.lower()} fill source={fill_provenance(metadata)}",
     }
 
 
@@ -980,6 +1102,11 @@ def build_experiment_registry(
         rr_metrics = pattern.get("rr_metrics_json") or {}
         if not rr_metrics:
             rr_metrics = {"best": best_rr_metrics(pattern)}
+        nested_replay = nested_discovery_replay_metadata(research_metrics)
+        registry = registry_metadata(research_metrics)
+        edge_claim = edge_claim_metadata(research_metrics)
+        event_ledger_hash = event_ledger_hash_metadata(research_metrics)
+        active_blockers = active_blockers_metadata(research_metrics)
         for rr_key, metrics in sorted(rr_metrics.items(), key=lambda item: str(item[0])):
             variant_id = f"RR_{str(rr_key).replace('.', '_')}"
             rows.append({
@@ -1022,9 +1149,93 @@ def build_experiment_registry(
                 "spa_p_value": metric_value(pattern, research_metrics, "spa_p_value"),
                 "fit_scope": metric_value(pattern, research_metrics, "fit_scope", {}),
                 "score_input_scope": metric_value(pattern, research_metrics, "score_input_scope", {}),
+                "event_ledger_hash": event_ledger_hash,
+                "nested_discovery_replay_status": nested_replay.get("status", ""),
+                "nested_discovery_replay_implemented": nested_replay.get("implemented", ""),
+                "nested_discovery_replay_passed": nested_replay.get("passed", ""),
+                "edge_claim": edge_claim,
+                "drift_status": metric_value(pattern, research_metrics, "drift_status", pattern.get("drift_status", "")),
+                "active_blockers": "; ".join(active_blockers),
+                "registry_path": registry.get("path", ""),
+                "registry_hash": registry.get("registry_hash") or registry.get("hash") or registry.get("sha256") or "",
+                "registry_previous_hash": registry.get("previous_registry_hash", ""),
+                "registry_run_manifest_hash": (
+                    registry.get("run_manifest_hash") or registry.get("latest_run_manifest_hash") or ""
+                ),
+                "registry_hash_chain_valid": registry.get("hash_chain_valid", ""),
                 "notes": "Research variant metrics are in R units; no paper trade PnL exists yet.",
             })
     return rows
+
+
+def nested_discovery_replay_metadata(metrics: dict[str, Any]) -> dict[str, Any]:
+    nested = metrics.get("nested_discovery_replay")
+    if not isinstance(nested, dict):
+        hypothesis = metrics.get("research_hypothesis")
+        if isinstance(hypothesis, dict):
+            nested = hypothesis.get("nested_discovery_replay")
+    if not isinstance(nested, dict):
+        hypothesis = metrics.get("research_hypothesis_package")
+        if isinstance(hypothesis, dict):
+            nested = hypothesis.get("nested_discovery_replay")
+    if not isinstance(nested, dict):
+        return {}
+    status = str(nested.get("status") or "").strip().lower()
+    passed = truthy(nested.get("passed")) or status in {"passed", "pass", "ok", "complete", "completed"}
+    return {
+        "status": status,
+        "implemented": truthy(nested.get("implemented")),
+        "passed": passed,
+    }
+
+
+def registry_metadata(metrics: dict[str, Any]) -> dict[str, Any]:
+    registry = metrics.get("global_experiment_registry")
+    return registry if isinstance(registry, dict) else {}
+
+
+def edge_claim_metadata(metrics: dict[str, Any]) -> str:
+    for key in ("edge_claim",):
+        value = str(metrics.get(key) or "").strip()
+        if value:
+            return value
+    for key in ("research_hypothesis", "research_hypothesis_package", "global_experiment_registry"):
+        payload = metrics.get(key)
+        if isinstance(payload, dict):
+            value = str(payload.get("edge_claim") or "").strip()
+            if value:
+                return value
+    return ""
+
+
+def event_ledger_hash_metadata(metrics: dict[str, Any]) -> str:
+    for key in ("event_ledger_hash", "event_ledger_sha256"):
+        value = str(metrics.get(key) or "").strip()
+        if value:
+            return value
+    for key in ("research_hypothesis", "research_hypothesis_package"):
+        payload = metrics.get(key)
+        if isinstance(payload, dict):
+            value = str(payload.get("event_ledger_hash") or "").strip()
+            if value:
+                return value
+    return ""
+
+
+def active_blockers_metadata(metrics: dict[str, Any]) -> list[str]:
+    blockers: list[str] = []
+    for key in ("active_blockers", "promotion_blockers", "director_blockers"):
+        value = metrics.get(key)
+        if isinstance(value, list):
+            blockers.extend(str(item) for item in value if str(item).strip())
+        elif isinstance(value, str) and value.strip():
+            blockers.append(value.strip())
+    lab_execution = metrics.get("lab_execution")
+    if isinstance(lab_execution, dict):
+        value = lab_execution.get("promotion_blockers")
+        if isinstance(value, list):
+            blockers.extend(str(item) for item in value if str(item).strip())
+    return blockers
 
 
 def build_metrics_by_pattern(

@@ -5,7 +5,8 @@ from sqlalchemy.orm import sessionmaker
 
 from tradeo.db.models import Signal, SignalStatus, Trade, TradeStatus
 from tradeo.db.session import Base
-from tradeo.services.evidence import EvidenceType
+from tradeo.routers.laboratory import laboratory_overview
+from tradeo.services.evidence import EvidenceQuality, EvidenceType, FillProvenance
 from tradeo.services.module_dashboard import module_overview
 
 
@@ -61,6 +62,32 @@ def test_legacy_ibkr_paper_research_trades_are_laboratory_history() -> None:
     assert lab["signals"][0]["execution_reason_code"] == "trade_open"
     assert lab["trades"][0]["status"] == "open"
     assert fox["trades"] == []
+
+
+def test_module_overview_exposes_dashboard_data_scope() -> None:
+    db = session_factory()
+
+    lab = module_overview(db, "laboratory", limit=12)
+
+    assert lab["data_scope"] == "last_500_query/limit_12"
+    assert lab["query_limit"] == 500
+    assert lab["summary_limit"] == 12
+    assert lab["pnl_basis"] == "operational_fills_only"
+    assert lab["stats"]["pnl_basis"] == "operational_fills_only"
+    assert lab["director_source"] is False
+    assert "Director review" in lab["scope_note"]
+
+
+def test_laboratory_overview_api_exposes_default_dashboard_data_scope() -> None:
+    db = session_factory()
+
+    lab = laboratory_overview("admin", db)
+
+    assert lab["data_scope"] == "last_500_query/limit_80"
+    assert lab["query_limit"] == 500
+    assert lab["summary_limit"] == 80
+    assert lab["pnl_basis"] == "operational_fills_only"
+    assert lab["director_source"] is False
 
 
 def test_legacy_ibkr_paper_smoke_order_is_laboratory_history() -> None:
@@ -190,7 +217,15 @@ def test_closed_trade_keeps_signal_executed_and_operation_closed() -> None:
             status=TradeStatus.CLOSED,
             pnl_usd=-30.0,
             r_multiple=-1.0,
-            metadata_json={"execution_mode": "paper"},
+            metadata_json={
+                "execution_mode": "paper",
+                "evidence_type": EvidenceType.IBKR_PAPER_FILL.value,
+                "evidence_quality": EvidenceQuality.NORMAL.value,
+                "fill_provenance": FillProvenance.BROKER_EXECUTION.value,
+                "broker_fill_id": "test-fill-1",
+                "broker_execution_time": "2026-06-10T00:00:00+00:00",
+                "commission_usd": 1.0,
+            },
         )
     )
     db.commit()

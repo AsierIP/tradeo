@@ -10,7 +10,12 @@ from tradeo.core.config import Settings, get_settings
 from tradeo.db.models import AuditLog, DiscoveredPattern, Signal, SignalStatus, Trade, TradeStatus
 from tradeo.research.novel_pattern_matcher import NovelPatternMatcher
 from tradeo.schemas import PatternCandidate
-from tradeo.services.evidence import EvidenceQuality, EvidenceType, is_director_review_paper_fill_evidence
+from tradeo.services.evidence import (
+    EvidenceQuality,
+    EvidenceType,
+    evidence_metadata_with_stored_columns,
+    is_director_review_paper_fill_evidence,
+)
 from tradeo.services.ibkr_broker import IBKRBroker
 from tradeo.services.lab_paper_observations import LAB_SHADOW_EXECUTION_MODE, LabPaperObservationService
 from tradeo.services.market_session import market_session_status
@@ -760,9 +765,16 @@ class PatternEntryScanner:
             metadata = signal.metadata_json or {}
             if metadata.get("entry_module") != module:
                 continue
-            if not is_director_review_paper_fill_evidence(
+            trade_metadata = evidence_metadata_with_stored_columns(
                 trade.metadata_json or {},
+                evidence_type=trade.evidence_type,
+                evidence_quality=trade.evidence_quality,
+            )
+            if not is_director_review_paper_fill_evidence(
+                trade_metadata,
                 trade_status=trade.status,
+                signal_metadata=metadata,
+                broker_order_id=trade.broker_order_id,
             ):
                 continue
             variant = str(metadata.get("entry_variant_id") or "*")

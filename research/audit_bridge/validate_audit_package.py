@@ -62,7 +62,9 @@ CSV_COLUMNS = {
         "bid_at_signal", "ask_at_signal", "spread_at_signal", "volume_at_signal",
         "atr_at_signal", "volatility_context", "market_regime", "sector",
         "was_trade_triggered", "trade_id", "reason_not_traded", "duplicate_group_id",
-        "is_independent_sample", "data_available_at_signal", "features_used_json", "notes",
+        "is_independent_sample", "data_available_at_signal", "available_data_cutoff_ts",
+        "decision_ts", "entry_eligible_ts", "label_generated_ts", "source_bar_hash",
+        "split_id", "features_used_json", "notes",
     ],
     "paper_trades.csv": [
         "trade_id", "event_id", "pattern_id", "ticker", "side", "quantity", "entry_signal_time",
@@ -87,7 +89,12 @@ CSV_COLUMNS = {
         "paper_live_end", "number_of_assets_tested", "number_of_events", "number_of_trades",
         "gross_pnl", "net_pnl", "winrate", "profit_factor", "sharpe", "sortino",
         "max_drawdown", "candidate_trial_count", "global_trial_count", "adjusted_p_value",
-        "wrc_p_value", "spa_p_value", "fit_scope", "score_input_scope", "notes",
+        "wrc_p_value", "spa_p_value", "fit_scope", "score_input_scope",
+        "event_ledger_hash", "nested_discovery_replay_status",
+        "nested_discovery_replay_implemented", "nested_discovery_replay_passed",
+        "edge_claim", "drift_status", "active_blockers", "registry_path",
+        "registry_hash", "registry_previous_hash", "registry_run_manifest_hash",
+        "registry_hash_chain_valid", "notes",
     ],
     "metrics_by_pattern.csv": [
         "pattern_id", "sample_count", "independent_sample_count", "trade_count", "ticker_count",
@@ -122,7 +129,10 @@ CSV_COLUMNS = {
 
 TIMESTAMP_COLUMNS = {
     "pattern_catalog.csv": ["created_at", "first_seen", "last_seen"],
-    "pattern_events.csv": ["detected_at", "market_timestamp", "bar_open_time", "bar_close_time"],
+    "pattern_events.csv": [
+        "detected_at", "market_timestamp", "bar_open_time", "bar_close_time",
+        "available_data_cutoff_ts", "decision_ts", "entry_eligible_ts", "label_generated_ts",
+    ],
     "paper_trades.csv": [
         "entry_signal_time", "entry_order_time", "entry_fill_time", "exit_signal_time",
         "exit_order_time", "exit_fill_time",
@@ -153,20 +163,16 @@ def main() -> int:
     args = parser.parse_args()
     package = args.package
     errors, csv_rows = validate_package(package)
+    status = validation_report(package, errors, csv_rows)
 
     if errors:
         print("AUDIT PACKAGE INVALID")
         for error in errors:
             print(f"- {error}")
+        print(json.dumps(status, indent=2))
         return 1
     print("AUDIT PACKAGE OK")
-    print(json.dumps({
-        "patterns": len(csv_rows.get("pattern_catalog.csv", [])),
-        "events": len(csv_rows.get("pattern_events.csv", [])),
-        "paper_trades": len(csv_rows.get("paper_trades.csv", [])),
-        "fills": len(csv_rows.get("ib_fills.csv", [])),
-        "experiments": len(csv_rows.get("experiment_registry.csv", [])),
-    }, indent=2))
+    print(json.dumps(status, indent=2))
     return 0
 
 
@@ -211,6 +217,66 @@ def validate_package(package: Path) -> tuple[list[str], dict[str, list[dict[str,
     check_metric_coherence(csv_rows, errors)
     check_bucket_breakdowns(csv_rows, errors)
     return errors, csv_rows
+
+
+def validation_report(
+    package: Path,
+    errors: list[str],
+    csv_rows: dict[str, list[dict[str, str]]],
+) -> dict[str, Any]:
+    director_gate = load_json_silent(package / "director_gate_result.json")
+    director_gate_status = director_gate_status_value(director_gate)
+    schema_valid = not errors
+    gate_allows_promotion = director_gate_promotion_allowed(director_gate, director_gate_status)
+    return {
+        "schema_valid": schema_valid,
+        "package_valid": schema_valid,
+        "director_gate_status": director_gate_status,
+        "promotion_allowed": bool(schema_valid and gate_allows_promotion),
+        "patterns": len(csv_rows.get("pattern_catalog.csv", [])),
+        "events": len(csv_rows.get("pattern_events.csv", [])),
+        "paper_trades": len(csv_rows.get("paper_trades.csv", [])),
+        "fills": len(csv_rows.get("ib_fills.csv", [])),
+        "experiments": len(csv_rows.get("experiment_registry.csv", [])),
+        "error_count": len(errors),
+    }
+
+
+def load_json_silent(path: Path) -> Any:
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def director_gate_status_value(result: Any) -> str:
+    if not isinstance(result, dict):
+        return "missing"
+    status = str(result.get("director_gate_status") or result.get("status") or "").strip().lower()
+    if status:
+        return status
+    summary = result.get("summary")
+    if isinstance(summary, dict):
+        return (
+            str(summary.get("director_gate_status") or summary.get("director_gate") or "")
+            .strip()
+            .lower()
+            or "missing"
+        )
+    return "missing"
+
+
+def director_gate_promotion_allowed(result: Any, status: str) -> bool:
+    if not isinstance(result, dict):
+        return False
+    if "promotion_allowed" in result:
+        return bool(result.get("promotion_allowed"))
+    summary = result.get("summary")
+    if isinstance(summary, dict) and "promotion_allowed" in summary:
+        return bool(summary.get("promotion_allowed"))
+    return status == "passed"
 
 
 def load_json(path: Path, errors: list[str]) -> Any:
@@ -268,12 +334,25 @@ def check_director_gate_result(result: dict[str, Any], errors: list[str]) -> Non
     status = result.get("status")
     if status not in {"passed", "blocked", "invalid"}:
         errors.append("director_gate_result.json status must be passed, blocked or invalid")
+    director_gate_status = result.get("director_gate_status")
+    if director_gate_status is not None and director_gate_status != status:
+        errors.append("director_gate_result.json director_gate_status must match status")
+    if "schema_valid" in result and not isinstance(result.get("schema_valid"), bool):
+        errors.append("director_gate_result.json schema_valid must be boolean when present")
+    if "package_valid" in result and not isinstance(result.get("package_valid"), bool):
+        errors.append("director_gate_result.json package_valid must be boolean when present")
+    if "promotion_allowed" in result and not isinstance(result.get("promotion_allowed"), bool):
+        errors.append("director_gate_result.json promotion_allowed must be boolean when present")
+    if result.get("promotion_allowed") is True and status != "passed":
+        errors.append("director_gate_result.json promotion_allowed cannot be true unless status is passed")
     summary = result.get("summary")
     if not isinstance(summary, dict):
         errors.append("director_gate_result.json summary must be an object")
         return
     if summary.get("director_gate") not in {"passed", "blocked", "invalid"}:
         errors.append("director_gate_result.json summary.director_gate must be present")
+    if "promotion_allowed" in summary and not isinstance(summary.get("promotion_allowed"), bool):
+        errors.append("director_gate_result.json summary.promotion_allowed must be boolean when present")
     for field in ("by_regime", "by_entry_variant"):
         value = summary.get(field)
         if not isinstance(value, dict):

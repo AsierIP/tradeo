@@ -386,6 +386,8 @@ class IBKRBroker:
                 status=TradeStatus.OPEN,
                 opened_at=now,
                 broker_order_id=str(parent_order.orderId),
+                evidence_type=evidence_type,
+                evidence_quality=EvidenceQuality.NORMAL.value,
                 metadata_json={
                     "evidence_type": evidence_type,
                     "evidence_quality": EvidenceQuality.NORMAL.value,

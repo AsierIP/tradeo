@@ -7,10 +7,11 @@ from sqlalchemy.orm import Session, joinedload
 
 from tradeo.db.models import AuditLog, DiscoveredPattern, DiscoveredPatternStatus, Trade, TradeStatus
 from tradeo.services.evidence import (
-    EvidenceQuality,
     PAPER_FILL_EVIDENCE_TYPES,
+    evidence_metadata_with_stored_columns,
     evidence_quality_from_metadata,
     evidence_type_from_metadata,
+    is_director_review_paper_fill_evidence,
 )
 from tradeo.services.production_manifest import build_production_manifest
 from tradeo.services.state_policy import REVIEW_TRIGGER_STATES
@@ -136,21 +137,17 @@ class DirectorReviewGate:
 
     @staticmethod
     def _counts_as_paper_fill(trade: Trade) -> bool:
-        metadata = trade.metadata_json or {}
-        signal_metadata = trade.signal.metadata_json if trade.signal is not None else {}
-        evidence_type = evidence_type_from_metadata(
-            metadata,
-            status=DirectorReviewGate._status_value(trade.status),
-            signal_metadata=signal_metadata,
-            broker_order_id=trade.broker_order_id,
+        metadata = evidence_metadata_with_stored_columns(
+            trade.metadata_json or {},
+            evidence_type=trade.evidence_type,
+            evidence_quality=trade.evidence_quality,
         )
-        evidence_quality = evidence_quality_from_metadata(metadata)
-        return (
-            evidence_type in PAPER_FILL_EVIDENCE_TYPES
-            and evidence_quality == EvidenceQuality.NORMAL.value
-            and not bool(metadata.get("no_ibkr_order") or metadata.get("observation_only"))
-            and not bool(signal_metadata.get("no_ibkr_order") or signal_metadata.get("observation_only"))
-            and not bool(metadata.get("near_miss") or signal_metadata.get("near_miss"))
+        signal_metadata = trade.signal.metadata_json if trade.signal is not None else {}
+        return is_director_review_paper_fill_evidence(
+            metadata,
+            signal_metadata=signal_metadata,
+            trade_status=DirectorReviewGate._status_value(trade.status),
+            broker_order_id=trade.broker_order_id,
         )
 
     @staticmethod
@@ -290,9 +287,14 @@ class DirectorReviewGate:
         counts: dict[str, int] = {}
         for trade in trades:
             signal_metadata = trade.signal.metadata_json if trade.signal is not None else {}
+            metadata = evidence_metadata_with_stored_columns(
+                trade.metadata_json or {},
+                evidence_type=trade.evidence_type,
+                evidence_quality=trade.evidence_quality,
+            )
             evidence_type = (
                 evidence_type_from_metadata(
-                    trade.metadata_json or {},
+                    metadata,
                     status=DirectorReviewGate._status_value(trade.status),
                     signal_metadata=signal_metadata,
                     broker_order_id=trade.broker_order_id,
@@ -306,7 +308,12 @@ class DirectorReviewGate:
     def _evidence_quality_counts(trades: list[Trade]) -> dict[str, int]:
         counts: dict[str, int] = {}
         for trade in trades:
-            quality = evidence_quality_from_metadata(trade.metadata_json or {})
+            metadata = evidence_metadata_with_stored_columns(
+                trade.metadata_json or {},
+                evidence_type=trade.evidence_type,
+                evidence_quality=trade.evidence_quality,
+            )
+            quality = evidence_quality_from_metadata(metadata)
             counts[quality] = counts.get(quality, 0) + 1
         return counts
 
@@ -520,6 +527,7 @@ class DirectorProductionGate:
     max_drawdown_r: float = 4.0
     min_profit_factor: float = 1.3
     min_expectancy_r: float = 0.05
+    required_edge_claim: str = "NO_DEMOSTRADO"
 
     def evaluate_pattern(
         self,
@@ -560,10 +568,13 @@ class DirectorProductionGate:
             blockers.append(f"paper_fill_expectancy_below_{self.min_expectancy_r}r")
         if profit_factor < self.min_profit_factor:
             blockers.append(f"paper_fill_profit_factor_below_{self.min_profit_factor}")
+        scientific_contracts = self._scientific_contracts(pattern, fills)
+        blockers.extend(scientific_contracts["blockers"])
         return {
             "gate_scope": "director_production_gate",
             "approved_for_production": not blockers,
             "blockers": blockers,
+            "scientific_contracts": scientific_contracts,
             "ibkr_paper_fills": len(fills),
             "min_paper_fills": self.min_paper_fills,
             "unique_fill_symbols": unique_symbols,
@@ -575,6 +586,315 @@ class DirectorProductionGate:
             "paper_fill_max_drawdown_r": round(max_drawdown, 4),
             "evidence_types_accepted": sorted(PAPER_FILL_EVIDENCE_TYPES),
         }
+
+    def _scientific_contracts(
+        self,
+        pattern: DiscoveredPattern,
+        fills: list[Trade],
+    ) -> dict[str, Any]:
+        metrics = pattern.metrics_json or {}
+        blockers: list[str] = []
+
+        nested = self._first_dict(
+            metrics,
+            ("nested_discovery_replay",),
+            ("research_hypothesis", "nested_discovery_replay"),
+            ("research_hypothesis_package", "nested_discovery_replay"),
+        )
+        nested_state = self._nested_replay_state(nested)
+        if not nested_state["present"]:
+            blockers.append("nested_discovery_replay_missing")
+        else:
+            if not nested_state["implemented"]:
+                blockers.append("nested_discovery_replay_not_implemented")
+            if not nested_state["passed"]:
+                blockers.append("nested_discovery_replay_not_passed")
+            if nested_state["blocking"]:
+                blockers.append("nested_discovery_replay_blocking")
+
+        director_gate = self._first_dict(
+            metrics,
+            ("director_gate",),
+            ("director_gate_result",),
+            ("audit_gate",),
+            ("audit_package", "director_gate"),
+        )
+        director_status = self._first_string(
+            metrics,
+            ("director_gate_status",),
+            ("audit_gate_status",),
+            ("director_gate", "status"),
+            ("director_gate_result", "status"),
+            ("audit_gate", "status"),
+            ("audit_package", "director_gate_status"),
+        ).lower()
+        if not director_status and director_gate:
+            director_status = str(director_gate.get("director_gate_status") or "").strip().lower()
+        director_passed = director_status == "passed" or _truthy(director_gate.get("passed") if director_gate else None)
+        if not director_passed:
+            blockers.append("director_audit_gate_not_passed" if director_status else "director_audit_gate_missing")
+
+        active_blockers = self._active_contract_blockers(metrics, director_gate)
+        if active_blockers:
+            blockers.append("active_director_blockers_present")
+
+        event_ledger_hash = self._first_string(
+            metrics,
+            ("event_ledger_sha256",),
+            ("event_ledger_hash",),
+            ("research_hypothesis", "event_ledger_hash"),
+            ("research_hypothesis_package", "event_ledger_hash"),
+        )
+        if not event_ledger_hash:
+            blockers.append("event_ledger_hash_missing")
+
+        evidence_packet = self._first_dict(
+            metrics,
+            ("production_evidence_packet",),
+            ("evidence_packet",),
+            ("director_packet",),
+            ("audit_package", "evidence_packet"),
+        )
+        evidence_packet_ref = self._evidence_packet_ref(evidence_packet)
+        evidence_packet_hash = self._first_string(
+            metrics,
+            ("evidence_packet_hash",),
+            ("production_evidence_packet_hash",),
+            ("audit_package_hash",),
+            ("production_evidence_packet", "hash"),
+            ("production_evidence_packet", "sha256"),
+            ("production_evidence_packet", "packet_hash"),
+            ("evidence_packet", "hash"),
+            ("evidence_packet", "sha256"),
+            ("evidence_packet", "packet_hash"),
+        )
+        if not evidence_packet_ref:
+            blockers.append("evidence_packet_ref_missing")
+        if not evidence_packet_hash:
+            blockers.append("evidence_packet_hash_missing")
+
+        provenance_state = self._execution_provenance_state(metrics, fills)
+        if not provenance_state["costs_reconciled"]:
+            blockers.append("cost_provenance_not_reconciled")
+        if not provenance_state["slippage_reconciled"]:
+            blockers.append("slippage_provenance_not_reconciled")
+        if not provenance_state["fills_reconciled"]:
+            blockers.append("fill_provenance_not_reconciled")
+
+        drift_status = self._first_string(
+            metrics,
+            ("drift_status",),
+            ("research_hypothesis", "drift_status"),
+            ("research_hypothesis_package", "drift_status"),
+        ) or str(getattr(pattern, "drift_status", "") or "")
+        if drift_status.strip().lower() in {"degrading", "regressing", "deteriorating"}:
+            blockers.append("drift_status_degrading")
+
+        edge_claim = self._first_string(
+            metrics,
+            ("edge_claim",),
+            ("research_hypothesis", "edge_claim"),
+            ("research_hypothesis_package", "edge_claim"),
+            ("global_experiment_registry", "edge_claim"),
+        )
+        if not edge_claim:
+            blockers.append("edge_claim_missing")
+        elif edge_claim != self.required_edge_claim:
+            blockers.append("edge_claim_inflated")
+
+        registry = self._first_dict(metrics, ("global_experiment_registry",))
+        registry_hash = self._first_string(
+            metrics,
+            ("global_experiment_registry", "registry_hash"),
+            ("global_experiment_registry", "hash"),
+            ("global_experiment_registry", "sha256"),
+        )
+        registry_run_manifest_hash = self._first_string(
+            metrics,
+            ("global_experiment_registry", "run_manifest_hash"),
+            ("global_experiment_registry", "latest_run_manifest_hash"),
+        )
+        registry_chain_valid = (
+            True
+            if not registry or "hash_chain_valid" not in registry
+            else _truthy(registry.get("hash_chain_valid"))
+        )
+        if not registry_hash:
+            blockers.append("global_experiment_registry_hash_missing")
+        if not registry_run_manifest_hash:
+            blockers.append("global_experiment_registry_run_manifest_hash_missing")
+        if not registry_chain_valid:
+            blockers.append("global_experiment_registry_hash_chain_invalid")
+
+        return {
+            "blockers": blockers,
+            "nested_discovery_replay": nested_state,
+            "director_gate_status": director_status or "missing",
+            "director_gate_passed": director_passed,
+            "active_blockers": active_blockers,
+            "event_ledger_hash": event_ledger_hash,
+            "evidence_packet": {
+                "ref": evidence_packet_ref,
+                "hash": evidence_packet_hash,
+            },
+            "execution_provenance": provenance_state,
+            "drift_status": drift_status or "unknown",
+            "edge_claim": edge_claim,
+            "global_experiment_registry": {
+                "path": registry.get("path") if registry else None,
+                "registry_hash": registry_hash,
+                "previous_registry_hash": registry.get("previous_registry_hash") if registry else None,
+                "run_manifest_hash": registry_run_manifest_hash,
+                "hash_chain_valid": registry_chain_valid,
+            },
+        }
+
+    @staticmethod
+    def _nested_replay_state(replay: dict[str, Any]) -> dict[str, Any]:
+        if not replay:
+            return {
+                "present": False,
+                "implemented": False,
+                "passed": False,
+                "blocking": False,
+                "status": "missing",
+            }
+        status = str(replay.get("status") or "").strip().lower()
+        passed_statuses = {"passed", "pass", "ok", "complete", "completed", "succeeded", "success"}
+        return {
+            "present": True,
+            "implemented": _truthy(replay.get("implemented")),
+            "passed": _truthy(replay.get("passed")) or status in passed_statuses,
+            "blocking": _truthy(replay.get("blocking")),
+            "status": status or "unknown",
+        }
+
+    @classmethod
+    def _execution_provenance_state(
+        cls,
+        metrics: dict[str, Any],
+        fills: list[Trade],
+    ) -> dict[str, Any]:
+        provenance = cls._first_dict(
+            metrics,
+            ("execution_provenance",),
+            ("cost_slippage_fill_provenance",),
+            ("production_execution_provenance",),
+        )
+        if provenance:
+            costs = _truthy(
+                provenance.get("costs_reconciled")
+                if "costs_reconciled" in provenance
+                else provenance.get("cost_provenance_reconciled")
+            )
+            slippage = _truthy(
+                provenance.get("slippage_reconciled")
+                if "slippage_reconciled" in provenance
+                else provenance.get("slippage_provenance_reconciled")
+            )
+            fill_state = _truthy(
+                provenance.get("fills_reconciled")
+                if "fills_reconciled" in provenance
+                else provenance.get("fill_provenance_reconciled")
+            )
+            return {
+                "source": "pattern.metrics_json",
+                "costs_reconciled": costs,
+                "slippage_reconciled": slippage,
+                "fills_reconciled": fill_state,
+            }
+
+        trade_count = len(fills)
+        cost_rows = 0
+        slippage_rows = 0
+        fill_rows = 0
+        for trade in fills:
+            metadata = trade.metadata_json or {}
+            if (
+                _truthy(metadata.get("cost_provenance_reconciled"))
+                or (
+                    metadata.get("commission") is not None
+                    and metadata.get("commission_source")
+                    and metadata.get("estimated_spread_cost") is not None
+                    and metadata.get("spread_cost_source")
+                )
+            ):
+                cost_rows += 1
+            if _truthy(metadata.get("slippage_provenance_reconciled")) or (
+                metadata.get("estimated_slippage") is not None and metadata.get("slippage_source")
+            ):
+                slippage_rows += 1
+            if _truthy(metadata.get("fill_provenance_reconciled")) or (
+                trade.broker_order_id
+                or metadata.get("broker_order_id")
+                or metadata.get("parent_order_id")
+                or metadata.get("fill_id_hash")
+                or metadata.get("entry_fill_time")
+            ):
+                fill_rows += 1
+        return {
+            "source": "trade.metadata_json",
+            "costs_reconciled": trade_count > 0 and cost_rows == trade_count,
+            "slippage_reconciled": trade_count > 0 and slippage_rows == trade_count,
+            "fills_reconciled": trade_count > 0 and fill_rows == trade_count,
+            "trade_count": trade_count,
+            "cost_rows": cost_rows,
+            "slippage_rows": slippage_rows,
+            "fill_rows": fill_rows,
+        }
+
+    @staticmethod
+    def _active_contract_blockers(metrics: dict[str, Any], director_gate: dict[str, Any]) -> list[str]:
+        values: list[Any] = []
+        for key in ("active_blockers", "promotion_blockers", "director_blockers"):
+            if key in metrics:
+                values.append(metrics.get(key))
+        if director_gate:
+            values.append(director_gate.get("blockers"))
+            summary = director_gate.get("summary")
+            if isinstance(summary, dict):
+                values.append(summary.get("blockers"))
+        lab_execution = metrics.get("lab_execution")
+        if isinstance(lab_execution, dict):
+            values.append(lab_execution.get("promotion_blockers"))
+        blockers: list[str] = []
+        for value in values:
+            if isinstance(value, list):
+                blockers.extend(str(item) for item in value if str(item).strip())
+            elif isinstance(value, str) and value.strip():
+                blockers.append(value.strip())
+        return blockers
+
+    @staticmethod
+    def _evidence_packet_ref(packet: dict[str, Any]) -> str:
+        if not packet:
+            return ""
+        for key in ("id", "packet_id", "uri", "path"):
+            value = str(packet.get(key) or "").strip()
+            if value:
+                return value
+        return ""
+
+    @staticmethod
+    def _first_dict(metrics: dict[str, Any], *paths: tuple[str, ...]) -> dict[str, Any]:
+        for path in paths:
+            value: Any = metrics
+            for key in path:
+                value = value.get(key) if isinstance(value, dict) else None
+            if isinstance(value, dict) and value:
+                return value
+        return {}
+
+    @staticmethod
+    def _first_string(metrics: dict[str, Any], *paths: tuple[str, ...]) -> str:
+        for path in paths:
+            value: Any = metrics
+            for key in path:
+                value = value.get(key) if isinstance(value, dict) else None
+            text = str(value or "").strip()
+            if text:
+                return text
+        return ""
 
     def approve_pattern(
         self,
@@ -642,3 +962,9 @@ def _max_drawdown_r(r_values: list[float]) -> float:
         peak = max(peak, cumulative)
         max_drawdown = max(max_drawdown, peak - cumulative)
     return max_drawdown
+
+
+def _truthy(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value or "").strip().lower() in {"true", "1", "yes", "y", "ok", "passed", "pass"}

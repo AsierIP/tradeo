@@ -13,6 +13,7 @@ from tradeo.db.models import AuditLog, Signal, Trade, TradeStatus
 from tradeo.services.evidence import (
     EvidenceQuality,
     EvidenceType,
+    FillProvenance,
     LAB_SHADOW_EXECUTION_MODE,
     with_evidence_metadata,
 )
@@ -79,6 +80,7 @@ class LabPaperObservationService:
         metadata = {
             "evidence_type": evidence_type,
             "evidence_quality": EvidenceQuality.NORMAL.value,
+            "fill_provenance": FillProvenance.SHADOW_CLOSE.value,
             "execution_mode": LAB_SHADOW_EXECUTION_MODE,
             "entry_module": "laboratory",
             "source_module": "laboratory",
@@ -135,6 +137,8 @@ class LabPaperObservationService:
             target=signal.target,
             status=TradeStatus.OPEN,
             opened_at=now,
+            evidence_type=evidence_type,
+            evidence_quality=EvidenceQuality.NORMAL.value,
             metadata_json=metadata,
         )
         db.add(trade)
@@ -318,6 +322,7 @@ class LabPaperObservationService:
             trade.metadata_json or {},
             trade_status=TradeStatus.CLOSED,
             evidence_quality=EvidenceQuality.DEGRADED.value if fallback is not None else None,
+            fill_provenance=FillProvenance.SHADOW_CLOSE.value,
             degradation_reason=(
                 f"fallback_market_data:{fallback.source}" if fallback is not None else None
             ),
@@ -351,6 +356,8 @@ class LabPaperObservationService:
         trade.exit_price = round(exit_price, 4)
         trade.pnl_usd = round(pnl, 4)
         trade.r_multiple = round(r_multiple, 6)
+        trade.evidence_type = metadata.get("evidence_type")
+        trade.evidence_quality = metadata.get("evidence_quality")
         trade.metadata_json = metadata
         db.add(trade)
         db.add(
@@ -423,6 +430,8 @@ class LabPaperObservationService:
             }
         )
         trade.metadata_json = metadata
+        trade.evidence_type = metadata.get("evidence_type")
+        trade.evidence_quality = metadata.get("evidence_quality")
         db.add(trade)
         db.add(
             AuditLog(
