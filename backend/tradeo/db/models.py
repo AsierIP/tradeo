@@ -140,6 +140,26 @@ class AuditLog(Base):
     details_json: Mapped[dict[str, Any]] = mapped_column(json_type(), default=dict)
 
 
+class SystemControl(Base):
+    """Runtime operational controls that must survive process restarts.
+
+    The env-based kill switch (TRADEO_KILL_SWITCH_ENABLED) is immutable at
+    runtime because Settings are cached at startup. Automatic safety triggers
+    (broker reconciliation divergence) persist their state here so every order
+    path can honour it immediately, without editing .env and restarting.
+    """
+
+    __tablename__ = "system_controls"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    key: Mapped[str] = mapped_column(String(80), unique=True, index=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    reason: Mapped[str] = mapped_column(Text, default="")
+    actor: Mapped[str] = mapped_column(String(80), default="")
+    details_json: Mapped[dict[str, Any]] = mapped_column(json_type(), default=dict)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class RiskLedger(Base):
     __tablename__ = "risk_ledger"
 

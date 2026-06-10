@@ -3,9 +3,17 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable
 
+import numpy as np
 from sqlalchemy.orm import Session, joinedload
 
+from tradeo.core.config import Settings
 from tradeo.db.models import AuditLog, DiscoveredPattern, DiscoveredPatternStatus, Trade, TradeStatus
+from tradeo.research.sequential_tests import (
+    ks_two_sample,
+    posterior_probability_edge,
+    sprt_inferiority,
+)
+from tradeo.services.implementation_shortfall import pattern_slippage_summary
 from tradeo.services.evidence import (
     PAPER_FILL_EVIDENCE_TYPES,
     evidence_metadata_with_stored_columns,
@@ -27,6 +35,31 @@ class DirectorReviewGate:
     min_lab_expectancy_r: float = 0.0
     min_baseline_edge_r: float = 0.05
     min_research_expectancy_ratio: float = 0.5
+    # Sequential evaluation (informe §4.7): n=10 stays a *review trigger*; the
+    # decision additionally uses a Bayesian posterior shrunk toward Research,
+    # an SPRT fast-kill and a KS mechanism-change check.
+    sequential_evaluation_enabled: bool = True
+    posterior_min_probability: float = 0.80
+    posterior_min_edge_r: float = 0.10
+    sprt_alpha: float = 0.05
+    sprt_beta: float = 0.20
+    ks_mechanism_change_pvalue: float = 0.01
+    # Implementation shortfall gate (informe §4.6): a research edge that costs
+    # more than this median slippage_R to execute is not an executable edge.
+    max_median_slippage_r: float = 0.10
+    min_slippage_samples: int = 5
+
+    @classmethod
+    def from_settings(cls, settings: Settings) -> "DirectorReviewGate":
+        return cls(
+            sequential_evaluation_enabled=settings.director_sequential_evaluation_enabled,
+            posterior_min_probability=settings.director_posterior_min_probability,
+            posterior_min_edge_r=settings.director_posterior_min_edge_r,
+            sprt_alpha=settings.director_sprt_alpha,
+            sprt_beta=settings.director_sprt_beta,
+            max_median_slippage_r=settings.director_max_median_slippage_r,
+            min_slippage_samples=settings.director_min_slippage_samples,
+        )
 
     def refresh(self, db: Session) -> dict[str, Any]:
         patterns = (
@@ -198,6 +231,13 @@ class DirectorReviewGate:
         )
         research_expectancy = float(pattern.best_expectancy_r or pattern.expectancy_r or 0.0)
         research_profit_factor = float(pattern.best_profit_factor or pattern.profit_factor or 0.0)
+        research_r_values = self._research_r_values(pattern)
+        slippage = pattern_slippage_summary(trades)
+        sequential = self._sequential_evaluation(
+            lab_r=r_values,
+            research_r=research_r_values,
+            research_expectancy=research_expectancy,
+        )
         blockers = self._promotion_blockers(
             closed_trades=len(trades),
             unique_symbols=unique_symbols,
@@ -207,6 +247,8 @@ class DirectorReviewGate:
             profit_factor=profit_factor,
             baseline_expectancy=baseline_expectancy,
             research_expectancy=research_expectancy,
+            slippage=slippage,
+            sequential=sequential,
         )
         metrics = {
             "gate_scope": "director_review_trigger",
@@ -245,6 +287,11 @@ class DirectorReviewGate:
             "research_profit_factor": round(research_profit_factor, 4),
             "expectancy_delta_r": round(expectancy - research_expectancy, 4),
             "profit_factor_delta": round(profit_factor - research_profit_factor, 4),
+            "implementation_shortfall": {
+                key: value for key, value in slippage.items() if key != "per_trade"
+            },
+            "max_median_slippage_r": self.max_median_slippage_r,
+            "sequential_evaluation": sequential,
             "by_entry_variant": self._bucket_metrics(
                 trades,
                 lambda trade: str(((trade.signal.metadata_json or {}) if trade.signal else {}).get("entry_variant_id") or "unknown"),
@@ -492,6 +539,8 @@ class DirectorReviewGate:
         profit_factor: float,
         baseline_expectancy: float,
         research_expectancy: float,
+        slippage: dict[str, Any] | None = None,
+        sequential: dict[str, Any] | None = None,
     ) -> list[str]:
         blockers: list[str] = []
         if closed_trades < self.min_closed_lab_trades:
@@ -510,7 +559,98 @@ class DirectorReviewGate:
             blockers.append("lab_expectancy_not_above_baseline")
         if research_expectancy > 0 and expectancy < research_expectancy * self.min_research_expectancy_ratio:
             blockers.append("lab_expectancy_degraded_vs_research")
+        if slippage and slippage.get("count", 0) >= self.min_slippage_samples:
+            median = slippage.get("median_slippage_r")
+            if median is not None and float(median) > self.max_median_slippage_r:
+                blockers.append(f"median_slippage_above_{self.max_median_slippage_r}r")
+        if sequential and self.sequential_evaluation_enabled:
+            sprt = sequential.get("sprt") or {}
+            if sprt.get("decision") == "no_edge":
+                blockers.append("sprt_concludes_no_edge")
+            posterior = sequential.get("posterior") or {}
+            probability = posterior.get("probability_edge")
+            if (
+                closed_trades >= self.min_closed_lab_trades
+                and probability is not None
+                and np.isfinite(probability)
+                and float(probability) < self.posterior_min_probability
+            ):
+                blockers.append(
+                    f"posterior_probability_below_{self.posterior_min_probability}"
+                )
+            ks = sequential.get("ks") or {}
+            ks_p = ks.get("p_value")
+            if (
+                ks_p is not None
+                and np.isfinite(ks_p)
+                and float(ks_p) < self.ks_mechanism_change_pvalue
+            ):
+                blockers.append("lab_research_r_distribution_mismatch")
         return blockers
+
+    @staticmethod
+    def _research_r_values(pattern: DiscoveredPattern) -> list[float]:
+        """Research-side R sample for distribution and dispersion estimates."""
+        try:
+            examples = pattern.examples or []
+        except Exception:  # noqa: BLE001 - detached instance without session
+            return []
+        return [
+            float(example.outcome_r)
+            for example in examples
+            if example.outcome_r is not None
+        ]
+
+    def _sequential_evaluation(
+        self,
+        *,
+        lab_r: list[float],
+        research_r: list[float],
+        research_expectancy: float,
+    ) -> dict[str, Any]:
+        """Posterior + SPRT + KS package for the Director decision (§4.7)."""
+        if not self.sequential_evaluation_enabled:
+            return {"enabled": False}
+        research_sd = (
+            float(np.std(np.asarray(research_r), ddof=1)) if len(research_r) >= 5 else 0.0
+        )
+        lab_sd = float(np.std(np.asarray(lab_r), ddof=1)) if len(lab_r) >= 3 else 0.0
+        sigma = research_sd if research_sd > 0 else (lab_sd if lab_sd > 0 else 1.0)
+        prior_sd = max(sigma / 2.0, 0.05)
+        posterior = posterior_probability_edge(
+            lab_r,
+            prior_mean=research_expectancy,
+            prior_sd=prior_sd,
+            min_edge_r=self.posterior_min_edge_r,
+        )
+        sprt = sprt_inferiority(
+            lab_r,
+            research_mean=research_expectancy,
+            sigma=sigma,
+            alpha=self.sprt_alpha,
+            beta=self.sprt_beta,
+        )
+        ks = (
+            ks_two_sample(lab_r, research_r)
+            if len(lab_r) >= 10 and len(research_r) >= 10
+            else {
+                "n_a": len(lab_r),
+                "n_b": len(research_r),
+                "statistic": None,
+                "p_value": None,
+                "skipped_reason": "needs >=10 lab and >=10 research R values",
+            }
+        )
+        return _json_safe(
+            {
+                "enabled": True,
+                "sigma_r": round(sigma, 4),
+                "research_r_count": len(research_r),
+                "posterior": posterior,
+                "sprt": sprt,
+                "ks": ks,
+            }
+        )
 
 
 @dataclass(slots=True)
@@ -951,6 +1091,19 @@ class DirectorProductionGate:
         db.add(pattern)
         db.commit()
         return {**decision, "production_manifest": manifest}
+
+
+def _json_safe(value: Any) -> Any:
+    """Replace non-finite floats with None so metrics survive JSONB storage."""
+    if isinstance(value, dict):
+        return {key: _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, (float, np.floating)):
+        return float(value) if np.isfinite(value) else None
+    if isinstance(value, np.integer):
+        return int(value)
+    return value
 
 
 def _max_drawdown_r(r_values: list[float]) -> float:

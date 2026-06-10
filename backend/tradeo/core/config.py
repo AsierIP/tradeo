@@ -185,6 +185,39 @@ class Settings(BaseSettings):
     fox_hunter_auto_submit_live_orders: bool = False
     fox_hunter_market_hours_only: bool = True
 
+    # Director sequential evaluation (informe §4.7). n=10 closed lab trades is
+    # only the review trigger; the decision additionally uses a Bayesian
+    # posterior shrunk toward the Research expectancy, an SPRT fast-kill and a
+    # KS lab-vs-research distribution check.
+    director_sequential_evaluation_enabled: bool = True
+    director_posterior_min_probability: float = 0.80
+    director_posterior_min_edge_r: float = 0.10
+    director_sprt_alpha: float = 0.05
+    director_sprt_beta: float = 0.20
+    # Implementation shortfall gate (informe §4.6): median slippage_R over real
+    # broker fills must stay below this for the pattern's edge to count as
+    # executable.
+    director_max_median_slippage_r: float = 0.10
+    director_min_slippage_samples: int = 5
+
+    # DB <-> IBKR reconciliation (informe §4.5). Confirmed divergence between
+    # open trades in the DB and broker positions/open orders activates the
+    # runtime kill switch automatically. Broker connection failures never do.
+    reconciliation_enabled: bool = True
+    reconciliation_interval_minutes: int = 30
+    reconciliation_auto_kill_switch: bool = True
+
+    # Pattern health monitor (informe §4.8): CUSUM over realized R per trade
+    # vs the Research expectancy for PRODUCTION/DIRECTOR_REVIEW patterns. A
+    # downward trigger marks the pattern drift_status='decaying' and the
+    # matcher stops generating new signals for it until re-validation.
+    health_monitor_enabled: bool = True
+    health_monitor_interval_minutes: int = 60
+    health_monitor_min_trades: int = 8
+    health_monitor_cusum_k: float = 0.5
+    health_monitor_cusum_h: float = 4.0
+    health_monitor_block_decaying: bool = True
+
     openai_api_key: str | None = None
     openai_supervisor_model: str = "gpt-5.5-pro"
     openai_supervisor_enabled: bool = False

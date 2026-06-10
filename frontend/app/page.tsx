@@ -1,5 +1,6 @@
 'use client'
 
+import type { ReactNode } from 'react'
 import { useEffect, useMemo, useState } from 'react'
 import useSWR from 'swr'
 import {
@@ -433,25 +434,35 @@ function explainAcceptedPattern(pattern: DiscoveredPattern) {
   return lines.join(' ')
 }
 
-function LabDiagnosticsPanel({ diagnostics }: { diagnostics?: LabDiagnostics }) {
+function LabDiagnosticsPanel({ diagnostics, compact = false }: { diagnostics?: LabDiagnostics; compact?: boolean }) {
   const rows = diagnostics?.opportunities || []
   const summary = diagnostics?.summary || {}
   return (
-    <div className="subsection lab-diagnostics">
-      <div className="section-head">
-        <div>
-          <h3>Diagnóstico Lab · candidatas y near-miss</h3>
-          <p className="muted">
-            Rechazos y sombras recientes con gate de entrada, variante, régimen e historial paper.
-          </p>
+    <div className={`subsection lab-diagnostics ${compact ? 'embedded-panel' : ''}`}>
+      {!compact && (
+        <div className="section-head">
+          <div>
+            <h3>Diagnóstico Lab · candidatas y near-miss</h3>
+            <p className="muted">
+              Rechazos y sombras recientes con gate de entrada, variante, régimen e historial paper.
+            </p>
+          </div>
+          <div className="mini-stats">
+            <span>{summary.candidates ?? 0} candidatas</span>
+            <span>{summary.rejected ?? 0} rechazadas</span>
+            <span>{summary.shadow_near_misses ?? 0} shadow</span>
+            <span>{summary.entry_gate_failures ?? 0} gate</span>
+          </div>
         </div>
-        <div className="mini-stats">
+      )}
+      {compact && (
+        <div className="mini-stats diagnostics-mini">
           <span>{summary.candidates ?? 0} candidatas</span>
           <span>{summary.rejected ?? 0} rechazadas</span>
           <span>{summary.shadow_near_misses ?? 0} shadow</span>
           <span>{summary.entry_gate_failures ?? 0} gate</span>
         </div>
-      </div>
+      )}
       <div className="table-scroll diagnostics-scroll">
         <table>
           <thead>
@@ -498,6 +509,26 @@ function LabDiagnosticsPanel({ diagnostics }: { diagnostics?: LabDiagnostics }) 
         </table>
       </div>
     </div>
+  )
+}
+
+function CollapsibleSection({
+  title,
+  meta,
+  children
+}: {
+  title: string
+  meta?: string
+  children: ReactNode
+}) {
+  return (
+    <details className="module-collapse">
+      <summary>
+        <span>{title}</span>
+        {meta && <small>{meta}</small>}
+      </summary>
+      <div className="module-collapse-body">{children}</div>
+    </details>
   )
 }
 
@@ -567,21 +598,7 @@ function OperationsModule({
         <div><strong>{(stats.win_rate * 100).toFixed(1)}%</strong><span>win rate fills</span></div>
       </div>
 
-      {diagnostics && <LabDiagnosticsPanel diagnostics={diagnostics} />}
-
       <div className="module-split">
-        <section className="module-panel">
-          <h3>PnL fills paper/live</h3>
-          <ResponsiveContainer width="100%" height={250}>
-            <AreaChart data={pnl}>
-              <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
-              <XAxis dataKey="timestamp" hide />
-              <YAxis />
-              <Tooltip />
-              <Area type="monotone" dataKey="total_pnl_usd" strokeWidth={2} fillOpacity={0.22} />
-            </AreaChart>
-          </ResponsiveContainer>
-        </section>
         <section className="module-panel">
           <h3>Operaciones</h3>
           <div className="table-scroll compact-scroll">
@@ -609,10 +626,31 @@ function OperationsModule({
             </table>
           </div>
         </section>
+        <section className="module-panel">
+          <h3>PnL fills paper/live</h3>
+          <ResponsiveContainer width="100%" height={280}>
+            <AreaChart data={pnl}>
+              <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
+              <XAxis dataKey="timestamp" hide />
+              <YAxis />
+              <Tooltip />
+              <Area type="monotone" dataKey="total_pnl_usd" strokeWidth={2} fillOpacity={0.22} />
+            </AreaChart>
+          </ResponsiveContainer>
+        </section>
       </div>
 
-      <div className="subsection">
-        <h3>Embudo por patrón</h3>
+      {diagnostics && (
+        <CollapsibleSection
+          title="Diagnóstico Lab · candidatas y near-miss"
+          meta={`${diagnostics.opportunities.length} filas`}
+        >
+          <LabDiagnosticsPanel diagnostics={diagnostics} compact />
+        </CollapsibleSection>
+      )}
+
+      <CollapsibleSection title="Embudo por patrón" meta={`${patternOutcomes.length} patrones`}>
+        <div className="subsection embedded-panel">
         <div className="table-scroll compact-scroll">
           <table>
             <thead>
@@ -641,10 +679,11 @@ function OperationsModule({
             </tbody>
           </table>
         </div>
-      </div>
+        </div>
+      </CollapsibleSection>
 
-      <div className="subsection">
-        <h3>Señales y patrones detectados</h3>
+      <CollapsibleSection title="Señales y patrones detectados" meta={`${signals.length} señales`}>
+        <div className="subsection embedded-panel">
         <div className="table-scroll signal-scroll">
           <table>
             <thead>
@@ -665,7 +704,8 @@ function OperationsModule({
             </tbody>
           </table>
         </div>
-      </div>
+        </div>
+      </CollapsibleSection>
     </section>
   )
 }

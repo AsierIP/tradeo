@@ -161,7 +161,7 @@ def laboratory_entry_job() -> None:
             logger.info("laboratory entry scanner skipped: laboratory_scanner_enabled=false")
             return
         result = PatternEntryScanner(settings=settings).scan(db, module="laboratory")
-        review_result = DirectorReviewGate().refresh(db)
+        review_result = DirectorReviewGate.from_settings(settings).refresh(db)
         logger.info("laboratory entry scanner result: {}", result)
         logger.info("director review gate result: {}", review_result)
     except PatternEntryScannerSafetyError as exc:
@@ -185,6 +185,46 @@ def fox_hunter_entry_job() -> None:
         logger.warning("fox hunter blocked by safety gate: {}", exc)
     except Exception as exc:  # noqa: BLE001
         logger.exception("fox hunter failed: {}", exc)
+    finally:
+        db.close()
+
+
+def reconciliation_job() -> None:
+    db = SessionLocal()
+    try:
+        settings = get_settings()
+        if not settings.reconciliation_enabled:
+            logger.info("reconciliation skipped: reconciliation_enabled=false")
+            return
+        from tradeo.services.reconciliation import ReconciliationService
+
+        result = ReconciliationService(settings=settings).reconcile(db)
+        if result.get("divergences"):
+            logger.error("reconciliation divergences: {}", result)
+        else:
+            logger.info("reconciliation result: {}", result)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("reconciliation job failed: {}", exc)
+    finally:
+        db.close()
+
+
+def pattern_health_job() -> None:
+    db = SessionLocal()
+    try:
+        settings = get_settings()
+        if not settings.health_monitor_enabled:
+            logger.info("pattern health monitor skipped: health_monitor_enabled=false")
+            return
+        from tradeo.services.pattern_health_monitor import PatternHealthMonitor
+
+        result = PatternHealthMonitor(settings=settings).run(db)
+        if result.get("decay_detected"):
+            logger.warning("pattern health monitor result: {}", result)
+        else:
+            logger.info("pattern health monitor result: {}", result)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("pattern health monitor job failed: {}", exc)
     finally:
         db.close()
 
@@ -299,6 +339,24 @@ def main() -> None:
                 "interval",
                 minutes=settings.fox_hunter_scan_minutes,
                 id="fox_hunter_entry_scanner",
+                max_instances=1,
+                coalesce=True,
+            )
+        if settings.reconciliation_enabled:
+            scheduler.add_job(
+                reconciliation_job,
+                "interval",
+                minutes=settings.reconciliation_interval_minutes,
+                id="ibkr_reconciliation",
+                max_instances=1,
+                coalesce=True,
+            )
+        if settings.health_monitor_enabled:
+            scheduler.add_job(
+                pattern_health_job,
+                "interval",
+                minutes=settings.health_monitor_interval_minutes,
+                id="pattern_health_monitor",
                 max_instances=1,
                 coalesce=True,
             )

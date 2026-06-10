@@ -317,6 +317,10 @@ class IBKRBroker:
         This method can target a paper TWS/Gateway session when TRADEO_TRADING_MODE=paper.
         For live ports or TRADEO_TRADING_MODE=live, the live_armed gate is mandatory.
         """
+        from tradeo.services.system_controls import runtime_kill_switch_active
+
+        if runtime_kill_switch_active(db):
+            raise IBKRSafetyError("runtime kill switch is active (see system_controls)")
         self._validate_signal_for_order(signal, require_execution_enabled=True)
         ib = self._connect()
         try:
