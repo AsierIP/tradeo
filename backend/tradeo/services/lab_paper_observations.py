@@ -10,11 +10,15 @@ from sqlalchemy.orm import Session, joinedload
 
 from tradeo.core.config import Settings, get_settings
 from tradeo.db.models import AuditLog, Signal, Trade, TradeStatus
+from tradeo.services.evidence import (
+    EvidenceQuality,
+    EvidenceType,
+    LAB_SHADOW_EXECUTION_MODE,
+    with_evidence_metadata,
+)
 from tradeo.services.data_provider import MarketDataProvider
 from tradeo.services.provider_factory import get_market_data_provider
 from tradeo.services.technical_indicators import normalize_ohlcv
-
-LAB_SHADOW_EXECUTION_MODE = "lab_shadow_observation"
 
 
 @dataclass(slots=True)
@@ -67,7 +71,14 @@ class LabPaperObservationService:
         entry_gate = signal_metadata.get("entry_gate") or (match.get("metrics") or {}).get("entry_gate")
         entry_quality = signal_metadata.get("entry_quality") or {}
         near_miss = bool(signal_metadata.get("near_miss") or match.get("near_miss"))
+        evidence_type = (
+            EvidenceType.NEAR_MISS_SHADOW.value
+            if near_miss
+            else EvidenceType.SHADOW_NO_ORDER.value
+        )
         metadata = {
+            "evidence_type": evidence_type,
+            "evidence_quality": EvidenceQuality.NORMAL.value,
             "execution_mode": LAB_SHADOW_EXECUTION_MODE,
             "entry_module": "laboratory",
             "source_module": "laboratory",
@@ -139,6 +150,8 @@ class LabPaperObservationService:
                     "pattern": signal.pattern,
                     "entry_variant_id": match.get("entry_variant_id"),
                     "near_miss": near_miss,
+                    "evidence_type": evidence_type,
+                    "evidence_quality": EvidenceQuality.NORMAL.value,
                     "no_ibkr_order": True,
                 },
             )
@@ -199,7 +212,7 @@ class LabPaperObservationService:
                 if fetch.error:
                     data_errors.append(diagnostic)
                 continue
-            self._close_trade(db, trade, outcome)
+            self._close_trade(db, trade, outcome, fallback=fallback)
             closed_ids.append(trade.id)
         if closed_ids or diagnosed_ids:
             db.commit()
@@ -284,7 +297,14 @@ class LabPaperObservationService:
             "bars": rows_seen[:max_holding_bars],
         }
 
-    def _close_trade(self, db: Session, trade: Trade, outcome: dict[str, Any]) -> None:
+    def _close_trade(
+        self,
+        db: Session,
+        trade: Trade,
+        outcome: dict[str, Any],
+        *,
+        fallback: FallbackFrame | None = None,
+    ) -> None:
         exit_price = float(outcome["exit_price"])
         risk = abs(float(trade.entry) - float(trade.stop))
         if trade.side.lower().strip() == "short":
@@ -294,11 +314,26 @@ class LabPaperObservationService:
             pnl = (exit_price - float(trade.entry)) * int(trade.qty)
             r_multiple = (exit_price - float(trade.entry)) / max(risk, 1e-9)
         closed_at = outcome["closed_at"]
-        metadata = dict(trade.metadata_json or {})
+        metadata = with_evidence_metadata(
+            trade.metadata_json or {},
+            trade_status=TradeStatus.CLOSED,
+            evidence_quality=EvidenceQuality.DEGRADED.value if fallback is not None else None,
+            degradation_reason=(
+                f"fallback_market_data:{fallback.source}" if fallback is not None else None
+            ),
+        )
         bars = outcome.get("bars") or []
         mfe, mae = self._mfe_mae_r(trade, bars)
         metadata.update(
             {
+                "evidence_quality": (
+                    EvidenceQuality.DEGRADED.value
+                    if fallback is not None
+                    else metadata.get("evidence_quality", EvidenceQuality.NORMAL.value)
+                ),
+                "fallback_used": fallback is not None,
+                "fallback_source": fallback.source if fallback is not None else None,
+                "fallback_timestamp_source": fallback.timestamp_source if fallback is not None else None,
                 "exit_reason": outcome["exit_reason"],
                 "exit_fill_time": closed_at.isoformat(),
                 "exit_fill_price": round(exit_price, 4),
@@ -329,6 +364,9 @@ class LabPaperObservationService:
                     "symbol": trade.symbol,
                     "exit_reason": outcome["exit_reason"],
                     "r_multiple": trade.r_multiple,
+                    "evidence_type": metadata.get("evidence_type"),
+                    "evidence_quality": metadata.get("evidence_quality"),
+                    "fallback_used": fallback is not None,
                     "no_ibkr_order": True,
                 },
             )
@@ -345,7 +383,13 @@ class LabPaperObservationService:
         fallback: FallbackFrame | None,
     ) -> dict[str, str]:
         now = datetime.now(timezone.utc)
-        metadata = dict(trade.metadata_json or {})
+        metadata = with_evidence_metadata(
+            trade.metadata_json or {},
+            evidence_quality=EvidenceQuality.DEGRADED.value if fallback is not None else None,
+            degradation_reason=(
+                f"fallback_market_data:{fallback.source}" if fallback is not None else None
+            ),
+        )
         last_bar = self._last_bar_snapshot(frame)
         mark = self._mark_to_market(trade, last_bar)
         lifecycle = {
@@ -366,6 +410,14 @@ class LabPaperObservationService:
                 "last_shadow_lifecycle_status": status,
                 "market_data_unavailable": status == "market_data_unavailable",
                 "market_data_unavailable_reason": reason if status == "market_data_unavailable" else None,
+                "evidence_quality": (
+                    EvidenceQuality.DEGRADED.value
+                    if fallback is not None
+                    else metadata.get("evidence_quality", EvidenceQuality.NORMAL.value)
+                ),
+                "fallback_used": fallback is not None,
+                "fallback_source": fallback.source if fallback is not None else None,
+                "fallback_timestamp_source": fallback.timestamp_source if fallback is not None else None,
                 "no_ibkr_order": True,
                 "paper_only": True,
             }

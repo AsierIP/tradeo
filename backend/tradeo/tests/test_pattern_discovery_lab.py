@@ -11,6 +11,7 @@ import numpy as np
 from tradeo.agents.pattern_discovery_lab_agent import PatternDiscoveryLabAgent
 from tradeo.core.config import Settings
 from tradeo.research.cluster_research_engine import ClusterResearchEngine
+from tradeo.research.global_experiment_registry import GlobalExperimentRegistry
 from tradeo.research.types import ClusterCandidate, ForwardOutcome, WindowSample
 from tradeo.research.validation_gate import ValidationGate
 from tradeo.research.window_sampler import WindowSampler
@@ -169,11 +170,26 @@ def test_cluster_engine_fits_scaler_on_train_only() -> None:
     assert "wrc_p_value" in candidates[0].metrics
     assert "spa_p_value" in candidates[0].metrics
     assert candidates[0].metrics["null_method"] == "stratified_regime_bootstrap"
+    assert candidates[0].metrics["reality_check_method"] == "bootstrap_reality_proxy"
+    assert candidates[0].metrics["reality_check_formal_test"] is False
+    assert candidates[0].metrics["bootstrap_reality_proxy"]["formal_test"] is False
     assert "expectancy_ci_low" in candidates[0].metrics
     assert "deflated_sharpe_probability" in candidates[0].metrics
     assert "purged_cv_fold_count" in candidates[0].metrics
     assert "edge_decay_parameter_score" in candidates[0].metrics
     assert "overfit_score" in candidates[0].metrics
+    assert "selection_split" in candidates[0].metrics
+    assert candidates[0].metrics["fit_scope"]["descriptive_all_feeds_scores"] is False
+    assert "train_metrics" in candidates[0].metrics
+    assert "out_of_sample_metrics" in candidates[0].metrics
+    assert "walk_forward_metrics" in candidates[0].metrics
+    assert "descriptive_all_expectancy_r" in candidates[0].metrics
+    assert candidates[0].metrics["descriptive_metric_policy"]["feeds_lab_priority_score"] is False
+    assert candidates[0].metrics["score_input_scope"]["descriptive_all_fields_used"] is False
+    mutated = dict(candidates[0].metrics)
+    mutated["descriptive_all_expectancy_r"] = 999.0
+    mutated["descriptive_all_profit_factor"] = 999.0
+    assert ClusterResearchEngine._candidate_score(mutated) == ClusterResearchEngine._candidate_score(candidates[0].metrics)
     assert abs(float(candidates[0].metrics["scaler_mean"][0])) < 0.01
 
 
@@ -342,7 +358,7 @@ def test_validation_gate_rejects_failed_reality_check_and_edge_decay() -> None:
     )
     evaluated = ValidationGate().evaluate(candidate)
     assert not evaluated.validation_passed
-    assert any("White Reality Check" in reason for reason in evaluated.validation_reasons)
+    assert any("bootstrap reality proxy WRC-like" in reason for reason in evaluated.validation_reasons)
     assert any("edge decae" in reason for reason in evaluated.validation_reasons)
 
 
@@ -559,3 +575,34 @@ def test_lab_agent_persists_compressed_event_ledger(tmp_path: Path) -> None:
     assert candidate.metrics["event_ledger_persisted"] is True
     assert "event_ledger" not in candidate.metrics
     assert len(candidate.metrics["event_ledger_preview"]) == 2
+
+
+def test_global_experiment_registry_accumulates_trials_once_per_experiment(tmp_path: Path) -> None:
+    candidate = ClusterCandidate(
+        pattern_key="pattern-a",
+        name="pattern-a",
+        side="long",
+        timeframe="1d",
+        window_size=20,
+        cluster_id=1,
+        centroid=[],
+        sample_count=10,
+        symbol_count=3,
+        year_count=2,
+        score=0.8,
+        validation_passed=True,
+        validation_reasons=[],
+        metrics={"real_variant_count": 12, "fit_scope": {"scaler": "train_only"}},
+        feature_summary={},
+        examples=[],
+    )
+    registry = GlobalExperimentRegistry(tmp_path / "global_experiment_registry.json")
+
+    first = registry.register([candidate], run_id=1, params={"interval": "1d"})
+    duplicate = registry.register([candidate], run_id=1, params={"interval": "1d"})
+    second = registry.register([candidate], run_id=2, params={"interval": "1d"})
+
+    assert first["global_trial_count"] == 12
+    assert duplicate["global_trial_count"] == 12
+    assert second["global_trial_count"] == 24
+    assert candidate.metrics["global_experiment_registry"]["edge_claim"] == "NO_DEMOSTRADO"

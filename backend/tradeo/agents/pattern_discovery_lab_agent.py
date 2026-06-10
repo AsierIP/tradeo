@@ -16,6 +16,7 @@ from tradeo.core.config import Settings, get_settings
 from tradeo.db.models import AuditLog, DiscoveryRun
 from tradeo.research.cluster_research_engine import ClusterResearchEngine
 from tradeo.research.autonomous_research_director import ResearchDirector as PersistentResearchDirector
+from tradeo.research.global_experiment_registry import GlobalExperimentRegistry
 from tradeo.research.novel_pattern_registry import NovelPatternRegistry
 from tradeo.research.research_director import ResearchDirector as CandidateResearchDirector
 from tradeo.research.validation_gate import ValidationGate
@@ -99,6 +100,9 @@ class PatternDiscoveryLabAgent:
             accepted = [c for c in candidates if c.validation_passed]
             rejected = [c for c in candidates if not c.validation_passed]
             ledger_artifacts = self._write_event_ledgers(run.id, candidates)
+            global_registry = GlobalExperimentRegistry(
+                settings.reports_path / "research" / "global_experiment_registry.json"
+            ).register(candidates, run_id=run.id, params=params)
             candidate_director_summary: dict[str, Any] = {}
             if settings.research_director_enabled:
                 try:
@@ -133,6 +137,7 @@ class PatternDiscoveryLabAgent:
                     warnings.append(msg)
             duration = round(time.perf_counter() - started, 3)
             summary = self._summary(candidates, samples, warnings)
+            summary["global_experiment_registry"] = global_registry
             summary["research_director"] = {
                 "candidate_completion": candidate_director_summary,
             }
@@ -304,6 +309,19 @@ class PatternDiscoveryLabAgent:
             "symbol_count": candidate.symbol_count,
             "year_count": candidate.year_count,
             "score": candidate.score,
+            "lab_priority_score": metrics.get("lab_priority_score", candidate.score),
+            "promotion_score": metrics.get("promotion_score"),
+            "score_input_scope": metrics.get("score_input_scope", {}),
+            "selection_split": metrics.get("selection_split", {}),
+            "fit_scope": metrics.get("fit_scope", {}),
+            "train_metrics": metrics.get("train_metrics", {}),
+            "out_of_sample_metrics": metrics.get("out_of_sample_metrics", {}),
+            "walk_forward_metrics": metrics.get("walk_forward_metrics", {}),
+            "descriptive_metric_policy": metrics.get("descriptive_metric_policy", {}),
+            "descriptive_all_expectancy_r": metrics.get("descriptive_all_expectancy_r"),
+            "descriptive_all_profit_factor": metrics.get("descriptive_all_profit_factor"),
+            "descriptive_all_win_rate": metrics.get("descriptive_all_win_rate"),
+            "descriptive_all_reward_risk_estimate": metrics.get("descriptive_all_reward_risk_estimate"),
             "expectancy_r": metrics.get("expectancy_r"),
             "profit_factor": metrics.get("profit_factor"),
             "win_rate": metrics.get("win_rate"),
@@ -343,6 +361,9 @@ class PatternDiscoveryLabAgent:
             "adjusted_p_value": metrics.get("adjusted_p_value"),
             "wrc_p_value": metrics.get("wrc_p_value"),
             "spa_p_value": metrics.get("spa_p_value"),
+            "reality_check_method": metrics.get("reality_check_method"),
+            "reality_check_formal_test": metrics.get("reality_check_formal_test", False),
+            "bootstrap_reality_proxy": metrics.get("bootstrap_reality_proxy", {}),
             "probabilistic_sharpe": metrics.get("probabilistic_sharpe"),
             "deflated_sharpe": metrics.get("deflated_sharpe"),
             "deflated_sharpe_probability": metrics.get("deflated_sharpe_probability"),
@@ -395,6 +416,9 @@ class PatternDiscoveryLabAgent:
             "causal_invariance": metrics.get("causal_invariance", {}),
             "adversarial_challenge": metrics.get("adversarial_challenge", {}),
             "research_hypothesis": metrics.get("research_hypothesis", {}),
+            "research_hypothesis_package": metrics.get("research_hypothesis_package", {}),
+            "nested_discovery_replay": metrics.get("nested_discovery_replay", {}),
+            "global_experiment_registry": metrics.get("global_experiment_registry", {}),
             "research_memory": metrics.get("research_memory", {}),
             "active_learning": metrics.get("active_learning", {}),
             "pattern_lifecycle": metrics.get("pattern_lifecycle", {}),
@@ -584,7 +608,8 @@ class PatternDiscoveryLabAgent:
                     (
                         f"- Null/CI: {pattern.get('null_method')} · "
                         f"p_adj {pattern.get('adjusted_p_value')} · "
-                        f"WRC {pattern.get('wrc_p_value')} · SPA {pattern.get('spa_p_value')} · "
+                        "bootstrap_reality_proxy "
+                        f"wrc_like {pattern.get('wrc_p_value')} · spa_like {pattern.get('spa_p_value')} · "
                         f"CI {pattern.get('expectancy_ci_low')}..{pattern.get('expectancy_ci_high')}R · "
                         f"overfit {pattern.get('overfit_score')}"
                     ),
@@ -601,6 +626,9 @@ class PatternDiscoveryLabAgent:
                     ),
                     f"- Regla humana: {human_rule_text}",
                     f"- Hipótesis: {(pattern.get('research_hypothesis') or {}).get('thesis') if isinstance(pattern.get('research_hypothesis'), dict) else None}",
+                    f"- Edge claim: {(pattern.get('research_hypothesis') or {}).get('edge_claim') if isinstance(pattern.get('research_hypothesis'), dict) else 'NO_DEMOSTRADO'}",
+                    f"- Nested replay: {pattern.get('nested_discovery_replay')}",
+                    f"- Registry global: {pattern.get('global_experiment_registry')}",
                     f"- Market replay: {pattern.get('market_replay')}",
                     f"- Adversarial challenge: {pattern.get('adversarial_challenge')}",
                     f"- Invariancia causal: {pattern.get('causal_invariance')}",

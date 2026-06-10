@@ -106,8 +106,29 @@ class ClusterResearchEngine:
             metrics["scaler_mean"] = np.nan_to_num(scaler.mean_, nan=0, posinf=0, neginf=0).round(6).tolist()
             metrics["scaler_scale"] = np.nan_to_num(scaler.scale_, nan=1, posinf=1, neginf=1).round(6).tolist()
             metrics["validation_method"] = "train_fit_forward_holdout_walk_forward_embargo"
+            metrics["selection_split"] = {
+                "method": metrics["validation_method"],
+                "train_start": train_samples[0].end if train_samples else None,
+                "train_end": train_samples[-1].end if train_samples else None,
+                "holdout_start": holdout_samples[0].end if holdout_samples else None,
+                "holdout_end": holdout_samples[-1].end if holdout_samples else None,
+                "train_sample_count": len(train_samples),
+                "holdout_sample_count": len(holdout_samples),
+                "out_of_sample_pct": self.out_of_sample_pct,
+            }
+            metrics["fit_scope"] = {
+                "scaler": "train_only",
+                "cluster_model": "train_only",
+                "rr_selection": "train_only",
+                "side_selection": "train_metrics_only",
+                "null_baseline": "train_population_stratified_bootstrap",
+                "lab_priority_score": "train_oos_walk_forward_only",
+                "promotion_score": "train_oos_walk_forward_only",
+                "descriptive_all_feeds_scores": False,
+            }
             metrics["train_cutoff"] = train_samples[-1].end if train_samples else None
             metrics["holdout_start"] = holdout_samples[0].end if holdout_samples else None
+            metrics["holdout_end"] = holdout_samples[-1].end if holdout_samples else None
             metrics["model_fit_sample_count"] = len(train_samples)
             metrics["model_holdout_sample_count"] = len(holdout_samples)
             metrics["real_variant_count"] = tested_trials
@@ -124,6 +145,15 @@ class ClusterResearchEngine:
             metrics["walk_forward_min_expectancy_r"] = walk_forward["min_expectancy_r"]
             metrics["walk_forward_pooled"] = walk_forward["pooled"]
             metrics["walk_forward_embargo_samples"] = self.walk_forward_embargo_samples
+            metrics["walk_forward_metrics"] = {
+                "folds": walk_forward["folds"],
+                "fold_count": walk_forward["fold_count"],
+                "positive_fold_rate": walk_forward["positive_fold_rate"],
+                "avg_expectancy_r": walk_forward["avg_expectancy_r"],
+                "min_expectancy_r": walk_forward["min_expectancy_r"],
+                "pooled": walk_forward["pooled"],
+                "embargo_samples": self.walk_forward_embargo_samples,
+            }
             purged_cv = self._purged_combinatorial_cv(cluster_samples, side)
             metrics["purged_combinatorial_cv"] = purged_cv["folds"]
             metrics["purged_cv_fold_count"] = purged_cv["fold_count"]
@@ -187,6 +217,31 @@ class ClusterResearchEngine:
                 metrics=metrics,
             )
             score = self._candidate_score(metrics)
+            metrics["lab_priority_score"] = round(float(score), 5)
+            metrics["promotion_score"] = self._promotion_score(metrics)
+            metrics["score_input_scope"] = {
+                "lab_priority_score": [
+                    "train_metrics",
+                    "out_of_sample_metrics",
+                    "walk_forward_metrics",
+                    "purged_combinatorial_cv",
+                    "bootstrap_reality_proxy",
+                    "market_replay",
+                    "adversarial_challenge",
+                    "causal_invariance",
+                    "foundation_teacher",
+                ],
+                "descriptive_all_fields_used": False,
+            }
+            metrics["nested_discovery_replay"] = {
+                "status": "required_for_finalists",
+                "implemented": False,
+                "blocking_reason": (
+                    "Full nested replay must refit scaler, clustering, side selection "
+                    "and R:R selection inside each fold before any edge claim upgrade."
+                ),
+                "applies_before": ["production_gate", "edge_claim_upgrade"],
+            }
             centroid = np.nan_to_num(centroid_scaled, nan=0, posinf=0, neginf=0).round(6).tolist()
             key = self._pattern_key(window_size, cluster_id, side, centroid)
             name = f"DISCOVERED_{side.upper()}_W{window_size}_C{cluster_id:02d}_{key[-8:].upper()}"
@@ -240,11 +295,23 @@ class ClusterResearchEngine:
             [RewardRiskAnalyzer._simulate_sample(s, side, 4.0)[0] >= 4.0 for s in all_samples],
             dtype=bool,
         )
+        train_outcomes = np.asarray(
+            [RewardRiskAnalyzer._simulate_sample(s, side, best_rr)[0] for s in train_samples],
+            dtype=float,
+        )
+        train_mfe = np.asarray([s.outcome.mfe_for(side) for s in train_samples], dtype=float)
+        train_mae = np.asarray([s.outcome.mae_for(side) for s in train_samples], dtype=float)
+        train_hits = np.asarray(
+            [RewardRiskAnalyzer._simulate_sample(s, side, 4.0)[0] >= 4.0 for s in train_samples],
+            dtype=bool,
+        )
         wins = outcomes[outcomes > 0]
         losses = outcomes[outcomes < 0]
         profit_factor = float(wins.sum() / abs(losses.sum())) if len(losses) else float(wins.sum() or 0.0)
         by_year = self._group_expectancy(all_samples, outcomes, key="year")
         by_symbol = self._group_expectancy(all_samples, outcomes, key="symbol")
+        train_by_year = self._group_expectancy(train_samples, train_outcomes, key="year")
+        train_by_symbol = self._group_expectancy(train_samples, train_outcomes, key="symbol")
         oos = self._split_metrics(holdout_samples, side, best_rr)
         in_sample_metrics = self._split_metrics(train_samples, side, best_rr)
         null_baseline = self._null_baseline(
@@ -257,27 +324,37 @@ class ClusterResearchEngine:
             multiple_testing_trials=multiple_testing_trials,
         )
         bootstrap = self._bootstrap_confidence(train_samples, side, best_rr)
-        sharpe = self._sharpe_diagnostics(outcomes, multiple_testing_trials=multiple_testing_trials)
+        sharpe = self._sharpe_diagnostics(train_outcomes, multiple_testing_trials=multiple_testing_trials)
         edge_decay = self._edge_decay_metrics(rr_metrics, best_rr)
-        stability_year = self._positive_group_fraction(by_year)
-        stability_symbol = self._positive_group_fraction(by_symbol)
-        diversity_score = min(1.0, len(by_symbol) / 20.0) * 0.55 + min(1.0, len(by_year) / 4.0) * 0.45
+        stability_year = self._positive_group_fraction(train_by_year)
+        stability_symbol = self._positive_group_fraction(train_by_symbol)
+        diversity_score = min(1.0, len(train_by_symbol) / 20.0) * 0.55 + min(1.0, len(train_by_year) / 4.0) * 0.45
         stability_score = 0.40 * stability_year + 0.35 * stability_symbol + 0.25 * diversity_score
         avg_mae = float(np.mean(mae)) if len(mae) else 0.0
         avg_mfe = float(np.mean(mfe)) if len(mfe) else 0.0
+        train_avg_mae = float(np.mean(train_mae)) if len(train_mae) else 0.0
+        train_avg_mfe = float(np.mean(train_mfe)) if len(train_mfe) else 0.0
         return {
             "sample_count": len(all_samples),
             "train_sample_count": len(train_samples),
             "holdout_sample_count": len(holdout_samples),
             "symbol_count": len({s.symbol for s in all_samples}),
             "year_count": len({s.year for s in all_samples}),
-            "expectancy_r": round(float(np.mean(outcomes)), 5) if len(outcomes) else 0.0,
-            "median_r": round(float(np.median(outcomes)), 5) if len(outcomes) else 0.0,
-            "win_rate": round(float(np.mean(outcomes > 0)), 5) if len(outcomes) else 0.0,
-            "hit_4r_rate": round(float(np.mean(hits)), 5) if len(hits) else 0.0,
-            "profit_factor": round(profit_factor, 5),
-            "avg_mfe_r": round(avg_mfe, 5),
-            "avg_mae_r": round(avg_mae, 5),
+            "descriptive_all_sample_count": len(all_samples),
+            "descriptive_all_expectancy_r": round(float(np.mean(outcomes)), 5) if len(outcomes) else 0.0,
+            "descriptive_all_median_r": round(float(np.median(outcomes)), 5) if len(outcomes) else 0.0,
+            "descriptive_all_win_rate": round(float(np.mean(outcomes > 0)), 5) if len(outcomes) else 0.0,
+            "descriptive_all_hit_4r_rate": round(float(np.mean(hits)), 5) if len(hits) else 0.0,
+            "descriptive_all_profit_factor": round(profit_factor, 5),
+            "descriptive_all_avg_mfe_r": round(avg_mfe, 5),
+            "descriptive_all_avg_mae_r": round(avg_mae, 5),
+            "expectancy_r": in_sample_metrics["expectancy_r"],
+            "median_r": round(float(np.median(train_outcomes)), 5) if len(train_outcomes) else 0.0,
+            "win_rate": in_sample_metrics["win_rate"],
+            "hit_4r_rate": round(float(np.mean(train_hits)), 5) if len(train_hits) else 0.0,
+            "profit_factor": in_sample_metrics["profit_factor"],
+            "avg_mfe_r": round(train_avg_mfe, 5),
+            "avg_mae_r": round(train_avg_mae, 5),
             "avg_execution_cost_r": float(best_rr_metrics.get("avg_execution_cost_r", 0.0))
             if isinstance(best_rr_metrics, dict)
             else 0.0,
@@ -332,9 +409,19 @@ class ClusterResearchEngine:
             "avg_short_borrow_proxy_pct": float(best_rr_metrics.get("avg_short_borrow_proxy_pct", 0.0))
             if isinstance(best_rr_metrics, dict)
             else 0.0,
-            "mfe_mae_ratio": round(float(avg_mfe / max(avg_mae, 1e-9)), 5),
-            "reward_risk_estimate": round(float(np.quantile(mfe, 0.60) / max(np.quantile(mae, 0.60), 1e-9)), 5)
+            "descriptive_all_mfe_mae_ratio": round(float(avg_mfe / max(avg_mae, 1e-9)), 5),
+            "descriptive_all_reward_risk_estimate": round(
+                float(np.quantile(mfe, 0.60) / max(np.quantile(mae, 0.60), 1e-9)),
+                5,
+            )
             if len(mfe) and len(mae)
+            else 0.0,
+            "mfe_mae_ratio": round(float(train_avg_mfe / max(train_avg_mae, 1e-9)), 5),
+            "reward_risk_estimate": round(
+                float(np.quantile(train_mfe, 0.60) / max(np.quantile(train_mae, 0.60), 1e-9)),
+                5,
+            )
+            if len(train_mfe) and len(train_mae)
             else 0.0,
             "rr_levels": rr_levels,
             "rr_metrics": rr_metrics,
@@ -358,6 +445,23 @@ class ClusterResearchEngine:
             else 0.0,
             "in_sample_expectancy_r": in_sample_metrics["expectancy_r"],
             "in_sample_profit_factor": in_sample_metrics["profit_factor"],
+            "train_metrics": {
+                "sample_count": in_sample_metrics["sample_count"],
+                "expectancy_r": in_sample_metrics["expectancy_r"],
+                "profit_factor": in_sample_metrics["profit_factor"],
+                "win_rate": in_sample_metrics["win_rate"],
+                "max_drawdown_r": in_sample_metrics["max_drawdown_r"],
+                "best_rr": round(float(best_rr), 5),
+                "best_expectancy_r": round(float(rr_analysis.get("best_expectancy_r", 0.0)), 5),
+                "best_profit_factor": round(float(rr_analysis.get("best_profit_factor", 0.0)), 5),
+                "best_win_rate": round(float(rr_analysis.get("best_win_rate", 0.0)), 5),
+                "target_hit_rate": float(best_rr_metrics.get("target_hit_rate", 0.0))
+                if isinstance(best_rr_metrics, dict)
+                else 0.0,
+                "stability_year": round(stability_year, 5),
+                "stability_symbol": round(stability_symbol, 5),
+                "stability_score": round(float(stability_score), 5),
+            },
             "null_expectancy_r": null_baseline["expectancy_r"],
             "null_profit_factor": null_baseline["profit_factor"],
             "null_win_rate": null_baseline["win_rate"],
@@ -370,6 +474,17 @@ class ClusterResearchEngine:
             "spa_passed": null_baseline["spa_passed"],
             "multiple_testing_penalty": null_baseline["multiple_testing_penalty"],
             "reality_check_method": null_baseline["reality_check_method"],
+            "reality_check_formal_test": null_baseline["reality_check_formal_test"],
+            "bootstrap_reality_proxy": {
+                "method": null_baseline["reality_check_method"],
+                "formal_test": null_baseline["reality_check_formal_test"],
+                "wrc_like_p_value": null_baseline["wrc_p_value"],
+                "spa_like_p_value": null_baseline["spa_p_value"],
+                "wrc_like_passed": null_baseline["wrc_passed"],
+                "spa_like_passed": null_baseline["spa_passed"],
+                "draws": bootstrap["draws"],
+                "trial_count": null_baseline["multiple_testing_trials"],
+            },
             "multiple_testing_trials": null_baseline["multiple_testing_trials"],
             "statistical_edge_passed": null_baseline["statistical_edge_passed"],
             "null_method": null_baseline["method"],
@@ -385,11 +500,27 @@ class ClusterResearchEngine:
             "out_of_sample_win_rate": oos["win_rate"],
             "out_of_sample_max_drawdown_r": oos["max_drawdown_r"],
             "out_of_sample_sample_count": oos["sample_count"],
+            "out_of_sample_metrics": {
+                "sample_count": oos["sample_count"],
+                "expectancy_r": oos["expectancy_r"],
+                "profit_factor": oos["profit_factor"],
+                "win_rate": oos["win_rate"],
+                "max_drawdown_r": oos["max_drawdown_r"],
+                "fit_scope": "holdout_only_no_refit",
+            },
             "stability_year": round(stability_year, 5),
             "stability_symbol": round(stability_symbol, 5),
             "stability_score": round(float(stability_score), 5),
-            "by_year_expectancy": by_year,
-            "top_symbols_expectancy": dict(list(by_symbol.items())[:25]),
+            "by_year_expectancy": train_by_year,
+            "top_symbols_expectancy": dict(list(train_by_symbol.items())[:25]),
+            "descriptive_all_by_year_expectancy": by_year,
+            "descriptive_all_top_symbols_expectancy": dict(list(by_symbol.items())[:25]),
+            "descriptive_metric_policy": {
+                "prefix": "descriptive_all_",
+                "feeds_lab_priority_score": False,
+                "feeds_promotion_score": False,
+                "feeds_best_pattern_selection": False,
+            },
         }
 
     def _train_holdout_samples(self, samples: list[WindowSample]) -> tuple[list[WindowSample], list[WindowSample]]:
@@ -409,7 +540,7 @@ class ClusterResearchEngine:
         rr: float,
         observed_expectancy: float,
         multiple_testing_trials: int,
-    ) -> dict[str, float | int | bool]:
+    ) -> dict[str, object]:
         outcomes = np.asarray([RewardRiskAnalyzer._simulate_sample(s, side, rr)[0] for s in samples], dtype=float)
         if len(outcomes) == 0 or cluster_size <= 0:
             return {
@@ -427,7 +558,8 @@ class ClusterResearchEngine:
                 "multiple_testing_trials": max(1, int(multiple_testing_trials)),
                 "statistical_edge_passed": False,
                 "method": "stratified_regime_bootstrap",
-                "reality_check_method": "white_reality_check_spa_proxy",
+                "reality_check_method": "bootstrap_reality_proxy",
+                "reality_check_formal_test": False,
                 "strata_count": 0,
             }
 
@@ -471,7 +603,8 @@ class ClusterResearchEngine:
             "multiple_testing_trials": trial_count,
             "statistical_edge_passed": adjusted_p <= 0.25 and expectancy_lift > 0,
             "method": "stratified_regime_bootstrap",
-            "reality_check_method": "white_reality_check_spa_proxy",
+            "reality_check_method": "bootstrap_reality_proxy",
+            "reality_check_formal_test": False,
             "strata_count": len(cluster_strata),
         }
 
@@ -1017,20 +1150,34 @@ class ClusterResearchEngine:
 
     @staticmethod
     def _side_score(metrics: dict[str, object]) -> float:
-        expectancy = float(metrics.get("in_sample_expectancy_r", metrics.get("expectancy_r", 0.0)))
-        pf = min(float(metrics.get("in_sample_profit_factor", metrics.get("profit_factor", 0.0))), 8.0)
+        train = metrics.get("train_metrics", {})
+        expectancy = (
+            float(train.get("expectancy_r", 0.0)) if isinstance(train, dict) else float(metrics.get("in_sample_expectancy_r", 0.0))
+        )
+        pf = min(
+            float(train.get("profit_factor", 0.0)) if isinstance(train, dict) else float(metrics.get("in_sample_profit_factor", 0.0)),
+            8.0,
+        )
         hit_rate = float(metrics.get("target_hit_rate", metrics.get("hit_4r_rate", 0.0)))
         stability = float(metrics.get("stability_score", 0.0))
         return expectancy * 2.0 + pf * 0.15 + hit_rate * 1.5 + stability * 0.7
 
     @staticmethod
     def _candidate_score(metrics: dict[str, object]) -> float:
-        expectancy = max(0.0, float(metrics.get("expectancy_r", 0.0)))
-        pf = min(float(metrics.get("profit_factor", 0.0)), 8.0) / 8.0
+        train = metrics.get("train_metrics", {})
+        if isinstance(train, dict):
+            train_expectancy = float(train.get("best_expectancy_r", train.get("expectancy_r", 0.0)) or 0.0)
+            train_pf = float(train.get("best_profit_factor", train.get("profit_factor", 0.0)) or 0.0)
+            stability = float(train.get("stability_score", metrics.get("stability_score", 0.0)) or 0.0)
+        else:
+            train_expectancy = float(metrics.get("best_expectancy_r", metrics.get("in_sample_expectancy_r", 0.0)) or 0.0)
+            train_pf = float(metrics.get("best_profit_factor", metrics.get("in_sample_profit_factor", 0.0)) or 0.0)
+            stability = float(metrics.get("stability_score", 0.0))
+        expectancy = max(0.0, train_expectancy)
+        pf = min(train_pf, 8.0) / 8.0
         hit = float(metrics.get("target_hit_rate", metrics.get("hit_4r_rate", 0.0)))
-        stability = float(metrics.get("stability_score", 0.0))
         oos = max(0.0, float(metrics.get("out_of_sample_expectancy_r", 0.0)))
-        rr = min(float(metrics.get("best_rr", metrics.get("reward_risk_estimate", 0.0))), 8.0) / 8.0
+        rr = min(float(metrics.get("best_rr", 0.0)), 8.0) / 8.0
         operational = metrics.get("operational_trigger", {})
         trigger_rate = float(operational.get("trigger_rate", 0.0)) if isinstance(operational, dict) else 0.0
         walk_forward_rate = float(metrics.get("walk_forward_positive_fold_rate", 0.0))
@@ -1093,6 +1240,37 @@ class ClusterResearchEngine:
             * (1.0 - invariance_penalty)
         )
         return raw_score * (0.45 + 0.55 * confidence) * robustness + lift * 0.05
+
+    @staticmethod
+    def _promotion_score(metrics: dict[str, object]) -> float:
+        train = metrics.get("train_metrics", {})
+        oos = metrics.get("out_of_sample_metrics", {})
+        wf = metrics.get("walk_forward_metrics", {})
+        train_expectancy = (
+            float(train.get("best_expectancy_r", train.get("expectancy_r", 0.0)) or 0.0)
+            if isinstance(train, dict)
+            else float(metrics.get("best_expectancy_r", 0.0) or 0.0)
+        )
+        oos_expectancy = (
+            float(oos.get("expectancy_r", 0.0) or 0.0)
+            if isinstance(oos, dict)
+            else float(metrics.get("out_of_sample_expectancy_r", 0.0) or 0.0)
+        )
+        wf_rate = (
+            float(wf.get("positive_fold_rate", 0.0) or 0.0)
+            if isinstance(wf, dict)
+            else float(metrics.get("walk_forward_positive_fold_rate", 0.0) or 0.0)
+        )
+        purged_rate = float(metrics.get("purged_cv_positive_rate", 0.0) or 0.0)
+        adjusted_p = min(max(float(metrics.get("adjusted_p_value", 1.0) or 1.0), 0.0), 1.0)
+        return round(
+            max(0.0, train_expectancy) * 0.35
+            + max(0.0, oos_expectancy) * 0.25
+            + wf_rate * 0.20
+            + purged_rate * 0.10
+            + (1.0 - adjusted_p) * 0.10,
+            5,
+        )
 
     @staticmethod
     def _feature_summary(samples: list[WindowSample]) -> dict[str, object]:

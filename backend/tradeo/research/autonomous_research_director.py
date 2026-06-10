@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
-from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -126,6 +125,7 @@ class ResearchDirector:
         }
         return {
             "thesis": f"{pattern.side} edge candidate: {rule}",
+            "edge_claim": "NO_DEMOSTRADO",
             "mechanism": mechanism,
             "works_when": works_when,
             "should_fail_when": fails_when,
@@ -276,14 +276,14 @@ class ResearchDirector:
                 "train/holdout timestamps are explicit",
             ),
             ResearchDirector._challenge_test(
-                "white_reality_check",
+                "bootstrap_reality_proxy_wrc_like",
                 float(metrics.get("wrc_p_value", 1.0) or 1.0) <= 0.25,
-                "multiple-testing corrected reality check should pass",
+                "bootstrap reality proxy WRC-like p-value should pass; not a formal White Reality Check",
             ),
             ResearchDirector._challenge_test(
-                "spa_test",
+                "bootstrap_reality_proxy_spa_like",
                 float(metrics.get("spa_p_value", 1.0) or 1.0) <= 0.25,
-                "SPA proxy should pass",
+                "bootstrap reality proxy SPA-like p-value should pass; not a formal SPA test",
             ),
             ResearchDirector._challenge_test(
                 "deflated_sharpe",

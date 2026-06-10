@@ -14,6 +14,7 @@ from tradeo.db.models import (
     DiscoveredPatternMetric,
     DiscoveredPatternStatus,
 )
+from tradeo.services.state_policy import is_legacy_promotion_state
 from tradeo.research.types import ClusterCandidate
 
 
@@ -83,11 +84,24 @@ class NovelPatternRegistry:
             float(candidate.score) * (0.70 + 0.30 * registry_novelty) + registry_eig * 0.04,
             5,
         )
+        metrics["registry_score_scope"] = {
+            "base": "lab_priority_score",
+            "uses_descriptive_all": False,
+            "novelty_adjustment": "registry_novelty_score",
+            "expected_information_gain_adjustment": "registry_expected_information_gain",
+        }
         pattern.run_id = run_id
         pattern.name = candidate.name
-        status = str(metrics.get("promotion_status", "lab" if candidate.validation_passed else "rejected"))
-        if metrics.get("confirmation_recommended") and status == "rejected":
-            status = "needs_confirmation"
+        raw_status = str(metrics.get("promotion_status", "lab" if candidate.validation_passed else "rejected"))
+        status = self._canonical_promotion_status(
+            raw_status,
+            validation_passed=candidate.validation_passed,
+            confirmation_recommended=bool(metrics.get("confirmation_recommended")),
+        )
+        if status != raw_status:
+            metrics["legacy_promotion_status_blocked"] = raw_status
+            metrics["runtime_promotion_blocked"] = True
+            metrics["promotion_status"] = status
         try:
             pattern.status = DiscoveredPatternStatus(status)
         except ValueError:
@@ -183,6 +197,19 @@ class NovelPatternRegistry:
             )
         )
         return pattern
+
+    @staticmethod
+    def _canonical_promotion_status(
+        status: str,
+        *,
+        validation_passed: bool,
+        confirmation_recommended: bool,
+    ) -> str:
+        if is_legacy_promotion_state(status):
+            return "lab_candidate" if validation_passed else "rejected"
+        if confirmation_recommended and status == "rejected":
+            return "needs_confirmation"
+        return status
 
     def _family_key(self, candidate: ClusterCandidate) -> str:
         digest = blake2b(digest_size=8)

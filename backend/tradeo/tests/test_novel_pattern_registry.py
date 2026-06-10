@@ -108,3 +108,16 @@ def test_registry_persists_confirmation_lifecycle() -> None:
     assert stored.confirmation_status == "needs_confirmation"
     assert stored.confirmation_priority_score == 0.72
     assert stored.confirmation_reason == "edge strong but underpowered"
+
+
+def test_registry_blocks_legacy_promotion_states() -> None:
+    db = session_factory()
+    candidate = _candidate("novel_legacy_paper", [0.0, 0.0, 0.0])
+    candidate.metrics["promotion_status"] = "paper_candidate"
+
+    stored = NovelPatternRegistry(similarity_threshold=0.99).store_candidates(db, [candidate])[0]
+
+    assert stored.status == DiscoveredPatternStatus.LAB_CANDIDATE
+    assert stored.promotion_status == "lab_candidate"
+    assert stored.metrics_json["legacy_promotion_status_blocked"] == "paper_candidate"
+    assert stored.metrics_json["runtime_promotion_blocked"] is True

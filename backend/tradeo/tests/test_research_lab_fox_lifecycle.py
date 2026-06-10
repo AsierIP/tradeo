@@ -5,7 +5,6 @@ from sqlalchemy.orm import sessionmaker
 
 from tradeo.core.config import Settings
 from tradeo.db.models import (
-    AuditLog,
     DiscoveredPattern,
     DiscoveredPatternStatus,
     Signal,
@@ -16,7 +15,8 @@ from tradeo.db.models import (
 from tradeo.db.session import Base
 from tradeo.research.novel_pattern_matcher import NovelPatternMatcher
 from tradeo.research.pattern_embedding_engine import PatternEmbeddingEngine
-from tradeo.services.director_review_gate import DirectorReviewGate
+from tradeo.services.director_review_gate import DirectorProductionGate, DirectorReviewGate
+from tradeo.services.evidence import EvidenceQuality, EvidenceType
 from tradeo.services.pattern_entry_scanner import PatternEntryScanner
 from tradeo.tests.fixtures import fixture_ohlcv
 
@@ -57,6 +57,7 @@ def settings() -> Settings:
         entry_min_regime_score=0.0,
         entry_min_quality_score=0.0,
         entry_cooldown_minutes=0,
+        artifacts_dir="/tmp/tradeo-test-artifacts",
     )
 
 
@@ -93,6 +94,16 @@ def add_research_approved_pattern(db, provider: FixtureProvider) -> DiscoveredPa
 
 def close_lab_trade(db, signal: Signal, index: int, r_multiple: float = 1.0) -> None:
     signal.status = SignalStatus.EXECUTED
+    signal_metadata = dict(signal.metadata_json or {})
+    for key in ("paper_only", "no_ibkr_order", "observation_only", "near_miss", "near_miss_shadow"):
+        signal_metadata.pop(key, None)
+    signal_metadata.update(
+        {
+            "evidence_type": EvidenceType.IBKR_PAPER_FILL.value,
+            "evidence_quality": EvidenceQuality.NORMAL.value,
+        }
+    )
+    signal.metadata_json = signal_metadata
     db.add(
         Trade(
             signal_id=signal.id,
@@ -106,7 +117,13 @@ def close_lab_trade(db, signal: Signal, index: int, r_multiple: float = 1.0) -> 
             status=TradeStatus.CLOSED,
             pnl_usd=100.0 * r_multiple,
             r_multiple=r_multiple,
-            metadata_json={"execution_mode": "ibkr", "ibkr_mode": "paper", "case": index},
+            metadata_json={
+                "execution_mode": "ibkr",
+                "ibkr_mode": "paper",
+                "evidence_type": EvidenceType.IBKR_PAPER_FILL.value,
+                "evidence_quality": EvidenceQuality.NORMAL.value,
+                "case": index,
+            },
         )
     )
     db.commit()
@@ -170,18 +187,16 @@ def test_research_to_lab_to_director_to_fox_lifecycle() -> None:
     assert pattern.metrics_json["lab_execution"]["lab_expectancy_r"] == 1.0
     assert pattern.metrics_json["lab_execution"]["research_expectancy_r"] == 0.4
 
-    pattern.status = DiscoveredPatternStatus.PRODUCTION
-    pattern.promotion_status = "production"
-    db.add(
-        AuditLog(
-            actor="director",
-            action="pattern_promoted_to_production",
-            entity_type="discovered_pattern",
-            entity_id=str(pattern.id),
-            details_json={"source_status": "director_review"},
-        )
-    )
-    db.commit()
+    production_result = DirectorProductionGate(
+        min_paper_fills=10,
+        min_fill_symbols=1,
+        min_fill_trading_days=1,
+        min_expectancy_r=0.0,
+    ).approve_pattern(db, pattern=pattern, reviewer="test_director")
+    db.refresh(pattern)
+    assert production_result["approved_for_production"] is True
+    assert pattern.status == DiscoveredPatternStatus.PRODUCTION
+    assert pattern.metrics_json["production_manifest"]["approved"] is True
 
     fox_result = scanner.scan(
         db,

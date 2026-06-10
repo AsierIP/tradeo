@@ -19,11 +19,13 @@ from tradeo.db.models import (
 from tradeo.db.session import Base
 from tradeo.research.novel_pattern_matcher import NovelPatternMatcher
 from tradeo.research.pattern_embedding_engine import PatternEmbeddingEngine
+from tradeo.services.evidence import EvidenceQuality, EvidenceType
 from tradeo.services.lab_paper_observations import LAB_SHADOW_EXECUTION_MODE, LabPaperObservationService
 from tradeo.services.pattern_entry_scanner import (
     PatternEntryScanner,
     PatternEntryScannerSafetyError,
 )
+from tradeo.services.production_manifest import build_production_manifest
 from tradeo.tests.fixtures import fixture_ohlcv
 
 
@@ -250,6 +252,7 @@ def scanner(provider: FixtureProvider, **settings_overrides) -> PatternEntryScan
         "entry_gate_enabled": False,
         "entry_min_quality_score": 0.0,
         "entry_cooldown_minutes": 0,
+        "artifacts_dir": "/tmp/tradeo-test-artifacts",
     }
     defaults.update(settings_overrides)
     settings = Settings(**defaults)
@@ -280,6 +283,8 @@ def test_laboratory_scanner_creates_paper_signal_for_validated_lab_pattern() -> 
     assert signal.status == SignalStatus.PAPER_APPROVED
     assert signal.human_approved is False
     assert signal.metadata_json["entry_module"] == "laboratory"
+    assert signal.metadata_json["evidence_type"] == EvidenceType.SHADOW_NO_ORDER.value
+    assert signal.metadata_json["evidence_quality"] == EvidenceQuality.NORMAL.value
     assert signal.metadata_json["entry_variant_id"]
     assert signal.metadata_json["entry_audit"]["available_data_cutoff_ts"]
     assert signal.metadata_json["entry_audit"]["entry_eligible_ts"]
@@ -308,6 +313,8 @@ def test_laboratory_scanner_creates_paper_signal_for_validated_lab_pattern() -> 
     assert observation.status == TradeStatus.OPEN
     assert observation.signal_id == signal.id
     assert observation.metadata_json["execution_mode"] == LAB_SHADOW_EXECUTION_MODE
+    assert observation.metadata_json["evidence_type"] == EvidenceType.SHADOW_NO_ORDER.value
+    assert observation.metadata_json["evidence_quality"] == EvidenceQuality.NORMAL.value
     assert observation.metadata_json["no_ibkr_order"] is True
 
 
@@ -374,6 +381,8 @@ def test_laboratory_volume_near_miss_opens_shadow_observation_without_ibkr(monke
     assert signal_meta["would_have_failed_entry_gate"] is True
     assert signal_meta["paper_only"] is True
     assert signal_meta["no_ibkr_order"] is True
+    assert signal_meta["evidence_type"] == EvidenceType.NEAR_MISS_SHADOW.value
+    assert signal_meta["evidence_quality"] == EvidenceQuality.NORMAL.value
     assert signal_meta["entry_quality"]["actionable"] is False
     assert signal_meta["entry_module"] == "laboratory"
 
@@ -386,6 +395,8 @@ def test_laboratory_volume_near_miss_opens_shadow_observation_without_ibkr(monke
     assert trade_meta["near_miss"] is True
     assert trade_meta["paper_only"] is True
     assert trade_meta["no_ibkr_order"] is True
+    assert trade_meta["evidence_type"] == EvidenceType.NEAR_MISS_SHADOW.value
+    assert trade_meta["evidence_quality"] == EvidenceQuality.NORMAL.value
 
 
 def test_laboratory_near_miss_hard_blocker_does_not_open_shadow_observation() -> None:
@@ -445,7 +456,8 @@ def test_fox_hunter_does_not_open_lab_near_miss_shadow_observation() -> None:
         execute_orders=False,
     )
 
-    assert result["rejected_by_entry_gate"] == 1
+    assert result["rejected_by_entry_gate"] == 0
+    assert result["rejected_by_production_manifest"] == 1
     assert result["signals_created"] == 0
     assert result["paper_observations_opened"] == 0
     assert result["near_miss_shadow_observations_opened"] == 0
@@ -515,6 +527,8 @@ def test_lab_shadow_observation_closes_on_target_without_ibkr_order() -> None:
     assert trade.r_multiple == 2.0
     assert trade.pnl_usd == 6.0
     assert trade.metadata_json["exit_reason"] == "target_hit"
+    assert trade.metadata_json["evidence_type"] == EvidenceType.SHADOW_NO_ORDER.value
+    assert trade.metadata_json["evidence_quality"] == EvidenceQuality.NORMAL.value
     assert trade.metadata_json["no_ibkr_order"] is True
 
 
@@ -536,6 +550,8 @@ def test_lab_shadow_observation_records_market_data_unavailable_without_fallback
     assert trade.metadata_json["market_data_unavailable"] is True
     assert trade.metadata_json["shadow_lifecycle"]["last_bar"] is None
     assert trade.metadata_json["shadow_lifecycle"]["mark_to_market"] is None
+    assert trade.metadata_json["evidence_type"] == EvidenceType.SHADOW_NO_ORDER.value
+    assert trade.metadata_json["evidence_quality"] == EvidenceQuality.NORMAL.value
     assert trade.metadata_json["no_ibkr_order"] is True
 
 
@@ -567,6 +583,8 @@ def test_lab_shadow_observation_marks_to_market_from_signal_snapshot_after_no_ba
     assert lifecycle["mark_to_market"]["price"] == 10.75
     assert lifecycle["mark_to_market"]["unrealized_pnl"] == 2.25
     assert lifecycle["mark_to_market"]["entry"] == 10.0
+    assert trade.metadata_json["evidence_type"] == EvidenceType.SHADOW_NO_ORDER.value
+    assert trade.metadata_json["evidence_quality"] == EvidenceQuality.DEGRADED.value
     assert trade.metadata_json["no_ibkr_order"] is True
 
 
@@ -595,6 +613,9 @@ def test_lab_shadow_observation_closes_from_metadata_bar_after_no_bars() -> None
     assert trade.status == TradeStatus.CLOSED
     assert trade.exit_price == 12.0
     assert trade.metadata_json["exit_reason"] == "target_hit"
+    assert trade.metadata_json["evidence_type"] == EvidenceType.SHADOW_NO_ORDER.value
+    assert trade.metadata_json["evidence_quality"] == EvidenceQuality.DEGRADED.value
+    assert trade.metadata_json["fallback_used"] is True
     assert trade.metadata_json["no_ibkr_order"] is True
 
 
@@ -853,6 +874,12 @@ def test_laboratory_scanner_prefers_entry_variant_with_paper_history() -> None:
                 status=TradeStatus.CLOSED,
                 pnl_usd=20.0,
                 r_multiple=2.0,
+                metadata_json={
+                    "execution_mode": "ibkr",
+                    "ibkr_mode": "paper",
+                    "evidence_type": EvidenceType.IBKR_PAPER_FILL.value,
+                    "evidence_quality": EvidenceQuality.NORMAL.value,
+                },
             )
         )
     db.commit()
@@ -996,6 +1023,27 @@ def test_fox_hunter_ignores_lab_patterns_and_uses_production_only() -> None:
     add_pattern(db, provider, status=DiscoveredPatternStatus.DIRECTOR_REVIEW)
     production = add_pattern(db, provider, status=DiscoveredPatternStatus.PRODUCTION)
 
+    blocked = scanner(provider).scan(
+        db,
+        module="fox_hunter",
+        symbols=[provider.symbol],
+        store_signals=True,
+        execute_orders=False,
+    )
+    assert blocked["patterns_checked"] == 0
+    assert blocked["signals_created"] == 0
+
+    production.metrics_json = {
+        **(production.metrics_json or {}),
+        "production_manifest": build_production_manifest(
+            production,
+            reviewer="test_director",
+            evidence_packet={"approved_for_production": True, "ibkr_paper_fills": 30},
+        ),
+    }
+    db.add(production)
+    db.commit()
+
     result = scanner(provider).scan(
         db,
         module="fox_hunter",
@@ -1133,6 +1181,7 @@ def test_laboratory_opens_near_miss_shadow_observation_for_soft_volume_failure()
     assert result["rejected_by_entry_gate"] == 1
     signal = db.get(Signal, result["signal_ids"][0])
     assert signal.metadata_json["near_miss"] is True
+    assert signal.metadata_json["evidence_type"] == EvidenceType.NEAR_MISS_SHADOW.value
     assert signal.metadata_json["near_miss_shadow"] is True
     assert signal.metadata_json["would_have_failed_entry_gate"] is True
     assert signal.metadata_json["paper_only"] is True
@@ -1143,6 +1192,7 @@ def test_laboratory_opens_near_miss_shadow_observation_for_soft_volume_failure()
     assert signal.metadata_json["entry_quality"]["near_miss_shadow"] is True
     observation = db.get(Trade, result["paper_observation_trade_ids"][0])
     assert observation.metadata_json["execution_mode"] == LAB_SHADOW_EXECUTION_MODE
+    assert observation.metadata_json["evidence_type"] == EvidenceType.NEAR_MISS_SHADOW.value
     assert observation.metadata_json["near_miss_shadow"] is True
     assert observation.metadata_json["no_ibkr_order"] is True
 
