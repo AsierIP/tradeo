@@ -68,19 +68,55 @@ def test_files_changed_references_resolve_to_real_files() -> None:
     assert not missing, f"remediation docs reference missing files: {missing}"
 
 
-def test_compliance_matrix_covers_all_agents() -> None:
-    matrix = _REMEDIATION_DIR / "tradeo_12_phase_compliance_matrix_2026_06_10.md"
-    if not matrix.is_file():
-        pytest.skip("docs/remediation not available in this environment")
-    text = matrix.read_text(encoding="utf-8")
+_MATRIX_PATH = (
+    _REMEDIATION_DIR / "tradeo_12_phase_compliance_matrix_2026_06_10.md"
+)
+_AGENT_DOC_NAME = re.compile(r"^agent_([a-z0-9]+)_")
+
+
+def _matrix_agents_with_rows(text: str) -> set[str]:
     rows = [line for line in text.splitlines() if line.startswith("|")]
-    agents_with_rows = {
+    return {
         cells[2]
         for line in rows
         if len(cells := [cell.strip() for cell in line.split("|")]) > 3
     }
-    for agent in ("A", "B", "C", "D"):
+
+
+def test_compliance_matrix_covers_all_agents() -> None:
+    if not _MATRIX_PATH.is_file():
+        pytest.skip("docs/remediation not available in this environment")
+    agents_with_rows = _matrix_agents_with_rows(
+        _MATRIX_PATH.read_text(encoding="utf-8")
+    )
+    for agent in ("A", "B", "C", "D", "E", "E2", "G", "H"):
         assert agent in agents_with_rows, f"matrix lost agent {agent} rows"
+
+
+def test_every_agent_report_is_reflected_in_matrix() -> None:
+    """Each agent_<id>_*.md report must leave a trace in the matrix.
+
+    Either a table row (Agent column) or an explicit "Agent <ID>" status note
+    counts; what failed before is an agent merging to main with no matrix
+    record at all (as Agent E2 initially did).
+    """
+    if not _MATRIX_PATH.is_file():
+        pytest.skip("docs/remediation not available in this environment")
+    text = _MATRIX_PATH.read_text(encoding="utf-8")
+    agents_with_rows = _matrix_agents_with_rows(text)
+    unrecorded: list[str] = []
+    for doc in _remediation_docs():
+        match = _AGENT_DOC_NAME.match(doc.name)
+        if match is None:
+            continue
+        agent_id = match.group(1).upper()
+        in_rows = agent_id in agents_with_rows
+        in_notes = re.search(rf"\bAgent {agent_id}\b", text) is not None
+        if not (in_rows or in_notes):
+            unrecorded.append(f"{doc.name} (agent {agent_id})")
+    assert not unrecorded, (
+        f"remediation reports with no compliance-matrix record: {unrecorded}"
+    )
 
 
 def test_audit_export_exposes_independent_sample_fields() -> None:

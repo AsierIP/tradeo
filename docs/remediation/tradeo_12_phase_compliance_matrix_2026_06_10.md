@@ -74,3 +74,22 @@ Status updates recorded by Agent G (rows above are wave-1/wave-2 history and wer
 Status update recorded by Agent H (earlier rows unedited): the section-6 row's
 "ShadowTracker canonical outcome parity remains for Agent D/future work" gap is
 now closed on `main`.
+
+## Agent E2 Update (2026-06-11, recorded by audit/traceability agent)
+
+Agent E2's intraday incremental cache work merged to `main` as `b83c71a`
+without appending its matrix rows; this section records them after the fact so
+the matrix matches the code on `main`. Earlier rows are unedited.
+
+| Section | Agent | Status | Evidence | Remaining gap |
+|---|---|---|---|---|
+| 3.1 Data layer (intraday incremental fetch) | E2 | Implemented | Intraday intervals (`1m/5m/15m/30m/1h`) now use the same overlap-verified tail append as daily, with bar-relative min-gap and wall-clock max-gap thresholds, master switch `market_data_incremental_intraday_enabled`, honest in-progress-bar exclusion in `_bar_complete_mask`, and complete-bars-only persistence (also fixes the latent daily partial-bar cementing defect). 5 new tests in `test_data_provider.py`; image suite 258 passed. See `agent_e2_intraday_incremental_cache_2026_06_11.md`. | RTH session boundaries not modeled (overnight gap math is wall-clock, harmless no-op); unknown intervals keep the permissive all-complete mask. |
+
+Status updates recorded by the audit/traceability agent (earlier rows unedited):
+
+- 3.1 Data layer (incremental fetch): the E row's remaining gap "Intraday
+  intervals keep cache-forever behavior" is now closed on `main` (`b83c71a`).
+- Agent F merge status: the Agent G notes above describe F's work as "pending
+  merge at the time of writing"; F is now merged on `main` (`12f2157`, via
+  merge `646b995`), so both F items (order-state transition tests, persisted
+  effective-sample weights) are live.
