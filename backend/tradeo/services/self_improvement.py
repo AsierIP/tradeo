@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from tradeo.core.config import Settings, get_settings
 from tradeo.db.models import AuditLog, StrategyVersion
+from tradeo.research.nested_optimization import nested_optimization_report
 from tradeo.research.quant_validation import pbo_cscv
 from tradeo.schemas import SelfImprovementResponse
 from tradeo.services.backtester import Backtester
@@ -149,10 +150,12 @@ class SelfImprovementEngine:
             and metrics.get("max_drawdown_pct", 100.0) <= 12.0
             and bool(guard.get("pbo_passed", False))
             and bool(guard.get("plateau_passed", False))
+            and bool(guard.get("nested_passed", False))
         )
 
     def _anti_overfit_guards(self, records: list[dict[str, Any]]) -> tuple[dict[int, dict[str, Any]], dict[str, Any]]:
         pbo_report = self._pbo_report(records)
+        nested_report = self._nested_report(records)
         out: dict[int, dict[str, Any]] = {}
         for idx, record in enumerate(records):
             plateau = self._plateau_report(idx, records)
@@ -161,9 +164,34 @@ class SelfImprovementEngine:
                 "pbo_passed": bool(pbo_report.get("passed", False)),
                 "plateau": plateau,
                 "plateau_passed": bool(plateau.get("passed", False)),
+                "nested": nested_report,
+                "nested_passed": bool(nested_report.get("passed", False)),
                 "accepted_only_if_outer_evidence": True,
             }
-        return out, pbo_report
+        summary = dict(pbo_report)
+        summary["nested"] = nested_report
+        return out, summary
+
+    def _nested_report(self, records: list[dict[str, Any]]) -> dict[str, Any]:
+        if not self.settings.self_improvement_nested_enabled:
+            return {
+                "method": "nested_outer_fold_pbo_v1",
+                "passed": False,
+                "blocked": True,
+                "reason": "nested_optimization_disabled_fail_closed",
+            }
+        matrix, periods = self._performance_matrix(records)
+        report = nested_optimization_report(
+            matrix,
+            n_outer_folds=max(4, int(self.settings.self_improvement_nested_outer_folds)),
+            inner_trials=max(1, int(self.settings.self_improvement_nested_inner_trials)),
+            max_pbo=float(self.settings.self_improvement_nested_max_pbo),
+            seed=int(self.settings.self_improvement_nested_seed),
+            use_optuna=bool(self.settings.self_improvement_nested_use_optuna),
+        )
+        report["period_kind"] = "monthly_realized_r_buckets"
+        report["period_count_available"] = len(periods)
+        return report
 
     def _pbo_report(self, records: list[dict[str, Any]]) -> dict[str, Any]:
         matrix, periods = self._performance_matrix(records)
@@ -288,6 +316,8 @@ class SelfImprovementEngine:
                         "max_drawdown_pct": 12.0,
                         "max_pbo": self.settings.self_improvement_max_pbo,
                         "plateau_pf_fraction": self.settings.self_improvement_plateau_pf_fraction,
+                        "nested_max_pbo": self.settings.self_improvement_nested_max_pbo,
+                        "nested_outer_folds": self.settings.self_improvement_nested_outer_folds,
                         "promotion": "requires human/API supervisor approval after paper trading",
                     },
                     "anti_overfit": guard_summary,
