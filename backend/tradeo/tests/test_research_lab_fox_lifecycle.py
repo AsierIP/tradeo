@@ -213,6 +213,7 @@ def test_research_to_lab_to_director_to_fox_lifecycle() -> None:
 
     review_result = DirectorReviewGate(
         min_closed_lab_trades=10,
+        min_effective_lab_trades=10,
         min_lab_symbols=1,
         min_lab_trading_days=1,
         min_baseline_edge_r=0.0,

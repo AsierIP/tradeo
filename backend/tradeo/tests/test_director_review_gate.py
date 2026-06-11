@@ -16,6 +16,7 @@ from tradeo.db.models import (
 from tradeo.db.session import Base
 from tradeo.services.director_review_gate import DirectorProductionGate, DirectorReviewGate
 from tradeo.services.evidence import EvidenceQuality, EvidenceType, FillProvenance
+from tradeo.services.pattern_health_monitor import PatternHealthMonitor
 
 
 def session_factory():
@@ -194,7 +195,7 @@ def test_director_review_gate_marks_candidate_after_ten_closed_lab_trades() -> N
     for index in range(10):
         add_closed_lab_trade(db, pattern, index, r_multiple=1.0 if index < 7 else -1.0)
 
-    result = DirectorReviewGate(min_closed_lab_trades=10).refresh(db)
+    result = DirectorReviewGate(min_closed_lab_trades=10, min_effective_lab_trades=10).refresh(db)
     db.refresh(pattern)
 
     assert result["marked_for_director_review"] == 1
@@ -208,6 +209,24 @@ def test_director_review_gate_marks_candidate_after_ten_closed_lab_trades() -> N
     assert pattern.metrics_json["lab_execution"]["unique_lab_days"] == 10
     assert pattern.metrics_json["lab_execution"]["trades_remaining_for_director_review"] == 0
     assert pattern.metrics_json["lab_execution"]["director_review_trigger_trades"] == 10
+
+
+def test_director_review_gate_blocks_until_effective_lab_trade_minimum() -> None:
+    db = session_factory()
+    pattern = add_pattern(db)
+    for index in range(10):
+        add_closed_lab_trade(db, pattern, index, r_multiple=1.0)
+
+    result = DirectorReviewGate(min_closed_lab_trades=10).refresh(db)
+    db.refresh(pattern)
+    lab_execution = pattern.metrics_json["lab_execution"]
+
+    assert result["marked_for_director_review"] == 0
+    assert pattern.status == DiscoveredPatternStatus.LAB_CANDIDATE
+    assert lab_execution["closed_lab_trades"] == 10
+    assert lab_execution["effective_lab_trades"] == 10
+    assert lab_execution["min_effective_lab_trades"] == 25
+    assert "effective_lab_trades_below_25" in lab_execution["promotion_blockers"]
 
 
 def test_director_review_gate_blocks_low_diversity_lab_results() -> None:
@@ -488,3 +507,33 @@ def test_director_review_gate_excludes_shadow_near_miss_and_degraded_fallback() 
     assert pattern.metrics_json["lab_execution"]["closed_lab_trades"] == 9
     assert "closed_lab_trades_below_10" in pattern.metrics_json["lab_execution"]["promotion_blockers"]
     assert pattern.status == DiscoveredPatternStatus.LAB_CANDIDATE
+
+
+def test_pattern_health_monitor_marks_decaying_on_shortfall_cusum() -> None:
+    db = session_factory()
+    pattern = add_pattern(db)
+    pattern.status = DiscoveredPatternStatus.DIRECTOR_REVIEW
+    db.add(pattern)
+    db.commit()
+    for index in range(8):
+        add_closed_lab_trade(
+            db,
+            pattern,
+            index,
+            r_multiple=0.5,
+            trade_metadata={
+                "entry_fill_price": 10.35,
+                "exit_fill_price": 14.0,
+                "exit_reason": "target_hit",
+            },
+        )
+
+    result = PatternHealthMonitor().run(db)
+    db.refresh(pattern)
+
+    assert result["decay_detected"] == 1
+    assert pattern.drift_status == "decaying"
+    health = pattern.metrics_json["pattern_health"]
+    assert health["shortfall_fills"] == 8
+    assert health["shortfall_cusum"]["available"] is True
+    assert health["shortfall_cusum"]["triggered"] is True

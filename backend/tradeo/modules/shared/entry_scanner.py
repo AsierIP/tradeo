@@ -615,6 +615,9 @@ class PatternEntryScanner:
         features = dict(metrics.get("features") or {})
         features["entry_variant_id"] = str(match.get("entry_variant_id") or "")
         features["regime_key"] = str((match.get("regime") or {}).get("regime_key") or "")
+        for key in ("pattern_family_key", "canonical_pattern_key", "pattern_key", "pattern_id"):
+            if match.get(key) is not None:
+                features[key] = str(match.get(key) or "")
         return PatternCandidate(
             symbol=str(match["symbol"]),
             pattern=str(match["pattern_name"]),
@@ -1216,6 +1219,8 @@ class PatternEntryScanner:
                 "bar_window_end": str(match.get("window_end") or ""),
                 "pattern_id": match["pattern_id"],
                 "pattern_key": match["pattern_key"],
+                "pattern_family_key": match.get("pattern_family_key"),
+                "canonical_pattern_key": match.get("canonical_pattern_key"),
                 "pattern_status": match.get("pattern_status"),
                 "pattern_promotion_status": match.get("pattern_promotion_status"),
                 "production_manifest": match.get("production_manifest"),

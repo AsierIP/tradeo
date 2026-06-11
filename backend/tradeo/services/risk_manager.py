@@ -66,6 +66,12 @@ class RiskManager:
             hard.append("max_open_positions_reached")
         if realized_today <= -settings.initial_capital_usd * settings.daily_loss_limit_pct:
             hard.append("daily_loss_limit_reached")
+        if db is not None:
+            family_key = self._candidate_family_key(candidate)
+            if family_key and self._open_family_positions(db, family_key) >= settings.max_open_positions_per_pattern_family:
+                hard.append(
+                    f"pattern_family_position_cap_{settings.max_open_positions_per_pattern_family}_reached"
+                )
 
         risk_per_share = abs(candidate.entry - candidate.stop)
         if risk_per_share <= 0:
@@ -76,7 +82,11 @@ class RiskManager:
         qty_by_risk = int(risk_budget // risk_per_share)
         max_position_value = equity * settings.max_position_value_pct
         qty_by_notional = int(max_position_value // candidate.entry)
-        qty = max(0, min(qty_by_risk, qty_by_notional))
+        qty_caps = [qty_by_risk, qty_by_notional]
+        adv_cap = self._qty_cap_by_adv(candidate)
+        if adv_cap is not None:
+            qty_caps.append(adv_cap)
+        qty = max(0, min(qty_caps))
         risk_usd = round(qty * risk_per_share, 2)
         notional = round(qty * candidate.entry, 2)
 
@@ -86,6 +96,8 @@ class RiskManager:
             hard.append("gross_exposure_exceeds_cash_limit")
         if risk_usd > risk_budget * 1.0001:
             hard.append("risk_budget_exceeded")
+        if adv_cap is not None and qty_by_risk > adv_cap:
+            warnings.append(f"adv_participation_cap_reduced_qty_to_{adv_cap}")
         if candidate.features.get("avg_dollar_volume", 0) < settings.min_avg_dollar_volume:
             hard.append("liquidity_filter_failed")
         if candidate.features.get("atr_pct", 0) > settings.max_atr_pct:
@@ -111,3 +123,49 @@ class RiskManager:
             and signal.human_approved
             and self.settings.live_armed
         )
+
+    def _qty_cap_by_adv(self, candidate: PatternCandidate) -> int | None:
+        avg_dollar_volume = self._safe_float(candidate.features.get("avg_dollar_volume"))
+        if avg_dollar_volume <= 0 or candidate.entry <= 0:
+            return None
+        max_participation = max(0.0, float(self.settings.max_adv_participation_pct))
+        if max_participation <= 0:
+            return None
+        adv_shares = avg_dollar_volume / candidate.entry
+        return int(adv_shares * max_participation)
+
+    @staticmethod
+    def _candidate_family_key(candidate: PatternCandidate) -> str:
+        for key in ("pattern_family_key", "canonical_pattern_key", "pattern_key", "pattern_id"):
+            value = str(candidate.features.get(key) or "").strip()
+            if value:
+                return value
+        return ""
+
+    @classmethod
+    def _open_family_positions(cls, db: Session, family_key: str) -> int:
+        open_trades = db.query(Trade).filter(Trade.status == TradeStatus.OPEN).all()
+        count = 0
+        for trade in open_trades:
+            signal_metadata = trade.signal.metadata_json if trade.signal is not None else {}
+            trade_metadata = trade.metadata_json or {}
+            keys = {
+                str(signal_metadata.get("pattern_family_key") or "").strip(),
+                str(signal_metadata.get("canonical_pattern_key") or "").strip(),
+                str(signal_metadata.get("pattern_key") or "").strip(),
+                str(signal_metadata.get("pattern_id") or "").strip(),
+                str(trade_metadata.get("pattern_family_key") or "").strip(),
+                str(trade_metadata.get("canonical_pattern_key") or "").strip(),
+                str(trade_metadata.get("pattern_key") or "").strip(),
+                str(trade_metadata.get("pattern_id") or "").strip(),
+            }
+            if family_key in keys:
+                count += 1
+        return count
+
+    @staticmethod
+    def _safe_float(value: object) -> float:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return 0.0

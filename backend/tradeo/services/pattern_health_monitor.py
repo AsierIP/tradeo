@@ -32,6 +32,7 @@ from tradeo.db.models import (
 )
 from tradeo.research.quant_validation import cusum_drift
 from tradeo.services.director_review_gate import DirectorReviewGate
+from tradeo.services.implementation_shortfall import trade_slippage_r
 
 MONITORED_STATUSES = (
     DiscoveredPatternStatus.PRODUCTION,
@@ -94,9 +95,26 @@ class PatternHealthMonitor:
                 target=target,
                 scale=scale,
             )
+            shortfall_values = [
+                float(row["slippage_r"])
+                for row in (trade_slippage_r(trade) for trade in trades)
+                if row is not None
+            ]
+            shortfall_verdict = None
+            if len(shortfall_values) >= settings.director_min_slippage_samples:
+                shortfall_verdict = cusum_drift(
+                    shortfall_values,
+                    k=settings.health_monitor_shortfall_cusum_k,
+                    h=settings.health_monitor_shortfall_cusum_h,
+                    target=settings.director_max_median_slippage_r,
+                    scale=max(float(np.std(np.asarray(shortfall_values), ddof=1)), 0.05)
+                    if len(shortfall_values) > 1
+                    else 0.05,
+                )
             health = {
                 "checked_at": datetime.now(timezone.utc).isoformat(),
                 "closed_fills": len(r_values),
+                "shortfall_fills": len(shortfall_values),
                 "target_expectancy_r": round(target, 4),
                 "scale_r": round(scale, 4),
                 "cusum_k": settings.health_monitor_cusum_k,
@@ -106,12 +124,22 @@ class PatternHealthMonitor:
                 "trigger_index": verdict["index"],
                 "min_s_neg": round(float(np.min(verdict["s_neg"])), 4),
                 "max_s_pos": round(float(np.max(verdict["s_pos"])), 4),
+                "shortfall_cusum": self._shortfall_health(shortfall_verdict),
             }
             pattern.metrics_json = {**(pattern.metrics_json or {}), "pattern_health": health}
-            if verdict["triggered"] and verdict["side"] == "down":
+            shortfall_triggered = (
+                shortfall_verdict is not None
+                and bool(shortfall_verdict["triggered"])
+                and shortfall_verdict["side"] == "up"
+            )
+            if (verdict["triggered"] and verdict["side"] == "down") or shortfall_triggered:
                 previous = str(pattern.drift_status or "stable")
                 pattern.drift_status = "decaying"
-                pattern.drift_score = round(float(abs(np.min(verdict["s_neg"]))), 4)
+                r_drift = float(abs(np.min(verdict["s_neg"])))
+                shortfall_drift = (
+                    float(np.max(shortfall_verdict["s_pos"])) if shortfall_verdict is not None else 0.0
+                )
+                pattern.drift_score = round(max(r_drift, shortfall_drift), 4)
                 db.add(
                     AuditLog(
                         actor="pattern_health_monitor",
@@ -122,6 +150,7 @@ class PatternHealthMonitor:
                             "pattern_id": pattern.id,
                             "previous_drift_status": previous,
                             "health": health,
+                            "decay_source": "shortfall" if shortfall_triggered else "realized_r",
                             "effect": (
                                 "matcher stops generating new signals for this pattern "
                                 "while drift_status='decaying'; re-validation required"
@@ -145,6 +174,19 @@ class PatternHealthMonitor:
             "skipped": skipped,
             "decay_detected": len(decaying),
             "decaying": decaying,
+        }
+
+    @staticmethod
+    def _shortfall_health(verdict: dict[str, Any] | None) -> dict[str, Any]:
+        if verdict is None:
+            return {"available": False, "reason": "insufficient_real_fill_shortfall_samples"}
+        return {
+            "available": True,
+            "triggered": bool(verdict["triggered"]),
+            "side": verdict["side"],
+            "trigger_index": verdict["index"],
+            "min_s_neg": round(float(np.min(verdict["s_neg"])), 4),
+            "max_s_pos": round(float(np.max(verdict["s_pos"])), 4),
         }
 
     @staticmethod

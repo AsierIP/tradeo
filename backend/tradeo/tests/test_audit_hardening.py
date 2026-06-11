@@ -332,6 +332,22 @@ def test_export_leaves_operational_metrics_empty_without_closed_lab_trades() -> 
     assert "entry_variant_id" in variant_rows[0]["empty_reason"]
 
 
+def test_export_metrics_reconstruct_independent_sample_counts_from_event_rows() -> None:
+    exporter = _load_audit_exporter()
+    patterns = [{"id": 1, "sample_count": 120, "symbol_count": 10}]
+    events = [
+        {"pattern_id": "PATTERN_000001", "is_independent_sample": "true"},
+        {"pattern_id": "PATTERN_000001", "is_independent_sample": "false"},
+        {"pattern_id": "PATTERN_000001", "is_independent_sample": "pending_review"},
+    ]
+
+    rows = exporter.build_metrics_by_pattern(patterns, {1: []}, [], event_rows=events)
+
+    assert rows[0]["sample_count"] == 3
+    assert rows[0]["independent_sample_count"] == 1
+    assert "raw pattern sample_count=120" in rows[0]["notes"]
+
+
 def test_export_groups_closed_lab_trade_performance_by_regime_and_entry_variant() -> None:
     exporter = _load_audit_exporter()
     patterns = [{"id": 1}]

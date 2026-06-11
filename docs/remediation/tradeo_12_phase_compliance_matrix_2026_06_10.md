@@ -23,7 +23,20 @@ Each agent appends its own rows without removing other branches' work.
 | 6 Backtester parity | C | Partial implemented | Backtester exit path now uses canonical `triple_barrier_outcome` and shared tiered costs. | ShadowTracker canonical outcome parity remains for Agent D/future work. |
 | 8 Config (outcomes scope) | C | Partial implemented | `.env.example` and `Settings` expose RR and self-improvement guard defaults. | — |
 
+| 4.3 Microstructure filters | D | Partial implemented | Signal snapshots and entry quality keep liquidity, ATR, volume, extension, regime, and entry-gate rejection reasons auditable. | Richer real-time microstructure feeds where available. |
+| 4.4 Sizing | D | Improved | `RiskManager` caps quantity by ADV participation and blocks excess open positions in the same pattern family. | — |
+| 4.5 Execution/reconciliation | D | Existing, verified | Reconciliation auto-kill-switch path remains enabled by default and backend suite is green. | Explicit order-state transition tests. |
+| 4.6 Shortfall | D | Improved | Director shortfall gate existed; PatternHealthMonitor now also monitors real-fill `slippage_R` CUSUM. | — |
+| 4.7 Director sequential gate | D | Improved | Defaults now require 25 effective real paper fills, 8 symbols, and 10 days before Director review eligibility. | Persisted effective-sample weights for paper fills. |
+| 4.8 Health monitor | D | Improved | Health monitor tracks realized R decay and shortfall deterioration. | — |
+| 7 Audit reproducibility | D | Improved | Audit export separates exported event count from verified independent sample count and tests reconstruction from event rows. | — |
+
 ## Agent C Test Evidence
 
 - Full backend suite: 165 passed (in Agent C worktree).
 - Ruff: passed.
+
+## Cross-Agent Notes
+
+- Agent D did not change live trading enablement.
+- Remaining full compliance needs persisted effective-sample weights for paper fills, explicit order-state transition tests, and richer real-time microstructure feeds where available.

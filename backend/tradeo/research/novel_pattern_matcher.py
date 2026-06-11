@@ -223,6 +223,8 @@ class NovelPatternMatcher:
                                 "pattern_id": pattern.id,
                                 "pattern_name": pattern.name,
                                 "pattern_key": pattern.pattern_key,
+                                "pattern_family_key": pattern.pattern_family_key,
+                                "canonical_pattern_key": pattern.canonical_pattern_key,
                                 "pattern_status": pattern.status.value,
                                 "pattern_promotion_status": pattern.promotion_status,
                                 "production_manifest": (
