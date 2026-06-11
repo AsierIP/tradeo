@@ -68,6 +68,13 @@ class Settings(BaseSettings):
     market_data_incremental_overlap_bars: int = 5
     market_data_incremental_min_gap_days: int = 1
     market_data_incremental_max_gap_days: int = 45
+    # Intraday cache refresh reuses the same overlap-verified tail append.
+    # Gap thresholds are bar-relative (min) and wall-clock (max) because a
+    # weekend gap on a 5m cache is normal while a 5-day-old intraday cache
+    # is cheaper to refetch in full than to stitch.
+    market_data_incremental_intraday_enabled: bool = True
+    market_data_incremental_intraday_min_gap_bars: int = 2
+    market_data_incremental_intraday_max_gap_days: int = 5
     universe_file: str = "/app/data/universe_us_mid_small.csv"
     universe_snapshot_monthly: bool = True
     universe_snapshot_dir: str = "/app/data/universe_snapshots"

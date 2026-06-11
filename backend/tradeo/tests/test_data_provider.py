@@ -130,14 +130,43 @@ class _RecordingUpstream:
         return self.df.copy()
 
 
-def _seed_cache(tmp_path: Path, stale: pd.DataFrame) -> None:
+def _seed_cache(
+    tmp_path: Path,
+    stale: pd.DataFrame,
+    *,
+    period: str = "2y",
+    interval: str = "1d",
+) -> None:
     seeder = CachedMarketDataProvider(
         upstream=_RecordingUpstream(stale),
         cache_dir=tmp_path,
         adjusted=True,
         what_to_show="ADJUSTED_LAST",
     )
-    seeder.fetch_ohlcv("AAA", period="2y", interval="1d")
+    seeder.fetch_ohlcv("AAA", period=period, interval=interval)
+
+
+def _intraday_frame_ending(
+    minutes_ago: int,
+    *,
+    periods: int,
+    freq_minutes: int = 5,
+    base: float = 10.0,
+) -> pd.DataFrame:
+    now = pd.Timestamp(datetime.now(timezone.utc))
+    end = now.floor(f"{freq_minutes}min") - pd.Timedelta(minutes=minutes_ago)
+    idx = pd.date_range(end=end, periods=periods, freq=f"{freq_minutes}min", tz="UTC")
+    closes = [base + 0.01 * i for i in range(periods)]
+    return pd.DataFrame(
+        {
+            "open": closes,
+            "high": [c * 1.002 for c in closes],
+            "low": [c * 0.998 for c in closes],
+            "close": closes,
+            "volume": [10_000 + 100 * i for i in range(periods)],
+        },
+        index=idx,
+    )
 
 
 def test_incremental_refresh_appends_missing_tail(tmp_path: Path) -> None:
@@ -229,6 +258,114 @@ def test_incremental_refresh_skips_fresh_cache(tmp_path: Path) -> None:
     provider.fetch_ohlcv("AAA", period="2y", interval="1d")
 
     assert upstream.calls == []
+
+
+def test_intraday_incremental_refresh_appends_missing_tail(tmp_path: Path) -> None:
+    full = _intraday_frame_ending(10, periods=120)
+    stale = full.iloc[:-12]
+    _seed_cache(tmp_path, stale, period="30d", interval="5m")
+
+    upstream = _RecordingUpstream(full)
+    provider = CachedMarketDataProvider(
+        upstream=upstream,
+        cache_dir=tmp_path,
+        adjusted=True,
+        what_to_show="ADJUSTED_LAST",
+        incremental_enabled=True,
+        incremental_overlap_bars=5,
+        incremental_intraday_enabled=True,
+        incremental_intraday_min_gap_bars=2,
+        incremental_intraday_max_gap_days=5,
+    )
+    refreshed = provider.fetch_ohlcv("AAA", period="30d", interval="5m")
+
+    assert len(upstream.calls) == 1
+    assert upstream.calls[0][1].endswith("d")
+    assert pd.Timestamp(refreshed.index[-1]) == pd.Timestamp(full.index[-1])
+    metadata = json.loads((tmp_path / "AAA_5m_30d.metadata.json").read_text())
+    assert metadata["refresh_mode"] == "incremental_append"
+    assert metadata["rows_appended"] == 12
+    assert metadata["incremental_fetch_supported"] is True
+
+
+def test_intraday_incremental_refresh_skips_fresh_cache(tmp_path: Path) -> None:
+    fresh = _intraday_frame_ending(5, periods=40)
+    _seed_cache(tmp_path, fresh, period="30d", interval="5m")
+
+    upstream = _RecordingUpstream(fresh)
+    provider = CachedMarketDataProvider(
+        upstream=upstream,
+        cache_dir=tmp_path,
+        adjusted=True,
+        what_to_show="ADJUSTED_LAST",
+        incremental_enabled=True,
+        incremental_intraday_enabled=True,
+        incremental_intraday_min_gap_bars=2,
+    )
+    provider.fetch_ohlcv("AAA", period="30d", interval="5m")
+
+    assert upstream.calls == []
+
+
+def test_intraday_incremental_refresh_full_refetch_on_large_gap(tmp_path: Path) -> None:
+    stale = _intraday_frame_ending(60 * 24 * 10, periods=40)
+    _seed_cache(tmp_path, stale, period="30d", interval="5m")
+
+    upstream = _RecordingUpstream(_intraday_frame_ending(10, periods=120))
+    provider = CachedMarketDataProvider(
+        upstream=upstream,
+        cache_dir=tmp_path,
+        adjusted=True,
+        what_to_show="ADJUSTED_LAST",
+        incremental_enabled=True,
+        incremental_intraday_enabled=True,
+        incremental_intraday_max_gap_days=5,
+    )
+    refreshed = provider.fetch_ohlcv("AAA", period="30d", interval="5m")
+
+    assert [call[1] for call in upstream.calls] == ["30d"]
+    assert len(refreshed) == 120
+    metadata = json.loads((tmp_path / "AAA_5m_30d.metadata.json").read_text())
+    assert metadata["refresh_mode"] == "full_refetch_gap_too_large"
+
+
+def test_intraday_incremental_refresh_disabled_keeps_cache_untouched(tmp_path: Path) -> None:
+    stale = _intraday_frame_ending(60 * 5, periods=40)
+    _seed_cache(tmp_path, stale, period="30d", interval="5m")
+
+    upstream = _RecordingUpstream(_intraday_frame_ending(10, periods=120))
+    provider = CachedMarketDataProvider(
+        upstream=upstream,
+        cache_dir=tmp_path,
+        adjusted=True,
+        what_to_show="ADJUSTED_LAST",
+        incremental_enabled=True,
+        incremental_intraday_enabled=False,
+    )
+    cached = provider.fetch_ohlcv("AAA", period="30d", interval="5m")
+
+    assert upstream.calls == []
+    assert pd.Timestamp(cached.index[-1]) == pd.Timestamp(stale.index[-1])
+
+
+def test_incomplete_intraday_bar_is_not_served_or_persisted(tmp_path: Path) -> None:
+    # minutes_ago=0: the last bar starts at floor(now, 5min), so it is still
+    # in progress at fetch time while every earlier bar is complete.
+    frame = _intraday_frame_ending(0, periods=20)
+
+    upstream = _RecordingUpstream(frame)
+    provider = CachedMarketDataProvider(
+        upstream=upstream,
+        cache_dir=tmp_path,
+        adjusted=True,
+        what_to_show="ADJUSTED_LAST",
+    )
+    served = provider.fetch_ohlcv("AAA", period="30d", interval="5m")
+
+    assert len(served) == 19
+    assert pd.Timestamp(served.index[-1]) == pd.Timestamp(frame.index[-2])
+    metadata = json.loads((tmp_path / "AAA_5m_30d.metadata.json").read_text())
+    assert metadata["rows"] == 19
 
 
 def test_detect_unadjusted_splits_flags_split_like_gap() -> None:

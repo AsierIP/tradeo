@@ -19,6 +19,28 @@ class MarketDataProvider(Protocol):
         ...
 
 
+_DAILY_INTERVALS = {"1d", "1day", "1 day"}
+# Bar widths for the intraday intervals the IBKR provider understands; used
+# both for completeness masking and for bar-relative refresh gap thresholds.
+_INTRADAY_BAR_MINUTES = {
+    "1m": 1,
+    "1min": 1,
+    "1 min": 1,
+    "5m": 5,
+    "5min": 5,
+    "5 mins": 5,
+    "15m": 15,
+    "15min": 15,
+    "15 mins": 15,
+    "30m": 30,
+    "30min": 30,
+    "30 mins": 30,
+    "1h": 60,
+    "60m": 60,
+    "1 hour": 60,
+}
+
+
 def load_universe(path: str | None = None) -> pd.DataFrame:
     settings = get_settings()
     p = Path(path or settings.universe_file)
@@ -52,6 +74,9 @@ class CachedMarketDataProvider:
     incremental_overlap_bars: int | None = None
     incremental_min_gap_days: int | None = None
     incremental_max_gap_days: int | None = None
+    incremental_intraday_enabled: bool | None = None
+    incremental_intraday_min_gap_bars: int | None = None
+    incremental_intraday_max_gap_days: int | None = None
 
     def __post_init__(self) -> None:
         if self.upstream is None:
@@ -68,6 +93,16 @@ class CachedMarketDataProvider:
             self.incremental_min_gap_days = settings.market_data_incremental_min_gap_days
         if self.incremental_max_gap_days is None:
             self.incremental_max_gap_days = settings.market_data_incremental_max_gap_days
+        if self.incremental_intraday_enabled is None:
+            self.incremental_intraday_enabled = settings.market_data_incremental_intraday_enabled
+        if self.incremental_intraday_min_gap_bars is None:
+            self.incremental_intraday_min_gap_bars = (
+                settings.market_data_incremental_intraday_min_gap_bars
+            )
+        if self.incremental_intraday_max_gap_days is None:
+            self.incremental_intraday_max_gap_days = (
+                settings.market_data_incremental_intraday_max_gap_days
+            )
         self._cache: dict[tuple[str, str, str], pd.DataFrame] = {}
 
     def fetch_ohlcv(self, symbol: str, period: str = "2y", interval: str = "1d") -> pd.DataFrame:
@@ -78,12 +113,24 @@ class CachedMarketDataProvider:
                 df = self._read_csv(csv_path)
                 df = self._maybe_refresh(df, key=key, csv_path=csv_path)
             else:
-                assert self.upstream is not None
-                df = self.upstream.fetch_ohlcv(symbol, period=period, interval=interval)
-                df = self._annotate(df, symbol=key[0], period=period, interval=interval)
-                self._atomic_write(csv_path, df, key=key, refresh_mode="full_fetch")
+                df = self._full_refetch(key, csv_path, refresh_mode="full_fetch")
             self._cache[key] = self._complete_bars_only(df)
         return self._cache[key].copy()
+
+    def _full_refetch(
+        self,
+        key: tuple[str, str, str],
+        csv_path: Path,
+        *,
+        refresh_mode: str,
+    ) -> pd.DataFrame:
+        symbol, period, interval = key
+        assert self.upstream is not None
+        df = self.upstream.fetch_ohlcv(symbol, period=period, interval=interval)
+        df = self._annotate(df, symbol=symbol, period=period, interval=interval)
+        df = self._complete_bars_only(df)
+        self._atomic_write(csv_path, df, key=key, refresh_mode=refresh_mode)
+        return df
 
     def _maybe_refresh(
         self,
@@ -92,38 +139,51 @@ class CachedMarketDataProvider:
         key: tuple[str, str, str],
         csv_path: Path,
     ) -> pd.DataFrame:
-        """Append the missing daily tail after verifying overlap bars.
+        """Append the missing tail after verifying overlap bars.
 
         Adjusted feeds rewrite history on splits/dividends, so an incremental
         append is only trusted when the refetched overlap matches the cached
-        bars; otherwise the whole artifact is refetched.
+        bars; otherwise the whole artifact is refetched. Daily gaps are
+        measured in calendar days; intraday gaps in bar widths (min) and
+        wall-clock days (max), since a weekend gap on a 5m cache is routine.
         """
         symbol, period, interval = key
-        if (
-            not self.incremental_enabled
-            or interval.lower() not in {"1d", "1day", "1 day"}
-            or cached.empty
-        ):
+        interval_lower = interval.lower()
+        is_daily = interval_lower in _DAILY_INTERVALS
+        bar_minutes = _INTRADAY_BAR_MINUTES.get(interval_lower)
+        if not self.incremental_enabled or cached.empty:
+            return cached
+        if not is_daily and (bar_minutes is None or not self.incremental_intraday_enabled):
             return cached
         last_ts = pd.Timestamp(cached.index[-1])
-        gap_days = (datetime.now(UTC).date() - last_ts.date()).days - 1
-        if gap_days < int(self.incremental_min_gap_days or 1):
-            return cached
-        assert self.upstream is not None
-        if gap_days > int(self.incremental_max_gap_days or 45):
-            df = self.upstream.fetch_ohlcv(symbol, period=period, interval=interval)
-            df = self._annotate(df, symbol=symbol, period=period, interval=interval)
-            self._atomic_write(csv_path, df, key=key, refresh_mode="full_refetch_gap_too_large")
-            return df
+        now = pd.Timestamp(datetime.now(UTC))
         overlap_bars = max(1, int(self.incremental_overlap_bars or 5))
-        tail_days = gap_days + overlap_bars * 2 + 4
+        if is_daily:
+            gap_days = (now.date() - last_ts.date()).days - 1
+            if gap_days < int(self.incremental_min_gap_days or 1):
+                return cached
+            gap_too_large = gap_days > int(self.incremental_max_gap_days or 45)
+            tail_days = gap_days + overlap_bars * 2 + 4
+        else:
+            gap = now - self._as_utc(last_ts)
+            min_gap_bars = max(1, int(self.incremental_intraday_min_gap_bars or 1))
+            if gap < pd.Timedelta(minutes=bar_minutes * min_gap_bars):
+                return cached
+            gap_too_large = gap > pd.Timedelta(
+                days=int(self.incremental_intraday_max_gap_days or 5)
+            )
+            # +3 days keeps overlap bars in the tail across weekends/holidays.
+            tail_days = int(gap.days) + 3
+        if gap_too_large:
+            return self._full_refetch(key, csv_path, refresh_mode="full_refetch_gap_too_large")
+        assert self.upstream is not None
         tail = self.upstream.fetch_ohlcv(symbol, period=f"{tail_days}d", interval=interval)
         tail = self._annotate(tail, symbol=symbol, period=period, interval=interval)
+        tail = self._complete_bars_only(tail)
         if not self._overlap_matches(cached, tail, overlap_bars=overlap_bars):
-            df = self.upstream.fetch_ohlcv(symbol, period=period, interval=interval)
-            df = self._annotate(df, symbol=symbol, period=period, interval=interval)
-            self._atomic_write(csv_path, df, key=key, refresh_mode="full_refetch_overlap_mismatch")
-            return df
+            return self._full_refetch(
+                key, csv_path, refresh_mode="full_refetch_overlap_mismatch"
+            )
         new_rows = tail[pd.DatetimeIndex(tail.index) > last_ts]
         if new_rows.empty:
             return cached
@@ -215,10 +275,24 @@ class CachedMarketDataProvider:
 
     @staticmethod
     def _bar_complete_mask(index: pd.Index, interval: str) -> list[bool]:
-        if interval.lower() not in {"1d", "1day", "1 day"}:
+        interval_lower = interval.lower()
+        if interval_lower in _DAILY_INTERVALS:
+            today = datetime.now(UTC).date()
+            return [pd.Timestamp(value).date() < today for value in index]
+        bar_minutes = _INTRADAY_BAR_MINUTES.get(interval_lower)
+        if bar_minutes is None:
             return [True] * len(index)
-        today = datetime.now(UTC).date()
-        return [pd.Timestamp(value).date() < today for value in index]
+        now = pd.Timestamp(datetime.now(UTC))
+        width = pd.Timedelta(minutes=bar_minutes)
+        return [
+            CachedMarketDataProvider._as_utc(value) + width <= now for value in index
+        ]
+
+    @staticmethod
+    def _as_utc(value: Any) -> pd.Timestamp:
+        # Naive timestamps are treated as UTC; IBKR intraday bars arrive tz-aware.
+        ts = pd.Timestamp(value)
+        return ts.tz_localize("UTC") if ts.tzinfo is None else ts.tz_convert("UTC")
 
     @staticmethod
     def _complete_bars_only(df: pd.DataFrame) -> pd.DataFrame:
@@ -246,8 +320,16 @@ class CachedMarketDataProvider:
         tmp_path = path.with_name(f".{path.name}.{os.getpid()}.tmp")
         meta_path = path.with_suffix(".metadata.json")
         tmp_meta = meta_path.with_name(f".{meta_path.name}.{os.getpid()}.tmp")
+        interval_lower = key[2].lower()
         incremental_supported = bool(
-            self.incremental_enabled and key[2].lower() in {"1d", "1day", "1 day"}
+            self.incremental_enabled
+            and (
+                interval_lower in _DAILY_INTERVALS
+                or (
+                    self.incremental_intraday_enabled
+                    and interval_lower in _INTRADAY_BAR_MINUTES
+                )
+            )
         )
         try:
             writable = df.copy()
