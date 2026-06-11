@@ -107,3 +107,36 @@ def test_canonical_outcome_skips_entry_gap_past_target() -> None:
     assert detail["status"] == "skipped"
     assert detail["reason"] == "gapped_past_target"
     assert (result, target_bar, stop_bar) == (0.0, None, None)
+
+
+def test_skipped_signals_do_not_dilute_traded_aggregates() -> None:
+    winner = _sample([130.0], [99.0], [130.0])
+    loser = _sample([104.0], [90.0], [90.0])
+    skipped = _sample([151.0], [149.0], [150.0], opens=[140.0])
+    metrics = RewardRiskAnalyzer([3.0], min_samples=1).metrics_for_rr([winner, loser, skipped], "long", 3.0)
+    # Traded aggregates over {+3R, -1R} only; the skipped signal adds no 0R.
+    assert metrics["sample_count"] == 2
+    assert metrics["signal_count"] == 3
+    assert metrics["skipped_count"] == 1
+    assert metrics["skip_rate"] == 0.33333
+    assert metrics["skip_reason_counts"] == {"gapped_past_target": 1}
+    assert metrics["expectancy_r"] == 1.0
+    assert metrics["win_rate"] == 0.5
+    assert metrics["loss_rate"] == 0.5
+    assert metrics["target_hit_rate"] == 0.5
+    assert metrics["stop_hit_rate"] == 0.5
+    assert metrics["triple_barrier_labels"] == {"target": 1, "stop": 1, "timeout": 0, "skipped": 1}
+    # Speed labels only cover traded samples (no phantom timeout for the skip).
+    assert sum(metrics["speed_label_counts"].values()) == 2
+
+
+def test_all_skipped_signals_yield_zero_sample_count() -> None:
+    skipped = _sample([151.0], [149.0], [150.0], opens=[140.0])
+    metrics = RewardRiskAnalyzer([3.0], min_samples=1).metrics_for_rr([skipped, skipped], "long", 3.0)
+    assert metrics["sample_count"] == 0
+    assert metrics["signal_count"] == 2
+    assert metrics["skipped_count"] == 2
+    assert metrics["skip_rate"] == 1.0
+    assert metrics["expectancy_r"] == 0.0
+    assert metrics["win_rate"] == 0.0
+    assert metrics["profit_factor"] == 0.0

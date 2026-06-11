@@ -46,11 +46,16 @@ class Backtester:
         trades: list[SimulatedTrade] = []
         equity_curve = [self.starting_equity]
         equity = self.starting_equity
+        total_signals = 0
+        skipped_signals = 0
         for symbol in symbols:
             df = self.provider.fetch_ohlcv(symbol, period=period, interval=interval)
             if len(df) < 260:
                 continue
-            trades.extend(self._run_symbol(symbol, df, equity_curve, equity))
+            symbol_trades, symbol_signals, symbol_skipped = self._run_symbol(symbol, df, equity_curve, equity)
+            trades.extend(symbol_trades)
+            total_signals += symbol_signals
+            skipped_signals += symbol_skipped
             equity = equity_curve[-1]
         r_values = [t.r_multiple for t in trades]
         wins = [r for r in r_values if r > 0]
@@ -64,14 +69,25 @@ class Backtester:
             expectancy_r=round(float(np.mean(r_values)), 4) if r_values else 0.0,
             avg_r_multiple=round(float(np.mean(r_values)), 4) if r_values else 0.0,
             max_drawdown_pct=round(max_drawdown_pct(equity_curve), 4),
+            total_signals=total_signals,
+            skipped_signals=skipped_signals,
+            skip_rate=round(skipped_signals / total_signals, 4) if total_signals else 0.0,
             trades=[t.__dict__ for t in trades[:500]],
         )
         return metrics
 
     def _run_symbol(
         self, symbol: str, df: pd.DataFrame, equity_curve: list[float], equity: float
-    ) -> list[SimulatedTrade]:
+    ) -> tuple[list[SimulatedTrade], int, int]:
+        """Simulate one symbol; returns (trades, signals detected, signals skipped).
+
+        Skipped signals are detected candidates that never become trades (entry
+        gap pre-filter or canonical gap-entry skip) and must not enter trade
+        aggregates.
+        """
         trades: list[SimulatedTrade] = []
+        signals = 0
+        skipped = 0
         i = 230
         max_holding = self.detector.params.max_holding_bars
         while i < len(df) - max_holding - 1:
@@ -80,21 +96,24 @@ class Backtester:
             if candidate is None:
                 i += 1
                 continue
+            signals += 1
             # Enter next bar near open. Skip if next open gaps beyond 1R against setup.
             next_bar = df.iloc[i + 1]
             entry = float(next_bar["open"])
             if abs(entry - candidate.entry) / candidate.entry > 0.08:
+                skipped += 1
                 i += 1
                 continue
             simulated = self._simulate_exit(symbol, df.iloc[i + 1 : i + 1 + max_holding], candidate, entry)
             if simulated is None:
+                skipped += 1
                 i += 1
                 continue
             trades.append(simulated)
             equity += equity * self.risk_per_trade_pct * simulated.r_multiple
             equity_curve.append(equity)
             i += max_holding
-        return trades
+        return trades, signals, skipped
 
     def _simulate_exit(
         self, symbol: str, future: pd.DataFrame, candidate: PatternCandidate, entry: float
@@ -120,7 +139,8 @@ class Backtester:
             gap_entry_policy="skip",
             round_trip_cost_R=cost_r,
         )
-        if out["status"] == "skipped":
+        if out["status"] != "ok":
+            # skipped (gap entry) / invalid / no_data: non-trade, excluded from aggregates.
             return None
         exit_idx = int(out["exit_index"] or 1) - 1
         exit_idx = max(0, min(exit_idx, len(future) - 1))

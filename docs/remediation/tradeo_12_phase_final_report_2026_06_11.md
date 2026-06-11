@@ -134,3 +134,91 @@ Checked all remediation docs for overstated claims. Findings:
 - No order routing or broker configuration changed by E, F or G.
 - Director production gate remains separate from review gate; no document
   or code claims production approval from the 10-trade review trigger.
+
+## Wave-3 Addendum (2026-06-11, Agents I/J)
+
+Recorded after the wave-3 merges; the report body above is kept verbatim as
+the wave-1/wave-2 historical record and this addendum supersedes its stale
+claims. Earlier sections were not edited in place, per the append-only
+convention used in the compliance matrix.
+
+### Merge state at time of writing
+
+Wave-3 implementation branches reviewed at local `main` tip `b46a684`;
+Agent J then closes the non-trade/skipped-signal accounting gap on top of
+that base.
+
+| Agent | Content | Merged at |
+|---|---|---|
+| F | Order-state transition tests, persisted effective-sample weights | `12f2157` via merge `646b995` |
+| G | Final report 06-11, docs-traceability test module | merged on `main` (test module live, extended at `0b1e258`) |
+| H | Shadow observation exits via canonical `triple_barrier_outcome` | `7375a95` |
+| E2 | Intraday incremental OHLCV cache refresh | `b83c71a` |
+| I | Benchmark-regime outcome calibration + optional hard gate | `9044fb6` via merge `b46a684` |
+| J | True non-trade/skipped-signal accounting in RR and backtest aggregates | `9acafdc` |
+
+### Section status changes vs the table above
+
+- Section 1 (3.1 Data layer): "Intraday intervals keep cache-forever" is
+  closed by Agent E2 — intraday intervals (`1m/5m/15m/30m/1h`) reuse the
+  overlap-verified tail append, persist complete bars only, and the latent
+  daily partial-bar cementing defect is fixed. Status: Implemented for
+  daily and intraday cache artifacts. Remaining there: RTH session
+  boundaries not modeled; CSV canonical artifact and live IBKR
+  `ADJUSTED_LAST` verification unchanged.
+- Section 7 (3.8 Market regimes): Agent I adds per-PIT-bucket labeled
+  outcome history (`benchmark_regime_outcomes`) from canonical
+  triple-barrier simulation and a config-gated hard gate
+  (`market_regime_hard_gate_enabled`, default OFF; min-samples default 12).
+  Status: Implemented (gate ships disabled). Remaining: rediscovery for
+  existing DB patterns, real-fill per-regime attribution, Director
+  enable-gate decision.
+- Section 10 (6 Backtester parity): "ShadowTracker canonical-outcome
+  parity not done" is closed by Agent H — shadow observation exits
+  delegate to canonical `triple_barrier_outcome`; closed trades persist a
+  `canonical_outcome` block. Status: Implemented. Remaining: shadow costs
+  stay 0R by design (observation-only).
+- Gap 3.5 (canonical outcomes / non-trade accounting): Agent J removes
+  phantom `0R` aggregation for skipped/invalid/no-data signals in Research
+  RR metrics, adds explicit `signal_count`/`skipped_count`/`skip_rate` and
+  `skip_reason_counts`, and exposes detected-vs-skipped signal counts in
+  `BacktestMetrics`. Status: Implemented. Remaining: surface `skip_rate`
+  in Director review evidence.
+
+### "Remaining real gaps (next wave)" list — wave-3 status
+
+| # | Gap | Status after wave 3 |
+|---|---|---|
+| 1 | PIT/delisting vendor data | Open (blocked on data) |
+| 2 | Intraday incremental cache refresh | Closed (E2, `b83c71a`) |
+| 3 | Rediscovery for embedding contract/cluster metadata | Open (now also needed for regime calibration) |
+| 4 | Calibrate `ambiguity_ratio` + `benchmark_regime` as hard gates | Half closed: regime gate calibrated and shipped disabled (I, `9044fb6`); `ambiguity_ratio` still audit-only |
+| 5 | Nested Optuna + outer-fold PBO | Open |
+| 6 | ShadowTracker canonical-outcome parity | Closed (H, `7375a95`) |
+| 7 | Non-trade/skipped-signal accounting | Closed (J, `9acafdc`) |
+| 8 | Real-time microstructure feeds | Open (no provider) |
+| 9 | Bit-for-bit discovery determinism | Open |
+
+### Test evidence ledger — wave-3 additions
+
+| Wave | Where | Result |
+|---|---|---|
+| H | full suite in `tradeo-backend:latest` | 270 passed |
+| E2 | full suite in `tradeo-backend:latest` | 258 passed |
+| I | full suite in `tradeo-backend:latest` | 278 passed |
+| J | Fable full backend suite | 286 passed; `ruff check` clean |
+| J local review | rebuilt `tradeo-backend:latest`; targeted analyzer/backtester tests + ruff | 10 passed; `ruff check tradeo` clean |
+
+### Traceability hardening in this phase
+
+The compliance matrix now carries explicit Agent I and Agent J rows, and
+this addendum mirrors those rows so the consolidated final report no
+longer lags the merged implementation waves.
+
+### Safety invariants (re-checked for wave 3)
+
+- `TRADEO_LIVE_TRADING_ENABLED=false` unchanged; H and E2 touch no order
+  routing; Agent I's only gate ships disabled by default
+  (`market_regime_hard_gate_enabled=false`).
+- Agent J changes aggregate accounting and backtest metrics only; no order
+  routing, broker configuration, sizing, or live-trading flags changed.
