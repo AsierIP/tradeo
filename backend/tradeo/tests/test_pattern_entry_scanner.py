@@ -1169,7 +1169,13 @@ def test_laboratory_matcher_reuses_symbol_data_across_patterns() -> None:
     assert provider.fetch_calls.count(("SPY", "3mo", "1d")) == 1
     assert provider.fetch_calls.count(("QQQ", "3mo", "1d")) == 1
     assert provider.fetch_calls.count((provider.symbol, "3mo", "1d")) == 1
-    assert len(provider.fetch_calls) == 3
+    benchmark_regime_calls = [
+        call
+        for call in provider.fetch_calls
+        if call[0] == "SPY" and call[2] == "1d" and call[1] != "3mo"
+    ]
+    assert len(benchmark_regime_calls) == 1
+    assert len(provider.fetch_calls) == 4
 
 
 def near_miss_match(provider: FixtureProvider, **overrides):

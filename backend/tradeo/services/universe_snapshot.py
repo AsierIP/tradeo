@@ -65,6 +65,13 @@ class UniverseSnapshotService:
             "eligibility_rules": rules,
             "point_in_time": bool(settings.universe_point_in_time_available),
             "survivorship_biased": not bool(settings.universe_point_in_time_available),
+            "delisting_data_available": bool(settings.universe_delisting_data_available),
+            "content_hash": _content_hash(
+                month_key=month_key,
+                as_of=snapshot_date.isoformat(),
+                symbols=filtered["symbol"].tolist(),
+                rules=rules,
+            ),
             "built_at": datetime.now(UTC).isoformat(),
         }
         self._write_json_atomic(metadata_path, metadata)
@@ -174,6 +181,23 @@ def _first_column(df: pd.DataFrame, candidates: tuple[str, ...]) -> str:
         if candidate in columns:
             return columns[candidate]
     return ""
+
+
+def _content_hash(*, month_key: str, as_of: str, symbols: list[str], rules: dict[str, Any]) -> str:
+    """Deterministic snapshot identity: same inputs -> same hash across rebuilds.
+
+    Excludes `built_at` and absolute paths so bit-for-bit reproducibility can
+    be asserted without caring when or where the snapshot was rebuilt.
+    """
+    payload = {
+        "snapshot_month": month_key,
+        "snapshot_as_of": as_of,
+        "symbols": symbols,
+        "eligibility_rules": rules,
+    }
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode()
+    ).hexdigest()
 
 
 def _sha256_file(path: Path) -> str:

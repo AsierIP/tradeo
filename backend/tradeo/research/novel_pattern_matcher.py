@@ -20,6 +20,7 @@ from tradeo.services.entry_variants import (
     build_entry_variants,
     classify_regime,
 )
+from tradeo.services.market_regime import MarketRegimeService
 from tradeo.services.provider_factory import get_market_data_provider
 from tradeo.modules.fox_hunter.production_manifest import (
     production_manifest_for_pattern,
@@ -86,6 +87,10 @@ class NovelPatternMatcher:
             "lab_path": "NovelPatternMatcher -> PatternEmbeddingEngine.embed",
         }
         required_bars_by_timeframe = self._required_bars_by_timeframe(patterns)
+        assert self.provider is not None
+        benchmark_regime = MarketRegimeService(
+            provider=self.provider, settings=settings
+        ).current_regime()
         data_cache: dict[tuple[str, str], pd.DataFrame | None] = {}
         benchmark_cache: dict[str, dict[str, pd.DataFrame]] = {}
         embedding_cache: dict[
@@ -193,6 +198,7 @@ class NovelPatternMatcher:
                         )
                         base_gate = self._entry_gate(pattern.side, df_for_match, score=base_score, settings=settings)
                         regime = classify_regime(features, base_gate)
+                        regime["benchmark_regime"] = dict(benchmark_regime)
                         regime_fit = self._pattern_regime_fit(pattern, regime)
                         entry_audit = build_entry_audit_context(df_for_match, pattern.timeframe)
                         variants = build_entry_variants(
@@ -302,6 +308,7 @@ class NovelPatternMatcher:
             "module": module,
             "similarity_threshold": threshold,
             "feature_parity_contract": feature_parity_contract,
+            "benchmark_regime": benchmark_regime,
             "generated_at": datetime.now(timezone.utc).isoformat(),
         }
 

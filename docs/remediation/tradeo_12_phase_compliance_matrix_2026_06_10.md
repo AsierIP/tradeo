@@ -31,6 +31,17 @@ Each agent appends its own rows without removing other branches' work.
 | 4.8 Health monitor | D | Improved | Health monitor tracks realized R decay and shortfall deterioration. | — |
 | 7 Audit reproducibility | D | Improved | Audit export separates exported event count from verified independent sample count and tests reconstruction from event rows. | — |
 
+| 3.1 Data layer (incremental fetch) | E | Implemented for daily artifacts | Overlap-verified tail merge inside the existing `period/interval` boundary; `refresh_mode`/`rows_appended` metadata; manifest exposes refresh lineage. Mismatched overlap (re-adjusted feed) forces full refetch. | Intraday intervals keep cache-forever behavior. |
+| 3.2 Universe | E | Partial implemented | Snapshot metadata adds deterministic `content_hash` and explicit `delisting_data_available=false`. | Delisting/PIT vendor data still absent (honestly blocked). |
+| 3.8 Market regimes | E | Implemented (audit-grade) | `market_regime.py`: SPY strict-SMA200 trend + trailing vol-tercile labels, PIT-stable by construction (test-covered); attached per match as `benchmark_regime` and on matcher run output. | Not yet a hard gate in `_pattern_regime_fit`; needs labeled outcome history per regime bucket to calibrate. |
+| 7 Reproducibility (data lineage) | E | Improved | Snapshot `content_hash` excludes timestamps/paths for bit-for-bit identity; regime snapshots carry `source_bar_hash`; manifest entries record `last_timestamp` + refresh mode. | Bit-for-bit determinism of full discovery runs still depends on clustering/research paths. |
+| 8 Config (regime/incremental scope) | E | Implemented for this scope | Env knobs for incremental cache refresh (enabled/overlap/min/max gap), regime windows, benchmark symbol, delisting availability. | — |
+
+## Agent E Test Evidence
+
+- Full backend suite in `tradeo-backend:latest` (worktree mounted read-only): 193 passed.
+- Ruff on touched files: passed.
+
 ## Agent C Test Evidence
 
 - Full backend suite: 165 passed (in Agent C worktree).

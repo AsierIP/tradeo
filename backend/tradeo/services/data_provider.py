@@ -48,6 +48,10 @@ class CachedMarketDataProvider:
     adjusted: bool | None = None
     what_to_show: str | None = None
     schema_version: int = 1
+    incremental_enabled: bool | None = None
+    incremental_overlap_bars: int | None = None
+    incremental_min_gap_days: int | None = None
+    incremental_max_gap_days: int | None = None
 
     def __post_init__(self) -> None:
         if self.upstream is None:
@@ -56,6 +60,14 @@ class CachedMarketDataProvider:
         self.cache_dir = self.cache_dir or settings.market_data_cache_path
         self.adjusted = settings.market_data_adjusted if self.adjusted is None else self.adjusted
         self.what_to_show = self.what_to_show or settings.market_data_what_to_show
+        if self.incremental_enabled is None:
+            self.incremental_enabled = settings.market_data_incremental_enabled
+        if self.incremental_overlap_bars is None:
+            self.incremental_overlap_bars = settings.market_data_incremental_overlap_bars
+        if self.incremental_min_gap_days is None:
+            self.incremental_min_gap_days = settings.market_data_incremental_min_gap_days
+        if self.incremental_max_gap_days is None:
+            self.incremental_max_gap_days = settings.market_data_incremental_max_gap_days
         self._cache: dict[tuple[str, str, str], pd.DataFrame] = {}
 
     def fetch_ohlcv(self, symbol: str, period: str = "2y", interval: str = "1d") -> pd.DataFrame:
@@ -64,13 +76,89 @@ class CachedMarketDataProvider:
             csv_path = self._cache_path(*key)
             if csv_path.exists():
                 df = self._read_csv(csv_path)
+                df = self._maybe_refresh(df, key=key, csv_path=csv_path)
             else:
                 assert self.upstream is not None
                 df = self.upstream.fetch_ohlcv(symbol, period=period, interval=interval)
                 df = self._annotate(df, symbol=key[0], period=period, interval=interval)
-                self._atomic_write(csv_path, df, key=key)
+                self._atomic_write(csv_path, df, key=key, refresh_mode="full_fetch")
             self._cache[key] = self._complete_bars_only(df)
         return self._cache[key].copy()
+
+    def _maybe_refresh(
+        self,
+        cached: pd.DataFrame,
+        *,
+        key: tuple[str, str, str],
+        csv_path: Path,
+    ) -> pd.DataFrame:
+        """Append the missing daily tail after verifying overlap bars.
+
+        Adjusted feeds rewrite history on splits/dividends, so an incremental
+        append is only trusted when the refetched overlap matches the cached
+        bars; otherwise the whole artifact is refetched.
+        """
+        symbol, period, interval = key
+        if (
+            not self.incremental_enabled
+            or interval.lower() not in {"1d", "1day", "1 day"}
+            or cached.empty
+        ):
+            return cached
+        last_ts = pd.Timestamp(cached.index[-1])
+        gap_days = (datetime.now(UTC).date() - last_ts.date()).days - 1
+        if gap_days < int(self.incremental_min_gap_days or 1):
+            return cached
+        assert self.upstream is not None
+        if gap_days > int(self.incremental_max_gap_days or 45):
+            df = self.upstream.fetch_ohlcv(symbol, period=period, interval=interval)
+            df = self._annotate(df, symbol=symbol, period=period, interval=interval)
+            self._atomic_write(csv_path, df, key=key, refresh_mode="full_refetch_gap_too_large")
+            return df
+        overlap_bars = max(1, int(self.incremental_overlap_bars or 5))
+        tail_days = gap_days + overlap_bars * 2 + 4
+        tail = self.upstream.fetch_ohlcv(symbol, period=f"{tail_days}d", interval=interval)
+        tail = self._annotate(tail, symbol=symbol, period=period, interval=interval)
+        if not self._overlap_matches(cached, tail, overlap_bars=overlap_bars):
+            df = self.upstream.fetch_ohlcv(symbol, period=period, interval=interval)
+            df = self._annotate(df, symbol=symbol, period=period, interval=interval)
+            self._atomic_write(csv_path, df, key=key, refresh_mode="full_refetch_overlap_mismatch")
+            return df
+        new_rows = tail[pd.DatetimeIndex(tail.index) > last_ts]
+        if new_rows.empty:
+            return cached
+        merged = pd.concat([cached, new_rows[cached.columns.intersection(new_rows.columns)]])
+        merged = merged[~merged.index.duplicated(keep="first")].sort_index()
+        self._atomic_write(
+            csv_path,
+            merged,
+            key=key,
+            refresh_mode="incremental_append",
+            rows_appended=int(len(new_rows)),
+        )
+        return merged
+
+    @staticmethod
+    def _overlap_matches(
+        cached: pd.DataFrame,
+        tail: pd.DataFrame,
+        *,
+        overlap_bars: int,
+        rel_tolerance: float = 1e-4,
+    ) -> bool:
+        common = cached.index.intersection(tail.index)
+        if len(common) == 0:
+            return False
+        common = common.sort_values()[-overlap_bars:]
+        for column in ("open", "close"):
+            if column not in cached.columns or column not in tail.columns:
+                continue
+            cached_values = cached.loc[common, column].astype(float).to_numpy()
+            tail_values = tail.loc[common, column].astype(float).to_numpy()
+            scale = abs(cached_values).clip(min=1e-9)
+            if (abs(cached_values - tail_values) / scale > rel_tolerance).any():
+                return False
+        return True
 
     def data_manifest(self, symbols: list[str] | None = None) -> dict[str, Any]:
         """Return a deterministic manifest over cached OHLCV artifacts."""
@@ -95,6 +183,9 @@ class CachedMarketDataProvider:
                 "what_to_show": metadata.get("what_to_show", self.what_to_show),
                 "bar_complete_column": "bar_complete",
                 "provider_boundary": metadata.get("provider_boundary", "period_interval_fetch"),
+                "incremental_fetch_supported": metadata.get("incremental_fetch_supported", False),
+                "refresh_mode": metadata.get("refresh_mode", "full_fetch"),
+                "last_timestamp": metadata.get("last_timestamp", ""),
             }
         payload = {
             "schema_version": self.schema_version,
@@ -142,11 +233,22 @@ class CachedMarketDataProvider:
             df.index.name = None
         return df
 
-    def _atomic_write(self, path: Path, df: pd.DataFrame, *, key: tuple[str, str, str]) -> None:
+    def _atomic_write(
+        self,
+        path: Path,
+        df: pd.DataFrame,
+        *,
+        key: tuple[str, str, str],
+        refresh_mode: str = "full_fetch",
+        rows_appended: int = 0,
+    ) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp_path = path.with_name(f".{path.name}.{os.getpid()}.tmp")
         meta_path = path.with_suffix(".metadata.json")
         tmp_meta = meta_path.with_name(f".{meta_path.name}.{os.getpid()}.tmp")
+        incremental_supported = bool(
+            self.incremental_enabled and key[2].lower() in {"1d", "1day", "1 day"}
+        )
         try:
             writable = df.copy()
             writable.index.name = "timestamp"
@@ -164,8 +266,12 @@ class CachedMarketDataProvider:
                 "adjusted": bool(self.adjusted),
                 "what_to_show": str(self.what_to_show or ""),
                 "bar_complete_column": "bar_complete",
-                "provider_boundary": "period_interval_fetch",
-                "incremental_fetch_supported": False,
+                "provider_boundary": "period_interval_fetch_with_tail_merge"
+                if incremental_supported
+                else "period_interval_fetch",
+                "incremental_fetch_supported": incremental_supported,
+                "refresh_mode": refresh_mode,
+                "rows_appended": int(rows_appended),
                 "created_at": datetime.now(UTC).isoformat(),
             }
             tmp_meta.write_text(json.dumps(metadata, indent=2, sort_keys=True), encoding="utf-8")
