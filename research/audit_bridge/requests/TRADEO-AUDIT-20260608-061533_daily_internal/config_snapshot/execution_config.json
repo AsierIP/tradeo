@@ -1,9 +1,0 @@
-{
-  "allow_longs": "true",
-  "allow_shorts": "true",
-  "allow_options": "false",
-  "allow_margin": "false",
-  "ibkr_readonly": "true",
-  "ibkr_allow_market_orders": "false",
-  "ibkr_max_order_value_usd": "1500"
-}

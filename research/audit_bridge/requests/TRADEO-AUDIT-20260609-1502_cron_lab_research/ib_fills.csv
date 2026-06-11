@@ -1,3 +1,0 @@
-fill_id_hash,trade_id,order_id_hash,ib_execution_time,timezone,ticker,side,quantity,price,commission,liquidity_flag,exchange,order_type,account_id_redacted,raw_status,notes
-0c9d4063b6d9d4d3b2ce5c7d,5,b3ae927803f06fd10d4d2327,2026-06-08T16:36:36.194036+00:00,UTC,TMDX,short,5,71.6783,,,SMART/IBKR,bracket,true,open,entry fill reconstructed from paper trade record
-ccde03d3e2c57b55b228eba3,1,779adcc0fa5ec45f08b35933,2026-06-08T15:42:20.672583+00:00,UTC,AAPL,long,1,280.0,,,SMART/IBKR,bracket,true,open,entry fill reconstructed from paper trade record
