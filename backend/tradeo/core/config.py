@@ -291,6 +291,13 @@ class Settings(BaseSettings):
     self_improvement_max_pbo: float = 0.10
     self_improvement_min_pbo_blocks: int = 16
     self_improvement_plateau_pf_fraction: float = 0.80
+    # Wave4-D nested optimization (fail-closed: disabling it blocks acceptance).
+    self_improvement_nested_enabled: bool = True
+    self_improvement_nested_outer_folds: int = 5
+    self_improvement_nested_inner_trials: int = 64
+    self_improvement_nested_max_pbo: float = 0.10
+    self_improvement_nested_seed: int = 17
+    self_improvement_nested_use_optuna: bool = True
 
     @field_validator("market_data_provider")
     @classmethod

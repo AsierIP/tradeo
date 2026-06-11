@@ -132,3 +132,14 @@ is closed on this branch.
 | Section | Agent | Status | Evidence | Remaining gap |
 |---|---|---|---|---|
 | 3.4 Clustering / reproducibility (discovery determinism) | K | Implemented (in-process contract) | Discovery output is bit-for-bit reproducible for identical inputs/config/seed on the same image: new `research/determinism.py` provides canonical JSON + `sha256_canonical_json_v1` content hash excluding volatile run metadata (timestamps, `run_id`, artifact paths); discovery report JSON now dumps `sort_keys=True` and carries a `determinism.content_hash` block; `autonomous_research_director` memory-graph enumeration and pattern query get deterministic sort/tiebreakers. Harness `test_discovery_determinism.py` runs the real engine twice over seeded synthetic fixtures and asserts byte-identical canonical payloads, input-order independence, and run_id-stable report hashes. 6 new tests; image suite 288 passed, 4 skipped. See `agent_k_discovery_determinism_2026_06_11.md`. | Cross-environment (sklearn/BLAS/hardware) bit-equality not claimed; full live-data end-to-end double-run out of scope (run-context excluded from identity hash); `tests/fixtures.py` `fixture_ohlcv` stays PYTHONHASHSEED-sensitive (pre-existing, test-data only). |
+
+## Wave4-D Update (2026-06-11)
+
+| Section | Agent | Status | Evidence | Remaining gap |
+|---|---|---|---|---|
+| 5 ImprovementAgent anti-overfitting (nested optimization + outer-fold PBO) | Wave4-D | Implemented (hardening only) | New `research/nested_optimization.py`: contiguous outer folds over the monthly realized-R performance matrix, inner selection on the train complement (deterministic exhaustive scan; seeded Optuna TPE with pruning off only if installed and M > inner budget — Optuna is NOT installed and was not added), outer-fold ranks give omega/lambda and `pbo_outer`; pass requires `pbo_outer < 0.10` AND median out-of-fold selected score > 0. `_passes_lab_gate` now requires `nested_passed` in addition to CSCV `pbo_passed` and `plateau_passed` (fail-closed on blocked reports or disabled knob); report persisted in `anti_overfit.nested` (report JSON, candidate `metrics_json`, audit log) with `optuna_available`/`inner_method` so evidence never overstates what ran. 13 new tests (1 skipped without Optuna) incl. synthetic specialist-overfit matrix blocked at `pbo_outer=1.0`; full suite 315 passed, 1 skipped. See `wave4_d_nested_optuna_pbo_2026_06_11.md`. | True Optuna path inactive until a justified pinned dependency lands (skipped seeded test ready); folds are monthly-bucket contiguous, no embargo at this aggregation level; train is CSCV-style complement, not causal walk-forward. |
+
+Traceability note recorded by Wave4-D (earlier rows unedited): Agent L
+(Wave4-C, `agent_l_rediscovery_readiness_2026_06_11.md`, rediscovery
+readiness audit/flags/manifest) merged to main without a matrix record;
+this note records that trace so the docs-traceability test holds.
