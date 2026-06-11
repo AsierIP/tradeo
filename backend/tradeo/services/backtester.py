@@ -5,6 +5,7 @@ import numpy as np
 import pandas as pd
 
 from tradeo.schemas import BacktestMetrics, PatternCandidate
+from tradeo.research.quant_validation import tiered_round_trip_cost_r, triple_barrier_outcome
 from tradeo.services.data_provider import MarketDataProvider
 from tradeo.services.pattern_detector import CupPatternDetector
 from tradeo.services.technical_indicators import max_drawdown_pct
@@ -86,6 +87,9 @@ class Backtester:
                 i += 1
                 continue
             simulated = self._simulate_exit(symbol, df.iloc[i + 1 : i + 1 + max_holding], candidate, entry)
+            if simulated is None:
+                i += 1
+                continue
             trades.append(simulated)
             equity += equity * self.risk_per_trade_pct * simulated.r_multiple
             equity_curve.append(equity)
@@ -94,27 +98,36 @@ class Backtester:
 
     def _simulate_exit(
         self, symbol: str, future: pd.DataFrame, candidate: PatternCandidate, entry: float
-    ) -> SimulatedTrade:
+    ) -> SimulatedTrade | None:
         stop = candidate.stop
         risk_per_share = max(0.01, entry - stop)
-        target = entry + candidate.reward_risk * risk_per_share
-        exit_price = float(future.iloc[-1]["close"])
-        outcome = "timeout"
-        exit_date = str(future.index[-1].date())
-        for idx, row in future.iterrows():
-            low = float(row["low"])
-            high = float(row["high"])
-            if low <= stop:
-                exit_price = stop
-                outcome = "stop"
-                exit_date = str(idx.date())
-                break
-            if high >= target:
-                exit_price = target
-                outcome = "target"
-                exit_date = str(idx.date())
-                break
-        r_multiple = (exit_price - entry) / risk_per_share
+        target = candidate.target
+        cost_r = tiered_round_trip_cost_r(
+            entry_price=entry,
+            risk_per_share=risk_per_share,
+            avg_dollar_volume=float(candidate.features.get("avg_dollar_volume", 0.0)),
+        )
+        out = triple_barrier_outcome(
+            [candidate.entry, *future["open"].astype(float).tolist()],
+            [candidate.entry, *future["high"].astype(float).tolist()],
+            [candidate.entry, *future["low"].astype(float).tolist()],
+            [candidate.entry, *future["close"].astype(float).tolist()],
+            signal_index=0,
+            side=1,
+            stop_price=float(stop),
+            target_price=float(target),
+            max_bars=len(future),
+            gap_entry_policy="skip",
+            round_trip_cost_R=cost_r,
+        )
+        if out["status"] == "skipped":
+            return None
+        exit_idx = int(out["exit_index"] or 1) - 1
+        exit_idx = max(0, min(exit_idx, len(future) - 1))
+        exit_price = float(out["exit_price"])
+        outcome = str(out["reason"])
+        exit_date = str(future.index[exit_idx].date())
+        r_multiple = float(out["R"])
         return SimulatedTrade(
             symbol=symbol,
             entry_date=str(future.index[0].date()),

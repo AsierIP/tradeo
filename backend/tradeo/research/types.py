@@ -32,6 +32,7 @@ class ForwardOutcome:
     forward_highs: list[float] = field(default_factory=list)
     forward_lows: list[float] = field(default_factory=list)
     forward_closes: list[float] = field(default_factory=list)
+    forward_opens: list[float] = field(default_factory=list)
     execution_cost_r: float = 0.0
     long_label: str = "timeout"
     short_label: str = "timeout"

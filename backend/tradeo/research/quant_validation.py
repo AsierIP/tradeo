@@ -59,6 +59,7 @@ __all__ = [
     "select_nonoverlapping_events",
     "average_uniqueness_weights",
     "triple_barrier_outcome",
+    "tiered_round_trip_cost_r",
     "stationary_bootstrap_ci",
     "newey_west_tstat",
     "profit_factor",
@@ -297,6 +298,40 @@ def triple_barrier_outcome(
             "entry_price": entry, "exit_price": float(exit_price),
             "bars_held": int(exit_index - i0 + 1),
             "mfe_R": float(mfe), "mae_R": float(mae)}
+
+
+def tiered_round_trip_cost_r(
+    *,
+    entry_price: float,
+    risk_per_share: float,
+    avg_dollar_volume: float = 0.0,
+    participation_rate: float = 0.005,
+    multiplier: float = 1.0,
+    commission_bps: float = 0.5,
+) -> float:
+    """Tiered spread/slippage cost model expressed in R.
+
+    The model is intentionally simple and deterministic so Research,
+    backtests and shadow simulations can share the same conservative cost
+    convention. Half-spread is applied per side, slippage grows with
+    participation, and the returned value is round-trip R.
+    """
+    entry = max(float(entry_price), 1e-9)
+    risk = max(float(risk_per_share), 1e-9)
+    adv = max(float(avg_dollar_volume), 0.0)
+    if adv >= 25_000_000:
+        half_spread_bps = 3.0
+    elif adv >= 5_000_000:
+        half_spread_bps = 8.0
+    elif adv >= 1_000_000:
+        half_spread_bps = 20.0
+    else:
+        half_spread_bps = 45.0
+    participation_pct = max(0.0, float(participation_rate)) * 100.0
+    slippage_bps = 10.0 * participation_pct
+    per_side_bps = half_spread_bps + slippage_bps + max(0.0, float(commission_bps))
+    round_trip_pct = 2.0 * per_side_bps / 10_000.0
+    return float(entry * round_trip_pct / risk * max(0.0, float(multiplier)))
 
 
 # ---------------------------------------------------------------------------

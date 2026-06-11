@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from tradeo.research.quant_validation import triple_barrier_outcome
 from tradeo.research.types import Side, WindowSample
 
 
@@ -62,7 +63,7 @@ class RewardRiskAnalyzer:
         gap_adverse: list[float] = []
         mfe_before_mae: list[bool] = []
         strong_close_without_target: list[bool] = []
-        labels: dict[str, int] = {"target": 0, "stop": 0, "timeout": 0}
+        labels: dict[str, int] = {"target": 0, "stop": 0, "timeout": 0, "skipped": 0}
         speed_labels: dict[str, int] = {}
         fill_probabilities: list[float] = []
         max_sizes: list[float] = []
@@ -71,7 +72,8 @@ class RewardRiskAnalyzer:
         entry_gap_penalty_pct: list[float] = []
         short_borrow_pct: list[float] = []
         for sample in samples:
-            result, target_bar, stop_bar = self._simulate_sample(sample, side, rr, cost_multiplier=cost_multiplier)
+            detail = self._simulate_sample_detail(sample, side, rr, cost_multiplier=cost_multiplier)
+            result, target_bar, stop_bar = self._tuple_from_detail(detail)
             results.append(result)
             if target_bar is not None:
                 target_bars.append(target_bar)
@@ -80,7 +82,7 @@ class RewardRiskAnalyzer:
             mfe.append(sample.outcome.mfe_for(side))
             mae.append(sample.outcome.mae_for(side))
             costs.append(self._execution_cost_for_sample(sample, side, cost_multiplier=cost_multiplier))
-            label = "target" if target_bar is not None else "stop" if stop_bar is not None else "timeout"
+            label = self._label_from_detail(detail, target_bar=target_bar, stop_bar=stop_bar)
             labels[label] = labels.get(label, 0) + 1
             speed = self._speed_label(target_bar, stop_bar, len(sample.outcome.forward_closes))
             speed_labels[speed] = speed_labels.get(speed, 0) + 1
@@ -160,35 +162,72 @@ class RewardRiskAnalyzer:
         *,
         cost_multiplier: float = 1.0,
     ) -> tuple[float, int | None, int | None]:
-        entry = sample.outcome.entry_price
-        risk = max(sample.outcome.risk_proxy, 1e-9)
+        detail = RewardRiskAnalyzer._simulate_sample_detail(sample, side, rr, cost_multiplier=cost_multiplier)
+        return RewardRiskAnalyzer._tuple_from_detail(detail)
+
+    @staticmethod
+    def _simulate_sample_detail(
+        sample: WindowSample,
+        side: Side,
+        rr: float,
+        *,
+        cost_multiplier: float = 1.0,
+    ) -> dict[str, object]:
+        signal_entry = float(sample.outcome.entry_price)
+        risk = max(float(sample.outcome.risk_proxy), 1e-9)
         highs = sample.outcome.forward_highs
         lows = sample.outcome.forward_lows
         closes = sample.outcome.forward_closes
+        opens = sample.outcome.forward_opens or [signal_entry for _ in closes]
         if not highs or not lows or not closes:
-            fallback = max(-1.0, min(rr, sample.outcome.outcome_for(side)))
+            fallback = max(-1.0, min(float(rr), float(sample.outcome.outcome_for(side))))
             fallback -= RewardRiskAnalyzer._execution_cost_for_sample(sample, side, cost_multiplier=cost_multiplier)
-            return float(fallback), None, None
-        cost_r = RewardRiskAnalyzer._execution_cost_for_sample(sample, side, cost_multiplier=cost_multiplier)
+            return {"status": "fallback", "R": float(fallback), "reason": "missing_forward_path"}
 
-        if side == "long":
-            target = entry + risk * rr
-            stop = entry - risk
-            for idx, (high, low) in enumerate(zip(highs, lows, strict=False), start=1):
-                if float(low) <= stop:
-                    return -1.0 - cost_r, None, idx
-                if float(high) >= target:
-                    return float(rr) - cost_r, idx, None
-            return float(max(-1.0, min(rr, (closes[-1] - entry) / risk)) - cost_r), None, None
+        side_int = 1 if side == "long" else -1
+        stop = signal_entry - risk if side_int > 0 else signal_entry + risk
+        target = signal_entry + float(rr) * risk if side_int > 0 else signal_entry - float(rr) * risk
+        n = min(len(opens), len(highs), len(lows), len(closes))
+        detail = triple_barrier_outcome(
+            [signal_entry, *[float(x) for x in opens[:n]]],
+            [signal_entry, *[float(x) for x in highs[:n]]],
+            [signal_entry, *[float(x) for x in lows[:n]]],
+            [signal_entry, *[float(x) for x in closes[:n]]],
+            signal_index=0,
+            side=side_int,
+            stop_price=float(stop),
+            target_price=float(target),
+            max_bars=n,
+            gap_entry_policy="skip",
+            round_trip_cost_R=RewardRiskAnalyzer._execution_cost_for_sample(
+                sample,
+                side,
+                cost_multiplier=cost_multiplier,
+            ),
+        )
+        detail["canonical_outcome"] = True
+        return detail
 
-        target = entry - risk * rr
-        stop = entry + risk
-        for idx, (high, low) in enumerate(zip(highs, lows, strict=False), start=1):
-            if float(high) >= stop:
-                return -1.0 - cost_r, None, idx
-            if float(low) <= target:
-                return float(rr) - cost_r, idx, None
-        return float(max(-1.0, min(rr, (entry - closes[-1]) / risk)) - cost_r), None, None
+    @staticmethod
+    def _tuple_from_detail(detail: dict[str, object]) -> tuple[float, int | None, int | None]:
+        if detail.get("status") == "skipped":
+            return 0.0, None, None
+        result = float(detail.get("R", 0.0) or 0.0)
+        reason = str(detail.get("reason", ""))
+        bars_held = int(detail.get("bars_held", 0) or 0)
+        target_bar = bars_held if reason.startswith("target") else None
+        stop_bar = bars_held if reason.startswith("stop") else None
+        return result, target_bar, stop_bar
+
+    @staticmethod
+    def _label_from_detail(detail: dict[str, object], *, target_bar: int | None, stop_bar: int | None) -> str:
+        if detail.get("status") == "skipped":
+            return "skipped"
+        if target_bar is not None:
+            return "target"
+        if stop_bar is not None:
+            return "stop"
+        return "timeout"
 
     @staticmethod
     def _execution_cost_for_sample(sample: WindowSample, side: Side, *, cost_multiplier: float = 1.0) -> float:

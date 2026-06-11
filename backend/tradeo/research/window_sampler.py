@@ -149,6 +149,7 @@ class WindowSampler:
             forward_highs=np.round(highs.astype(float), 6).tolist(),
             forward_lows=np.round(lows.astype(float), 6).tolist(),
             forward_closes=np.round(closes.astype(float), 6).tolist(),
+            forward_opens=np.round(opens.astype(float), 6).tolist(),
             execution_cost_r=round(float(execution_cost_r), 5),
             long_label=long_label,
             short_label=short_label,

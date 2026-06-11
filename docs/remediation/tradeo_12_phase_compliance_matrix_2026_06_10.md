@@ -2,6 +2,8 @@
 
 Date: 2026-06-10
 
+Each agent appends its own rows without removing other branches' work.
+
 | Section | Agent | Status | Evidence | Remaining gap |
 |---|---|---|---|---|
 | 3.1 Data layer | A | Partial implemented | Deterministic OHLCV cache, metadata columns, split heuristic, provider manifest. | True incremental fetch remains blocked by current provider signature. |
@@ -14,3 +16,14 @@ Date: 2026-06-10
 | 4.1 Matching parity / no live daily bar | B | Mostly implemented | Prior patch already drops incomplete daily bars; this patch adds explicit feature parity contract to matcher output and match metrics. | Existing historical patterns need rediscovery to carry the contract. |
 | 4.2 Matcher threshold / ambiguity | B | Partial implemented | Prior patch uses per-pattern tau; this patch adds `ambiguity_ratio`, similarity margin and second-best pattern metadata. | Ratio is audit-only until calibrated as a hard gate. |
 | 7 Audit / reproducibility | B | Partial implemented | New JSON metrics are deterministic and covered by tests; remediation report created. | Coordinator should merge all agents' reports into the final consolidated package. |
+| 3.5 Canonical outcomes | C | Partial implemented | `RewardRiskAnalyzer._simulate_sample_detail` and `Backtester._simulate_exit` delegate to `triple_barrier_outcome`; `WindowSampler` persists `forward_opens`. | True non-trade/skipped signal accounting should propagate beyond labels. |
+| 3.5 Cost model | C | Partial implemented | `tiered_round_trip_cost_r` added and used by backtester; Research continues to use existing execution cost metrics through canonical net R. | — |
+| 3.6 RR/N_trials accounting | C | Partial implemented | Default RR grid reduced to `2.5,4.0`; existing `real_variant_count`/`multiple_testing_trials` counts configured RR levels. | — |
+| 5 ImprovementAgent anti-overfitting | C | Partial implemented | Fixed trial budget, mandatory CSCV/PBO guard, PBO threshold, and plateau check added before lab candidate creation. | Guarded but not yet a nested Optuna workflow. |
+| 6 Backtester parity | C | Partial implemented | Backtester exit path now uses canonical `triple_barrier_outcome` and shared tiered costs. | ShadowTracker canonical outcome parity remains for Agent D/future work. |
+| 8 Config (outcomes scope) | C | Partial implemented | `.env.example` and `Settings` expose RR and self-improvement guard defaults. | — |
+
+## Agent C Test Evidence
+
+- Full backend suite: 165 passed (in Agent C worktree).
+- Ruff: passed.
