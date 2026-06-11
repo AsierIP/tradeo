@@ -51,3 +51,16 @@ Each agent appends its own rows without removing other branches' work.
 
 - Agent D did not change live trading enablement.
 - Remaining full compliance needs persisted effective-sample weights for paper fills, explicit order-state transition tests, and richer real-time microstructure feeds where available.
+
+## Agent G Consolidation (2026-06-11)
+
+| Section | Agent | Status | Evidence | Remaining gap |
+|---|---|---|---|---|
+| 7 Audit package consolidation | G | Implemented | Final consolidated report `tradeo_12_phase_final_report_2026_06_11.md` (12-section status, test ledger, merge order, honest-claims review); supersedes the 06-10 final report. | — |
+| 7 Docs traceability | G | Implemented | `test_remediation_docs_traceability.py`: Files Changed references must resolve to real files; matrix must keep A–D rows; audit export must keep `event_count`/`independent_sample_count`/`is_independent_sample`. | Validates path existence, not prose accuracy. |
+
+Status updates recorded by Agent G (rows above are wave-1/wave-2 history and were not edited in place):
+
+- 4.5 Execution/reconciliation: "explicit order-state transition tests" gap closed by Agent F (`feat/tradeo12-execution-state-gap-20260611`, 22 tests in `test_execution_state_transitions.py`), pending merge at the time of writing.
+- 4.7 Director sequential gate: "persisted effective-sample weights" gap closed by Agent F (`effective_sample.py`, weights persisted in trade metadata and pattern `lab_execution` metrics; `n_eff` now binding), pending merge at the time of writing.
+- The Cross-Agent Notes list above predates Agent F; of its three items only "richer real-time microstructure feeds" remains open (no provider available).
