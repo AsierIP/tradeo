@@ -20,7 +20,7 @@ from tradeo.services.entry_variants import (
     build_entry_variants,
     classify_regime,
 )
-from tradeo.services.market_regime import MarketRegimeService
+from tradeo.services.market_regime import INSUFFICIENT_HISTORY, MarketRegimeService
 from tradeo.services.provider_factory import get_market_data_provider
 from tradeo.modules.fox_hunter.production_manifest import (
     production_manifest_for_pattern,
@@ -80,6 +80,7 @@ class NovelPatternMatcher:
             symbols = [s.upper().strip() for s in symbols if s.strip()]
         threshold = similarity_threshold or settings.discovery_match_similarity_threshold
         matches: list[dict[str, Any]] = []
+        regime_gate_blocked = 0
         engine = PatternEmbeddingEngine()
         feature_parity_contract = {
             **engine.contract(),
@@ -199,7 +200,17 @@ class NovelPatternMatcher:
                         base_gate = self._entry_gate(pattern.side, df_for_match, score=base_score, settings=settings)
                         regime = classify_regime(features, base_gate)
                         regime["benchmark_regime"] = dict(benchmark_regime)
-                        regime_fit = self._pattern_regime_fit(pattern, regime)
+                        regime_fit = self._pattern_regime_fit(pattern, regime, settings)
+                        if settings.market_regime_hard_gate_enabled and regime_fit.get("hard_gate_blocked"):
+                            regime_gate_blocked += 1
+                            logger.info(
+                                "regime hard gate blocked {} on {} ({}): {}",
+                                pattern.name,
+                                symbol,
+                                regime_fit.get("label"),
+                                regime_fit.get("calibration"),
+                            )
+                            continue
                         entry_audit = build_entry_audit_context(df_for_match, pattern.timeframe)
                         variants = build_entry_variants(
                             side=pattern.side,
@@ -309,6 +320,8 @@ class NovelPatternMatcher:
             "similarity_threshold": threshold,
             "feature_parity_contract": feature_parity_contract,
             "benchmark_regime": benchmark_regime,
+            "regime_hard_gate_enabled": bool(settings.market_regime_hard_gate_enabled),
+            "regime_gate_blocked": regime_gate_blocked,
             "generated_at": datetime.now(timezone.utc).isoformat(),
         }
 
@@ -345,10 +358,17 @@ class NovelPatternMatcher:
         )
 
     @staticmethod
-    def _pattern_regime_fit(pattern: DiscoveredPattern, regime: dict[str, Any]) -> dict[str, Any]:
+    def _pattern_regime_fit(
+        pattern: DiscoveredPattern,
+        regime: dict[str, Any],
+        settings: Settings | None = None,
+    ) -> dict[str, Any]:
         profile = (pattern.metrics_json or {}).get("regime_profile", {})
         if not isinstance(profile, dict) or not profile:
             return {"score": 0.5, "label": "unknown_pattern_regime", "matched": False}
+        calibrated = NovelPatternMatcher._calibrated_regime_fit(profile, regime, settings)
+        if calibrated is not None:
+            return calibrated
         regime_key = str(regime.get("regime_key") or "")
         preferred = profile.get("preferred_regime_keys")
         if isinstance(preferred, list) and preferred:
@@ -376,6 +396,66 @@ class NovelPatternMatcher:
             "score": round(0.45 + overlap, 4),
             "label": "partial_regime_overlap" if overlap else "unseen_regime",
             "matched": bool(overlap),
+        }
+
+    @staticmethod
+    def _calibrated_regime_fit(
+        profile: dict[str, Any],
+        regime: dict[str, Any],
+        settings: Settings | None,
+    ) -> dict[str, Any] | None:
+        """Per-bucket calibrated fit from research-labeled benchmark outcomes (3.8).
+
+        Only fires when Research persisted enough simulated outcomes for the
+        CURRENT benchmark regime bucket; otherwise the caller falls back to the
+        presence heuristics. A calibrated-negative bucket marks the match as
+        hard-gate eligible, enforced in match_current behind
+        market_regime_hard_gate_enabled (default off).
+        """
+        if settings is None:
+            return None
+        outcomes = profile.get("benchmark_regime_outcomes")
+        if not isinstance(outcomes, dict) or not outcomes.get("available"):
+            return None
+        benchmark = regime.get("benchmark_regime") if isinstance(regime, dict) else None
+        regime_key = str((benchmark or {}).get("regime_key") or "")
+        if not regime_key or INSUFFICIENT_HISTORY in regime_key:
+            return None
+        buckets = outcomes.get("buckets")
+        bucket = buckets.get(regime_key) if isinstance(buckets, dict) else None
+        if not isinstance(bucket, dict):
+            return None
+        sample_count = int(bucket.get("sample_count") or 0)
+        min_samples = int(settings.market_regime_outcome_min_samples)
+        if sample_count < min_samples:
+            return None
+        expectancy_r = float(bucket.get("expectancy_r") or 0.0)
+        calibration = {
+            "regime_key": regime_key,
+            "sample_count": sample_count,
+            "min_samples": min_samples,
+            "expectancy_r": expectancy_r,
+            "win_rate": float(bucket.get("win_rate") or 0.0),
+            "profit_factor": float(bucket.get("profit_factor") or 0.0),
+            "rr": outcomes.get("rr"),
+            "side": outcomes.get("side"),
+            "benchmark_symbol": outcomes.get("benchmark_symbol"),
+            "method": outcomes.get("method"),
+        }
+        if expectancy_r > 0.0:
+            return {
+                "score": round(min(1.0, 0.75 + 0.25 * min(1.0, expectancy_r)), 4),
+                "label": "calibrated_regime_positive",
+                "matched": True,
+                "hard_gate_blocked": False,
+                "calibration": calibration,
+            }
+        return {
+            "score": 0.2,
+            "label": "calibrated_regime_negative",
+            "matched": False,
+            "hard_gate_blocked": True,
+            "calibration": calibration,
         }
 
     @staticmethod

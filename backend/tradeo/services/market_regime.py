@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from hashlib import blake2b
 import math
-from typing import Any
+from typing import Any, Iterable
 
 import numpy as np
 import pandas as pd
@@ -114,6 +114,59 @@ def regime_at(
     }
 
 
+def unlabeled_regime_key() -> str:
+    return f"{INSUFFICIENT_HISTORY}|{INSUFFICIENT_HISTORY}"
+
+
+def regime_keys_for_dates(table: pd.DataFrame | None, dates: Iterable[Any]) -> list[str]:
+    """PIT regime_key at the last benchmark bar on or before each date.
+
+    `table` is a `regime_table` output. Dates earlier than the first benchmark
+    bar return the explicit unlabeled key instead of guessing, so callers can
+    separate "no benchmark history yet" from real regime buckets.
+    """
+    materialized = list(dates)
+    if table is None or table.empty or "regime_key" not in table.columns:
+        return [unlabeled_regime_key() for _ in materialized]
+    index = pd.DatetimeIndex(table.index)
+    if index.tz is not None:
+        index = index.tz_convert("UTC").tz_localize(None)
+    keys = table["regime_key"].astype(str).to_numpy()
+    out: list[str] = []
+    for value in materialized:
+        try:
+            ts = pd.Timestamp(value)
+        except (TypeError, ValueError):
+            out.append(unlabeled_regime_key())
+            continue
+        if ts.tzinfo is not None:
+            ts = ts.tz_convert("UTC").tz_localize(None)
+        pos = int(index.searchsorted(ts, side="right")) - 1
+        out.append(str(keys[pos]) if pos >= 0 else unlabeled_regime_key())
+    return out
+
+
+def period_to_months(period: str | None) -> int:
+    """Approximate calendar months covered by a provider period string."""
+    if not period:
+        return 0
+    text = str(period).strip().lower()
+    if text == "max":
+        return 120
+    try:
+        if text.endswith("mo"):
+            return int(math.ceil(float(text[:-2])))
+        if text.endswith("y"):
+            return int(math.ceil(float(text[:-1]) * 12))
+        if text.endswith("d"):
+            return int(math.ceil(float(text[:-1]) / 30))
+        if text.endswith("wk"):
+            return int(math.ceil(float(text[:-2]) * 7 / 30))
+    except ValueError:
+        return 0
+    return 0
+
+
 def required_benchmark_bars(settings: Settings | None = None) -> int:
     """Bars of benchmark history needed for fully-labeled trend and terciles."""
     settings = settings or get_settings()
@@ -155,6 +208,34 @@ class MarketRegimeService:
             vol_window=settings.market_regime_vol_window,
             tercile_lookback=settings.market_regime_vol_tercile_lookback,
         )
+
+    def history_table(self, period: str | None = None) -> pd.DataFrame:
+        """PIT regime table covering `period` plus the labeling warmup window.
+
+        Raises on provider failure so callers decide whether regime-labeled
+        outcomes are skippable (research warning) or fatal.
+        """
+        settings = self.settings
+        assert settings is not None
+        warmup_bars = required_benchmark_bars(settings)
+        warmup_months = max(3, math.ceil(warmup_bars * 7 / 5 / 30) + 1)
+        months = warmup_months + period_to_months(period)
+        df = self.provider.fetch_ohlcv(
+            settings.market_regime_benchmark_symbol,
+            period=f"{months}mo",
+            interval="1d",
+        )
+        table = regime_table(
+            df,
+            sma_window=settings.market_regime_sma_window,
+            vol_window=settings.market_regime_vol_window,
+            tercile_lookback=settings.market_regime_vol_tercile_lookback,
+        )
+        table.attrs["benchmark_symbol"] = settings.market_regime_benchmark_symbol
+        table.attrs["sma_window"] = int(settings.market_regime_sma_window)
+        table.attrs["vol_window"] = int(settings.market_regime_vol_window)
+        table.attrs["vol_tercile_lookback"] = int(settings.market_regime_vol_tercile_lookback)
+        return table
 
 
 def _empty_regime(benchmark_symbol: str) -> dict[str, Any]:

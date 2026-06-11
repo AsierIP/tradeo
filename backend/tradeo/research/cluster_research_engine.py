@@ -27,6 +27,10 @@ from tradeo.research.quant_validation import (
 from tradeo.research.pattern_embedding_engine import PatternEmbeddingEngine
 from tradeo.research.reward_risk_analyzer import RewardRiskAnalyzer
 from tradeo.research.types import ClusterCandidate, Side, WindowSample
+from tradeo.services.market_regime import (
+    INSUFFICIENT_HISTORY,
+    regime_keys_for_dates,
+)
 
 
 @dataclass(slots=True)
@@ -47,6 +51,7 @@ class ClusterResearchEngine:
     required_cost_stress_multiplier: float = 2.0
     match_tau_percentile: float = 92.5
     quant_bootstrap_draws: int = 500
+    benchmark_regime_table: pd.DataFrame | None = None
 
     def discover(self, samples: list[WindowSample]) -> list[ClusterCandidate]:
         candidates: list[ClusterCandidate] = []
@@ -248,7 +253,13 @@ class ClusterResearchEngine:
             )
             metrics["event_ledger_count"] = len(metrics["event_ledger"])
             feature_summary = self._feature_summary(cluster_samples)
-            metrics["regime_profile"] = self._regime_profile(cluster_samples)
+            regime_profile = self._regime_profile(cluster_samples)
+            regime_profile["benchmark_regime_outcomes"] = self._benchmark_regime_outcomes(
+                cluster_samples,
+                side=side,
+                rr=best_rr,
+            )
+            metrics["regime_profile"] = regime_profile
             metrics["human_rule"] = self._human_rule(
                 cluster_samples,
                 baseline_samples=train_samples,
@@ -1511,6 +1522,51 @@ class ClusterResearchEngine:
             "top_trend_regime": dominant_parts[1] if len(dominant_parts) > 1 else "",
             "top_market_regime": dominant_parts[2] if len(dominant_parts) > 2 else "",
             "feature_means": means,
+        }
+
+    def _benchmark_regime_outcomes(
+        self,
+        samples: list[WindowSample],
+        *,
+        side: Side,
+        rr: float,
+    ) -> dict[str, object]:
+        """Labeled outcome history per benchmark-regime bucket (section 3.8).
+
+        Each cluster sample is labeled with the PIT benchmark regime at its
+        window end and simulated with the canonical triple-barrier path at the
+        pattern's side/RR, so the matcher can calibrate a regime gate against
+        real per-bucket expectancies instead of presence heuristics.
+        """
+        table = self.benchmark_regime_table
+        if table is None or table.empty:
+            return {
+                "available": False,
+                "reason": "benchmark_regime_table_unavailable",
+                "buckets": {},
+            }
+        keys = regime_keys_for_dates(table, [sample.end for sample in samples])
+        grouped: dict[str, list[float]] = {}
+        for sample, key in zip(samples, keys, strict=True):
+            outcome_r = float(RewardRiskAnalyzer._simulate_sample(sample, side, rr)[0])
+            grouped.setdefault(key, []).append(outcome_r)
+        buckets: dict[str, dict[str, float | int]] = {}
+        labeled = 0
+        for key in sorted(grouped):
+            arr = np.asarray(grouped[key], dtype=float)
+            stats = self._outcome_metrics(arr)
+            buckets[key] = {"sample_count": int(len(arr)), **stats}
+            if INSUFFICIENT_HISTORY not in key:
+                labeled += int(len(arr))
+        return {
+            "available": True,
+            "method": "pit_benchmark_regime_at_sample_end+canonical_triple_barrier",
+            "side": str(side),
+            "rr": round(float(rr), 4),
+            "benchmark_symbol": str(table.attrs.get("benchmark_symbol", "SPY")),
+            "labeled_sample_count": int(labeled),
+            "unlabeled_sample_count": int(len(samples) - labeled),
+            "buckets": buckets,
         }
 
     def _apply_novelty_diversity(self, candidates: list[ClusterCandidate]) -> None:
