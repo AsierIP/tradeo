@@ -279,6 +279,23 @@ class ValidationGate:
                     f"no positivo (low={float(stationary_ci_low):.3f}R)"
                 )
 
+        survivorship_biased = metrics.get("survivorship_biased")
+        universe_pit = metrics.get("universe_point_in_time")
+        if promotion_status == "lab_candidate" and (
+            survivorship_biased is True or universe_pit is False
+        ):
+            cap_state = str(s.survivorship_cap_state or "lab_watchlist")
+            if cap_state not in {"lab", "lab_watchlist", "rejected"}:
+                cap_state = "lab_watchlist"
+            promotion_status = cap_state
+            metrics["survivorship_cap_applied"] = True
+            warnings.append(
+                "lab_candidate bloqueado: universo historico no point-in-time; "
+                f"cap aplicado a {promotion_status}"
+            )
+        else:
+            metrics["survivorship_cap_applied"] = False
+
         candidate.validation_passed = promotion_status != "rejected"
         candidate.validation_reasons = warnings if candidate.validation_passed else reasons + warnings
         candidate.metrics["validation_warnings"] = warnings

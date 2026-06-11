@@ -99,7 +99,7 @@ class IBKRHistoricalDataProvider:
                 endDateTime="",
                 durationStr=_duration_from_period(period),
                 barSizeSetting=_bar_size_from_interval(interval),
-                whatToShow="TRADES",
+                whatToShow=self.settings.market_data_what_to_show,
                 useRTH=True,
                 formatDate=1,
             )

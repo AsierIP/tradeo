@@ -85,7 +85,7 @@ class WindowSample:
     vector: np.ndarray
     outcome: ForwardOutcome
     chart: dict[str, Any]
-    features: dict[str, float] = field(default_factory=dict)
+    features: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
