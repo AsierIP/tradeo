@@ -78,13 +78,15 @@ def add_open_trade(
     symbol: str = "AAPL",
     execution_mode: str = "ibkr",
     broker_order_id: str | None = "101",
+    qty: int = 5,
+    side: str = "long",
     metadata: dict | None = None,
 ) -> Trade:
     trade = Trade(
         symbol=symbol,
         pattern="cup_handle",
-        side="long",
-        qty=5,
+        side=side,
+        qty=qty,
         entry=10.0,
         stop=9.0,
         target=14.0,
@@ -511,6 +513,185 @@ def test_reconciliation_reports_pre_existing_kill_switch() -> None:
 
     assert result["kill_switch_already_active"] is True
     assert result["kill_switch_activated"] is False
+
+
+# ---------------------------------------------------------------------------
+# Reconciliation: explicit qty / order-id / partial-fill checks
+# ---------------------------------------------------------------------------
+
+
+def test_reconciliation_position_larger_than_db_trips_kill_switch() -> None:
+    db = session_factory()
+    add_open_trade(db, symbol="AAPL", qty=5)
+    broker = FakeBroker(positions=[{"symbol": "AAPL", "position": 8.0}])
+
+    result = reconciliation_service(broker).reconcile(db)
+
+    assert result["divergences"] == [
+        {
+            "kind": "position_qty_mismatch_at_broker",
+            "symbol": "AAPL",
+            "db_signed_qty": 5.0,
+            "broker_signed_qty": 8.0,
+        }
+    ]
+    assert result["kill_switch_activated"] is True
+    assert runtime_kill_switch_active(db) is True
+
+
+def test_reconciliation_position_wrong_side_trips_kill_switch() -> None:
+    db = session_factory()
+    add_open_trade(db, symbol="AAPL", qty=5, side="short")
+    broker = FakeBroker(
+        positions=[{"symbol": "AAPL", "position": 5.0}],
+        open_orders=[{"symbol": "AAPL", "order_id": 101}],
+    )
+
+    result = reconciliation_service(broker).reconcile(db)
+
+    assert [d["kind"] for d in result["divergences"]] == [
+        "position_qty_mismatch_at_broker"
+    ]
+    assert result["divergences"][0]["db_signed_qty"] == -5.0
+    assert runtime_kill_switch_active(db) is True
+
+
+def test_reconciliation_smaller_position_with_pending_orders_is_warning_only() -> None:
+    db = session_factory()
+    add_open_trade(db, symbol="AAPL", qty=5)
+    broker = FakeBroker(
+        positions=[{"symbol": "AAPL", "position": 3.0}],
+        open_orders=[
+            {
+                "symbol": "AAPL",
+                "order_id": 101,
+                "quantity": 5.0,
+                "filled": 3.0,
+                "remaining": 2.0,
+            }
+        ],
+    )
+
+    result = reconciliation_service(broker).reconcile(db)
+
+    assert result["divergences"] == []
+    warning_kinds = sorted(w["kind"] for w in result["warnings"])
+    assert warning_kinds == [
+        "partial_fill_open_order",
+        "position_qty_below_db_pending_orders",
+    ]
+    assert result["kill_switch_activated"] is False
+    assert runtime_kill_switch_active(db) is False
+    assert "runtime_kill_switch_activated" not in audit_actions(db)
+
+
+def test_reconciliation_smaller_position_without_orders_trips_kill_switch() -> None:
+    db = session_factory()
+    add_open_trade(db, symbol="AAPL", qty=5)
+    broker = FakeBroker(positions=[{"symbol": "AAPL", "position": 3.0}])
+
+    result = reconciliation_service(broker).reconcile(db)
+
+    assert [d["kind"] for d in result["divergences"]] == [
+        "position_qty_mismatch_at_broker"
+    ]
+    assert runtime_kill_switch_active(db) is True
+
+
+def test_reconciliation_sums_multiple_db_trades_per_symbol() -> None:
+    db = session_factory()
+    add_open_trade(db, symbol="AAPL", qty=3, broker_order_id="101")
+    add_open_trade(db, symbol="AAPL", qty=2, broker_order_id="102")
+    broker = FakeBroker(positions=[{"symbol": "AAPL", "position": 5.0}])
+
+    result = reconciliation_service(broker).reconcile(db)
+
+    assert result["divergences"] == []
+    assert runtime_kill_switch_active(db) is False
+
+
+def test_reconciliation_unknown_order_id_at_broker_trips_kill_switch() -> None:
+    db = session_factory()
+    trade = add_open_trade(db, symbol="AAPL", broker_order_id="101")
+    broker = FakeBroker(open_orders=[{"symbol": "AAPL", "order_id": 999}])
+
+    result = reconciliation_service(broker).reconcile(db)
+
+    assert result["divergences"] == [
+        {
+            "kind": "db_order_id_missing_at_broker",
+            "symbol": "AAPL",
+            "trade_id": trade.id,
+            "broker_order_id": "101",
+            "broker_open_order_ids": ["999"],
+        }
+    ]
+    assert runtime_kill_switch_active(db) is True
+
+
+def test_reconciliation_matches_bracket_children_via_parent_order_id() -> None:
+    db = session_factory()
+    add_open_trade(db, symbol="AAPL", broker_order_id="101")
+    broker = FakeBroker(
+        open_orders=[
+            {"symbol": "AAPL", "order_id": 102, "parent_order_id": 101},
+            {"symbol": "AAPL", "order_id": 103, "parent_order_id": 101},
+        ]
+    )
+
+    result = reconciliation_service(broker).reconcile(db)
+
+    assert result["divergences"] == []
+    assert runtime_kill_switch_active(db) is False
+
+
+def test_reconciliation_partial_fill_is_audited_warning_never_divergence() -> None:
+    db = session_factory()
+    add_open_trade(db, symbol="AAPL", broker_order_id="101")
+    broker = FakeBroker(
+        open_orders=[
+            {
+                "symbol": "AAPL",
+                "order_id": 101,
+                "quantity": 5.0,
+                "filled": 2.0,
+                "remaining": 3.0,
+            }
+        ]
+    )
+
+    result = reconciliation_service(broker).reconcile(db)
+
+    assert result["divergences"] == []
+    assert result["warnings"] == [
+        {
+            "kind": "partial_fill_open_order",
+            "symbol": "AAPL",
+            "order_id": 101,
+            "filled": 2.0,
+            "quantity": 5.0,
+            "remaining": 3.0,
+        }
+    ]
+    assert runtime_kill_switch_active(db) is False
+    audit = (
+        db.query(AuditLog)
+        .filter(AuditLog.action == "reconciliation_completed")
+        .one()
+    )
+    assert audit.details_json["warning_count"] == 1
+    assert audit.details_json["warnings"][0]["kind"] == "partial_fill_open_order"
+
+
+def test_reconciliation_trade_without_order_id_skips_order_matching() -> None:
+    db = session_factory()
+    add_open_trade(db, symbol="AAPL", broker_order_id=None)
+    broker = FakeBroker(open_orders=[{"symbol": "AAPL", "order_id": 999}])
+
+    result = reconciliation_service(broker).reconcile(db)
+
+    assert result["divergences"] == []
+    assert runtime_kill_switch_active(db) is False
 
 
 # ---------------------------------------------------------------------------
