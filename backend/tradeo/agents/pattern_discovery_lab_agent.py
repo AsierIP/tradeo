@@ -29,6 +29,7 @@ from tradeo.research.validation_gate import ValidationGate
 from tradeo.research.window_sampler import WindowSampler
 from tradeo.schemas import DiscoveryRunRequest, DiscoveryRunResponse
 from tradeo.services.data_provider import MarketDataProvider, pick_symbols
+from tradeo.services.market_regime import MarketRegimeService
 from tradeo.services.provider_factory import get_market_data_provider
 from tradeo.services.universe_snapshot import UniverseSnapshotService
 
@@ -67,6 +68,7 @@ class PatternDiscoveryLabAgent:
             samples = []
             sampler = WindowSampler(target_r=settings.discovery_min_reward_risk)
             benchmark_frames = self._benchmark_frames(params, warnings)
+            benchmark_regime_table = self._benchmark_regime_table(params, warnings)
             for symbol in symbols:
                 if len(samples) >= params["max_total_windows"]:
                     break
@@ -103,6 +105,7 @@ class PatternDiscoveryLabAgent:
                 required_cost_stress_multiplier=settings.discovery_required_cost_stress_multiplier,
                 event_ledger_limit=0,
                 match_tau_percentile=settings.discovery_match_tau_percentile,
+                benchmark_regime_table=benchmark_regime_table,
             )
             raw_candidates = engine.discover(samples)
             data_manifest = self._data_manifest(run.id, symbols, warnings)
@@ -424,6 +427,16 @@ class PatternDiscoveryLabAgent:
             except Exception as exc:  # noqa: BLE001
                 warnings.append(f"{symbol} benchmark unavailable: {exc}")
         return frames
+
+    def _benchmark_regime_table(self, params: dict[str, Any], warnings: list[str]) -> Any:
+        assert self.provider is not None
+        try:
+            return MarketRegimeService(provider=self.provider, settings=self.settings).history_table(
+                period=str(params.get("period") or "")
+            )
+        except Exception as exc:  # noqa: BLE001
+            warnings.append(f"benchmark regime table unavailable: {exc}")
+            return None
 
     def _summary(self, candidates: list[Any], samples: list[Any], warnings: list[str]) -> dict[str, Any]:
         accepted = [c for c in candidates if c.validation_passed]

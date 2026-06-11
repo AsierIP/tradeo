@@ -93,3 +93,15 @@ Status updates recorded by the audit/traceability agent (earlier rows unedited):
   merge at the time of writing"; F is now merged on `main` (`12f2157`, via
   merge `646b995`), so both F items (order-state transition tests, persisted
   effective-sample weights) are live.
+
+## Agent I Update (2026-06-11)
+
+| Section | Agent | Status | Evidence | Remaining gap |
+|---|---|---|---|---|
+| 3.8 Market regimes (outcome calibration) | I | Implemented (gate ships disabled) | Research persists `regime_profile.benchmark_regime_outcomes`: per-PIT-benchmark-bucket sample_count/expectancy_r/win_rate/profit_factor from canonical triple-barrier simulation at the pattern's side/best RR. `_pattern_regime_fit` uses the calibrated bucket when it has ≥ `market_regime_outcome_min_samples` (default 12) labeled outcomes, attaching the evidence as `regime_fit.calibration`; calibrated-negative buckets are droppable via `market_regime_hard_gate_enabled` (default OFF), with `regime_gate_blocked` counts on matcher output. 11 tests in `test_regime_outcome_calibration.py`; image suite 278 passed. See `agent_i_regime_outcome_calibration_2026_06_11.md`. | Existing DB patterns lack calibration until rediscovery; real-fill per-regime attribution and the enable-gate decision remain Director follow-ups. |
+
+Status update recorded by Agent I (earlier rows unedited): the E row's
+section-3.8 remaining gap ("Not yet a hard gate in `_pattern_regime_fit`;
+needs labeled outcome history per regime bucket to calibrate") now has the
+labeled outcome history and a config-gated hard gate on this branch; the
+gate default stays off pending calibrated real-fill evidence.

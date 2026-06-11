@@ -86,6 +86,11 @@ class Settings(BaseSettings):
     market_regime_sma_window: int = 200
     market_regime_vol_window: int = 20
     market_regime_vol_tercile_lookback: int = 252
+    # Calibrated regime gate (3.8): minimum research-labeled outcomes in the
+    # current benchmark bucket before the calibrated fit replaces heuristics,
+    # and whether a calibrated-negative bucket hard-blocks new matches.
+    market_regime_outcome_min_samples: int = 12
+    market_regime_hard_gate_enabled: bool = False
     survivorship_cap_state: str = "lab_watchlist"
     strategy_config_file: str = "/app/config/strategy_cup_v0.json"
     reports_dir: str = "/app/reports"
