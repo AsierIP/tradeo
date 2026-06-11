@@ -17,9 +17,23 @@ from tradeo.services.evidence import (
     LAB_SHADOW_EXECUTION_MODE,
     with_evidence_metadata,
 )
+from tradeo.research.quant_validation import triple_barrier_outcome
 from tradeo.services.data_provider import MarketDataProvider
 from tradeo.services.provider_factory import get_market_data_provider
 from tradeo.services.technical_indicators import normalize_ohlcv
+
+# Map canonical triple-barrier reasons to the shadow lifecycle vocabulary.
+# "stop_gap" / "target_gap" pass through unchanged: implementation-shortfall
+# accounting already classifies them, and renaming them to *_hit would hide
+# that the fill happened at the open, not at the barrier price.
+CANONICAL_EXIT_REASON_MAP = {
+    "stop": "stop_hit",
+    "stop_and_target_conservative": "stop_hit",
+    "stop_gap": "stop_gap",
+    "target": "target_hit",
+    "target_gap": "target_gap",
+    "time": "time_stop",
+}
 
 
 @dataclass(slots=True)
@@ -256,49 +270,73 @@ class LabPaperObservationService:
             return MarketDataFetch(None, f"provider_fetch_failed: {type(exc).__name__}: {exc}")
 
     def _evaluate_trade(self, trade: Trade, frame: pd.DataFrame) -> dict[str, Any] | None:
+        """Evaluate a shadow observation with the canonical triple-barrier engine.
+
+        Parity contract (informe §6): shadow exits use the same fill rules as
+        the backtester and Research RR simulation (`triple_barrier_outcome`),
+        instead of an ad-hoc loop that filled gapped stops at the stop price.
+
+        Construction: the shadow position exists from `opened_at` at
+        `trade.entry`, before the first future bar. Two synthetic bars pinned
+        at the entry price (signal bar + entry bar) precede the future bars so
+        every real bar is "posterior to entry" and the canonical open-gap
+        rules (fill at the OPEN through a stop, at the TARGET through a
+        target) apply to all of them, including the first.
+        """
         opened_at = self._as_utc(trade.opened_at)
         future = frame[[self._as_utc(idx) > opened_at for idx in frame.index]]
         if future.empty:
             return None
-        side = trade.side.lower().strip()
-        risk = abs(float(trade.entry) - float(trade.stop))
+        side = -1 if trade.side.lower().strip() == "short" else 1
+        entry = float(trade.entry)
+        risk = abs(entry - float(trade.stop))
         if risk <= 0:
             return None
         max_holding_bars = max(1, max(self.settings.discovery_forward_bar_list if self.settings else [20]))
-        rows_seen: list[dict[str, Any]] = []
-        for idx, row in future.iterrows():
-            rows_seen.append(row.to_dict())
-            high = float(row["high"])
-            low = float(row["low"])
-            if side == "short":
-                stop_hit = high >= float(trade.stop)
-                target_hit = low <= float(trade.target)
-            else:
-                stop_hit = low <= float(trade.stop)
-                target_hit = high >= float(trade.target)
-            if stop_hit:
-                return {
-                    "exit_price": float(trade.stop),
-                    "closed_at": self._as_utc(idx),
-                    "exit_reason": "stop_hit",
-                    "bars": rows_seen,
-                }
-            if target_hit:
-                return {
-                    "exit_price": float(trade.target),
-                    "closed_at": self._as_utc(idx),
-                    "exit_reason": "target_hit",
-                    "bars": rows_seen,
-                }
-        if len(rows_seen) < max_holding_bars:
+        synthetic = [entry, entry]
+        out = triple_barrier_outcome(
+            synthetic + future["open"].astype(float).tolist(),
+            synthetic + future["high"].astype(float).tolist(),
+            synthetic + future["low"].astype(float).tolist(),
+            synthetic + future["close"].astype(float).tolist(),
+            signal_index=0,
+            side=side,
+            stop_price=float(trade.stop),
+            target_price=float(trade.target),
+            # +1: the synthetic entry bar consumes the first slot of the window
+            max_bars=max_holding_bars + 1,
+            entry_price=entry,
+            gap_entry_policy="skip",
+            conservative_both=True,
+            round_trip_cost_R=0.0,
+        )
+        if out["status"] != "ok":
+            # 'skipped'/'invalid' only occur for malformed barriers (entry at
+            # or beyond stop/target); keep the observation pending so the
+            # diagnostic path surfaces it instead of fabricating an exit.
             return None
-        last_idx = future.index[min(max_holding_bars, len(future)) - 1]
-        last_row = future.iloc[min(max_holding_bars, len(future)) - 1]
+        reason = str(out["reason"])
+        if reason == "time" and len(future) < max_holding_bars:
+            return None
+        exit_pos = max(0, min(int(out["exit_index"]) - len(synthetic), len(future) - 1))
+        rows_seen = [row.to_dict() for _, row in future.iloc[: exit_pos + 1].iterrows()]
         return {
-            "exit_price": float(last_row["close"]),
-            "closed_at": self._as_utc(last_idx),
-            "exit_reason": "time_stop",
-            "bars": rows_seen[:max_holding_bars],
+            "exit_price": float(out["exit_price"]),
+            "closed_at": self._as_utc(future.index[exit_pos]),
+            "exit_reason": CANONICAL_EXIT_REASON_MAP.get(reason, reason),
+            "bars": rows_seen,
+            "canonical_outcome": {
+                "engine": "triple_barrier_outcome",
+                "status": str(out["status"]),
+                "reason": reason,
+                "r_multiple": round(float(out["R"]), 6),
+                "mfe_R": round(float(out["mfe_R"]), 6),
+                "mae_R": round(float(out["mae_R"]), 6),
+                "bars_held": max(0, int(out["bars_held"]) - 1),
+                "conservative_both": True,
+                "gap_entry_policy": "skip",
+                "round_trip_cost_R": 0.0,
+            },
         }
 
     def _close_trade(
@@ -349,6 +387,7 @@ class LabPaperObservationService:
                 "mae": round(mae, 6),
                 "holding_period_seconds": int((closed_at - self._as_utc(trade.opened_at)).total_seconds()),
                 "closed_by": "lab_shadow_observation_lifecycle",
+                "canonical_outcome": outcome.get("canonical_outcome"),
             }
         )
         trade.status = TradeStatus.CLOSED
