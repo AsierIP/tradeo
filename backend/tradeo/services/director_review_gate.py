@@ -13,6 +13,10 @@ from tradeo.research.sequential_tests import (
     posterior_probability_edge,
     sprt_inferiority,
 )
+from tradeo.services.effective_sample import (
+    effective_sample_summary,
+    persist_effective_sample_weights,
+)
 from tradeo.services.implementation_shortfall import pattern_slippage_summary
 from tradeo.services.evidence import (
     PAPER_FILL_EVIDENCE_TYPES,
@@ -236,6 +240,9 @@ class DirectorReviewGate:
         research_expectancy = float(pattern.best_expectancy_r or pattern.expectancy_r or 0.0)
         research_profit_factor = float(pattern.best_profit_factor or pattern.profit_factor or 0.0)
         research_r_values = self._research_r_values(pattern)
+        effective_sample = effective_sample_summary(trades)
+        persist_effective_sample_weights(trades, effective_sample)
+        effective_trades = float(effective_sample["n_eff"])
         slippage = pattern_slippage_summary(trades)
         sequential = self._sequential_evaluation(
             lab_r=r_values,
@@ -244,6 +251,7 @@ class DirectorReviewGate:
         )
         blockers = self._promotion_blockers(
             closed_trades=len(trades),
+            effective_trades=effective_trades,
             unique_symbols=unique_symbols,
             unique_days=unique_days,
             max_drawdown=max_drawdown,
@@ -264,12 +272,15 @@ class DirectorReviewGate:
             ),
             "closed_lab_trades": len(trades),
             "paper_fill_trades": len(trades),
-            "effective_lab_trades": len(trades),
+            "effective_lab_trades": round(effective_trades, 4),
             "min_effective_lab_trades": self.min_effective_lab_trades,
             "effective_lab_trades_note": (
-                "Conservative lower-bound proxy: only normal IBKR paper fills count until "
-                "per-trade uniqueness weights are persisted."
+                "Weighted effective sample: each normal IBKR paper fill weighs "
+                "1/cluster_size for its (symbol, trading day) cluster, so correlated "
+                "same-symbol same-day fills count as one sample. Per-trade weights are "
+                "persisted in trade.metadata_json.effective_sample."
             ),
+            "effective_sample": effective_sample,
             "director_review_trigger_trades": len(trades),
             "min_closed_lab_trades": self.min_closed_lab_trades,
             "review_trigger_min_closed_lab_trades": self.min_closed_lab_trades,
@@ -542,6 +553,7 @@ class DirectorReviewGate:
         self,
         *,
         closed_trades: int,
+        effective_trades: float | None = None,
         unique_symbols: int,
         unique_days: int,
         max_drawdown: float,
@@ -555,7 +567,8 @@ class DirectorReviewGate:
         blockers: list[str] = []
         if closed_trades < self.min_closed_lab_trades:
             blockers.append(f"closed_lab_trades_below_{self.min_closed_lab_trades}")
-        if closed_trades < self.min_effective_lab_trades:
+        effective = float(closed_trades if effective_trades is None else effective_trades)
+        if effective < self.min_effective_lab_trades:
             blockers.append(f"effective_lab_trades_below_{self.min_effective_lab_trades}")
         if unique_symbols < self.min_lab_symbols:
             blockers.append(f"unique_lab_symbols_below_{self.min_lab_symbols}")

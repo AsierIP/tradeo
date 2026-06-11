@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -135,6 +137,7 @@ def close_lab_trade(db, signal: Signal, index: int, r_multiple: float = 1.0) -> 
         }
     )
     signal.metadata_json = signal_metadata
+    fill_time = datetime(2026, 1, index + 1, 16, 0, tzinfo=timezone.utc)
     db.add(
         Trade(
             signal_id=signal.id,
@@ -146,6 +149,8 @@ def close_lab_trade(db, signal: Signal, index: int, r_multiple: float = 1.0) -> 
             stop=signal.stop,
             target=signal.target,
             status=TradeStatus.CLOSED,
+            opened_at=fill_time - timedelta(minutes=30),
+            closed_at=fill_time,
             pnl_usd=100.0 * r_multiple,
             r_multiple=r_multiple,
             evidence_type=EvidenceType.IBKR_PAPER_FILL.value,
