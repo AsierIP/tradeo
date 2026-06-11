@@ -54,6 +54,14 @@ class RewardRiskAnalyzer:
         *,
         cost_multiplier: float = 1.0,
     ) -> dict[str, float | int]:
+        """Aggregate canonical triple-barrier outcomes for one target R level.
+
+        Skipped signals (gap-entry policy) are true non-trades: they never enter
+        the traded arrays, so win/loss/expectancy/drawdown reflect executed
+        trades only. They are accounted separately via ``signal_count``,
+        ``skipped_count``, ``skip_rate`` and ``skip_reason_counts``;
+        ``sample_count`` counts traded samples only.
+        """
         results: list[float] = []
         target_bars: list[int] = []
         stop_bars: list[int] = []
@@ -64,6 +72,8 @@ class RewardRiskAnalyzer:
         mfe_before_mae: list[bool] = []
         strong_close_without_target: list[bool] = []
         labels: dict[str, int] = {"target": 0, "stop": 0, "timeout": 0, "skipped": 0}
+        skip_reasons: dict[str, int] = {}
+        signal_count = 0
         speed_labels: dict[str, int] = {}
         fill_probabilities: list[float] = []
         max_sizes: list[float] = []
@@ -72,7 +82,15 @@ class RewardRiskAnalyzer:
         entry_gap_penalty_pct: list[float] = []
         short_borrow_pct: list[float] = []
         for sample in samples:
+            signal_count += 1
             detail = self._simulate_sample_detail(sample, side, rr, cost_multiplier=cost_multiplier)
+            status = str(detail.get("status", "ok"))
+            if status not in ("ok", "fallback"):
+                # skipped / invalid / no_data: a non-trade, never aggregated as 0R.
+                labels["skipped"] += 1
+                reason = str(detail.get("reason", "")) or status
+                skip_reasons[reason] = skip_reasons.get(reason, 0) + 1
+                continue
             result, target_bar, stop_bar = self._tuple_from_detail(detail)
             results.append(result)
             if target_bar is not None:
@@ -151,6 +169,10 @@ class RewardRiskAnalyzer:
             if short_borrow_pct
             else 0.0,
             "sample_count": int(len(arr)),
+            "signal_count": int(signal_count),
+            "skipped_count": int(labels["skipped"]),
+            "skip_rate": round(labels["skipped"] / signal_count, 5) if signal_count else 0.0,
+            "skip_reason_counts": skip_reasons,
             "cost_multiplier": float(cost_multiplier),
         }
 

@@ -105,3 +105,14 @@ section-3.8 remaining gap ("Not yet a hard gate in `_pattern_regime_fit`;
 needs labeled outcome history per regime bucket to calibrate") now has the
 labeled outcome history and a config-gated hard gate on this branch; the
 gate default stays off pending calibrated real-fill evidence.
+
+## Agent J Update (2026-06-11)
+
+| Section | Agent | Status | Evidence | Remaining gap |
+|---|---|---|---|---|
+| 3.5 Canonical outcomes (non-trade accounting) | J | Implemented | Skipped/invalid/no-data signals no longer enter Research RR aggregates as phantom `0R`: `metrics_for_rr` excludes them from all traded arrays and reports `signal_count`/`skipped_count`/`skip_rate`/`skip_reason_counts`, with `sample_count` now traded-only (conservative for `min_samples` and validation-gate thresholds). `Backtester` counts detected-vs-skipped signals and `BacktestMetrics` exposes `total_signals`/`skipped_signals`/`skip_rate`; `_simulate_exit` filters every non-`ok` status, closing the latent `invalid`/`no_data` NaN path. 4 new tests; full suite 286 passed. See `agent_j_non_trade_accounting_2026_06_11.md`. | `skip_rate` not yet surfaced in Director review evidence; shadow path intentionally untouched. |
+
+Status update recorded by Agent J (earlier rows unedited): the C row's
+section-3.5 remaining gap ("True non-trade/skipped signal accounting should
+propagate beyond labels") and the H row's note ("3.5 non-trade accounting
+still open") are closed on this branch.

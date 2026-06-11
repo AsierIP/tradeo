@@ -167,6 +167,9 @@ class BacktestMetrics(BaseModel):
     expectancy_r: float
     avg_r_multiple: float
     max_drawdown_pct: float
+    total_signals: int = 0
+    skipped_signals: int = 0
+    skip_rate: float = 0.0
     trades: list[dict[str, Any]] = Field(default_factory=list)
 
 
