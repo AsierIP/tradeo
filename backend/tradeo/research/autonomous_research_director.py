@@ -78,7 +78,11 @@ class ResearchDirector:
         return self._json_clean(summary)
 
     def _patterns(self, db: Session, *, run_id: int | None, limit: int) -> list[DiscoveredPattern]:
-        query = db.query(DiscoveredPattern).order_by(DiscoveredPattern.score.desc(), DiscoveredPattern.created_at.desc())
+        query = db.query(DiscoveredPattern).order_by(
+            DiscoveredPattern.score.desc(),
+            DiscoveredPattern.created_at.desc(),
+            DiscoveredPattern.pattern_key.asc(),
+        )
         if run_id is not None:
             query = query.filter(DiscoveredPattern.run_id == run_id)
         return query.limit(max(1, min(int(limit), 500))).all()
@@ -499,10 +503,10 @@ class ResearchDirector:
                     "dominant_regime": regime,
                 }
             )
-        for family, members in families.items():
+        for family, members in sorted(families.items()):
             if len(members) <= 1:
                 continue
-            canonical = sorted(members, key=lambda p: p.score or 0.0, reverse=True)[0]
+            canonical = sorted(members, key=lambda p: (-(p.score or 0.0), p.pattern_key))[0]
             for member in members:
                 if member.pattern_key == canonical.pattern_key:
                     continue
@@ -514,7 +518,7 @@ class ResearchDirector:
                         "family": family,
                     }
                 )
-        for regime, pattern_keys in regimes.items():
+        for regime, pattern_keys in sorted(regimes.items()):
             if regime == "unknown" or len(pattern_keys) <= 1:
                 continue
             hub = f"regime::{regime}"
@@ -532,7 +536,7 @@ class ResearchDirector:
                     "best_score": round(max(float(p.score or 0.0) for p in members), 5),
                     "statuses": sorted({p.promotion_status for p in members}),
                 }
-                for family, members in families.items()
+                for family, members in sorted(families.items())
             },
         }
 
