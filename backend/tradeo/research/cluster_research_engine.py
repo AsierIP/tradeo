@@ -24,6 +24,7 @@ from tradeo.research.quant_validation import (
     select_nonoverlapping_events,
     stationary_bootstrap_ci,
 )
+from tradeo.research.pattern_embedding_engine import PatternEmbeddingEngine
 from tradeo.research.reward_risk_analyzer import RewardRiskAnalyzer
 from tradeo.research.types import ClusterCandidate, Side, WindowSample
 
@@ -77,6 +78,7 @@ class ClusterResearchEngine:
         train_labels = model.fit_predict(matrix_train_scaled)
         all_labels = model.predict(matrix_all_scaled)
         candidates: list[ClusterCandidate] = []
+        embedding_contract = PatternEmbeddingEngine().contract()
         holdout_ids = {id(sample) for sample in holdout_samples}
         for cluster_id in sorted(set(train_labels.tolist())):
             train_idxs = np.flatnonzero(train_labels == cluster_id)
@@ -115,6 +117,12 @@ class ClusterResearchEngine:
             metrics["side"] = side
             metrics["target_r"] = self.target_r
             metrics["embedding_length"] = int(matrix_all.shape[1])
+            metrics["feature_parity_contract"] = {
+                **embedding_contract,
+                "vector_length": int(matrix_all.shape[1]),
+                "research_path": "WindowSampler -> PatternEmbeddingEngine.embed",
+                "lab_path": "NovelPatternMatcher -> PatternEmbeddingEngine.embed",
+            }
             metrics["scaler_mean"] = np.nan_to_num(scaler.mean_, nan=0, posinf=0, neginf=0).round(6).tolist()
             metrics["scaler_scale"] = np.nan_to_num(scaler.scale_, nan=1, posinf=1, neginf=1).round(6).tolist()
             metrics["validation_method"] = "train_fit_forward_holdout_walk_forward_embargo"
@@ -193,6 +201,17 @@ class ClusterResearchEngine:
             metrics["match_tau_similarity"] = self._match_tau_similarity(
                 cluster_vectors, centroid_scaled
             )
+            signature = self._cluster_signature(cluster_samples, cluster_vectors, centroid_scaled, side)
+            metrics["cluster_signature"] = signature
+            metrics["medoid"] = signature["medoid"]
+            metrics["concentration_checks"] = signature["concentration_checks"]
+            metrics["cluster_stability"] = {
+                "method": "outcome_diversity_concentration_proxy",
+                "stability_score": metrics["stability_score"],
+                "stability_year": metrics["stability_year"],
+                "stability_symbol": metrics["stability_symbol"],
+                "concentration_passed": signature["concentration_checks"]["passed"],
+            }
             metrics["foundation_teacher"] = FoundationChartTeacher().analyze(
                 cluster_samples,
                 side=side,
@@ -1626,6 +1645,93 @@ class ClusterResearchEngine:
                 }
             )
         return examples
+
+    @staticmethod
+    def _cluster_signature(
+        samples: list[WindowSample],
+        vectors_scaled: np.ndarray,
+        centroid_scaled: np.ndarray,
+        side: Side,
+    ) -> dict[str, object]:
+        if not samples or vectors_scaled.size == 0:
+            return {
+                "medoid": {},
+                "similarity_distribution": {},
+                "concentration_checks": {
+                    "passed": False,
+                    "reasons": ["empty_cluster"],
+                    "max_symbol_share": 0.0,
+                    "max_month_share": 0.0,
+                    "symbol_herfindahl": 0.0,
+                    "month_herfindahl": 0.0,
+                },
+            }
+        distances = np.linalg.norm(vectors_scaled - centroid_scaled, axis=1) / max(
+            1.0, math.sqrt(vectors_scaled.shape[1])
+        )
+        similarities = 1.0 / (1.0 + distances)
+        medoid_idx = int(np.argmin(distances))
+        medoid_sample = samples[medoid_idx]
+
+        def share_counts(values: list[str]) -> tuple[dict[str, int], float, float]:
+            counts: dict[str, int] = {}
+            for value in values:
+                counts[value] = counts.get(value, 0) + 1
+            total = max(1, len(values))
+            shares = [count / total for count in counts.values()]
+            return counts, round(float(max(shares, default=0.0)), 6), round(float(sum(s * s for s in shares)), 6)
+
+        month_keys: list[str] = []
+        for sample in samples:
+            try:
+                month_keys.append(pd.Timestamp(sample.end).strftime("%Y-%m"))
+            except (TypeError, ValueError):
+                month_keys.append("unknown")
+        symbol_counts, max_symbol_share, symbol_hhi = share_counts([sample.symbol for sample in samples])
+        month_counts, max_month_share, month_hhi = share_counts(month_keys)
+        reasons: list[str] = []
+        if max_symbol_share > 0.40:
+            reasons.append("symbol_concentration_gt_40pct")
+        if max_month_share > 0.50:
+            reasons.append("month_concentration_gt_50pct")
+        top_symbols = sorted(symbol_counts.items(), key=lambda item: item[1], reverse=True)[:5]
+        top_months = sorted(month_counts.items(), key=lambda item: item[1], reverse=True)[:5]
+        return {
+            "method": "centroid_distance_medoid_and_concentration",
+            "medoid": {
+                "symbol": medoid_sample.symbol,
+                "timeframe": medoid_sample.timeframe,
+                "window_start": medoid_sample.start,
+                "window_end": medoid_sample.end,
+                "outcome_r": round(float(medoid_sample.outcome.outcome_for(side)), 5),
+                "similarity": round(float(similarities[medoid_idx]), 6),
+                "distance": round(float(distances[medoid_idx]), 6),
+                "chart": medoid_sample.chart,
+                "features": {k: round(float(v), 6) for k, v in medoid_sample.features.items()},
+            },
+            "similarity_distribution": {
+                "p05": round(float(np.quantile(similarities, 0.05)), 6),
+                "p50": round(float(np.quantile(similarities, 0.50)), 6),
+                "p90": round(float(np.quantile(similarities, 0.90)), 6),
+                "p95": round(float(np.quantile(similarities, 0.95)), 6),
+                "min": round(float(np.min(similarities)), 6),
+                "max": round(float(np.max(similarities)), 6),
+            },
+            "concentration_checks": {
+                "passed": not reasons,
+                "reasons": reasons,
+                "max_symbol_share": max_symbol_share,
+                "max_month_share": max_month_share,
+                "symbol_herfindahl": symbol_hhi,
+                "month_herfindahl": month_hhi,
+                "top_symbols": [{"symbol": symbol, "count": count} for symbol, count in top_symbols],
+                "top_months": [{"month": month, "count": count} for month, count in top_months],
+                "thresholds": {
+                    "max_symbol_share": 0.40,
+                    "max_month_share": 0.50,
+                },
+            },
+        }
 
     def _quant_validation_metrics(
         self,

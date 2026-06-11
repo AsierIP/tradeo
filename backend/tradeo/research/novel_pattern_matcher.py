@@ -80,6 +80,11 @@ class NovelPatternMatcher:
         threshold = similarity_threshold or settings.discovery_match_similarity_threshold
         matches: list[dict[str, Any]] = []
         engine = PatternEmbeddingEngine()
+        feature_parity_contract = {
+            **engine.contract(),
+            "research_path": "WindowSampler -> PatternEmbeddingEngine.embed",
+            "lab_path": "NovelPatternMatcher -> PatternEmbeddingEngine.embed",
+        }
         required_bars_by_timeframe = self._required_bars_by_timeframe(patterns)
         data_cache: dict[tuple[str, str], pd.DataFrame | None] = {}
         benchmark_cache: dict[str, dict[str, pd.DataFrame]] = {}
@@ -129,26 +134,52 @@ class NovelPatternMatcher:
                                 )
                                 embedding_cache[cache_key] = None
 
+                similarity_diagnostics: dict[int, dict[str, Any]] = {}
+                competitors_by_window: dict[tuple[str, int], list[dict[str, Any]]] = defaultdict(list)
+                for pattern in timeframe_patterns:
+                    cached = embedding_cache.get((symbol.upper(), timeframe, int(pattern.window_size)))
+                    diagnostic = self._similarity_diagnostic(
+                        pattern,
+                        cached,
+                        threshold,
+                    )
+                    if diagnostic is None:
+                        continue
+                    similarity_diagnostics[int(pattern.id)] = diagnostic
+                    competitors_by_window[(pattern.timeframe, int(pattern.window_size))].append(
+                        {
+                            "pattern_id": int(pattern.id),
+                            "pattern_name": pattern.name,
+                            "pattern_key": pattern.pattern_key,
+                            "similarity": diagnostic["similarity"],
+                        }
+                    )
+                ambiguity_by_pattern: dict[int, dict[str, Any]] = {}
+                for competitors in competitors_by_window.values():
+                    ranked = sorted(competitors, key=lambda item: float(item["similarity"]), reverse=True)
+                    for item in ranked:
+                        peers = [peer for peer in ranked if int(peer["pattern_id"]) != int(item["pattern_id"])]
+                        second = peers[0] if peers else None
+                        ambiguity_by_pattern[int(item["pattern_id"])] = self._ambiguity_ratio(
+                            similarity=float(item["similarity"]),
+                            second=second,
+                        )
+
                 for pattern in timeframe_patterns:
                     try:
-                        scaler_mean, scaler_scale = self._scaler(pattern)
-                        centroid = np.asarray(pattern.centroid_json, dtype=float)
-                        if scaler_mean is None or scaler_scale is None or len(centroid) == 0:
-                            continue
                         cached = embedding_cache.get((symbol.upper(), timeframe, int(pattern.window_size)))
                         if cached is None:
                             continue
                         df_for_match, vector, features, chart = cached
-                        scaled = self._scaled_vector_for_pattern(vector, centroid, scaler_mean, scaler_scale)
-                        if scaled is None:
+                        diagnostic = similarity_diagnostics.get(int(pattern.id))
+                        if not diagnostic or not diagnostic["passed_threshold"]:
                             continue
-                        normalized_distance = float(
-                            np.linalg.norm(scaled - centroid) / max(1.0, np.sqrt(len(centroid)))
+                        similarity = float(diagnostic["similarity"])
+                        effective_threshold = float(diagnostic["similarity_threshold_used"])
+                        ambiguity = ambiguity_by_pattern.get(int(pattern.id)) or self._ambiguity_ratio(
+                            similarity=similarity,
+                            second=None,
                         )
-                        similarity = float(1.0 / (1.0 + normalized_distance))
-                        effective_threshold = self._effective_threshold(pattern, threshold)
-                        if similarity < effective_threshold:
-                            continue
                         features = dict(features)
                         features["avg_dollar_volume"] = float(
                             (df_for_match["close"] * df_for_match["volume"]).tail(20).mean()
@@ -204,6 +235,8 @@ class NovelPatternMatcher:
                                 "side": pattern.side,
                                 "similarity": round(similarity, 6),
                                 "similarity_threshold_used": round(effective_threshold, 6),
+                                "match_ambiguity": ambiguity,
+                                "ambiguity_ratio": ambiguity["ambiguity_ratio"],
                                 "score": score,
                                 "entry_score": entry_gate["entry_score"],
                                 "entry_gate_passed": entry_gate["passed"],
@@ -232,6 +265,11 @@ class NovelPatternMatcher:
                                     "pattern_profit_factor": pattern.profit_factor,
                                     "pattern_stability_score": pattern.stability_score,
                                     "pattern_regime_profile": (pattern.metrics_json or {}).get("regime_profile", {}),
+                                    "feature_parity_contract": {
+                                        **feature_parity_contract,
+                                        "vector_length": int(len(vector)),
+                                    },
+                                    "match_ambiguity": ambiguity,
                                     "features": features,
                                     "entry_gate": entry_gate,
                                     "base_entry_gate": base_gate,
@@ -261,6 +299,7 @@ class NovelPatternMatcher:
             "stored_matches": len(matches) if store else 0,
             "module": module,
             "similarity_threshold": threshold,
+            "feature_parity_contract": feature_parity_contract,
             "generated_at": datetime.now(timezone.utc).isoformat(),
         }
 
@@ -503,6 +542,54 @@ class NovelPatternMatcher:
         if not math.isfinite(tau) or tau <= 0.0:
             return floor
         return max(floor, tau)
+
+    def _similarity_diagnostic(
+        self,
+        pattern: DiscoveredPattern,
+        cached: tuple[pd.DataFrame, np.ndarray, dict[str, float], dict[str, list[float]]] | None,
+        floor: float,
+    ) -> dict[str, Any] | None:
+        if cached is None:
+            return None
+        _, vector, _, _ = cached
+        scaler_mean, scaler_scale = self._scaler(pattern)
+        centroid = np.asarray(pattern.centroid_json, dtype=float)
+        if scaler_mean is None or scaler_scale is None or len(centroid) == 0:
+            return None
+        scaled = self._scaled_vector_for_pattern(vector, centroid, scaler_mean, scaler_scale)
+        if scaled is None:
+            return None
+        normalized_distance = float(np.linalg.norm(scaled - centroid) / max(1.0, np.sqrt(len(centroid))))
+        similarity = float(1.0 / (1.0 + normalized_distance))
+        effective_threshold = self._effective_threshold(pattern, floor)
+        return {
+            "similarity": round(similarity, 6),
+            "normalized_distance": round(normalized_distance, 6),
+            "similarity_threshold_used": round(float(effective_threshold), 6),
+            "passed_threshold": similarity >= effective_threshold,
+        }
+
+    @staticmethod
+    def _ambiguity_ratio(
+        *,
+        similarity: float,
+        second: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        best = max(0.0, float(similarity))
+        second_similarity = max(0.0, float(second.get("similarity", 0.0))) if second else 0.0
+        margin = max(0.0, best - second_similarity)
+        ratio = second_similarity / best if best > 1e-12 else 0.0
+        return {
+            "method": "second_best_similarity_over_best_same_symbol_timeframe_window",
+            "ambiguity_ratio": round(float(ratio), 6),
+            "similarity_margin": round(float(margin), 6),
+            "best_similarity": round(float(best), 6),
+            "second_best_similarity": round(float(second_similarity), 6),
+            "second_best_pattern_id": int(second["pattern_id"]) if second else None,
+            "second_best_pattern_name": str(second["pattern_name"]) if second else None,
+            "second_best_pattern_key": str(second["pattern_key"]) if second else None,
+            "ambiguous": bool(second and ratio >= 0.95),
+        }
 
     @staticmethod
     def _required_bars_by_timeframe(patterns: list[DiscoveredPattern]) -> dict[str, int]:

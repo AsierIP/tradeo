@@ -321,6 +321,63 @@ def test_laboratory_scanner_creates_paper_signal_for_validated_lab_pattern() -> 
     assert observation.metadata_json["no_ibkr_order"] is True
 
 
+def test_laboratory_matcher_records_feature_parity_and_ambiguity_ratio() -> None:
+    db = session_factory()
+    provider = FixtureProvider()
+    first = add_pattern(db, provider, status=DiscoveredPatternStatus.LAB_CANDIDATE)
+    vector, _, _ = PatternEmbeddingEngine().embed(provider.df.iloc[-20:])
+    second = DiscoveredPattern(
+        pattern_key="lab_candidate_key_second",
+        name="lab_candidate_pattern_second",
+        status=DiscoveredPatternStatus.LAB_CANDIDATE,
+        side="long",
+        timeframe="1d",
+        window_size=20,
+        sample_count=120,
+        symbol_count=12,
+        year_count=3,
+        score=0.88,
+        reward_risk_estimate=4.0,
+        expectancy_r=0.35,
+        profit_factor=2.0,
+        win_rate=0.54,
+        stability_score=0.78,
+        out_of_sample_expectancy_r=0.25,
+        out_of_sample_profit_factor=1.8,
+        best_rr=4.0,
+        validation_passed=True,
+        promotion_status=DiscoveredPatternStatus.LAB_CANDIDATE.value,
+        centroid_json=[float(value) + 0.005 for value in vector.tolist()],
+        metrics_json={"scaler_mean": [0.0] * len(vector), "scaler_scale": [1.0] * len(vector)},
+    )
+    db.add(second)
+    db.commit()
+    db.refresh(second)
+
+    settings = Settings(
+        discovery_match_complete_bars_only=False,
+        discovery_match_max_patterns=10,
+        discovery_match_max_results=10,
+        entry_gate_enabled=False,
+    )
+    result = NovelPatternMatcher(provider=provider, settings=settings).match_current(
+        db,
+        symbols=[provider.symbol],
+        store=False,
+    )
+
+    assert result["feature_parity_contract"]["contract_id"] == PatternEmbeddingEngine.CONTRACT_ID
+    matches = {int(match["pattern_id"]): match for match in result["matches"]}
+    assert first.id in matches
+    ambiguity = matches[first.id]["match_ambiguity"]
+    assert ambiguity["second_best_pattern_id"] == second.id
+    assert ambiguity["ambiguity_ratio"] > 0.95
+    assert matches[first.id]["metrics"]["match_ambiguity"] == ambiguity
+    contract = matches[first.id]["metrics"]["feature_parity_contract"]
+    assert contract["research_lab_shared_path"] is True
+    assert contract["contract_id"] == PatternEmbeddingEngine.CONTRACT_ID
+
+
 def test_laboratory_volume_near_miss_opens_shadow_observation_without_ibkr(monkeypatch) -> None:
     db = session_factory()
     provider = FixtureProvider()
