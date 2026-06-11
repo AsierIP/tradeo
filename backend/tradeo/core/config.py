@@ -61,10 +61,24 @@ class Settings(BaseSettings):
     market_data_cache_dir: str = "/app/data/ohlcv_cache"
     market_data_adjusted: bool = True
     market_data_what_to_show: str = "ADJUSTED_LAST"
+    # Incremental daily-cache refresh: append only the missing tail after
+    # verifying an overlap window against cached bars; any mismatch (e.g.
+    # dividend/split re-adjustment) forces an honest full refetch.
+    market_data_incremental_enabled: bool = True
+    market_data_incremental_overlap_bars: int = 5
+    market_data_incremental_min_gap_days: int = 1
+    market_data_incremental_max_gap_days: int = 45
     universe_file: str = "/app/data/universe_us_mid_small.csv"
     universe_snapshot_monthly: bool = True
     universe_snapshot_dir: str = "/app/data/universe_snapshots"
     universe_point_in_time_available: bool = False
+    # No licensed delisting/PIT membership vendor is wired yet; snapshots stay
+    # honest via survivorship flags until this flips with a real data source.
+    universe_delisting_data_available: bool = False
+    market_regime_benchmark_symbol: str = "SPY"
+    market_regime_sma_window: int = 200
+    market_regime_vol_window: int = 20
+    market_regime_vol_tercile_lookback: int = 252
     survivorship_cap_state: str = "lab_watchlist"
     strategy_config_file: str = "/app/config/strategy_cup_v0.json"
     reports_dir: str = "/app/reports"

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -103,6 +104,133 @@ def test_cached_market_data_provider_persists_manifest(tmp_path: Path) -> None:
     assert entry["what_to_show"] == "ADJUSTED_LAST"
 
 
+def _frame_ending(days_ago: int, *, periods: int, base: float = 10.0) -> pd.DataFrame:
+    end = pd.Timestamp(datetime.now(timezone.utc).date()) - pd.Timedelta(days=days_ago)
+    idx = pd.bdate_range(end=end, periods=periods)
+    closes = [base + 0.1 * i for i in range(periods)]
+    return pd.DataFrame(
+        {
+            "open": closes,
+            "high": [c * 1.02 for c in closes],
+            "low": [c * 0.98 for c in closes],
+            "close": closes,
+            "volume": [100_000 + 1_000 * i for i in range(periods)],
+        },
+        index=idx,
+    )
+
+
+class _RecordingUpstream:
+    def __init__(self, df: pd.DataFrame) -> None:
+        self.df = df
+        self.calls: list[tuple[str, str, str]] = []
+
+    def fetch_ohlcv(self, symbol: str, period: str = "2y", interval: str = "1d") -> pd.DataFrame:
+        self.calls.append((symbol, period, interval))
+        return self.df.copy()
+
+
+def _seed_cache(tmp_path: Path, stale: pd.DataFrame) -> None:
+    seeder = CachedMarketDataProvider(
+        upstream=_RecordingUpstream(stale),
+        cache_dir=tmp_path,
+        adjusted=True,
+        what_to_show="ADJUSTED_LAST",
+    )
+    seeder.fetch_ohlcv("AAA", period="2y", interval="1d")
+
+
+def test_incremental_refresh_appends_missing_tail(tmp_path: Path) -> None:
+    full = _frame_ending(1, periods=60)
+    stale = full.iloc[:-7]
+    _seed_cache(tmp_path, stale)
+
+    upstream = _RecordingUpstream(full)
+    provider = CachedMarketDataProvider(
+        upstream=upstream,
+        cache_dir=tmp_path,
+        adjusted=True,
+        what_to_show="ADJUSTED_LAST",
+        incremental_enabled=True,
+        incremental_overlap_bars=5,
+        incremental_min_gap_days=1,
+        incremental_max_gap_days=45,
+    )
+    refreshed = provider.fetch_ohlcv("AAA", period="2y", interval="1d")
+
+    assert len(upstream.calls) == 1
+    assert upstream.calls[0][1].endswith("d")
+    assert pd.Timestamp(refreshed.index[-1]) == pd.Timestamp(full.index[-1])
+    metadata = json.loads((tmp_path / "AAA_1d_2y.metadata.json").read_text())
+    assert metadata["refresh_mode"] == "incremental_append"
+    assert metadata["rows_appended"] == 7
+    assert metadata["incremental_fetch_supported"] is True
+    manifest_entry = provider.data_manifest(["AAA"])["entries"]["AAA_1d_2y"]
+    assert manifest_entry["refresh_mode"] == "incremental_append"
+    assert manifest_entry["incremental_fetch_supported"] is True
+
+
+def test_incremental_refresh_full_refetch_on_overlap_mismatch(tmp_path: Path) -> None:
+    stale = _frame_ending(1, periods=60).iloc[:-7]
+    _seed_cache(tmp_path, stale)
+
+    readjusted = _frame_ending(1, periods=60, base=9.0)
+    upstream = _RecordingUpstream(readjusted)
+    provider = CachedMarketDataProvider(
+        upstream=upstream,
+        cache_dir=tmp_path,
+        adjusted=True,
+        what_to_show="ADJUSTED_LAST",
+        incremental_enabled=True,
+        incremental_overlap_bars=5,
+        incremental_min_gap_days=1,
+        incremental_max_gap_days=45,
+    )
+    refreshed = provider.fetch_ohlcv("AAA", period="2y", interval="1d")
+
+    assert [call[1] for call in upstream.calls[-1:]] == ["2y"]
+    assert len(upstream.calls) == 2
+    assert float(refreshed["close"].iloc[0]) == 9.0
+    metadata = json.loads((tmp_path / "AAA_1d_2y.metadata.json").read_text())
+    assert metadata["refresh_mode"] == "full_refetch_overlap_mismatch"
+
+
+def test_incremental_refresh_disabled_keeps_cache_untouched(tmp_path: Path) -> None:
+    stale = _frame_ending(10, periods=40)
+    _seed_cache(tmp_path, stale)
+
+    upstream = _RecordingUpstream(_frame_ending(1, periods=60))
+    provider = CachedMarketDataProvider(
+        upstream=upstream,
+        cache_dir=tmp_path,
+        adjusted=True,
+        what_to_show="ADJUSTED_LAST",
+        incremental_enabled=False,
+    )
+    cached = provider.fetch_ohlcv("AAA", period="2y", interval="1d")
+
+    assert upstream.calls == []
+    assert pd.Timestamp(cached.index[-1]) == pd.Timestamp(stale.index[-1])
+
+
+def test_incremental_refresh_skips_fresh_cache(tmp_path: Path) -> None:
+    fresh = _frame_ending(1, periods=40)
+    _seed_cache(tmp_path, fresh)
+
+    upstream = _RecordingUpstream(fresh)
+    provider = CachedMarketDataProvider(
+        upstream=upstream,
+        cache_dir=tmp_path,
+        adjusted=True,
+        what_to_show="ADJUSTED_LAST",
+        incremental_enabled=True,
+        incremental_min_gap_days=1,
+    )
+    provider.fetch_ohlcv("AAA", period="2y", interval="1d")
+
+    assert upstream.calls == []
+
+
 def test_detect_unadjusted_splits_flags_split_like_gap() -> None:
     idx = pd.date_range("2026-01-02", periods=4, freq="B")
     df = pd.DataFrame(
@@ -146,6 +274,30 @@ def test_universe_snapshot_filters_and_marks_survivorship(tmp_path: Path) -> Non
     assert snapshot["symbols"] == ["AAA"]
     assert snapshot["survivorship_biased"] is True
     assert df["symbol"].tolist() == ["AAA"]
+
+
+def test_universe_snapshot_content_hash_is_deterministic(tmp_path: Path) -> None:
+    settings = Settings(
+        universe_snapshot_dir=str(tmp_path / "snapshots"),
+        universe_file=str(tmp_path / "universe.csv"),
+        universe_point_in_time_available=False,
+        min_price=2.0,
+        min_avg_dollar_volume=5_000_000,
+    )
+    universe = pd.DataFrame(
+        [
+            {"symbol": "aaa", "price": 3.0, "avg_dollar_volume": 6_000_000, "exchange": "NASDAQ"},
+            {"symbol": "zzz", "price": 9.0, "avg_dollar_volume": 9_000_000, "exchange": "NYSE"},
+        ]
+    )
+    service = UniverseSnapshotService(settings)
+
+    first = service.build_monthly_snapshot("2026-06-10", universe=universe)
+    second = service.build_monthly_snapshot("2026-06-10", universe=universe)
+
+    assert first["content_hash"] == second["content_hash"]
+    assert first["delisting_data_available"] is False
+    assert first["survivorship_biased"] is True
 
 
 class FakeIB:
