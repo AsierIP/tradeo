@@ -116,3 +116,9 @@ Status update recorded by Agent J (earlier rows unedited): the C row's
 section-3.5 remaining gap ("True non-trade/skipped signal accounting should
 propagate beyond labels") and the H row's note ("3.5 non-trade accounting
 still open") are closed on this branch.
+
+## Agent K Update (2026-06-11, Wave4-B)
+
+| Section | Agent | Status | Evidence | Remaining gap |
+|---|---|---|---|---|
+| 3.4 Clustering / reproducibility (discovery determinism) | K | Implemented (in-process contract) | Discovery output is bit-for-bit reproducible for identical inputs/config/seed on the same image: new `research/determinism.py` provides canonical JSON + `sha256_canonical_json_v1` content hash excluding volatile run metadata (timestamps, `run_id`, artifact paths); discovery report JSON now dumps `sort_keys=True` and carries a `determinism.content_hash` block; `autonomous_research_director` memory-graph enumeration and pattern query get deterministic sort/tiebreakers. Harness `test_discovery_determinism.py` runs the real engine twice over seeded synthetic fixtures and asserts byte-identical canonical payloads, input-order independence, and run_id-stable report hashes. 6 new tests; image suite 288 passed, 4 skipped. See `agent_k_discovery_determinism_2026_06_11.md`. | Cross-environment (sklearn/BLAS/hardware) bit-equality not claimed; full live-data end-to-end double-run out of scope (run-context excluded from identity hash); `tests/fixtures.py` `fixture_ohlcv` stays PYTHONHASHSEED-sensitive (pre-existing, test-data only). |

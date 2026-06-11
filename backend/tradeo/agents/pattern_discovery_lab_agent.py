@@ -17,6 +17,7 @@ from tradeo.core.config import Settings, get_settings
 from tradeo.db.models import AuditLog, DiscoveryRun
 from tradeo.research.cluster_research_engine import ClusterResearchEngine
 from tradeo.research.autonomous_research_director import ResearchDirector as PersistentResearchDirector
+from tradeo.research.determinism import CONTENT_HASH_ALGO, DEFAULT_VOLATILE_KEYS, content_hash
 from tradeo.research.global_experiment_registry import GlobalExperimentRegistry
 from tradeo.research.novel_pattern_registry import NovelPatternRegistry
 from tradeo.research.quant_validation import (
@@ -714,7 +715,15 @@ class PatternDiscoveryLabAgent:
                 reverse=True,
             )[:10],
         }
-        json_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False, default=str), encoding="utf-8")
+        payload["determinism"] = {
+            "algo": CONTENT_HASH_ALGO,
+            "content_hash": content_hash(payload),
+            "excluded_keys": sorted(DEFAULT_VOLATILE_KEYS),
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        json_path.write_text(
+            json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True, default=str), encoding="utf-8"
+        )
         md_path.write_text(self._markdown_report(run_id, params, summary), encoding="utf-8")
         return json_path
 
