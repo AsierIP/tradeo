@@ -509,6 +509,128 @@ def test_director_review_gate_excludes_shadow_near_miss_and_degraded_fallback() 
     assert pattern.status == DiscoveredPatternStatus.LAB_CANDIDATE
 
 
+def add_research_skip_accounting(db, pattern: DiscoveredPattern, skip_rate: float = 0.4) -> None:
+    skipped = int(round(50 * skip_rate))
+    pattern.best_rr = 2.0
+    pattern.rr_metrics_json = {
+        "2": {
+            "rr": 2.0,
+            "expectancy_r": 0.5,
+            "profit_factor": 2.2,
+            "sample_count": 50 - skipped,
+            "signal_count": 50,
+            "skipped_count": skipped,
+            "skip_rate": skip_rate,
+            "skip_reason_counts": {"gap_entry_policy": skipped},
+        }
+    }
+    db.add(pattern)
+    db.commit()
+
+
+def test_director_review_gate_surfaces_high_research_skip_rate_evidence() -> None:
+    db = session_factory()
+    pattern = add_pattern(db)
+    add_research_skip_accounting(db, pattern, skip_rate=0.4)
+    for index in range(10):
+        add_closed_lab_trade(db, pattern, index, r_multiple=1.0 if index < 7 else -1.0)
+
+    result = DirectorReviewGate(min_closed_lab_trades=10, min_effective_lab_trades=10).refresh(db)
+    db.refresh(pattern)
+    lab_execution = pattern.metrics_json["lab_execution"]
+    skip_accounting = lab_execution["research_skip_accounting"]
+
+    # Good expectancy + high skip_rate stays visible but never blocks the gate.
+    assert result["marked_for_director_review"] == 1
+    assert lab_execution["promotion_blockers"] == []
+    assert skip_accounting["available"] is True
+    assert skip_accounting["source"] == "pattern.rr_metrics_json[2]"
+    assert skip_accounting["skip_rate"] == 0.4
+    assert skip_accounting["signal_count"] == 50
+    assert skip_accounting["skipped_count"] == 20
+    assert skip_accounting["skip_reason_counts"] == {"gap_entry_policy": 20}
+    assert lab_execution["research_skip_rate_warning"] is True
+    assert lab_execution["skip_rate_warning_threshold"] == 0.25
+    warning = next(
+        recommendation
+        for recommendation in lab_execution["director_recommendations"]
+        if recommendation["action"] == "review_research_skip_rate"
+    )
+    assert warning["priority"] == "high"
+    assert warning["skip_rate"] == 0.4
+    assert warning["skip_reason_counts"] == {"gap_entry_policy": 20}
+
+
+def test_director_review_gate_reports_missing_skip_accounting_without_inventing_data() -> None:
+    db = session_factory()
+    pattern = add_pattern(db)
+    for index in range(9):
+        add_closed_lab_trade(db, pattern, index)
+
+    DirectorReviewGate(min_closed_lab_trades=10).refresh(db)
+    db.refresh(pattern)
+    lab_execution = pattern.metrics_json["lab_execution"]
+    skip_accounting = lab_execution["research_skip_accounting"]
+
+    assert skip_accounting["available"] is False
+    assert "no skip accounting" in skip_accounting["reason"]
+    assert "skip_rate" not in skip_accounting
+    assert lab_execution["research_skip_rate_warning"] is False
+    assert all(
+        recommendation["action"] != "review_research_skip_rate"
+        for recommendation in lab_execution["director_recommendations"]
+    )
+
+
+def test_director_review_gate_reads_backtest_shape_skip_accounting() -> None:
+    db = session_factory()
+    pattern = add_pattern(db)
+    pattern.metrics_json = {
+        "backtest": {"total_signals": 50, "skipped_signals": 10, "skip_rate": 0.2}
+    }
+    db.add(pattern)
+    db.commit()
+    for index in range(9):
+        add_closed_lab_trade(db, pattern, index)
+
+    DirectorReviewGate(min_closed_lab_trades=10).refresh(db)
+    db.refresh(pattern)
+    lab_execution = pattern.metrics_json["lab_execution"]
+    skip_accounting = lab_execution["research_skip_accounting"]
+
+    assert skip_accounting["available"] is True
+    assert skip_accounting["source"] == "pattern.metrics_json.backtest"
+    assert skip_accounting["signal_count"] == 50
+    assert skip_accounting["skipped_count"] == 10
+    assert skip_accounting["skip_rate"] == 0.2
+    # Below the warning threshold: evidence is visible, no warning raised.
+    assert lab_execution["research_skip_rate_warning"] is False
+
+
+def test_director_production_gate_report_includes_research_skip_accounting() -> None:
+    db = session_factory()
+    pattern = add_pattern(db)
+    add_research_skip_accounting(db, pattern, skip_rate=0.4)
+    for index in range(3):
+        add_closed_lab_trade(db, pattern, index)
+
+    closed_trades = db.query(Trade).filter(Trade.status == TradeStatus.CLOSED).all()
+    result = DirectorProductionGate(
+        min_paper_fills=3,
+        min_fill_symbols=1,
+        min_fill_trading_days=1,
+        min_expectancy_r=0.0,
+        min_profit_factor=0.1,
+    ).evaluate_pattern(pattern, closed_trades)
+    skip_accounting = result["research_skip_accounting"]
+
+    assert skip_accounting["available"] is True
+    assert skip_accounting["skip_rate"] == 0.4
+    assert skip_accounting["skip_reason_counts"] == {"gap_entry_policy": 20}
+    # Skip accounting is evidence only: it must never appear as a blocker.
+    assert all("skip" not in blocker for blocker in result["blockers"])
+
+
 def test_pattern_health_monitor_marks_decaying_on_shortfall_cusum() -> None:
     db = session_factory()
     pattern = add_pattern(db)
