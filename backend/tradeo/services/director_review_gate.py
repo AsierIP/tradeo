@@ -17,6 +17,10 @@ from tradeo.services.effective_sample import (
     effective_sample_summary,
     persist_effective_sample_weights,
 )
+from tradeo.services.execution_quality import (
+    pattern_execution_quality_summary,
+    persist_execution_quality,
+)
 from tradeo.services.implementation_shortfall import pattern_slippage_summary
 from tradeo.services.evidence import (
     PAPER_FILL_EVIDENCE_TYPES,
@@ -244,6 +248,8 @@ class DirectorReviewGate:
         persist_effective_sample_weights(trades, effective_sample)
         effective_trades = float(effective_sample["n_eff"])
         slippage = pattern_slippage_summary(trades)
+        execution_quality = pattern_execution_quality_summary(trades)
+        persist_execution_quality(trades)
         sequential = self._sequential_evaluation(
             lab_r=r_values,
             research_r=research_r_values,
@@ -312,6 +318,16 @@ class DirectorReviewGate:
                 key: value for key, value in slippage.items() if key != "per_trade"
             },
             "max_median_slippage_r": self.max_median_slippage_r,
+            "execution_quality": {
+                key: value
+                for key, value in execution_quality.items()
+                if key != "per_trade"
+            },
+            "execution_quality_note": (
+                "Diagnostic only — not a promotion blocker. Per-trade reports are "
+                "persisted in trade.metadata_json.execution_quality. No real-time "
+                "microstructure feed backs these numbers (informe §4.3, no provider)."
+            ),
             "sequential_evaluation": sequential,
             "by_entry_variant": self._bucket_metrics(
                 trades,
