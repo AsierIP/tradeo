@@ -1,0 +1,70 @@
+# Agent L — Rediscovery/Backfill Readiness (Wave4-C, 2026-06-11)
+
+Branch: `feat/wave4-rediscovery-readiness-20260611`
+
+## Objective
+
+Legacy `DiscoveredPattern` rows predate the Wave4 metadata contracts and lack
+the embedding contract, cluster signature/concentration metadata and
+benchmark-regime calibration buckets. Deliver a safe path to identify them,
+mark them and verify a real rediscovery repopulated them — without running a
+heavy unbounded job in this phase and without pretending production rows were
+populated.
+
+## Remediation matrix
+
+| Gap | Where it lives | Remediation delivered | Populated in prod? |
+|---|---|---|---|
+| Legacy patterns lack `feature_parity_contract` (embedding contract) | `metrics_json` on `discovered_patterns` rows written before Wave4 | Audit check `embedding_contract`: missing if no `contract_id`; **stale** if `contract_id != PatternEmbeddingEngine.CONTRACT_ID` (v2 legacy-prefix-stable) | No — readiness only; runbook §3 populates |
+| Legacy patterns lack `cluster_signature` / `concentration_checks` / `medoid` | same | Audit check `cluster_signature`: requires dict signature with `medoid` dict and `concentration_checks.passed` present | No — readiness only |
+| Legacy patterns lack `regime_profile.benchmark_regime_outcomes` (calibration buckets) | same | Audit check `regime_calibration_buckets`: requires outcomes dict with `available` key | No — readiness only |
+| No way to mark laggards | n/a | `--apply-flags` writes `metrics_json.rediscovery_readiness` block (`needs_rediscovery`, `missing`, `stale`, `checker_version`, `flagged_at`); JSONB-extensible, no schema migration, flips honestly to `false` once real metadata arrives | Flag only — never fakes metadata |
+| No rediscovery plan/manifest | n/a | `run_readiness()` emits manifest: per-pattern reasons, per-field counts, `metadata_complete_before == metadata_complete_after` by construction (tool populates nothing), truncation reported, `determinism.content_hash` (Wave4-B algo) | Manifest is dry-run honest |
+| Unbounded scan risk | n/a | `DEFAULT_AUDIT_LIMIT = 2000` hard cap + explicit `truncated` flag in manifest and CLI warning | n/a |
+| No execution/verification procedure | n/a | `docs/research/wave4_rediscovery_runbook.md`: bounded discovery commands, re-audit verification, success criteria, non-reemerging-pattern disposition rule | Pending operator run |
+
+## Implemented
+
+1. `backend/tradeo/research/rediscovery_readiness.py` (new):
+   - `evaluate_pattern_metrics` — pure per-blob check returning
+     (`missing`, `stale`) against the three Wave4 contracts.
+   - `audit_patterns` — deterministic scan (ordered by `pattern_key`),
+     bounded by `limit`, reports truncation.
+   - `apply_rediscovery_flags` — opt-in flagging into `metrics_json`;
+     clears to `needs_rediscovery: false` when metadata is later present.
+   - `build_manifest` / `run_readiness` — honest manifest with before/after
+     counts, content hash, and rediscovery plan pointer; optional JSON dump.
+   - CLI: `python -m tradeo.research.rediscovery_readiness
+     [--apply-flags] [--limit N] [--manifest-out PATH]` — dry-run by default.
+2. `backend/tradeo/tests/test_rediscovery_readiness.py` (new, 7 tests):
+   legacy-pattern flagged with all three fields missing; modern pattern
+   clean; stale v1 embedding contract detected; dry-run mutates nothing and
+   `after == before`; `--apply-flags` marks but re-audit still flags
+   (flag ≠ metadata); flag flips to false after real metadata upsert;
+   manifest written to disk and truncation honest at `limit`.
+3. `docs/research/wave4_rediscovery_runbook.md` (new): operator runbook.
+
+## Explicitly NOT done in this phase
+
+- No discovery/rediscovery job was executed; production rows remain
+  unpopulated until an operator follows runbook §3.
+- No `--apply-flags` run against the production DB (operator decision).
+- No schema migration (JSONB block chosen deliberately; no Alembic in repo).
+- No live/paper order paths touched.
+
+## Tests run
+
+```
+backend/.venv pytest tradeo/tests/test_rediscovery_readiness.py  -> 7 passed
+pytest tradeo/tests/test_novel_pattern_registry.py tradeo/tests/test_discovery_determinism.py -> 10 passed
+ruff check + format on new files -> clean
+```
+
+## Risks / assumptions
+
+- Assumes rediscovery re-emerges the same clusters so upserts refresh legacy
+  rows; patterns that never re-emerge stay flagged and need an explicit
+  retire/accept disposition (runbook §3 caveat).
+- Stale-contract detection keys off exact `CONTRACT_ID` equality; a future
+  contract bump automatically marks all rows stale (intended behavior).
+- Audit reads whole rows; at current pattern counts (≪2000) this is trivial.
