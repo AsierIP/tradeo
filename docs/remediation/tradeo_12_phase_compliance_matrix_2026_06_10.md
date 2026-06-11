@@ -116,3 +116,13 @@ Status update recorded by Agent J (earlier rows unedited): the C row's
 section-3.5 remaining gap ("True non-trade/skipped signal accounting should
 propagate beyond labels") and the H row's note ("3.5 non-trade accounting
 still open") are closed on this branch.
+
+## Wave4-A Update (2026-06-11)
+
+| Section | Agent | Status | Evidence | Remaining gap |
+|---|---|---|---|---|
+| 3.5 Canonical outcomes (Director skip-rate evidence) | Wave4-A | Implemented (evidence only) | `DirectorReviewGate` now surfaces stored non-trade accounting as Director evidence: `lab_execution.research_skip_accounting` (with `source` provenance from `pattern.rr_metrics_json[best_rr]`, other RR levels, `metrics_json.rr_metrics`, or backtest-shaped `total_signals`/`skipped_signals` blocks), `research_skip_rate_warning` at threshold 0.25, and a high-priority `review_research_skip_rate` director recommendation carrying `skip_rate`/`signal_count`/`skipped_count`/`skip_reason_counts`. `DirectorProductionGate.evaluate_pattern` includes the same block in its packet. Never a blocker; returns `available: false` (no invented numbers) when the research run predates non-trade accounting. 4 new tests; gate suite 18 passed. See `wave4_a_director_skip_evidence_2026_06_11.md`. | Whether a hard `skip_rate` ceiling belongs in `DirectorProductionGate` is a Director/Asier decision once calibrated evidence accumulates. |
+
+Status update recorded by Wave4-A (earlier rows unedited): the J row's
+remaining gap ("`skip_rate` not yet surfaced in Director review evidence")
+is closed on this branch.

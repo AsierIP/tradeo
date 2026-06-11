@@ -57,6 +57,11 @@ class DirectorReviewGate:
     max_median_slippage_r: float = 0.10
     min_slippage_samples: int = 5
     min_effective_lab_trades: int = 25
+    # Skip-rate evidence (Wave4-A): research/backtest skip accounting is
+    # surfaced as Director evidence and a warning only — never a blocker, so
+    # gate behavior is unchanged. A high skip_rate means reported expectancy
+    # excludes many non-trades and executable coverage must be reviewed.
+    skip_rate_warning_threshold: float = 0.25
 
     @classmethod
     def from_settings(cls, settings: Settings) -> "DirectorReviewGate":
@@ -255,6 +260,11 @@ class DirectorReviewGate:
             research_r=research_r_values,
             research_expectancy=research_expectancy,
         )
+        skip_accounting = self._research_skip_accounting(pattern)
+        skip_rate_warning = bool(
+            skip_accounting.get("available")
+            and float(skip_accounting.get("skip_rate") or 0.0) >= self.skip_rate_warning_threshold
+        )
         blockers = self._promotion_blockers(
             closed_trades=len(trades),
             effective_trades=effective_trades,
@@ -329,6 +339,15 @@ class DirectorReviewGate:
                 "microstructure feed backs these numbers (informe §4.3, no provider)."
             ),
             "sequential_evaluation": sequential,
+            "research_skip_accounting": skip_accounting,
+            "skip_rate_warning_threshold": self.skip_rate_warning_threshold,
+            "research_skip_rate_warning": skip_rate_warning,
+            "research_skip_accounting_note": (
+                "Evidence only — never a promotion blocker. Skipped signals are "
+                "true non-trades: research expectancy/profit factor exclude them, "
+                "so a high skip_rate means the edge was measured on fewer "
+                "executable signals than were generated."
+            ),
             "by_entry_variant": self._bucket_metrics(
                 trades,
                 lambda trade: str(((trade.signal.metadata_json or {}) if trade.signal else {}).get("entry_variant_id") or "unknown"),
@@ -362,6 +381,8 @@ class DirectorReviewGate:
             research_expectancy=research_expectancy,
             by_entry_variant=metrics["by_entry_variant"],
             by_regime=metrics["by_regime"],
+            skip_accounting=skip_accounting,
+            skip_rate_warning=skip_rate_warning,
         )
         pattern.metrics_json = {**(pattern.metrics_json or {}), "lab_execution": metrics}
         return metrics
@@ -467,8 +488,26 @@ class DirectorReviewGate:
         research_expectancy: float,
         by_entry_variant: dict[str, dict[str, Any]],
         by_regime: dict[str, dict[str, Any]],
+        skip_accounting: dict[str, Any] | None = None,
+        skip_rate_warning: bool = False,
     ) -> list[dict[str, Any]]:
         recommendations: list[dict[str, Any]] = []
+        if skip_rate_warning and skip_accounting:
+            recommendations.append(
+                {
+                    "action": "review_research_skip_rate",
+                    "priority": "high",
+                    "skip_rate": float(skip_accounting.get("skip_rate") or 0.0),
+                    "signal_count": int(skip_accounting.get("signal_count") or 0),
+                    "skipped_count": int(skip_accounting.get("skipped_count") or 0),
+                    "skip_reason_counts": skip_accounting.get("skip_reason_counts") or {},
+                    "reason": (
+                        "research metrics report a high non-trade skip_rate; reported "
+                        "expectancy and profit factor exclude skipped signals, so verify "
+                        "executable signal coverage before relying on this evidence"
+                    ),
+                }
+            )
         trades_remaining = max(0, self.min_closed_lab_trades - len(trades))
         if trades_remaining:
             recommendations.append(
@@ -630,6 +669,75 @@ class DirectorReviewGate:
         return blockers
 
     @staticmethod
+    def _normalized_skip_evidence(data: Any) -> dict[str, Any] | None:
+        """Normalize research (`signal_count`/`skipped_count`) or backtest
+        (`total_signals`/`skipped_signals`) skip accounting; None if absent."""
+        if not isinstance(data, dict) or "skip_rate" not in data:
+            return None
+        signal_count = data.get("signal_count", data.get("total_signals"))
+        skipped_count = data.get("skipped_count", data.get("skipped_signals"))
+        if signal_count is None and skipped_count is None:
+            return None
+        evidence: dict[str, Any] = {
+            "skip_rate": float(data.get("skip_rate") or 0.0),
+            "signal_count": int(signal_count or 0),
+            "skipped_count": int(skipped_count or 0),
+        }
+        reasons = data.get("skip_reason_counts")
+        if isinstance(reasons, dict):
+            evidence["skip_reason_counts"] = {
+                str(reason): int(count or 0) for reason, count in reasons.items()
+            }
+        return evidence
+
+    @classmethod
+    def _research_skip_accounting(cls, pattern: DiscoveredPattern) -> dict[str, Any]:
+        """Locate stored skip accounting for Director evidence.
+
+        Reads what research/backtest runs already persisted on the pattern;
+        never derives or invents numbers when the run predates skip accounting.
+        """
+        metrics = pattern.metrics_json or {}
+        best_rr_key = f"{float(pattern.best_rr or 0.0):g}"
+        rr_metric_sources = (
+            ("pattern.rr_metrics_json", pattern.rr_metrics_json or {}),
+            ("pattern.metrics_json.rr_metrics", metrics.get("rr_metrics") or {}),
+        )
+        for source, rr_metrics in rr_metric_sources:
+            if not isinstance(rr_metrics, dict):
+                continue
+            keys = [key for key in (best_rr_key,) if key in rr_metrics]
+            keys.extend(key for key in sorted(rr_metrics) if key not in keys)
+            for key in keys:
+                evidence = cls._normalized_skip_evidence(rr_metrics.get(key))
+                if evidence is not None:
+                    return {
+                        "available": True,
+                        "source": f"{source}[{key}]",
+                        "rr_key": key,
+                        **evidence,
+                    }
+        for key in ("backtest", "lab_backtest", "backtest_summary"):
+            evidence = cls._normalized_skip_evidence(metrics.get(key))
+            if evidence is not None:
+                return {
+                    "available": True,
+                    "source": f"pattern.metrics_json.{key}",
+                    **evidence,
+                }
+        evidence = cls._normalized_skip_evidence(metrics)
+        if evidence is not None:
+            return {"available": True, "source": "pattern.metrics_json", **evidence}
+        return {
+            "available": False,
+            "reason": (
+                "no skip accounting (skip_rate + signal/skipped counts) found in "
+                "pattern.rr_metrics_json or pattern.metrics_json; the research run "
+                "likely predates non-trade accounting"
+            ),
+        }
+
+    @staticmethod
     def _research_r_values(pattern: DiscoveredPattern) -> list[float]:
         """Research-side R sample for distribution and dispersion estimates."""
         try:
@@ -766,6 +874,9 @@ class DirectorProductionGate:
             "paper_fill_profit_factor": round(profit_factor, 4),
             "paper_fill_max_drawdown_r": round(max_drawdown, 4),
             "evidence_types_accepted": sorted(PAPER_FILL_EVIDENCE_TYPES),
+            # Evidence only (Wave4-A): research/backtest skip accounting is
+            # surfaced for the Director packet, never used as a blocker here.
+            "research_skip_accounting": DirectorReviewGate._research_skip_accounting(pattern),
         }
 
     def _scientific_contracts(
