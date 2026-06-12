@@ -15,6 +15,7 @@ import pandas as pd
 from tradeo.research.adversarial_research import AdversarialResearchEngine
 from tradeo.research.causal_invariance import CausalInvariantTester
 from tradeo.research.false_match_harness import FalseMatchHarness
+from tradeo.research.conformal_matching import split_conformal_similarity_threshold
 from tradeo.research.foundation_teacher import FoundationChartTeacher
 from tradeo.research.market_replay import MarketReplayEngine
 from tradeo.research.quant_validation import (
@@ -210,6 +211,12 @@ class ClusterResearchEngine:
             metrics["match_tau_similarity"] = self._match_tau_similarity(
                 cluster_vectors, centroid_scaled
             )
+            conformal = self._match_conformal_threshold(cluster_vectors, centroid_scaled)
+            metrics["match_conformal"] = conformal
+            if not conformal.get("blocked"):
+                metrics["match_conformal_similarity_threshold"] = conformal["similarity_threshold"]
+            prototype = self._prototype_match_contract(cluster_vectors, centroid_scaled)
+            metrics.update(prototype)
             false_match = self._false_match_metrics(
                 cluster_id=int(cluster_id),
                 all_labels=all_labels,
@@ -1925,6 +1932,63 @@ class ClusterResearchEngine:
         pct = min(max(float(self.match_tau_percentile), 50.0), 100.0)
         tau = float(np.quantile(similarities, 1.0 - pct / 100.0))
         return round(tau, 6)
+
+    @staticmethod
+    def _match_conformal_threshold(
+        cluster_vectors: np.ndarray,
+        centroid: np.ndarray,
+    ) -> dict[str, object]:
+        if cluster_vectors.size == 0:
+            return {"blocked": True, "reason": "empty_cluster"}
+        similarities = FalseMatchHarness._similarities(cluster_vectors, centroid)
+        return split_conformal_similarity_threshold(
+            similarities,
+            alpha=0.10,
+            min_calibration_count=20,
+        )
+
+    @staticmethod
+    def _prototype_match_contract(
+        cluster_vectors: np.ndarray,
+        centroid: np.ndarray,
+        *,
+        medoid_count: int = 16,
+        knn_k: int = 3,
+    ) -> dict[str, object]:
+        if cluster_vectors.size == 0:
+            return {
+                "matcher_medoids_scaled": [],
+                "matcher_diag_variance_scaled": [],
+                "match_knn_similarity_threshold": 0.0,
+            }
+        distances = np.linalg.norm(cluster_vectors - centroid, axis=1) / max(
+            1.0, math.sqrt(cluster_vectors.shape[1])
+        )
+        medoid_indices = np.argsort(distances)[: max(1, min(medoid_count, cluster_vectors.shape[0]))]
+        medoids = cluster_vectors[medoid_indices]
+        k = max(1, min(knn_k, medoids.shape[0]))
+        member_distances = []
+        for vector in cluster_vectors:
+            dists = np.linalg.norm(medoids - vector, axis=1) / max(
+                1.0, math.sqrt(cluster_vectors.shape[1])
+            )
+            member_distances.append(float(np.mean(np.sort(dists)[:k])))
+        member_similarities = 1.0 / (1.0 + np.asarray(member_distances, dtype=float))
+        threshold = float(np.quantile(member_similarities, 0.10))
+        variance = np.nan_to_num(np.var(cluster_vectors, axis=0), nan=1.0, posinf=1.0, neginf=1.0)
+        variance = np.maximum(variance, 1e-6)
+        return {
+            "matcher_medoids_scaled": np.round(medoids, 6).tolist(),
+            "matcher_diag_variance_scaled": np.round(variance, 6).tolist(),
+            "match_knn_similarity_threshold": round(threshold, 6),
+            "matcher_prototype_contract": {
+                "method": "nearest_centroid_medoids_diag_variance_v1",
+                "medoid_count": int(medoids.shape[0]),
+                "knn_k": k,
+                "threshold_recall_target": 0.90,
+                "threshold_method": "p10_member_knn_similarity",
+            },
+        }
 
     def _false_match_metrics(
         self,

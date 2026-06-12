@@ -221,6 +221,38 @@ def test_cluster_signature_records_medoid_and_concentration() -> None:
     assert "symbol_concentration_gt_40pct" in checks["reasons"]
 
 
+def test_cluster_research_persists_matcher_prototype_contract() -> None:
+    vectors = np.asarray(
+        [[0.0, 0.0], [0.1, 0.0], [0.2, 0.0], [0.3, 0.0], [0.4, 0.0], [0.5, 0.0]],
+        dtype=float,
+    )
+
+    contract = ClusterResearchEngine._prototype_match_contract(
+        vectors,
+        np.asarray([0.2, 0.0]),
+        medoid_count=3,
+        knn_k=2,
+    )
+
+    assert len(contract["matcher_medoids_scaled"]) == 3
+    assert len(contract["matcher_diag_variance_scaled"]) == 2
+    assert contract["match_knn_similarity_threshold"] > 0
+    assert contract["matcher_prototype_contract"]["knn_k"] == 2
+
+
+def test_cluster_research_persists_conformal_match_threshold() -> None:
+    vectors = np.asarray([[float(i) / 100.0, 0.0] for i in range(25)], dtype=float)
+
+    report = ClusterResearchEngine._match_conformal_threshold(
+        vectors,
+        np.asarray([0.12, 0.0]),
+    )
+
+    assert report["blocked"] is False
+    assert report["similarity_threshold"] > 0
+    assert report["target_recall"] == 0.9
+
+
 def test_cluster_engine_selects_best_rr_from_train_only() -> None:
     train = [
         _research_sample(i, vector_value=0.0, highs=[121.0], lows=[99.0], closes=[100.0])
