@@ -183,6 +183,13 @@ class Settings(BaseSettings):
     # The global similarity threshold remains as a safety floor only (P0-4).
     discovery_match_per_pattern_threshold: bool = True
     discovery_match_tau_percentile: float = 92.5
+    # Temporal weighting of the matcher's scaled window (audit §2.2.a): an
+    # exponential ramp gamma^(bars_from_end) per channel block so the trigger
+    # end of the window dominates the distance. Stays OFF until the false-match
+    # harness (§3.1.5) shows fpr_at_recall improves in purged validation; the
+    # research run already publishes both curves per pattern.
+    discovery_match_temporal_weighting_enabled: bool = False
+    discovery_match_temporal_gamma: float = 0.97
     discovery_match_max_results: int = 100
     discovery_registry_similarity_threshold: float = 0.96
     research_director_enabled: bool = True

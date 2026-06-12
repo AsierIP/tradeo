@@ -20,8 +20,24 @@ class PatternEmbeddingEngine:
 
     points_per_channel: int = 24
     CONTRACT_ID: ClassVar[str] = "tradeo.pattern_embedding.v2.legacy_prefix_stable"
+    # Vector layout owned by embed(): downsampled channel blocks carry a bar
+    # position, scalar blocks do not. temporal_weights() depends on these counts
+    # staying in sync with the channel lists in embed().
+    LEGACY_CHANNEL_COUNT: ClassVar[int] = 9
+    LEGACY_SCALAR_COUNT: ClassVar[int] = 23
+    ENHANCED_CHANNEL_COUNT: ClassVar[int] = 3
+    ENHANCED_SCALAR_COUNT: ClassVar[int] = 23
+    MATCHER_SCALING_BASE: ClassVar[str] = "train_fit_standard_scaler_prefix"
 
-    def contract(self, *, vector_length: int | None = None) -> dict[str, object]:
+    def contract(
+        self,
+        *,
+        vector_length: int | None = None,
+        temporal_gamma: float | None = None,
+    ) -> dict[str, object]:
+        matcher_scaling = self.MATCHER_SCALING_BASE
+        if temporal_gamma is not None:
+            matcher_scaling = f"{matcher_scaling}+temporal_gamma_{float(temporal_gamma):g}"
         return {
             "contract_id": self.CONTRACT_ID,
             "engine": "PatternEmbeddingEngine",
@@ -35,8 +51,34 @@ class PatternEmbeddingEngine:
                 "volume": "volume/median_volume_clipped",
                 "range": "high_low_pct_clipped",
             },
-            "matcher_scaling": "train_fit_standard_scaler_prefix",
+            "matcher_scaling": matcher_scaling,
         }
+
+    def temporal_weights(self, length: int, *, gamma: float = 0.97) -> np.ndarray:
+        """Exponential time ramp per downsampled channel block (audit §2.2.a).
+
+        Weight gamma^(bars_from_end) over each points_per_channel block, so the
+        trigger end of the window dominates the distance and two shapes that
+        differ only in handle phase stop colliding. Scalar features carry no bar
+        position and keep weight 1.0. `length` may be a stored centroid prefix
+        shorter than the full vector; weights are truncated to match.
+        """
+        ppc = int(self.points_per_channel)
+        gamma = float(gamma)
+        if not 0.0 < gamma <= 1.0:
+            raise ValueError(f"gamma must be in (0, 1], got {gamma}")
+        weights = np.ones(max(0, int(length)), dtype=float)
+        ramp = gamma ** np.arange(ppc - 1, -1, -1, dtype=float)
+        legacy_end = self.LEGACY_CHANNEL_COUNT * ppc
+        enhanced_start = legacy_end + self.LEGACY_SCALAR_COUNT
+        block_starts = [ch * ppc for ch in range(self.LEGACY_CHANNEL_COUNT)]
+        block_starts += [enhanced_start + ch * ppc for ch in range(self.ENHANCED_CHANNEL_COUNT)]
+        for start in block_starts:
+            if start >= len(weights):
+                break
+            end = min(start + ppc, len(weights))
+            weights[start:end] = ramp[: end - start]
+        return weights
 
     def embed(
         self,

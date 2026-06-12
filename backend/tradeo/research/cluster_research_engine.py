@@ -14,6 +14,7 @@ import pandas as pd
 
 from tradeo.research.adversarial_research import AdversarialResearchEngine
 from tradeo.research.causal_invariance import CausalInvariantTester
+from tradeo.research.false_match_harness import FalseMatchHarness
 from tradeo.research.foundation_teacher import FoundationChartTeacher
 from tradeo.research.market_replay import MarketReplayEngine
 from tradeo.research.quant_validation import (
@@ -50,6 +51,9 @@ class ClusterResearchEngine:
     cost_stress_multipliers: list[float] | None = None
     required_cost_stress_multiplier: float = 2.0
     match_tau_percentile: float = 92.5
+    # Diagnostic gamma for the temporal-weighting variant of the false-match
+    # harness (audit §2.2.a); live matcher adoption is gated separately.
+    match_temporal_gamma: float = 0.97
     quant_bootstrap_draws: int = 500
     benchmark_regime_table: pd.DataFrame | None = None
 
@@ -206,6 +210,21 @@ class ClusterResearchEngine:
             metrics["match_tau_similarity"] = self._match_tau_similarity(
                 cluster_vectors, centroid_scaled
             )
+            false_match = self._false_match_metrics(
+                cluster_id=int(cluster_id),
+                all_labels=all_labels,
+                ordered_samples=ordered_samples,
+                matrix_all_scaled=matrix_all_scaled,
+                cluster_samples=cluster_samples,
+                cluster_vectors=cluster_vectors,
+                centroid_scaled=centroid_scaled,
+                tau_similarity=float(metrics["match_tau_similarity"]),
+            )
+            metrics["false_match_harness"] = false_match["unweighted"]
+            metrics["false_match_harness_temporal"] = false_match["temporal"]
+            metrics["fpr_at_recall90"] = false_match["unweighted"].get("fpr_at_recall")
+            metrics["match_tau_similarity_temporal"] = false_match["tau_similarity_temporal"]
+            metrics["temporal_weighting"] = false_match["temporal_weighting"]
             signature = self._cluster_signature(cluster_samples, cluster_vectors, centroid_scaled, side)
             metrics["cluster_signature"] = signature
             metrics["medoid"] = signature["medoid"]
@@ -1887,7 +1906,12 @@ class ClusterResearchEngine:
             "method": "dedup_uniqueness_stationary_bootstrap_newey_west",
         }
 
-    def _match_tau_similarity(self, cluster_vectors: np.ndarray, centroid: np.ndarray) -> float:
+    def _match_tau_similarity(
+        self,
+        cluster_vectors: np.ndarray,
+        centroid: np.ndarray,
+        weights: np.ndarray | None = None,
+    ) -> float:
         """Per-pattern matcher threshold from the intra-cluster similarity spread.
 
         Uses the same normalized-distance -> similarity mapping as
@@ -1897,13 +1921,74 @@ class ClusterResearchEngine:
         """
         if cluster_vectors.size == 0:
             return 0.0
-        distances = np.linalg.norm(cluster_vectors - centroid, axis=1) / max(
-            1.0, math.sqrt(cluster_vectors.shape[1])
-        )
-        similarities = 1.0 / (1.0 + distances)
+        similarities = FalseMatchHarness._similarities(cluster_vectors, centroid, weights)
         pct = min(max(float(self.match_tau_percentile), 50.0), 100.0)
         tau = float(np.quantile(similarities, 1.0 - pct / 100.0))
         return round(tau, 6)
+
+    def _false_match_metrics(
+        self,
+        *,
+        cluster_id: int,
+        all_labels: np.ndarray,
+        ordered_samples: list[WindowSample],
+        matrix_all_scaled: np.ndarray,
+        cluster_samples: list[WindowSample],
+        cluster_vectors: np.ndarray,
+        centroid_scaled: np.ndarray,
+        tau_similarity: float,
+    ) -> dict[str, object]:
+        """False-match harness per pattern (audit §3.1.5) + temporal variant (§2.2.a).
+
+        Negative banks are disjoint: same-symbol windows outside the cluster are
+        the hard negatives; the remaining members of other clusters with the same
+        window_size cover cross-pattern confusion. Shadow occurrences only exist
+        lab-side, so that bank is empty at research time. The temporal variant
+        reweights the same banks with the gamma ramp and its own tau, so the
+        gamma change is adopted only if this curve improves (§2.2.a gate).
+        """
+        outside = np.flatnonzero(np.asarray(all_labels) != cluster_id)
+        cluster_symbols = {sample.symbol for sample in cluster_samples}
+        same_symbol_mask = np.asarray(
+            [ordered_samples[int(i)].symbol in cluster_symbols for i in outside],
+            dtype=bool,
+        )
+        banks = {
+            "same_symbol_outside_cluster": matrix_all_scaled[outside[same_symbol_mask]],
+            "other_cluster_members": matrix_all_scaled[outside[~same_symbol_mask]],
+            "shadow_occurrences": np.empty((0, matrix_all_scaled.shape[1])),
+        }
+        harness = FalseMatchHarness(random_state=self.random_state)
+        unweighted = harness.evaluate(
+            positives=cluster_vectors,
+            centroid=centroid_scaled,
+            negative_banks=banks,
+            tau_similarity=tau_similarity,
+        )
+        gamma = float(self.match_temporal_gamma)
+        engine = PatternEmbeddingEngine()
+        weights = engine.temporal_weights(matrix_all_scaled.shape[1], gamma=gamma)
+        tau_temporal = self._match_tau_similarity(cluster_vectors, centroid_scaled, weights)
+        temporal = harness.evaluate(
+            positives=cluster_vectors,
+            centroid=centroid_scaled,
+            negative_banks=banks,
+            tau_similarity=tau_temporal,
+            weights=weights,
+        )
+        return {
+            "unweighted": unweighted,
+            "temporal": temporal,
+            "tau_similarity_temporal": tau_temporal,
+            "temporal_weighting": {
+                "gamma": gamma,
+                "matcher_scaling": str(
+                    engine.contract(temporal_gamma=gamma)["matcher_scaling"]
+                ),
+                "adopted_in_matcher": False,
+                "adoption_gate": "temporal fpr_at_recall must beat unweighted in purged validation",
+            },
+        }
 
     @staticmethod
     def _pattern_key(window_size: int, cluster_id: int, side: str, centroid: Iterable[float]) -> str:
