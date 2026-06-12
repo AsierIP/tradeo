@@ -17,6 +17,7 @@ from tradeo.services.evidence import (
     is_director_review_paper_fill_evidence,
 )
 from tradeo.services.ibkr_broker import IBKRBroker
+from tradeo.services.market_quotes import QuoteSnapshotProvider, capture_signal_spread_snapshot
 from tradeo.modules.laboratory.paper_observations import LAB_SHADOW_EXECUTION_MODE, LabPaperObservationService
 from tradeo.services.market_session import market_session_status
 from tradeo.services.order_outcomes import mark_signal_order_failure
@@ -64,6 +65,7 @@ class PatternEntryScanner:
 
     settings: Settings | None = None
     matcher: NovelPatternMatcher | None = None
+    quote_provider: QuoteSnapshotProvider | None = None
 
     def __post_init__(self) -> None:
         self.settings = self.settings or get_settings()
@@ -1189,6 +1191,13 @@ class PatternEntryScanner:
             execution_requested=execute_orders,
             market_session=market_session,
         )
+        spread_snapshot = capture_signal_spread_snapshot(
+            symbol=candidate.symbol,
+            entry=candidate.entry,
+            stop=candidate.stop,
+            settings=settings,
+            provider=self.quote_provider,
+        )
         evidence_type = self._signal_evidence_type(
             module,
             match=match,
@@ -1236,6 +1245,8 @@ class PatternEntryScanner:
                 "entry_quality_score": entry_quality["score"],
                 "entry_quality": entry_quality,
                 "signal_snapshot": signal_snapshot,
+                "spread_snapshot": spread_snapshot,
+                "spread_observed_pct": spread_snapshot.get("spread_observed_pct"),
                 "match": match,
                 "entry_gate": match.get("metrics", {}).get("entry_gate"),
                 "near_miss": bool(match.get("near_miss")),

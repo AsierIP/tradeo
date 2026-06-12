@@ -172,6 +172,37 @@ class RiskLedger(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class AgentMessageSeverity(str, Enum):
+    INFO = "info"
+    WARNING = "warning"
+    CRITICAL = "critical"
+    BLOCKING = "blocking"
+
+
+class AgentMessage(Base):
+    """Versioned, idempotent message bus row for bridge agents (informe §5).
+
+    Bridge agents never call each other directly: they publish evidence here
+    and consumers poll/mark consumption. Rows are immutable once written
+    except for ``consumed_by``. Promotion state is never written through this
+    table — only evidence and blocks.
+    """
+
+    __tablename__ = "agent_messages"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    agent: Mapped[str] = mapped_column(String(80), index=True)
+    schema_version: Mapped[int] = mapped_column(Integer, default=1)
+    produced_at_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    input_refs: Mapped[list[str]] = mapped_column(json_type(), default=list)
+    payload_json: Mapped[dict[str, Any]] = mapped_column(json_type(), default=dict)
+    severity: Mapped[AgentMessageSeverity] = mapped_column(
+        SAEnum(AgentMessageSeverity), default=AgentMessageSeverity.INFO, index=True
+    )
+    consumed_by: Mapped[list[str]] = mapped_column(json_type(), default=list)
+    idempotency_key: Mapped[str] = mapped_column(String(160), unique=True, index=True)
+
+
 class DiscoveredPatternStatus(str, Enum):
     LAB = "lab"
     LAB_WATCHLIST = "lab_watchlist"

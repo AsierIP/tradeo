@@ -21,3 +21,8 @@ for _name, _sub in (
     ("TRADEO_ARTIFACTS_DIR", "artifacts"),
 ):
     os.environ.setdefault(_name, os.path.join(_TEST_DATA_ROOT, _sub))
+
+# No IBKR is reachable in tests: the per-signal spread snapshot would attempt
+# a broker connection for every stored signal. Tests that exercise it inject
+# a fake provider and enable the flag explicitly on their own Settings.
+os.environ.setdefault("TRADEO_SIGNAL_SPREAD_SNAPSHOT_ENABLED", "false")

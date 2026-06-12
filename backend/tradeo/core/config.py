@@ -274,6 +274,12 @@ class Settings(BaseSettings):
     ibkr_allow_market_orders: bool = False
     ibkr_allowed_symbols: str = ""
 
+    # Per-signal quote snapshot (informe §3.3.1): capture real bid/ask/last at
+    # signal time so spread becomes a datum, not a proxy. Fail-soft: a failed
+    # snapshot never blocks the signal, only records itself as unavailable.
+    signal_spread_snapshot_enabled: bool = True
+    signal_spread_snapshot_timeout_seconds: float = 4.0
+
     @property
     def ibkr_allowed_symbol_set(self) -> set[str]:
         return {s.strip().upper() for s in self.ibkr_allowed_symbols.split(",") if s.strip()}
