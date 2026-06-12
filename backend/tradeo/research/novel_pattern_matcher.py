@@ -82,8 +82,13 @@ class NovelPatternMatcher:
         matches: list[dict[str, Any]] = []
         regime_gate_blocked = 0
         engine = PatternEmbeddingEngine()
+        contract_gamma = (
+            float(settings.discovery_match_temporal_gamma)
+            if settings.discovery_match_temporal_weighting_enabled
+            else None
+        )
         feature_parity_contract = {
-            **engine.contract(),
+            **engine.contract(temporal_gamma=contract_gamma),
             "research_path": "WindowSampler -> PatternEmbeddingEngine.embed",
             "lab_path": "NovelPatternMatcher -> PatternEmbeddingEngine.embed",
         }
@@ -612,18 +617,26 @@ class NovelPatternMatcher:
             "target_price": round(target, 4),
         }
 
-    def _effective_threshold(self, pattern: DiscoveredPattern, floor: float) -> float:
+    def _effective_threshold(
+        self,
+        pattern: DiscoveredPattern,
+        floor: float,
+        *,
+        tau_key: str = "match_tau_similarity",
+    ) -> float:
         """Per-pattern similarity threshold; the global config value is a floor.
 
         A single global threshold misfits every cluster at once: compact clusters
         accept spurious matches and loose clusters never fire (P0-4). Research
         persists match_tau_similarity (the intra-cluster similarity percentile),
-        and the matcher requires the stricter of the two.
+        and the matcher requires the stricter of the two. With temporal
+        weighting active, similarities live on the weighted scale, so the tau
+        must come from the matching weighted distribution (tau_key).
         """
         settings = self.settings
         if settings is None or not settings.discovery_match_per_pattern_threshold:
             return floor
-        tau = (pattern.metrics_json or {}).get("match_tau_similarity")
+        tau = (pattern.metrics_json or {}).get(tau_key)
         try:
             tau = float(tau)
         except (TypeError, ValueError):
@@ -631,6 +644,30 @@ class NovelPatternMatcher:
         if not math.isfinite(tau) or tau <= 0.0:
             return floor
         return max(floor, tau)
+
+    def _temporal_weighting_for_pattern(
+        self, pattern: DiscoveredPattern
+    ) -> tuple[float, float] | None:
+        """Gamma + weighted tau when temporal weighting (audit §2.2.a) applies.
+
+        Requires the config flag AND research-persisted weighted tau with its
+        gamma: weighting only one side of the research<->lab pair would compare
+        weighted similarities against an unweighted threshold.
+        """
+        settings = self.settings
+        if settings is None or not settings.discovery_match_temporal_weighting_enabled:
+            return None
+        metrics = pattern.metrics_json or {}
+        gamma = (metrics.get("temporal_weighting") or {}).get("gamma")
+        tau = metrics.get("match_tau_similarity_temporal")
+        try:
+            gamma = float(gamma)
+            tau = float(tau)
+        except (TypeError, ValueError):
+            return None
+        if not (0.0 < gamma <= 1.0) or not math.isfinite(tau) or tau <= 0.0:
+            return None
+        return gamma, tau
 
     def _similarity_diagnostic(
         self,
@@ -648,14 +685,33 @@ class NovelPatternMatcher:
         scaled = self._scaled_vector_for_pattern(vector, centroid, scaler_mean, scaler_scale)
         if scaled is None:
             return None
-        normalized_distance = float(np.linalg.norm(scaled - centroid) / max(1.0, np.sqrt(len(centroid))))
+        temporal = self._temporal_weighting_for_pattern(pattern)
+        if temporal is not None:
+            gamma, _ = temporal
+            engine = PatternEmbeddingEngine()
+            weights = engine.temporal_weights(len(centroid), gamma=gamma)
+            normalized_distance = float(
+                np.linalg.norm((scaled - centroid) * weights)
+                / max(1.0, math.sqrt(float(np.sum(weights * weights))))
+            )
+            effective_threshold = self._effective_threshold(
+                pattern, floor, tau_key="match_tau_similarity_temporal"
+            )
+        else:
+            normalized_distance = float(
+                np.linalg.norm(scaled - centroid) / max(1.0, np.sqrt(len(centroid)))
+            )
+            effective_threshold = self._effective_threshold(pattern, floor)
         similarity = float(1.0 / (1.0 + normalized_distance))
-        effective_threshold = self._effective_threshold(pattern, floor)
         return {
             "similarity": round(similarity, 6),
             "normalized_distance": round(normalized_distance, 6),
             "similarity_threshold_used": round(float(effective_threshold), 6),
             "passed_threshold": similarity >= effective_threshold,
+            "temporal_weighting": {
+                "enabled": temporal is not None,
+                "gamma": temporal[0] if temporal is not None else None,
+            },
         }
 
     @staticmethod
