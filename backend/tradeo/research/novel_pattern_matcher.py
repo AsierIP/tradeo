@@ -651,14 +651,23 @@ class NovelPatternMatcher:
         settings = self.settings
         if settings is None or not settings.discovery_match_per_pattern_threshold:
             return floor
-        tau = (pattern.metrics_json or {}).get(tau_key)
+        metrics = pattern.metrics_json or {}
+        conformal_tau = metrics.get("match_conformal_similarity_threshold")
+        try:
+            conformal_tau = float(conformal_tau)
+        except (TypeError, ValueError):
+            conformal_tau = None
+        tau = metrics.get(tau_key)
         try:
             tau = float(tau)
         except (TypeError, ValueError):
-            return floor
-        if not math.isfinite(tau) or tau <= 0.0:
-            return floor
-        return max(floor, tau)
+            tau = None
+        candidates = [float(floor)]
+        if conformal_tau is not None and math.isfinite(conformal_tau) and conformal_tau > 0.0:
+            candidates.append(conformal_tau)
+        if tau is not None and math.isfinite(tau) and tau > 0.0:
+            candidates.append(tau)
+        return max(candidates)
 
     def _temporal_weighting_for_pattern(
         self, pattern: DiscoveredPattern

@@ -431,6 +431,24 @@ def test_laboratory_matcher_hard_blocks_ambiguous_weak_entry() -> None:
     assert result["matches"] == []
 
 
+def test_matcher_effective_threshold_prefers_conformal_tau() -> None:
+    db = session_factory()
+    provider = FixtureProvider()
+    pattern = add_pattern(db, provider, status=DiscoveredPatternStatus.LAB_CANDIDATE)
+    pattern.metrics_json = {
+        **pattern.metrics_json,
+        "match_tau_similarity": 0.60,
+        "match_conformal_similarity_threshold": 0.72,
+    }
+
+    matcher = NovelPatternMatcher(
+        provider=provider,
+        settings=Settings(discovery_match_per_pattern_threshold=True),
+    )
+
+    assert matcher._effective_threshold(pattern, 0.45) == 0.72
+
+
 def test_laboratory_volume_near_miss_opens_shadow_observation_without_ibkr(monkeypatch) -> None:
     db = session_factory()
     provider = FixtureProvider()
