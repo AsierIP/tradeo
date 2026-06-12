@@ -25,6 +25,7 @@ from tradeo.research.quant_validation import (
     stationary_bootstrap_ci,
 )
 from tradeo.research.pattern_embedding_engine import PatternEmbeddingEngine
+from tradeo.research.prototype_bank import build_prototype_bank
 from tradeo.research.reward_risk_analyzer import RewardRiskAnalyzer
 from tradeo.research.types import ClusterCandidate, Side, WindowSample
 from tradeo.services.market_regime import (
@@ -52,6 +53,9 @@ class ClusterResearchEngine:
     match_tau_percentile: float = 92.5
     quant_bootstrap_draws: int = 500
     benchmark_regime_table: pd.DataFrame | None = None
+    conformal_alpha: float = 0.10
+    prototype_medoid_count: int = 16
+    prototype_knn_k: int = 3
 
     def discover(self, samples: list[WindowSample]) -> list[ClusterCandidate]:
         candidates: list[ClusterCandidate] = []
@@ -206,6 +210,17 @@ class ClusterResearchEngine:
             metrics["match_tau_similarity"] = self._match_tau_similarity(
                 cluster_vectors, centroid_scaled
             )
+            # Audit §2.3.4 + §3.1.3: medoids + diagonal covariance + conformal
+            # taus, fit on TRAIN members only (holdout stays out of the bank).
+            prototype_bank = build_prototype_bank(
+                matrix_train_scaled[train_idxs],
+                medoid_count=self.prototype_medoid_count,
+                knn_k=self.prototype_knn_k,
+                alpha=self.conformal_alpha,
+                seed=self._prototype_bank_seed(window_size, int(cluster_id)),
+            )
+            if prototype_bank is not None:
+                metrics["prototype_bank"] = prototype_bank
             signature = self._cluster_signature(cluster_samples, cluster_vectors, centroid_scaled, side)
             metrics["cluster_signature"] = signature
             metrics["medoid"] = signature["medoid"]
@@ -1886,6 +1901,10 @@ class ClusterResearchEngine:
             "horizon_bars": int(horizon_bars),
             "method": "dedup_uniqueness_stationary_bootstrap_newey_west",
         }
+
+    def _prototype_bank_seed(self, window_size: int, cluster_id: int) -> int:
+        """Deterministic per-cluster seed so reruns rebuild the same bank."""
+        return int(self.random_state) * 1_000_003 + int(window_size) * 101 + int(cluster_id)
 
     def _match_tau_similarity(self, cluster_vectors: np.ndarray, centroid: np.ndarray) -> float:
         """Per-pattern matcher threshold from the intra-cluster similarity spread.

@@ -14,6 +14,11 @@ from sqlalchemy.orm import Session
 from tradeo.core.config import Settings, get_settings
 from tradeo.db.models import DiscoveredPattern, DiscoveredPatternMatch, DiscoveredPatternStatus
 from tradeo.research.pattern_embedding_engine import PatternEmbeddingEngine
+from tradeo.research.prototype_bank import (
+    knn_distance,
+    mahalanobis_diag_distance,
+    parse_prototype_bank,
+)
 from tradeo.services.data_provider import MarketDataProvider, pick_symbols
 from tradeo.services.entry_variants import (
     build_entry_audit_context,
@@ -254,6 +259,7 @@ class NovelPatternMatcher:
                                 "side": pattern.side,
                                 "similarity": round(similarity, 6),
                                 "similarity_threshold_used": round(effective_threshold, 6),
+                                "conformal_gate": diagnostic.get("conformal_gate"),
                                 "match_ambiguity": ambiguity,
                                 "ambiguity_ratio": ambiguity["ambiguity_ratio"],
                                 "score": score,
@@ -289,6 +295,7 @@ class NovelPatternMatcher:
                                         "vector_length": int(len(vector)),
                                     },
                                     "match_ambiguity": ambiguity,
+                                    "conformal_gate": diagnostic.get("conformal_gate"),
                                     "features": features,
                                     "entry_gate": entry_gate,
                                     "base_entry_gate": base_gate,
@@ -650,12 +657,61 @@ class NovelPatternMatcher:
             return None
         normalized_distance = float(np.linalg.norm(scaled - centroid) / max(1.0, np.sqrt(len(centroid))))
         similarity = float(1.0 / (1.0 + normalized_distance))
+        conformal = self._conformal_gate(pattern, scaled)
+        if conformal is not None:
+            # Audit §3.1.1-3: kNN-to-medoids + diagonal Mahalanobis with
+            # split-conformal taus replace the tau-percentile similarity as the
+            # primary criterion. The global similarity floor remains an operator
+            # brake; centroid similarity stays published as continuity diagnostic.
+            return {
+                "similarity": round(similarity, 6),
+                "normalized_distance": round(normalized_distance, 6),
+                "similarity_threshold_used": round(float(floor), 6),
+                "passed_threshold": bool(similarity >= floor and conformal["passed"]),
+                "centroid_similarity_role": "diagnostic_only",
+                "conformal_gate": conformal,
+            }
         effective_threshold = self._effective_threshold(pattern, floor)
         return {
             "similarity": round(similarity, 6),
             "normalized_distance": round(normalized_distance, 6),
             "similarity_threshold_used": round(float(effective_threshold), 6),
             "passed_threshold": similarity >= effective_threshold,
+        }
+
+    def _conformal_gate(
+        self,
+        pattern: DiscoveredPattern,
+        scaled: np.ndarray,
+    ) -> dict[str, Any] | None:
+        """kNN/Mahalanobis conformal gate when Research persisted a bank.
+
+        Returns None (legacy gate applies) when the flag is off, no valid bank
+        exists, or the bank dimension does not match the compared prefix.
+        """
+        settings = self.settings
+        if settings is None or not settings.discovery_match_conformal_gate_enabled:
+            return None
+        bank = parse_prototype_bank(pattern.metrics_json or {})
+        if bank is None or bank.dimension != len(scaled):
+            return None
+        d_knn = knn_distance(scaled, bank.medoids, bank.knn_k)
+        d_maha = mahalanobis_diag_distance(scaled, bank.maha_center, bank.maha_var)
+        knn_passed = d_knn <= bank.tau_knn_distance
+        maha_passed = d_maha <= bank.tau_maha_distance
+        return {
+            "method": "knn_medoids_mahalanobis_diag_split_conformal",
+            "knn_distance": round(d_knn, 6),
+            "tau_knn_distance": round(bank.tau_knn_distance, 6),
+            "knn_passed": bool(knn_passed),
+            "knn_similarity": round(1.0 / (1.0 + d_knn), 6),
+            "maha_distance": round(d_maha, 6),
+            "tau_maha_distance": round(bank.tau_maha_distance, 6),
+            "maha_passed": bool(maha_passed),
+            "alpha": round(bank.alpha, 6),
+            "knn_k": int(bank.knn_k),
+            "medoid_count": int(len(bank.medoids)),
+            "passed": bool(knn_passed and maha_passed),
         }
 
     @staticmethod

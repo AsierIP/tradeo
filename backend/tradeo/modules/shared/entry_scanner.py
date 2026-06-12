@@ -122,6 +122,7 @@ class PatternEntryScanner:
         skipped_cooldown = 0
         rejected_by_entry_gate = 0
         rejected_by_entry_quality = 0
+        rejected_by_ambiguity = 0
         rejected_by_risk = 0
         rejected_by_production_manifest = 0
         near_miss_shadow_observations_opened = 0
@@ -255,6 +256,44 @@ class PatternEntryScanner:
                 )
                 db.commit()
                 continue
+            ambiguity_block = self._ambiguity_gate(match, entry_quality)
+            if ambiguity_block is not None:
+                # Audit §3.1.4: two patterns nearly tied on the same window and
+                # quality below the escalated bar -> abstain, keep the outcome
+                # observable as a near-miss shadow (reason: ambiguous_match).
+                rejected_by_ambiguity += 1
+                db.add(
+                    AuditLog(
+                        actor=module,
+                        action="entry_match_rejected_by_ambiguity",
+                        entity_type="discovered_pattern_match",
+                        entity_id=str(match.get("pattern_id", "")),
+                        details_json={
+                            "match": match,
+                            "entry_quality": entry_quality,
+                            "ambiguity_gate": ambiguity_block,
+                        },
+                    )
+                )
+                db.commit()
+                if module == "laboratory":
+                    opened = self._open_near_miss_shadow_observation(
+                        db,
+                        match=match,
+                        resolved=resolved,
+                        session=session,
+                        extra_reasons=["ambiguous_match"],
+                    )
+                    if opened is not None:
+                        signal, observation = opened
+                        signals_created += 1
+                        signal_ids.append(signal.id)
+                        near_miss_signal_ids.append(signal.id)
+                        paper_observations_opened += 1
+                        near_miss_shadow_observations_opened += 1
+                        paper_observation_trade_ids.append(observation.id)
+                        near_miss_trade_ids.append(observation.id)
+                continue
             if not resolved["store_signals"]:
                 continue
 
@@ -329,6 +368,7 @@ class PatternEntryScanner:
             "skipped_cooldown": skipped_cooldown,
             "rejected_by_entry_gate": rejected_by_entry_gate,
             "rejected_by_entry_quality": rejected_by_entry_quality,
+            "rejected_by_ambiguity": rejected_by_ambiguity,
             "rejected_by_risk": rejected_by_risk,
             "rejected_by_production_manifest": rejected_by_production_manifest,
             "near_miss_shadow_observations_opened": near_miss_shadow_observations_opened,
@@ -518,6 +558,7 @@ class PatternEntryScanner:
             "skipped_cooldown": 0,
             "rejected_by_entry_gate": 0,
             "rejected_by_entry_quality": 0,
+            "rejected_by_ambiguity": 0,
             "rejected_by_risk": 0,
             "rejected_by_production_manifest": 0,
             "near_miss_shadow_observations_opened": 0,
@@ -846,6 +887,49 @@ class PatternEntryScanner:
                 by_key.setdefault(key, []).append(float(trade.r_multiple or 0.0))
         return {key: self._history_item(values) for key, values in by_key.items()}
 
+    def _ambiguity_gate(
+        self,
+        match: dict[str, Any],
+        entry_quality: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        """Ambiguity with teeth (audit §3.1.4): block ambiguous matches that do
+        not clear the escalated quality bar. Returns the block details, or None
+        when the match may proceed. Annotates the match either way so the
+        escalation is auditable on stored signals.
+        """
+        settings = self.settings
+        assert settings is not None
+        if not settings.entry_ambiguity_gate_enabled:
+            return None
+        ambiguity = match.get("match_ambiguity") or (match.get("metrics") or {}).get(
+            "match_ambiguity"
+        ) or {}
+        ratio = self._safe_float(
+            match.get("ambiguity_ratio", ambiguity.get("ambiguity_ratio")), 0.0
+        )
+        if ratio < float(settings.entry_ambiguity_ratio_threshold):
+            return None
+        required_quality = float(settings.entry_min_quality_score) + float(
+            settings.entry_ambiguity_quality_margin
+        )
+        quality_score = self._safe_float(entry_quality.get("score"), 0.0)
+        details = {
+            "ambiguity_ratio": round(ratio, 6),
+            "ambiguity_ratio_threshold": float(settings.entry_ambiguity_ratio_threshold),
+            "second_best_pattern_key": ambiguity.get("second_best_pattern_key"),
+            "required_quality_score": round(required_quality, 6),
+            "entry_quality_score": round(quality_score, 6),
+            "escalated": True,
+            "passed": quality_score >= required_quality,
+        }
+        match["ambiguity_gate"] = details
+        metrics = match.get("metrics")
+        if isinstance(metrics, dict):
+            metrics["ambiguity_gate"] = details
+        if details["passed"]:
+            return None
+        return details
+
     def _open_near_miss_shadow_observation(
         self,
         db: Session,
@@ -853,6 +937,7 @@ class PatternEntryScanner:
         match: dict[str, Any],
         resolved: dict[str, Any],
         session: dict[str, Any],
+        extra_reasons: list[str] | None = None,
     ) -> tuple[Signal, Trade] | None:
         settings = self.settings
         assert settings is not None
@@ -903,7 +988,18 @@ class PatternEntryScanner:
             db.commit()
             return None
         near_miss_reasons = self._entry_gate_reasons(entry_gate)
-        match = self._mark_near_miss_shadow_match(match, near_miss_reasons)
+        for reason in extra_reasons or []:
+            if reason not in near_miss_reasons:
+                near_miss_reasons.append(reason)
+        if extra_reasons and "ambiguous_match" in extra_reasons:
+            match = self._mark_near_miss_shadow_match(
+                match,
+                near_miss_reasons,
+                near_miss_type="ambiguous_match_shadow",
+                note="abstained: ambiguous match below escalated quality bar.",
+            )
+        else:
+            match = self._mark_near_miss_shadow_match(match, near_miss_reasons)
         entry_quality = dict(entry_quality)
         entry_quality["near_miss_shadow"] = True
         entry_quality["actionable"] = False
@@ -1026,7 +1122,13 @@ class PatternEntryScanner:
             return None
 
     @staticmethod
-    def _mark_near_miss_shadow_match(match: dict[str, Any], reasons: list[str]) -> dict[str, Any]:
+    def _mark_near_miss_shadow_match(
+        match: dict[str, Any],
+        reasons: list[str],
+        *,
+        near_miss_type: str = "volume_only_entry_gate_shadow",
+        note: str = "entry gate failed only on soft volume confirmation.",
+    ) -> dict[str, Any]:
         enriched = dict(match)
         metrics = dict(enriched.get("metrics") or {})
         entry_gate = dict(metrics.get("entry_gate") or {})
@@ -1049,7 +1151,7 @@ class PatternEntryScanner:
         enriched["near_miss"] = True
         enriched["near_miss_shadow"] = True
         enriched["near_miss_shadow_candidate"] = True
-        enriched["near_miss_type"] = "volume_only_entry_gate_shadow"
+        enriched["near_miss_type"] = near_miss_type
         enriched["near_miss_reasons"] = reasons
         enriched["entry_gate_rejection_reasons"] = reasons
         enriched["entry_gate_reason"] = str(entry_gate.get("reason") or ";".join(reasons))
@@ -1060,8 +1162,7 @@ class PatternEntryScanner:
         enriched["evidence_type"] = EvidenceType.NEAR_MISS_SHADOW.value
         enriched["evidence_quality"] = EvidenceQuality.NORMAL.value
         enriched["notes"] = (
-            f"{enriched.get('notes', '')} Near-miss Lab shadow observation; "
-            "entry gate failed only on soft volume confirmation."
+            f"{enriched.get('notes', '')} Near-miss Lab shadow observation; {note}"
         ).strip()
         return enriched
 
