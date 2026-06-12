@@ -9,10 +9,38 @@ from tradeo.db.session import Base, engine
 from tradeo.services.strategy_config import load_strategy_config
 
 
+ALEMBIC_BASELINE_REVISION = "0001_baseline"
+
+
 def init_db() -> None:
     Base.metadata.create_all(bind=engine)
     _migrate_trades_evidence_columns()
     _migrate_discovered_patterns()
+    _stamp_alembic_baseline()
+
+
+def _stamp_alembic_baseline() -> None:
+    """Adopt the database into the Alembic migration tree (informe §6.1).
+
+    ``create_all`` above already produced the baseline schema, so databases
+    that have no Alembic version yet are stamped at the baseline revision.
+    Databases already past the baseline are left untouched — from then on
+    ``alembic upgrade head`` is the canonical migration path.
+    """
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "CREATE TABLE IF NOT EXISTS alembic_version ("
+                "version_num VARCHAR(32) NOT NULL, "
+                "CONSTRAINT alembic_version_pkc PRIMARY KEY (version_num))"
+            )
+        )
+        existing = conn.execute(text("SELECT version_num FROM alembic_version")).fetchall()
+        if not existing:
+            conn.execute(
+                text("INSERT INTO alembic_version (version_num) VALUES (:rev)"),
+                {"rev": ALEMBIC_BASELINE_REVISION},
+            )
 
 
 def _migrate_trades_evidence_columns() -> None:
