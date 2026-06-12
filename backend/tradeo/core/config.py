@@ -190,6 +190,9 @@ class Settings(BaseSettings):
     # research run already publishes both curves per pattern.
     discovery_match_temporal_weighting_enabled: bool = False
     discovery_match_temporal_gamma: float = 0.97
+    discovery_match_ambiguity_hard_gate_enabled: bool = True
+    discovery_match_ambiguity_ratio_threshold: float = 0.95
+    discovery_match_ambiguity_entry_score_margin: float = 0.10
     discovery_match_max_results: int = 100
     discovery_registry_similarity_threshold: float = 0.96
     research_director_enabled: bool = True

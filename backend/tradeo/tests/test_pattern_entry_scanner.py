@@ -358,6 +358,7 @@ def test_laboratory_matcher_records_feature_parity_and_ambiguity_ratio() -> None
         discovery_match_complete_bars_only=False,
         discovery_match_max_patterns=10,
         discovery_match_max_results=10,
+        discovery_match_ambiguity_hard_gate_enabled=False,
         entry_gate_enabled=False,
     )
     result = NovelPatternMatcher(provider=provider, settings=settings).match_current(
@@ -376,6 +377,58 @@ def test_laboratory_matcher_records_feature_parity_and_ambiguity_ratio() -> None
     contract = matches[first.id]["metrics"]["feature_parity_contract"]
     assert contract["research_lab_shared_path"] is True
     assert contract["contract_id"] == PatternEmbeddingEngine.CONTRACT_ID
+
+
+def test_laboratory_matcher_hard_blocks_ambiguous_weak_entry() -> None:
+    db = session_factory()
+    provider = FixtureProvider()
+    add_pattern(db, provider, status=DiscoveredPatternStatus.LAB_CANDIDATE)
+    vector, _, _ = PatternEmbeddingEngine().embed(provider.df.iloc[-20:])
+    db.add(
+        DiscoveredPattern(
+            pattern_key="lab_candidate_key_ambiguous",
+            name="lab_candidate_pattern_ambiguous",
+            status=DiscoveredPatternStatus.LAB_CANDIDATE,
+            side="long",
+            timeframe="1d",
+            window_size=20,
+            sample_count=120,
+            symbol_count=12,
+            year_count=3,
+            score=0.88,
+            reward_risk_estimate=4.0,
+            expectancy_r=0.35,
+            profit_factor=2.0,
+            win_rate=0.54,
+            stability_score=0.78,
+            out_of_sample_expectancy_r=0.25,
+            out_of_sample_profit_factor=1.8,
+            best_rr=4.0,
+            validation_passed=True,
+            promotion_status=DiscoveredPatternStatus.LAB_CANDIDATE.value,
+            centroid_json=[float(value) + 0.005 for value in vector.tolist()],
+            metrics_json={"scaler_mean": [0.0] * len(vector), "scaler_scale": [1.0] * len(vector)},
+        )
+    )
+    db.commit()
+
+    settings = Settings(
+        discovery_match_complete_bars_only=False,
+        discovery_match_max_patterns=10,
+        discovery_match_max_results=10,
+        discovery_match_ambiguity_hard_gate_enabled=True,
+        discovery_match_ambiguity_entry_score_margin=0.10,
+        entry_min_score=0.99,
+    )
+    result = NovelPatternMatcher(provider=provider, settings=settings).match_current(
+        db,
+        symbols=[provider.symbol],
+        store=False,
+    )
+
+    assert result["ambiguity_hard_gate_enabled"] is True
+    assert result["ambiguity_gate_blocked"] >= 1
+    assert result["matches"] == []
 
 
 def test_laboratory_volume_near_miss_opens_shadow_observation_without_ibkr(monkeypatch) -> None:
@@ -1156,7 +1209,7 @@ def test_laboratory_matcher_reuses_symbol_data_across_patterns() -> None:
     add_pattern(db, provider, status=DiscoveredPatternStatus.LAB_CANDIDATE)
     add_pattern(db, provider, status=DiscoveredPatternStatus.LAB_WATCHLIST)
 
-    result = scanner(provider).scan(
+    result = scanner(provider, discovery_match_ambiguity_hard_gate_enabled=False).scan(
         db,
         module="laboratory",
         symbols=[provider.symbol],

@@ -97,6 +97,7 @@ class NovelPatternMatcher:
         benchmark_regime = MarketRegimeService(
             provider=self.provider, settings=settings
         ).current_regime()
+        ambiguity_gate_blocked = 0
         data_cache: dict[tuple[str, str], pd.DataFrame | None] = {}
         benchmark_cache: dict[str, dict[str, pd.DataFrame]] = {}
         embedding_cache: dict[
@@ -203,6 +204,16 @@ class NovelPatternMatcher:
                             6,
                         )
                         base_gate = self._entry_gate(pattern.side, df_for_match, score=base_score, settings=settings)
+                        ambiguity_gate = self._ambiguity_gate(ambiguity, base_gate, settings)
+                        if not ambiguity_gate["passed"]:
+                            ambiguity_gate_blocked += 1
+                            logger.info(
+                                "ambiguity hard gate blocked {} on {}: {}",
+                                pattern.name,
+                                symbol,
+                                ambiguity_gate,
+                            )
+                            continue
                         regime = classify_regime(features, base_gate)
                         regime["benchmark_regime"] = dict(benchmark_regime)
                         regime_fit = self._pattern_regime_fit(pattern, regime, settings)
@@ -261,6 +272,7 @@ class NovelPatternMatcher:
                                 "similarity_threshold_used": round(effective_threshold, 6),
                                 "match_ambiguity": ambiguity,
                                 "ambiguity_ratio": ambiguity["ambiguity_ratio"],
+                                "ambiguity_gate": ambiguity_gate,
                                 "score": score,
                                 "entry_score": entry_gate["entry_score"],
                                 "entry_gate_passed": entry_gate["passed"],
@@ -294,6 +306,7 @@ class NovelPatternMatcher:
                                         "vector_length": int(len(vector)),
                                     },
                                     "match_ambiguity": ambiguity,
+                                    "ambiguity_gate": ambiguity_gate,
                                     "features": features,
                                     "entry_gate": entry_gate,
                                     "base_entry_gate": base_gate,
@@ -327,6 +340,8 @@ class NovelPatternMatcher:
             "benchmark_regime": benchmark_regime,
             "regime_hard_gate_enabled": bool(settings.market_regime_hard_gate_enabled),
             "regime_gate_blocked": regime_gate_blocked,
+            "ambiguity_hard_gate_enabled": bool(settings.discovery_match_ambiguity_hard_gate_enabled),
+            "ambiguity_gate_blocked": ambiguity_gate_blocked,
             "generated_at": datetime.now(timezone.utc).isoformat(),
         }
 
@@ -734,6 +749,39 @@ class NovelPatternMatcher:
             "second_best_pattern_name": str(second["pattern_name"]) if second else None,
             "second_best_pattern_key": str(second["pattern_key"]) if second else None,
             "ambiguous": bool(second and ratio >= 0.95),
+        }
+
+    @staticmethod
+    def _ambiguity_gate(
+        ambiguity: dict[str, Any],
+        entry_gate: dict[str, Any],
+        settings: Settings,
+    ) -> dict[str, Any]:
+        ratio = float(ambiguity.get("ambiguity_ratio") or 0.0)
+        threshold = float(settings.discovery_match_ambiguity_ratio_threshold)
+        ambiguous = bool(ambiguity.get("ambiguous")) or ratio >= threshold
+        required_entry_score = min(
+            1.0,
+            float(settings.entry_min_score)
+            + float(settings.discovery_match_ambiguity_entry_score_margin),
+        )
+        entry_score = float(entry_gate.get("entry_score") or 0.0)
+        enabled = bool(settings.discovery_match_ambiguity_hard_gate_enabled)
+        passed = (not enabled) or (not ambiguous) or entry_score >= required_entry_score
+        return {
+            "method": "ambiguity_requires_extra_entry_quality",
+            "enabled": enabled,
+            "passed": passed,
+            "ambiguous": ambiguous,
+            "ambiguity_ratio": round(ratio, 6),
+            "ambiguity_ratio_threshold": round(threshold, 6),
+            "entry_score": round(entry_score, 6),
+            "required_entry_score": round(required_entry_score, 6),
+            "reason": (
+                "passed"
+                if passed
+                else "ambiguous_match_below_extra_entry_quality"
+            ),
         }
 
     @staticmethod
