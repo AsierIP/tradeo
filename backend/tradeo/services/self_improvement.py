@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import itertools
 import json
+import random
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
@@ -20,6 +22,75 @@ from tradeo.services.pattern_detector import CupPatternDetector
 from tradeo.services.strategy_config import load_strategy_config
 from tradeo.services.provider_factory import get_market_data_provider
 
+MUTATION_GRID: dict[str, list[float]] = {
+    "min_depth": [0.10, 0.12, 0.16],
+    "max_depth": [0.34, 0.42],
+    "rim_tolerance": [0.08, 0.12],
+    "max_handle_depth": [0.12, 0.16, 0.18],
+    "min_breakout_volume_ratio": [1.10, 1.20, 1.35],
+    "min_composite_score": [0.68, 0.72, 0.76],
+}
+
+
+def sample_grid(
+    grids: dict[str, list[Any]],
+    budget: int,
+    seed: int,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    budget = max(1, int(budget))
+    keys = list(grids)
+    sizes = {key: len(grids[key]) for key in keys}
+    full_size = 1
+    for size in sizes.values():
+        full_size *= size
+
+    rng = random.Random(int(seed))
+    if budget >= full_size:
+        combos = list(itertools.product(*(range(sizes[key]) for key in keys)))
+    else:
+        perms = {key: rng.sample(range(sizes[key]), sizes[key]) for key in keys}
+        core_rounds = min(budget, max(sizes.values()))
+        combos = [
+            tuple(perms[key][round_idx % sizes[key]] for key in keys)
+            for round_idx in range(core_rounds)
+        ]
+        chosen = set(combos)
+        remaining = budget - len(combos)
+        if remaining > 0:
+            pool = [
+                combo
+                for combo in itertools.product(*(range(sizes[key]) for key in keys))
+                if combo not in chosen
+            ]
+            combos.extend(rng.sample(pool, min(remaining, len(pool))))
+
+    sampled = [
+        {key: grids[key][combo[idx]] for idx, key in enumerate(keys)}
+        for combo in combos
+    ]
+    axis_coverage: dict[str, Any] = {}
+    for idx, key in enumerate(keys):
+        covered = sorted({combo[idx] for combo in combos})
+        axis_coverage[key] = {
+            "values": list(grids[key]),
+            "covered_values": [grids[key][value_idx] for value_idx in covered],
+            "covered_count": len(covered),
+            "total_count": sizes[key],
+            "fully_covered": len(covered) == sizes[key],
+        }
+    metadata = {
+        "method": "stratified_cycle_v1",
+        "seed": int(seed),
+        "budget": budget,
+        "full_grid_size": full_size,
+        "sampled_count": len(sampled),
+        "axis_coverage": axis_coverage,
+        "all_axes_fully_covered": all(
+            coverage["fully_covered"] for coverage in axis_coverage.values()
+        ),
+    }
+    return sampled, metadata
+
 
 class SelfImprovementEngine:
     """Strategy mutation and promotion gate.
@@ -30,6 +101,7 @@ class SelfImprovementEngine:
 
     def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or get_settings()
+        self._last_sampling_metadata: dict[str, Any] | None = None
 
     def run_lab_cycle(self, db: Session, max_symbols: int = 25) -> SelfImprovementResponse:
         base = load_strategy_config(self.settings.strategy_config_file)
@@ -111,35 +183,19 @@ class SelfImprovementEngine:
         )
 
     def _mutations(self, base: dict[str, Any]) -> list[dict[str, Any]]:
-        grids = {
-            "min_depth": [0.10, 0.12, 0.16],
-            "max_depth": [0.34, 0.42],
-            "rim_tolerance": [0.08, 0.12],
-            "max_handle_depth": [0.12, 0.16, 0.18],
-            "min_breakout_volume_ratio": [1.10, 1.20, 1.35],
-            "min_composite_score": [0.68, 0.72, 0.76],
-        }
+        sampled, metadata = sample_grid(
+            MUTATION_GRID,
+            budget=max(1, int(self.settings.self_improvement_max_trials)),
+            seed=int(self.settings.self_improvement_sampling_seed),
+        )
+        self._last_sampling_metadata = metadata
         out: list[dict[str, Any]] = []
-        for min_depth in grids["min_depth"]:
-            for max_depth in grids["max_depth"]:
-                for rim_tolerance in grids["rim_tolerance"]:
-                    for handle in grids["max_handle_depth"]:
-                        for vol in grids["min_breakout_volume_ratio"]:
-                            for score in grids["min_composite_score"]:
-                                cfg = deepcopy(base)
-                                cfg.update(
-                                    {
-                                        "min_depth": min_depth,
-                                        "max_depth": max_depth,
-                                        "rim_tolerance": rim_tolerance,
-                                        "max_handle_depth": handle,
-                                        "min_breakout_volume_ratio": vol,
-                                        "min_composite_score": score,
-                                        "target_r_multiple": max(4.0, float(base.get("target_r_multiple", 4.0))),
-                                    }
-                                )
-                                out.append(cfg)
-        return out[: max(1, int(self.settings.self_improvement_max_trials))]
+        for selection in sampled:
+            cfg = deepcopy(base)
+            cfg.update(selection)
+            cfg["target_r_multiple"] = max(4.0, float(base.get("target_r_multiple", 4.0)))
+            out.append(cfg)
+        return out
 
     def _passes_lab_gate(self, metrics: dict[str, Any], anti_overfit: dict[str, Any] | None = None) -> bool:
         guard = anti_overfit or {}
@@ -321,6 +377,7 @@ class SelfImprovementEngine:
                         "promotion": "requires human/API supervisor approval after paper trading",
                     },
                     "anti_overfit": guard_summary,
+                    "sampling": self._last_sampling_metadata,
                     "best": best,
                     "accepted": accepted,
                 },

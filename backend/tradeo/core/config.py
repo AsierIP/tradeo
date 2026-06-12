@@ -294,6 +294,7 @@ class Settings(BaseSettings):
     watchdog_close_stale_discovery_runs: bool = True
 
     self_improvement_max_trials: int = 80
+    self_improvement_sampling_seed: int = 20260611
     self_improvement_max_pbo: float = 0.10
     self_improvement_min_pbo_blocks: int = 16
     self_improvement_plateau_pf_fraction: float = 0.80
