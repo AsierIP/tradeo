@@ -376,15 +376,11 @@ class Settings(BaseSettings):
 
     @property
     def market_data_cache_path(self) -> Path:
-        path = Path(self.market_data_cache_dir)
-        path.mkdir(parents=True, exist_ok=True)
-        return path
+        return self._writable_path(self.market_data_cache_dir, "ohlcv_cache")
 
     @property
     def universe_snapshot_path(self) -> Path:
-        path = Path(self.universe_snapshot_dir)
-        path.mkdir(parents=True, exist_ok=True)
-        return path
+        return self._writable_path(self.universe_snapshot_dir, "universe_snapshots")
 
     @property
     def account_risk_usd(self) -> float:
@@ -398,6 +394,16 @@ class Settings(BaseSettings):
             and self.live_trading_confirmation_value == self.live_trading_confirmation_phrase
             and not self.kill_switch_enabled
         )
+
+    def _writable_path(self, raw_path: str, fallback_name: str) -> Path:
+        path = Path(raw_path)
+        try:
+            path.mkdir(parents=True, exist_ok=True)
+            return path
+        except OSError:
+            fallback = Path(self.artifacts_dir) / "runtime" / fallback_name
+            fallback.mkdir(parents=True, exist_ok=True)
+            return fallback
 
 
 @lru_cache
