@@ -727,16 +727,93 @@ class NovelPatternMatcher:
             )
             effective_threshold = self._effective_threshold(pattern, floor)
         similarity = float(1.0 / (1.0 + normalized_distance))
+        prototype = self._prototype_diagnostic(
+            pattern,
+            scaled,
+            centroid,
+            floor=effective_threshold,
+        )
+        passed_threshold = similarity >= effective_threshold
+        if prototype is not None:
+            passed_threshold = passed_threshold and bool(prototype["passed"])
         return {
             "similarity": round(similarity, 6),
             "normalized_distance": round(normalized_distance, 6),
             "similarity_threshold_used": round(float(effective_threshold), 6),
-            "passed_threshold": similarity >= effective_threshold,
+            "passed_threshold": passed_threshold,
             "temporal_weighting": {
                 "enabled": temporal is not None,
                 "gamma": temporal[0] if temporal is not None else None,
             },
+            "prototype_match": prototype,
         }
+
+    def _prototype_diagnostic(
+        self,
+        pattern: DiscoveredPattern,
+        scaled: np.ndarray,
+        centroid: np.ndarray,
+        *,
+        floor: float,
+    ) -> dict[str, Any] | None:
+        settings = self.settings
+        if settings is None or not settings.discovery_match_knn_enabled:
+            return None
+        metrics = pattern.metrics_json or {}
+        medoids = metrics.get("matcher_medoids_scaled") or metrics.get("medoid_vectors_scaled")
+        if not isinstance(medoids, list) or not medoids:
+            return None
+        medoid_matrix = np.asarray(medoids, dtype=float)
+        if medoid_matrix.ndim != 2 or medoid_matrix.shape[1] != len(centroid):
+            return None
+        k = max(1, min(int(settings.discovery_match_knn_k), medoid_matrix.shape[0]))
+        distances = np.linalg.norm(medoid_matrix - scaled, axis=1) / max(
+            1.0, math.sqrt(medoid_matrix.shape[1])
+        )
+        knn_distance = float(np.mean(np.sort(distances)[:k]))
+        knn_similarity = float(1.0 / (1.0 + knn_distance))
+        threshold = metrics.get("match_knn_similarity_threshold")
+        try:
+            threshold = float(threshold)
+        except (TypeError, ValueError):
+            threshold = float(floor)
+        if not math.isfinite(threshold) or threshold <= 0.0:
+            threshold = float(floor)
+        threshold = max(float(floor), threshold)
+        diag = {
+            "method": "knn_medoids_mahalanobis_optional_v1",
+            "enabled": True,
+            "k": k,
+            "medoid_count": int(medoid_matrix.shape[0]),
+            "knn_distance": round(knn_distance, 6),
+            "knn_similarity": round(knn_similarity, 6),
+            "knn_similarity_threshold": round(threshold, 6),
+            "knn_passed": knn_similarity >= threshold,
+            "mahalanobis": None,
+        }
+        passed = bool(diag["knn_passed"])
+        variance = metrics.get("matcher_diag_variance_scaled") or metrics.get("diag_variance_scaled")
+        if isinstance(variance, list) and len(variance) >= len(centroid):
+            var = np.asarray(variance[: len(centroid)], dtype=float)
+            if np.isfinite(var).all():
+                var = np.maximum(var, 1e-9)
+                maha_distance = float(np.sqrt(np.mean(((scaled - centroid) ** 2) / var)))
+                max_distance = metrics.get("match_mahalanobis_max_distance")
+                try:
+                    max_distance = float(max_distance)
+                except (TypeError, ValueError):
+                    max_distance = math.inf
+                maha_passed = maha_distance <= max_distance
+                diag["mahalanobis"] = {
+                    "distance": round(maha_distance, 6),
+                    "max_distance": (
+                        round(max_distance, 6) if math.isfinite(max_distance) else None
+                    ),
+                    "passed": bool(maha_passed),
+                }
+                passed = passed and bool(maha_passed)
+        diag["passed"] = passed
+        return diag
 
     @staticmethod
     def _ambiguity_ratio(

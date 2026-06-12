@@ -449,6 +449,50 @@ def test_matcher_effective_threshold_prefers_conformal_tau() -> None:
     assert matcher._effective_threshold(pattern, 0.45) == 0.72
 
 
+def test_matcher_optional_knn_medoids_gate_passes_and_blocks() -> None:
+    db = session_factory()
+    provider = FixtureProvider()
+    pattern = add_pattern(db, provider, status=DiscoveredPatternStatus.LAB_CANDIDATE)
+    vector, features, chart = PatternEmbeddingEngine().embed(provider.df.iloc[-20:])
+    cached = (provider.df, vector, features, chart)
+    base_metrics = {
+        **pattern.metrics_json,
+        "matcher_medoids_scaled": [
+            vector.tolist(),
+            (vector + 0.01).tolist(),
+            (vector - 0.01).tolist(),
+        ],
+        "matcher_diag_variance_scaled": [1.0] * len(vector),
+        "match_knn_similarity_threshold": 0.70,
+        "match_mahalanobis_max_distance": 1.0,
+    }
+    pattern.metrics_json = base_metrics
+
+    matcher = NovelPatternMatcher(
+        provider=provider,
+        settings=Settings(
+            discovery_match_complete_bars_only=False,
+            discovery_match_knn_enabled=True,
+            discovery_match_knn_k=3,
+        ),
+    )
+    passed = matcher._similarity_diagnostic(pattern, cached, 0.45)
+    assert passed is not None
+    assert passed["passed_threshold"] is True
+    assert passed["prototype_match"]["passed"] is True
+    assert passed["prototype_match"]["knn_similarity"] >= 0.70
+
+    pattern.metrics_json = {
+        **base_metrics,
+        "matcher_medoids_scaled": [(vector + 100.0).tolist()],
+        "match_knn_similarity_threshold": 0.90,
+    }
+    blocked = matcher._similarity_diagnostic(pattern, cached, 0.45)
+    assert blocked is not None
+    assert blocked["passed_threshold"] is False
+    assert blocked["prototype_match"]["knn_passed"] is False
+
+
 def test_laboratory_volume_near_miss_opens_shadow_observation_without_ibkr(monkeypatch) -> None:
     db = session_factory()
     provider = FixtureProvider()
