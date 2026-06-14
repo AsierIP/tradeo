@@ -18,6 +18,10 @@ class IBKRSafetyError(RuntimeError):
     """Raised when a hard safety gate blocks IBKR execution."""
 
 
+class IBKROperationalError(RuntimeError):
+    """Raised for broker connectivity/API failures outside Tradeo safety gates."""
+
+
 def _ensure_event_loop() -> None:
     try:
         asyncio.get_running_loop()
@@ -76,14 +80,14 @@ class IBKRBroker:
                     timeout=self.connect_timeout,
                 )
                 return ib
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001 - ib_insync raises heterogeneous runtime errors.
                 last_exc = exc
                 if ib.isConnected():
                     ib.disconnect()
                 continue
         if last_exc:
-            raise last_exc
-        raise IBKRSafetyError("IBKR connection failed")
+            raise IBKROperationalError(str(last_exc)) from last_exc
+        raise IBKROperationalError("IBKR connection failed")
 
     def status(self) -> dict[str, Any]:
         from ib_insync import util

@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from tradeo.core.config import get_settings
 from tradeo.db.models import AuditLog, DiscoveredPatternMatch, DiscoveryRun
+from tradeo.services.ops_alerts import add_internal_alert
 
 
 class SystemWatchdog:
@@ -81,6 +82,19 @@ class SystemWatchdog:
                             "duration_seconds": run.duration_seconds,
                         },
                     )
+                )
+                add_internal_alert(
+                    db,
+                    source="system_watchdog",
+                    severity="warning",
+                    message="watchdog closed stale discovery run",
+                    details={
+                        "discovery_run_id": run.id,
+                        "started_at": run.started_at.isoformat(),
+                        "duration_seconds": run.duration_seconds,
+                    },
+                    entity_type="discovery_run",
+                    entity_id=str(run.id),
                 )
                 repaired.append({"type": "discovery_run", "id": run.id, "action": "marked_failed"})
             if repaired:

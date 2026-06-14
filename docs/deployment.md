@@ -33,11 +33,22 @@ docker compose ps
 curl http://localhost:8000/api/health
 ```
 
-## Backup mínimo
+## Backup local
 
 ```bash
-tar -czf tradeo_reports_backup_$(date +%Y%m%d).tar.gz reports data config .env
+ops/scripts/backup_tradeo.sh
 ```
+
+El script empaqueta `reports`, `data`, `config`, `.env`, compose y docs. Si
+encuentra `pg_dump` y `TRADEO_DATABASE_URL` apunta a PostgreSQL, añade además
+un dump custom de la base de datos al archivo. Para fallar si no puede volcar
+PostgreSQL, ejecuta:
+
+```bash
+TRADEO_BACKUP_POSTGRES=required ops/scripts/backup_tradeo.sh
+```
+
+El dump usa la misma URL de `.env`; no requiere nuevas credenciales.
 
 ## Actualización
 

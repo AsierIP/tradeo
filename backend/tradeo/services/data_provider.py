@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 import hashlib
 import json
 import os
@@ -159,7 +159,9 @@ class CachedMarketDataProvider:
         now = pd.Timestamp(datetime.now(UTC))
         overlap_bars = max(1, int(self.incremental_overlap_bars or 5))
         if is_daily:
-            gap_days = (now.date() - last_ts.date()).days - 1
+            next_possible_bar = last_ts.date() + timedelta(days=1)
+            latest_complete_bar = now.date() - timedelta(days=1)
+            gap_days = len(pd.bdate_range(start=next_possible_bar, end=latest_complete_bar))
             if gap_days < int(self.incremental_min_gap_days or 1):
                 return cached
             gap_too_large = gap_days > int(self.incremental_max_gap_days or 45)

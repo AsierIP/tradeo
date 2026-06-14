@@ -3,6 +3,7 @@ from __future__ import annotations
 import time
 from datetime import datetime, timedelta, timezone
 
+from apscheduler.events import EVENT_JOB_ERROR, EVENT_JOB_MISSED, JobExecutionEvent
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from loguru import logger
@@ -12,6 +13,10 @@ from tradeo.core.config import get_settings
 from tradeo.db.init_db import init_db, seed_db
 from tradeo.db.models import DiscoveryRun
 from tradeo.db.session import SessionLocal
+from tradeo.ops.false_match_metrics import (
+    collect_false_match_drift_metrics,
+    persist_false_match_drift_report,
+)
 from tradeo.research.autonomous_research_director import ResearchDirector
 from tradeo.research.novel_pattern_matcher import NovelPatternMatcher
 from tradeo.schemas import ScanRequest
@@ -24,7 +29,12 @@ from tradeo.services.reports import ReportService
 from tradeo.services.runtime_status import write_worker_heartbeat
 from tradeo.services.scanner import MarketScanner
 from tradeo.services.self_improvement import SelfImprovementEngine
+from tradeo.services.ops_alerts import record_internal_alert, record_job_failure
 from tradeo.services.watchdog import SystemWatchdog
+
+
+def _record_job_failure(db, job_id: str, exc: BaseException) -> None:  # noqa: ANN001
+    record_job_failure(db, job_id=job_id, exc=exc)
 
 
 def scan_job() -> None:
@@ -38,6 +48,7 @@ def scan_job() -> None:
         logger.info("scan complete: {}", response.model_dump())
     except Exception as exc:  # noqa: BLE001
         logger.exception("scan job failed: {}", exc)
+        _record_job_failure(db, "market_scan", exc)
     finally:
         db.close()
 
@@ -49,6 +60,7 @@ def report_job() -> None:
         logger.info("report generated: {}", pack.get("paths"))
     except Exception as exc:  # noqa: BLE001
         logger.exception("report job failed: {}", exc)
+        _record_job_failure(db, "daily_report", exc)
     finally:
         db.close()
 
@@ -60,6 +72,7 @@ def self_improvement_job() -> None:
         logger.info("self-improvement result: {}", result.model_dump())
     except Exception as exc:  # noqa: BLE001
         logger.exception("self-improvement job failed: {}", exc)
+        _record_job_failure(db, "weekly_self_improvement", exc)
     finally:
         db.close()
 
@@ -110,6 +123,7 @@ def discovery_job() -> None:
         logger.info("pattern discovery result: {}", result.model_dump())
     except Exception as exc:  # noqa: BLE001
         logger.exception("pattern discovery job failed: {}", exc)
+        _record_job_failure(db, "pattern_discovery_lab", exc)
     finally:
         db.close()
 
@@ -131,6 +145,7 @@ def novel_match_job() -> None:
         logger.info("novel pattern match result: {}", result)
     except Exception as exc:  # noqa: BLE001
         logger.exception("novel pattern match job failed: {}", exc)
+        _record_job_failure(db, "novel_pattern_matcher", exc)
     finally:
         db.close()
 
@@ -149,6 +164,7 @@ def research_director_job() -> None:
         logger.info("research director result: {}", result.get("director_state", {}))
     except Exception as exc:  # noqa: BLE001
         logger.exception("research director failed: {}", exc)
+        _record_job_failure(db, "research_director", exc)
     finally:
         db.close()
 
@@ -168,6 +184,7 @@ def laboratory_entry_job() -> None:
         logger.warning("laboratory entry scanner blocked by safety gate: {}", exc)
     except Exception as exc:  # noqa: BLE001
         logger.exception("laboratory entry scanner failed: {}", exc)
+        _record_job_failure(db, "laboratory_entry_scanner", exc)
     finally:
         db.close()
 
@@ -185,6 +202,7 @@ def fox_hunter_entry_job() -> None:
         logger.warning("fox hunter blocked by safety gate: {}", exc)
     except Exception as exc:  # noqa: BLE001
         logger.exception("fox hunter failed: {}", exc)
+        _record_job_failure(db, "fox_hunter_entry_scanner", exc)
     finally:
         db.close()
 
@@ -205,6 +223,7 @@ def reconciliation_job() -> None:
             logger.info("reconciliation result: {}", result)
     except Exception as exc:  # noqa: BLE001
         logger.exception("reconciliation job failed: {}", exc)
+        _record_job_failure(db, "ibkr_reconciliation", exc)
     finally:
         db.close()
 
@@ -225,6 +244,7 @@ def pattern_health_job() -> None:
             logger.info("pattern health monitor result: {}", result)
     except Exception as exc:  # noqa: BLE001
         logger.exception("pattern health monitor job failed: {}", exc)
+        _record_job_failure(db, "pattern_health_monitor", exc)
     finally:
         db.close()
 
@@ -239,6 +259,53 @@ def watchdog_job() -> None:
             logger.debug("watchdog ok: {}", result)
     except Exception as exc:  # noqa: BLE001
         logger.exception("watchdog job failed: {}", exc)
+        _record_job_failure(db, "system_watchdog", exc)
+    finally:
+        db.close()
+
+
+def false_match_metrics_job() -> None:
+    db = SessionLocal()
+    try:
+        settings = get_settings()
+        if not settings.false_match_metrics_job_enabled:
+            logger.info("false-match metrics job skipped: false_match_metrics_job_enabled=false")
+            return
+        report = collect_false_match_drift_metrics(
+            db,
+            high_fpr_threshold=settings.false_match_metrics_high_fpr_threshold,
+        )
+        persist_false_match_drift_report(db, report)
+        logger.info(
+            "false-match metrics report: patterns={} high_fpr={} drifted={}",
+            report["pattern_count"],
+            report["patterns_high_fpr"],
+            report["patterns_drifted"],
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("false-match metrics job failed: {}", exc)
+        _record_job_failure(db, "false_match_drift_metrics", exc)
+    finally:
+        db.close()
+
+
+def scheduler_event_listener(event: JobExecutionEvent) -> None:
+    db = SessionLocal()
+    try:
+        if event.code == EVENT_JOB_MISSED:
+            record_internal_alert(
+                db,
+                source="scheduler",
+                severity="warning",
+                message=f"scheduler job missed: {event.job_id}",
+                details={"job_id": event.job_id, "scheduled_run_time": str(event.scheduled_run_time)},
+                entity_type="scheduler_job",
+                entity_id=str(event.job_id),
+            )
+            return
+        exc = getattr(event, "exception", None)
+        if exc is not None:
+            record_job_failure(db, job_id=str(event.job_id), exc=exc)
     finally:
         db.close()
 
@@ -253,6 +320,7 @@ def main() -> None:
     finally:
         db.close()
     scheduler = BackgroundScheduler(timezone="UTC")
+    scheduler.add_listener(scheduler_event_listener, EVENT_JOB_ERROR | EVENT_JOB_MISSED)
     if settings.scheduler_enabled:
         if settings.watchdog_enabled:
             watchdog_job()
@@ -357,6 +425,18 @@ def main() -> None:
                 "interval",
                 minutes=settings.health_monitor_interval_minutes,
                 id="pattern_health_monitor",
+                max_instances=1,
+                coalesce=True,
+            )
+        if settings.false_match_metrics_job_enabled:
+            scheduler.add_job(
+                false_match_metrics_job,
+                CronTrigger(
+                    hour=settings.false_match_metrics_hour_utc,
+                    minute=settings.false_match_metrics_minute_utc,
+                    day_of_week="mon-fri",
+                ),
+                id="false_match_drift_metrics",
                 max_instances=1,
                 coalesce=True,
             )

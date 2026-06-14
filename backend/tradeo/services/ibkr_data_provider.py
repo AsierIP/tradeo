@@ -14,6 +14,14 @@ from tradeo.services.technical_indicators import normalize_ohlcv
 _event_loop_state = threading.local()
 
 
+class IBKRDataProviderError(RuntimeError):
+    """Raised for IBKR market-data provider failures after library wrapping."""
+
+
+class IBKRDataConnectionError(IBKRDataProviderError):
+    """Raised when TWS/IB Gateway cannot be reached."""
+
+
 def _duration_from_period(period: str) -> str:
     p = period.lower().strip()
     if p.endswith("y"):
@@ -67,13 +75,13 @@ def _connect_ibkr(settings: Settings):
                 timeout=float(getattr(settings, "ibkr_connect_timeout_seconds", 8.0)),
             )
             return ib, client_id
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001 - ib_insync raises heterogeneous runtime errors.
             last_exc = exc
             if ib.isConnected():
                 ib.disconnect()
     if last_exc:
-        raise last_exc
-    raise ConnectionError("IBKR connection failed")
+        raise IBKRDataConnectionError(str(last_exc)) from last_exc
+    raise IBKRDataConnectionError("IBKR connection failed")
 
 
 @dataclass
@@ -140,7 +148,7 @@ def inspect_ibkr_connection(settings: Settings | None = None) -> dict[str, Any]:
             "selected_account_configured": bool(settings.ibkr_account),
             "account_summary_included": False,
         }
-    except Exception as exc:  # noqa: BLE001
+    except (IBKRDataProviderError, RuntimeError, ValueError, OSError) as exc:
         return {
             "ok": False,
             "host": settings.ibkr_host,
