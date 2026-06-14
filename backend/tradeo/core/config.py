@@ -304,6 +304,11 @@ class Settings(BaseSettings):
     watchdog_interval_minutes: int = 5
     watchdog_stale_discovery_minutes: int = 30
     watchdog_close_stale_discovery_runs: bool = True
+    ops_alerting_enabled: bool = True
+    false_match_metrics_job_enabled: bool = True
+    false_match_metrics_hour_utc: int = 23
+    false_match_metrics_minute_utc: int = 45
+    false_match_metrics_high_fpr_threshold: float = 0.25
 
     self_improvement_max_trials: int = 80
     self_improvement_sampling_seed: int = 20260611

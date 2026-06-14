@@ -27,6 +27,9 @@ dependencies = [
   "tzdata>=2025.2"
 ]
 
+[project.scripts]
+tradeo-false-match-metrics = "tradeo.ops.false_match_metrics:main"
+
 [project.optional-dependencies]
 dev = ["pytest>=8.2.0", "ruff>=0.5.0", "mypy>=1.10.0"]
 

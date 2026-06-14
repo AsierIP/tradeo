@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from tradeo.db.models import DiscoveryRun
+from tradeo.db.models import AuditLog, DiscoveryRun
 from tradeo.db.session import Base
 from tradeo.services.watchdog import SystemWatchdog
 
@@ -33,3 +33,7 @@ def test_watchdog_closes_stale_running_discovery_run() -> None:
     assert stale.finished_at is not None
     assert fresh.status == "running"
     assert result["repaired"] == [{"type": "discovery_run", "id": stale.id, "action": "marked_failed"}]
+    alert = session.query(AuditLog).filter(AuditLog.action == "internal_ops_alert").one()
+    assert alert.details_json["source"] == "system_watchdog"
+    assert alert.details_json["severity"] == "warning"
+    assert alert.entity_type == "discovery_run"
