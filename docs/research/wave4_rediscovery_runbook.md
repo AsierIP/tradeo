@@ -30,6 +30,8 @@ docker compose run --rm backend \
 - The manifest lists every `pattern_key` needing rediscovery, with per-field
   `missing`/`stale` reasons and a `determinism.content_hash` for comparison
   across runs.
+- For byte-identical audit artifacts in CI, pass a fixed ISO timestamp with
+  `--generated-at`, for example `--generated-at 2026-06-14T00:00:00+00:00`.
 
 ## 2. Flag laggards (optional, writes `metrics_json.rediscovery_readiness`)
 
@@ -42,8 +44,12 @@ docker compose run --rm backend \
 - Adds a `rediscovery_readiness` block (`needs_rediscovery`, `missing`,
   `stale`, `checker_version`, `flagged_at`) inside each laggard's
   `metrics_json`. No schema migration needed (JSONB is extensible).
+- Re-running the same flagging pass is idempotent for unchanged laggards:
+  existing `flagged_at` values are preserved and unchanged blocks are not
+  rewritten.
 - Re-flagging after metadata arrives flips the block to
-  `needs_rediscovery: false`; it is never deleted, preserving audit trail.
+  `needs_rediscovery: false` with `cleared_at`; it is never deleted,
+  preserving audit trail.
 
 ## 3. Execute real rediscovery (the only step that populates metadata)
 
