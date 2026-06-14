@@ -123,7 +123,12 @@ def audit_patterns(
     return results, truncated
 
 
-def apply_rediscovery_flags(db: Session, results: list[PatternReadiness]) -> int:
+def apply_rediscovery_flags(
+    db: Session,
+    results: list[PatternReadiness],
+    *,
+    flagged_at: str | None = None,
+) -> int:
     """Write a ``rediscovery_readiness`` block into metrics_json of laggards.
 
     Marks intent only — it does not create, recompute or fake any metadata.
@@ -136,26 +141,49 @@ def apply_rediscovery_flags(db: Session, results: list[PatternReadiness]) -> int
     rows = db.execute(
         select(DiscoveredPattern).where(DiscoveredPattern.id.in_(by_id.keys()))
     ).scalars()
-    now = datetime.now(timezone.utc).isoformat()
+    now = flagged_at or datetime.now(timezone.utc).isoformat()
     for row in rows:
         result = by_id[int(row.id)]
         metrics = dict(row.metrics_json or {})
         if result.needs_rediscovery:
-            metrics[READINESS_KEY] = {
+            existing = (
+                metrics.get(READINESS_KEY) if isinstance(metrics.get(READINESS_KEY), dict) else {}
+            )
+            flagged_block = {
                 "needs_rediscovery": True,
                 "missing": list(result.missing),
                 "stale": list(result.stale),
                 "checker_version": CHECKER_VERSION,
-                "flagged_at": now,
+                "flagged_at": existing.get("flagged_at") or now,
             }
-            flagged += 1
+            if existing == flagged_block:
+                continue
+            metrics[READINESS_KEY] = flagged_block
+            if not existing.get("needs_rediscovery"):
+                flagged += 1
         elif READINESS_KEY in metrics:
-            metrics[READINESS_KEY] = {
+            existing = metrics.get(READINESS_KEY)
+            existing_flagged_at = existing.get("flagged_at") if isinstance(existing, dict) else None
+            cleared_block = {
                 "needs_rediscovery": False,
                 "missing": [],
                 "stale": [],
                 "checker_version": CHECKER_VERSION,
-                "flagged_at": now,
+                "flagged_at": existing_flagged_at or now,
+            }
+            if (
+                isinstance(existing, dict)
+                and all(existing.get(key) == value for key, value in cleared_block.items())
+                and existing.get("cleared_at")
+            ):
+                continue
+            metrics[READINESS_KEY] = {
+                **cleared_block,
+                "cleared_at": (
+                    existing.get("cleared_at")
+                    if isinstance(existing, dict) and existing.get("cleared_at")
+                    else now
+                ),
             }
         else:
             continue
@@ -171,6 +199,7 @@ def build_manifest(
     dry_run: bool,
     flagged_count: int,
     truncated: bool,
+    generated_at: str | None = None,
 ) -> dict[str, Any]:
     """Build an honest rediscovery manifest with before/after counts.
 
@@ -191,7 +220,7 @@ def build_manifest(
     manifest: dict[str, Any] = {
         "checker_version": CHECKER_VERSION,
         "dry_run": dry_run,
-        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "generated_at": generated_at or datetime.now(timezone.utc).isoformat(),
         "truncated": truncated,
         "counts": {
             "patterns_audited": len(results),
@@ -225,12 +254,17 @@ def run_readiness(
     apply_flags: bool = False,
     limit: int = DEFAULT_AUDIT_LIMIT,
     manifest_path: Path | None = None,
+    generated_at: str | None = None,
 ) -> dict[str, Any]:
     """Audit patterns, optionally flag laggards, and return the manifest."""
     results, truncated = audit_patterns(db, limit=limit)
-    flagged = apply_rediscovery_flags(db, results) if apply_flags else 0
+    flagged = apply_rediscovery_flags(db, results, flagged_at=generated_at) if apply_flags else 0
     manifest = build_manifest(
-        results, dry_run=not apply_flags, flagged_count=flagged, truncated=truncated
+        results,
+        dry_run=not apply_flags,
+        flagged_count=flagged,
+        truncated=truncated,
+        generated_at=generated_at,
     )
     if manifest_path is not None:
         manifest_path.parent.mkdir(parents=True, exist_ok=True)
@@ -253,6 +287,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--manifest-out", type=Path, default=None, help="path for the JSON manifest"
     )
+    parser.add_argument(
+        "--generated-at",
+        default=None,
+        help="optional ISO-8601 timestamp for bit-for-bit reproducible manifests",
+    )
     args = parser.parse_args(argv)
 
     from tradeo.db.session import SessionLocal
@@ -260,7 +299,11 @@ def main(argv: list[str] | None = None) -> int:
     db = SessionLocal()
     try:
         manifest = run_readiness(
-            db, apply_flags=args.apply_flags, limit=args.limit, manifest_path=args.manifest_out
+            db,
+            apply_flags=args.apply_flags,
+            limit=args.limit,
+            manifest_path=args.manifest_out,
+            generated_at=args.generated_at,
         )
     finally:
         db.close()

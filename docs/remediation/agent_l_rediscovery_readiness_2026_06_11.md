@@ -68,3 +68,45 @@ ruff check + format on new files -> clean
 - Stale-contract detection keys off exact `CONTRACT_ID` equality; a future
   contract bump automatically marks all rows stale (intended behavior).
 - Audit reads whole rows; at current pattern counts (≪2000) this is trivial.
+
+## 2026-06-14 Addendum — deterministic/idempotent flags
+
+Follow-up branch `solaris/internal-remediation-20260614` hardens the same
+readiness tooling without changing scope: it still audits/flags only and never
+populates metadata.
+
+### What changed
+
+- `run_readiness(..., generated_at=...)` and CLI `--generated-at` allow
+  bit-for-bit reproducible manifests when an operator or CI pins the clock.
+- Re-running `--apply-flags` against unchanged laggards is idempotent:
+  existing `flagged_at` values are preserved, unchanged JSONB blocks are not
+  rewritten, and `flagged_this_run` counts only newly flagged laggards.
+- Clearing a flag after real rediscovery metadata arrives preserves the
+  original `flagged_at` and records a stable `cleared_at`.
+- Full-suite verification exposed a daily-cache refresh bug on weekends:
+  a Friday daily bar was treated as stale on Sunday because the gap used
+  calendar days. `CachedMarketDataProvider` now counts complete business
+  dates before today's incomplete daily bar.
+
+### Files Changed
+
+- `backend/tradeo/research/rediscovery_readiness.py`
+- `backend/tradeo/services/data_provider.py`
+- `backend/tradeo/tests/test_data_provider.py`
+- `backend/tradeo/tests/test_rediscovery_readiness.py`
+- `docs/remediation/agent_l_rediscovery_readiness_2026_06_11.md`
+- `docs/research/wave4_rediscovery_runbook.md`
+
+### Tests
+
+Added coverage that two fixed-clock manifests are byte-identical and that a
+second unchanged `--apply-flags` pass does not rewrite `metrics_json`. Added
+coverage that a Friday daily cache does not refresh on Sunday without a new
+complete business-day bar.
+
+### Remaining external gaps
+
+No PIT/delisting feed, broker/live validation or external market-data provider
+was added. Real metadata backfill still requires a bounded rediscovery run over
+available internal cached/provider data, followed by this audit.

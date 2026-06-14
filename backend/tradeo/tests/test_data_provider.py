@@ -10,6 +10,7 @@ import pandas as pd
 import pytest
 
 from tradeo.core.config import Settings
+import tradeo.services.data_provider as data_provider_module
 from tradeo.services.data_provider import CachedMarketDataProvider, detect_unadjusted_splits
 from tradeo.services.provider_factory import get_market_data_provider
 from tradeo.services.ibkr_data_provider import inspect_ibkr_connection
@@ -41,7 +42,9 @@ def test_market_data_factory_returns_ibkr_provider(monkeypatch: pytest.MonkeyPat
     assert provider.__class__.__name__ == "IBKRHistoricalDataProvider"
 
 
-def test_market_data_factory_wraps_ibkr_with_cache(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_market_data_factory_wraps_ibkr_with_cache(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     monkeypatch.setenv("TRADEO_MARKET_DATA_PROVIDER", "ibkr")
     monkeypatch.setenv("TRADEO_ALLOW_SYNTHETIC_MARKET_DATA", "false")
     monkeypatch.setenv("TRADEO_MARKET_DATA_CACHE_ENABLED", "true")
@@ -75,7 +78,9 @@ def test_cached_market_data_provider_persists_manifest(tmp_path: Path) -> None:
     class Upstream:
         calls = 0
 
-        def fetch_ohlcv(self, symbol: str, period: str = "2y", interval: str = "1d") -> pd.DataFrame:
+        def fetch_ohlcv(
+            self, symbol: str, period: str = "2y", interval: str = "1d"
+        ) -> pd.DataFrame:
             self.calls += 1
             return _ohlcv_frame()
 
@@ -260,6 +265,45 @@ def test_incremental_refresh_skips_fresh_cache(tmp_path: Path) -> None:
     assert upstream.calls == []
 
 
+def test_incremental_refresh_skips_weekend_without_complete_daily_bar(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    friday = pd.Timestamp("2026-06-12")
+    idx = pd.bdate_range(end=friday, periods=40)
+    fresh = pd.DataFrame(
+        {
+            "open": [10.0 + 0.1 * i for i in range(40)],
+            "high": [10.2 + 0.1 * i for i in range(40)],
+            "low": [9.8 + 0.1 * i for i in range(40)],
+            "close": [10.1 + 0.1 * i for i in range(40)],
+            "volume": [100_000 + 1_000 * i for i in range(40)],
+        },
+        index=idx,
+    )
+    _seed_cache(tmp_path, fresh)
+
+    class SundayDateTime:
+        @classmethod
+        def now(cls, tz=None):
+            value = datetime(2026, 6, 14, 12, 0, tzinfo=timezone.utc)
+            return value if tz is None else value.astimezone(tz)
+
+    monkeypatch.setattr(data_provider_module, "datetime", SundayDateTime)
+    upstream = _RecordingUpstream(fresh)
+    provider = CachedMarketDataProvider(
+        upstream=upstream,
+        cache_dir=tmp_path,
+        adjusted=True,
+        what_to_show="ADJUSTED_LAST",
+        incremental_enabled=True,
+        incremental_min_gap_days=1,
+    )
+
+    provider.fetch_ohlcv("AAA", period="2y", interval="1d")
+
+    assert upstream.calls == []
+
+
 def test_intraday_incremental_refresh_appends_missing_tail(tmp_path: Path) -> None:
     full = _intraday_frame_ending(10, periods=120)
     stale = full.iloc[:-12]
@@ -403,7 +447,9 @@ def test_universe_snapshot_filters_and_marks_survivorship(tmp_path: Path) -> Non
         ]
     )
 
-    snapshot = UniverseSnapshotService(settings).build_monthly_snapshot("2026-06-10", universe=universe)
+    snapshot = UniverseSnapshotService(settings).build_monthly_snapshot(
+        "2026-06-10", universe=universe
+    )
     df = pd.read_csv(snapshot["path"])
 
     assert snapshot["snapshot_month"] == "2026-06"

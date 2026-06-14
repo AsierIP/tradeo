@@ -15,8 +15,9 @@ from tradeo.services.technical_indicators import normalize_ohlcv
 
 
 class MarketDataProvider(Protocol):
-    def fetch_ohlcv(self, symbol: str, period: str = "2y", interval: str = "1d") -> pd.DataFrame:
-        ...
+    def fetch_ohlcv(
+        self, symbol: str, period: str = "2y", interval: str = "1d"
+    ) -> pd.DataFrame: ...
 
 
 _DAILY_INTERVALS = {"1d", "1day", "1 day"}
@@ -159,9 +160,7 @@ class CachedMarketDataProvider:
         now = pd.Timestamp(datetime.now(UTC))
         overlap_bars = max(1, int(self.incremental_overlap_bars or 5))
         if is_daily:
-            next_possible_bar = last_ts.date() + timedelta(days=1)
-            latest_complete_bar = now.date() - timedelta(days=1)
-            gap_days = len(pd.bdate_range(start=next_possible_bar, end=latest_complete_bar))
+            gap_days = self._complete_business_days_since(last_ts, now)
             if gap_days < int(self.incremental_min_gap_days or 1):
                 return cached
             gap_too_large = gap_days > int(self.incremental_max_gap_days or 45)
@@ -183,9 +182,7 @@ class CachedMarketDataProvider:
         tail = self._annotate(tail, symbol=symbol, period=period, interval=interval)
         tail = self._complete_bars_only(tail)
         if not self._overlap_matches(cached, tail, overlap_bars=overlap_bars):
-            return self._full_refetch(
-                key, csv_path, refresh_mode="full_refetch_overlap_mismatch"
-            )
+            return self._full_refetch(key, csv_path, refresh_mode="full_refetch_overlap_mismatch")
         new_rows = tail[pd.DatetimeIndex(tail.index) > last_ts]
         if new_rows.empty:
             return cached
@@ -258,7 +255,9 @@ class CachedMarketDataProvider:
             "entries": entries,
         }
         payload["manifest_hash"] = hashlib.sha256(
-            json.dumps(payload["entries"], sort_keys=True, separators=(",", ":"), default=str).encode()
+            json.dumps(
+                payload["entries"], sort_keys=True, separators=(",", ":"), default=str
+            ).encode()
         ).hexdigest()
         return payload
 
@@ -267,7 +266,9 @@ class CachedMarketDataProvider:
         safe = "_".join(_safe_part(part) for part in (symbol.upper(), interval, period))
         return self.cache_dir / f"{safe}.csv"
 
-    def _annotate(self, df: pd.DataFrame, *, symbol: str, period: str, interval: str) -> pd.DataFrame:
+    def _annotate(
+        self, df: pd.DataFrame, *, symbol: str, period: str, interval: str
+    ) -> pd.DataFrame:
         out = normalize_ohlcv(df)
         out = out.copy()
         out["adjusted"] = bool(self.adjusted)
@@ -286,15 +287,22 @@ class CachedMarketDataProvider:
             return [True] * len(index)
         now = pd.Timestamp(datetime.now(UTC))
         width = pd.Timedelta(minutes=bar_minutes)
-        return [
-            CachedMarketDataProvider._as_utc(value) + width <= now for value in index
-        ]
+        return [CachedMarketDataProvider._as_utc(value) + width <= now for value in index]
 
     @staticmethod
     def _as_utc(value: Any) -> pd.Timestamp:
         # Naive timestamps are treated as UTC; IBKR intraday bars arrive tz-aware.
         ts = pd.Timestamp(value)
         return ts.tz_localize("UTC") if ts.tzinfo is None else ts.tz_convert("UTC")
+
+    @staticmethod
+    def _complete_business_days_since(last_ts: pd.Timestamp, now: pd.Timestamp) -> int:
+        """Business dates after ``last_ts`` and before today's incomplete daily bar."""
+        start = pd.Timestamp(pd.Timestamp(last_ts).date()) + pd.Timedelta(days=1)
+        end = pd.Timestamp(pd.Timestamp(now).date()) - pd.Timedelta(days=1)
+        if start > end:
+            return 0
+        return int(len(pd.bdate_range(start=start, end=end)))
 
     @staticmethod
     def _complete_bars_only(df: pd.DataFrame) -> pd.DataFrame:
@@ -327,10 +335,7 @@ class CachedMarketDataProvider:
             self.incremental_enabled
             and (
                 interval_lower in _DAILY_INTERVALS
-                or (
-                    self.incremental_intraday_enabled
-                    and interval_lower in _INTRADAY_BAR_MINUTES
-                )
+                or (self.incremental_intraday_enabled and interval_lower in _INTRADAY_BAR_MINUTES)
             )
         )
         try:

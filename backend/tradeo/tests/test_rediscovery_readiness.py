@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -125,10 +126,38 @@ def test_apply_flags_marks_legacy_but_does_not_fake_metadata():
     assert manifest["counts"]["metadata_complete_after"] == 0
 
 
+def test_readiness_manifest_is_bit_for_bit_with_fixed_clock():
+    db = session_factory()
+    add_pattern(db, "legacy_cup", {"expectancy_r": 0.4})
+    add_pattern(db, "modern_flag", modern_metrics())
+
+    first = run_readiness(db, apply_flags=False, generated_at="2026-06-14T00:00:00+00:00")
+    second = run_readiness(db, apply_flags=False, generated_at="2026-06-14T00:00:00+00:00")
+
+    assert json.dumps(first, sort_keys=True) == json.dumps(second, sort_keys=True)
+    assert first["determinism"]["content_hash"] == second["determinism"]["content_hash"]
+
+
+def test_apply_flags_is_idempotent_for_unchanged_laggards():
+    db = session_factory()
+    legacy = add_pattern(db, "legacy_cup", {"expectancy_r": 0.4})
+
+    first = run_readiness(db, apply_flags=True, generated_at="2026-06-14T00:00:00+00:00")
+    db.refresh(legacy)
+    first_metrics = deepcopy(legacy.metrics_json)
+    second = run_readiness(db, apply_flags=True, generated_at="2026-06-15T00:00:00+00:00")
+    db.refresh(legacy)
+
+    assert first["counts"]["flagged_this_run"] == 1
+    assert second["counts"]["flagged_this_run"] == 0
+    assert legacy.metrics_json == first_metrics
+    assert legacy.metrics_json[READINESS_KEY]["flagged_at"] == "2026-06-14T00:00:00+00:00"
+
+
 def test_flag_cleared_after_real_metadata_arrives():
     db = session_factory()
     legacy = add_pattern(db, "legacy_cup", {"expectancy_r": 0.4})
-    run_readiness(db, apply_flags=True)
+    run_readiness(db, apply_flags=True, generated_at="2026-06-14T00:00:00+00:00")
 
     # Simulate a real rediscovery upsert refreshing metrics_json.
     db.refresh(legacy)
@@ -136,12 +165,14 @@ def test_flag_cleared_after_real_metadata_arrives():
     legacy.metrics_json = refreshed
     db.commit()
 
-    manifest = run_readiness(db, apply_flags=True)
+    manifest = run_readiness(db, apply_flags=True, generated_at="2026-06-15T00:00:00+00:00")
 
     assert manifest["counts"]["needs_rediscovery"] == 0
     assert manifest["counts"]["flagged_this_run"] == 0
     db.refresh(legacy)
     assert legacy.metrics_json[READINESS_KEY]["needs_rediscovery"] is False
+    assert legacy.metrics_json[READINESS_KEY]["flagged_at"] == "2026-06-14T00:00:00+00:00"
+    assert legacy.metrics_json[READINESS_KEY]["cleared_at"] == "2026-06-15T00:00:00+00:00"
 
 
 def test_manifest_written_to_disk_and_truncation_reported(tmp_path):
