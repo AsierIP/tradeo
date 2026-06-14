@@ -28,6 +28,9 @@ _PHI = NormalDist().cdf
 __all__ = [
     "posterior_probability_edge",
     "sprt_inferiority",
+    "normal_msprt_edge",
+    "alpha_spending_boundary",
+    "alpha_spending_evaluation",
     "ks_two_sample",
 ]
 
@@ -134,6 +137,139 @@ def sprt_inferiority(
     return out
 
 
+def normal_msprt_edge(
+    lab_r: Sequence[float],
+    *,
+    null_mean: float = 0.0,
+    prior_mean: float,
+    prior_sd: float,
+    sigma: float,
+    alpha: float = 0.05,
+) -> dict:
+    """Normal-mixture SPRT diagnostic for an edge over ``null_mean``.
+
+    H0: E = null_mean with known sigma. H1 integrates E under a Normal prior
+    centered on the Research expectancy. The returned Bayes factor is
+    diagnostic evidence only; Director blockers are wired separately.
+    """
+    x = np.asarray(lab_r, dtype=float)
+    threshold = math.log(1.0 / max(float(alpha), 1e-12))
+    out = {
+        "method": "normal_mixture_sprt_v1",
+        "n": int(x.size),
+        "null_mean": float(null_mean),
+        "prior_mean": float(prior_mean),
+        "prior_sd": float(prior_sd),
+        "sigma": float(sigma),
+        "alpha": float(alpha),
+        "log_bayes_factor": float("nan"),
+        "edge_threshold": float(threshold),
+        "decision": "not_applicable",
+        "decided_at_n": None,
+    }
+    if x.size == 0 or not (sigma > 0) or not (prior_sd > 0):
+        return out
+    lower = math.log(max(float(alpha), 1e-12))
+    decision = "continue"
+    decided_at = None
+    log_bf = float("nan")
+    for n in range(1, int(x.size) + 1):
+        mean = float(x[:n].mean())
+        var0 = (sigma * sigma) / n
+        var1 = var0 + prior_sd * prior_sd
+        log_h0 = _normal_log_pdf(mean, float(null_mean), var0)
+        log_h1 = _normal_log_pdf(mean, float(prior_mean), var1)
+        log_bf = log_h1 - log_h0
+        if log_bf >= threshold:
+            decision = "edge_supported"
+            decided_at = n
+            break
+        if log_bf <= lower:
+            decision = "edge_not_supported"
+            decided_at = n
+            break
+    out["log_bayes_factor"] = float(log_bf)
+    out["decision"] = decision
+    out["decided_at_n"] = decided_at
+    return out
+
+
+def alpha_spending_boundary(
+    *,
+    look_index: int,
+    max_looks: int,
+    alpha: float = 0.05,
+    method: str = "obrien_fleming",
+) -> dict:
+    """One-sided cumulative alpha spending boundary for sequential looks."""
+    looks = max(1, int(max_looks))
+    look = min(max(1, int(look_index)), looks)
+    info_fraction = look / looks
+    alpha = min(max(float(alpha), 1e-12), 0.5)
+    method_key = str(method or "obrien_fleming").lower()
+    if method_key == "pocock":
+        spent = alpha * math.log(1.0 + (math.e - 1.0) * info_fraction)
+    elif method_key == "linear":
+        spent = alpha * info_fraction
+    else:
+        z_alpha = NormalDist().inv_cdf(1.0 - alpha)
+        spent = 1.0 - _PHI(z_alpha / math.sqrt(info_fraction))
+        method_key = "obrien_fleming"
+    spent = min(max(spent, 1e-12), alpha)
+    return {
+        "method": method_key,
+        "look_index": look,
+        "max_looks": looks,
+        "information_fraction": float(info_fraction),
+        "alpha": float(alpha),
+        "cumulative_alpha_spent": float(spent),
+        "z_boundary": float(NormalDist().inv_cdf(1.0 - spent)),
+    }
+
+
+def alpha_spending_evaluation(
+    lab_r: Sequence[float],
+    *,
+    max_looks: int,
+    min_edge_r: float = 0.0,
+    sigma: float | None = None,
+    alpha: float = 0.05,
+    method: str = "obrien_fleming",
+) -> dict:
+    """Evaluate the current look against a one-sided alpha-spending boundary."""
+    x = np.asarray(lab_r, dtype=float)
+    out = {
+        "method": "alpha_spending_sequential_mean_v1",
+        "n": int(x.size),
+        "min_edge_r": float(min_edge_r),
+        "sigma": None if sigma is None else float(sigma),
+        "decision": "not_applicable",
+    }
+    if x.size < 2:
+        return out
+    scale = float(sigma) if sigma is not None and sigma > 0 else float(x.std(ddof=1))
+    if not (scale > 0):
+        return out
+    boundary = alpha_spending_boundary(
+        look_index=int(x.size),
+        max_looks=max_looks,
+        alpha=alpha,
+        method=method,
+    )
+    z = (float(x.mean()) - float(min_edge_r)) / (scale / math.sqrt(int(x.size)))
+    decision = "edge_supported" if z >= float(boundary["z_boundary"]) else "continue"
+    out.update(
+        {
+            "sigma": float(scale),
+            "z_stat": float(z),
+            "boundary": boundary,
+            "decision": decision,
+            "diagnostic_only": True,
+        }
+    )
+    return out
+
+
 def ks_two_sample(a: Sequence[float], b: Sequence[float]) -> dict:
     """Two-sample Kolmogorov-Smirnov statistic with asymptotic p-value.
 
@@ -163,3 +299,8 @@ def ks_two_sample(a: Sequence[float], b: Sequence[float]) -> dict:
     out["statistic"] = d
     out["p_value"] = float(min(max(p, 0.0), 1.0))
     return out
+
+
+def _normal_log_pdf(x: float, mean: float, variance: float) -> float:
+    var = max(float(variance), 1e-12)
+    return -0.5 * (math.log(2.0 * math.pi * var) + ((x - mean) ** 2) / var)

@@ -106,6 +106,18 @@ class PatternDiscoveryLabAgent:
                 required_cost_stress_multiplier=settings.discovery_required_cost_stress_multiplier,
                 event_ledger_limit=0,
                 match_tau_percentile=settings.discovery_match_tau_percentile,
+                clusterer_method=settings.discovery_clusterer_method,
+                clusterer_min_samples=(
+                    settings.discovery_clusterer_min_samples
+                    if settings.discovery_clusterer_min_samples > 0
+                    else None
+                ),
+                consensus_repeats=settings.discovery_cluster_consensus_repeats,
+                consensus_subsample_pct=settings.discovery_cluster_consensus_subsample_pct,
+                shape_dtw_band_pct=settings.discovery_match_shape_dtw_band_pct,
+                shape_dtw_threshold_quantile=settings.discovery_match_shape_dtw_threshold_quantile,
+                shape_dtw_method=settings.discovery_match_shape_dtw_method,
+                shape_soft_dtw_gamma=settings.discovery_match_shape_soft_dtw_gamma,
                 benchmark_regime_table=benchmark_regime_table,
             )
             raw_candidates = engine.discover(samples)

@@ -71,6 +71,9 @@ __all__ = [
     "sample_skew_kurt",
     "purged_walk_forward",
     "pbo_cscv",
+    "spa_reality_check",
+    "romano_wolf_stepdown_pvalues",
+    "cpcv_multipath_splits",
     "cusum_drift",
     "summarize_pattern_validation",
 ]
@@ -646,7 +649,207 @@ def pbo_cscv(
 
 
 # ---------------------------------------------------------------------------
-# 6. Detector de decay post-producción (§4.8)
+# 6. Selective inference / multipath diagnostics (SPA, Romano-Wolf, CPCV)
+# ---------------------------------------------------------------------------
+
+def spa_reality_check(
+    perf: np.ndarray,
+    *,
+    benchmark: float | Sequence[float] = 0.0,
+    n_boot: int = 1000,
+    mean_block: Optional[int] = None,
+    rng=None,
+) -> dict:
+    """Studentized stationary-bootstrap SPA/White Reality Check diagnostic.
+
+    `perf` is a T x M matrix of net returns/R by period and variant. The null
+    is that no variant beats `benchmark` after selecting the best performer.
+    This is diagnostic evidence for audit packets; callers decide gates.
+    """
+    excess = _excess_perf_matrix(perf, benchmark)
+    T, M = excess.shape
+    if T < 5 or M < 1:
+        return {
+            "method": "studentized_stationary_bootstrap_spa_v1",
+            "blocked": True,
+            "reason": "insufficient_periods_or_variants",
+            "period_count": int(T),
+            "variant_count": int(M),
+        }
+    means = excess.mean(axis=0)
+    scale = excess.std(axis=0, ddof=1)
+    scale = np.where(scale > 1e-12, scale, 1e-12)
+    t_stats = np.sqrt(T) * means / scale
+    observed = float(np.max(t_stats))
+    centered = excess - means
+    boot_idx = _stationary_bootstrap_index_matrix(
+        T, n_boot=max(1, int(n_boot)), mean_block=mean_block, rng=rng
+    )
+    boot_means = centered[boot_idx].mean(axis=1)
+    boot_t = np.sqrt(T) * boot_means / scale
+    boot_max = boot_t.max(axis=1)
+    p_value = (1.0 + float(np.sum(boot_max >= observed))) / (boot_max.size + 1.0)
+    best = int(np.argmax(t_stats))
+    return {
+        "method": "studentized_stationary_bootstrap_spa_v1",
+        "blocked": False,
+        "diagnostic_only": True,
+        "period_count": int(T),
+        "variant_count": int(M),
+        "n_boot": int(n_boot),
+        "mean_block": int(mean_block or max(5, round(T ** (1.0 / 3.0)))),
+        "best_variant": best,
+        "best_mean_excess": round(float(means[best]), 8),
+        "best_t_stat": round(float(t_stats[best]), 8),
+        "p_value": round(float(min(max(p_value, 0.0), 1.0)), 8),
+        "variant_means": [round(float(value), 8) for value in means],
+        "variant_t_stats": [round(float(value), 8) for value in t_stats],
+    }
+
+
+def romano_wolf_stepdown_pvalues(
+    perf: np.ndarray,
+    *,
+    benchmark: float | Sequence[float] = 0.0,
+    alpha: float = 0.05,
+    n_boot: int = 1000,
+    mean_block: Optional[int] = None,
+    rng=None,
+) -> dict:
+    """Romano-Wolf stepdown adjusted p-values for variant mean excess.
+
+    Uses a centered stationary bootstrap and max-t stepdown. This controls
+    family-wise error for the tested variants under the bootstrap approximation.
+    """
+    excess = _excess_perf_matrix(perf, benchmark)
+    T, M = excess.shape
+    if T < 5 or M < 1:
+        return {
+            "method": "romano_wolf_stepdown_stationary_bootstrap_v1",
+            "blocked": True,
+            "reason": "insufficient_periods_or_variants",
+            "period_count": int(T),
+            "variant_count": int(M),
+        }
+    means = excess.mean(axis=0)
+    scale = excess.std(axis=0, ddof=1)
+    scale = np.where(scale > 1e-12, scale, 1e-12)
+    observed_t = np.sqrt(T) * means / scale
+    order = np.argsort(-observed_t)
+    centered = excess - means
+    boot_idx = _stationary_bootstrap_index_matrix(
+        T, n_boot=max(1, int(n_boot)), mean_block=mean_block, rng=rng
+    )
+    boot_means = centered[boot_idx].mean(axis=1)
+    boot_t = np.sqrt(T) * boot_means / scale
+    adjusted = np.ones(M, dtype=float)
+    running = 0.0
+    for position, variant in enumerate(order):
+        remaining = order[position:]
+        max_remaining = boot_t[:, remaining].max(axis=1)
+        raw_p = (1.0 + float(np.sum(max_remaining >= observed_t[variant]))) / (
+            max_remaining.size + 1.0
+        )
+        running = max(running, raw_p)
+        adjusted[variant] = min(running, 1.0)
+    return {
+        "method": "romano_wolf_stepdown_stationary_bootstrap_v1",
+        "blocked": False,
+        "diagnostic_only": True,
+        "period_count": int(T),
+        "variant_count": int(M),
+        "alpha": float(alpha),
+        "n_boot": int(n_boot),
+        "mean_block": int(mean_block or max(5, round(T ** (1.0 / 3.0)))),
+        "order": [int(i) for i in order],
+        "variant_t_stats": [round(float(value), 8) for value in observed_t],
+        "adjusted_p_values": [round(float(value), 8) for value in adjusted],
+        "rejected": [bool(value <= alpha) for value in adjusted],
+    }
+
+
+def cpcv_multipath_splits(
+    starts: Sequence[int],
+    ends: Sequence[int],
+    *,
+    n_groups: int = 6,
+    test_groups: int = 2,
+    embargo: int = 0,
+    max_splits: int | None = None,
+    rng=None,
+) -> list[tuple[np.ndarray, np.ndarray]]:
+    """Combinatorial purged CV splits with embargo for multipath diagnostics."""
+    starts_arr = np.asarray(starts, dtype=int)
+    ends_arr = np.asarray(ends, dtype=int)
+    if starts_arr.size != ends_arr.size:
+        raise ValueError("starts and ends must have the same length")
+    if starts_arr.size == 0:
+        return []
+    if np.any(ends_arr < starts_arr):
+        raise ValueError("all spans must satisfy end >= start")
+    groups_n = max(2, min(int(n_groups), int(starts_arr.size)))
+    test_n = max(1, min(int(test_groups), groups_n - 1))
+    order = np.argsort(starts_arr, kind="stable")
+    groups = [np.asarray(group, dtype=int) for group in np.array_split(order, groups_n)]
+    combos = list(itertools.combinations(range(groups_n), test_n))
+    if max_splits is not None and len(combos) > max_splits:
+        gen = np.random.default_rng(rng)
+        chosen = gen.choice(len(combos), size=max(1, int(max_splits)), replace=False)
+        combos = [combos[int(i)] for i in chosen]
+    splits: list[tuple[np.ndarray, np.ndarray]] = []
+    all_idx = np.arange(starts_arr.size)
+    for combo in combos:
+        test_idx = np.sort(np.concatenate([groups[i] for i in combo]))
+        if test_idx.size == 0:
+            continue
+        test_start = int(starts_arr[test_idx].min()) - int(embargo)
+        test_end = int(ends_arr[test_idx].max()) + int(embargo)
+        not_test = np.setdiff1d(all_idx, test_idx, assume_unique=False)
+        train_mask = (ends_arr[not_test] < test_start) | (starts_arr[not_test] > test_end)
+        train_idx = np.sort(not_test[train_mask])
+        if train_idx.size == 0:
+            continue
+        splits.append((train_idx, test_idx))
+    return splits
+
+
+def _excess_perf_matrix(perf: np.ndarray, benchmark: float | Sequence[float]) -> np.ndarray:
+    matrix = np.asarray(perf, dtype=float)
+    if matrix.ndim != 2:
+        raise ValueError("perf must be a matrix (T, M)")
+    if not np.all(np.isfinite(matrix)):
+        raise ValueError("perf contains non-finite values")
+    bench = np.asarray(benchmark, dtype=float)
+    if bench.ndim == 0:
+        return matrix - float(bench)
+    if bench.shape[0] != matrix.shape[0]:
+        raise ValueError("benchmark series length must match perf rows")
+    return matrix - bench.reshape(-1, 1)
+
+
+def _stationary_bootstrap_index_matrix(
+    n: int,
+    *,
+    n_boot: int,
+    mean_block: Optional[int] = None,
+    rng=None,
+) -> np.ndarray:
+    if n <= 0:
+        raise ValueError("n must be positive")
+    gen = np.random.default_rng(rng)
+    block = max(1, int(mean_block or max(5, round(n ** (1.0 / 3.0)))))
+    p = 1.0 / block
+    idx = np.empty((n_boot, n), dtype=int)
+    for b in range(n_boot):
+        idx[b, 0] = gen.integers(n)
+        restart = gen.random(n) < p
+        for t in range(1, n):
+            idx[b, t] = gen.integers(n) if restart[t] else (idx[b, t - 1] + 1) % n
+    return idx
+
+
+# ---------------------------------------------------------------------------
+# 7. Detector de decay post-producción (§4.8)
 # ---------------------------------------------------------------------------
 
 def cusum_drift(
@@ -697,7 +900,7 @@ def cusum_drift(
 
 
 # ---------------------------------------------------------------------------
-# 7. Orquestador: ValidationReport de un candidato (§3.6 completo)
+# 8. Orquestador: ValidationReport de un candidato (§3.6 completo)
 # ---------------------------------------------------------------------------
 
 def summarize_pattern_validation(

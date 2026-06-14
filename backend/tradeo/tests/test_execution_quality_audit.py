@@ -9,12 +9,19 @@ summary the Director gate stores as a diagnostic.
 
 from __future__ import annotations
 
-from tradeo.db.models import Trade, TradeStatus
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+
+from tradeo.db.models import AgentMessage, AuditLog, Signal, SignalStatus, Trade, TradeStatus
+from tradeo.db.session import Base
 from tradeo.services.evidence import FillProvenance
 from tradeo.services.execution_quality import (
+    COST_RECALIBRATION_METHOD,
     EXECUTION_QUALITY_METHOD,
     pattern_execution_quality_summary,
     persist_execution_quality,
+    publish_cost_recalibration_report,
+    real_fill_cost_recalibration_report,
     trade_execution_quality,
 )
 
@@ -43,6 +50,59 @@ def make_trade(
             **(metadata or {}),
         },
     )
+
+
+def make_recalibration_trade(
+    index: int,
+    *,
+    adv: float = 30_000_000.0,
+    spread_observed_pct: float = 0.0008,
+    entry_fill_price: float = 10.05,
+    fill_provenance: str = FillProvenance.BROKER_EXECUTION.value,
+) -> Trade:
+    signal = Signal(
+        id=index,
+        symbol=f"T{index}",
+        pattern="cup_handle",
+        side="long",
+        entry=10.0,
+        stop=9.0,
+        target=14.0,
+        reward_risk=4.0,
+        confidence=0.7,
+        composite_score=0.7,
+        status=SignalStatus.EXECUTED,
+        metadata_json={
+            "signal_snapshot": {"features": {"avg_dollar_volume": adv}},
+            "spread_snapshot": {
+                "available": True,
+                "spread_observed_pct": spread_observed_pct,
+            },
+        },
+    )
+    return Trade(
+        id=index,
+        symbol=f"T{index}",
+        pattern="cup_handle",
+        side="long",
+        qty=10,
+        entry=10.0,
+        stop=9.0,
+        target=14.0,
+        status=TradeStatus.CLOSED,
+        metadata_json={
+            "fill_provenance": fill_provenance,
+            "entry_fill_price": entry_fill_price,
+            "commission": 0.25,
+        },
+        signal=signal,
+    )
+
+
+def session_factory():
+    engine = create_engine("sqlite:///:memory:", future=True)
+    Base.metadata.create_all(bind=engine)
+    return sessionmaker(bind=engine, future=True)()
 
 
 # ---------------------------------------------------------------------------
@@ -253,3 +313,70 @@ def test_pattern_summary_empty_when_no_real_fills() -> None:
     assert summary["count"] == 0
     assert summary["median_entry_slippage_bps"] is None
     assert summary["per_trade"] == []
+
+
+# ---------------------------------------------------------------------------
+# Advisory cost-model recalibration from real fills
+# ---------------------------------------------------------------------------
+
+
+def test_cost_recalibration_aggregates_real_fills_by_adv_bucket_only() -> None:
+    trades = [
+        make_recalibration_trade(1, entry_fill_price=10.05),
+        make_recalibration_trade(2, entry_fill_price=10.08),
+        make_recalibration_trade(3, entry_fill_price=10.10),
+        make_recalibration_trade(
+            4,
+            entry_fill_price=10.50,
+            fill_provenance=FillProvenance.SHADOW_CLOSE.value,
+        ),
+    ]
+
+    report = real_fill_cost_recalibration_report(
+        trades,
+        min_bucket_samples=3,
+        min_total_samples=3,
+    )
+
+    assert report["method"] == COST_RECALIBRATION_METHOD
+    assert report["status"] == "ok"
+    assert report["auto_apply"] is False
+    assert report["live_risk_config_changed"] is False
+    assert report["real_fill_sample_count"] == 3
+    assert report["excluded_sample_count"] == 1
+    deep = report["buckets"]["deep_adv_gte_25m"]
+    assert deep["count"] == 3
+    assert deep["sufficient_data"] is True
+    assert deep["p75_half_spread_bps"] == 4.0
+    assert deep["suggestion"]["recommended_half_spread_bps"] == 4.0
+    assert deep["suggestion"]["recommended_slippage_bps_per_side"] > 0.0
+    assert deep["suggestion"]["auto_apply"] is False
+
+
+def test_cost_recalibration_publishes_agent_message_and_audit_log() -> None:
+    db = session_factory()
+    trades = [
+        make_recalibration_trade(1, entry_fill_price=10.05),
+        make_recalibration_trade(2, entry_fill_price=10.08),
+        make_recalibration_trade(3, entry_fill_price=10.10),
+    ]
+    db.add_all(trades)
+    db.commit()
+    persisted = db.query(Trade).all()
+
+    report = publish_cost_recalibration_report(
+        db,
+        persisted,
+        min_bucket_samples=3,
+        min_total_samples=3,
+    )
+
+    message = db.query(AgentMessage).one()
+    audit = db.query(AuditLog).one()
+    assert report["agent_message_id"] == message.id
+    assert message.agent == "execution_quality"
+    assert message.payload_json["kind"] == "cost_model_recalibration_suggestion"
+    assert message.payload_json["data"]["report_hash"] == report["report_hash"]
+    assert audit.action == "cost_model_recalibration_suggested"
+    assert audit.details_json["auto_apply"] is False
+    assert audit.details_json["live_risk_config_changed"] is False

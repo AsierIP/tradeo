@@ -14,7 +14,11 @@ from sqlalchemy.orm import Session
 from tradeo.core.config import Settings, get_settings
 from tradeo.db.models import AuditLog, StrategyVersion
 from tradeo.research.nested_optimization import nested_optimization_report
-from tradeo.research.quant_validation import pbo_cscv
+from tradeo.research.quant_validation import (
+    pbo_cscv,
+    romano_wolf_stepdown_pvalues,
+    spa_reality_check,
+)
 from tradeo.schemas import SelfImprovementResponse
 from tradeo.services.backtester import Backtester
 from tradeo.services.data_provider import CachedMarketDataProvider, pick_symbols
@@ -226,6 +230,7 @@ class SelfImprovementEngine:
             }
         summary = dict(pbo_report)
         summary["nested"] = nested_report
+        summary["selective_inference_diagnostics"] = self._selective_inference_diagnostics(records)
         return out, summary
 
     def _nested_report(self, records: list[dict[str, Any]]) -> dict[str, Any]:
@@ -286,6 +291,40 @@ class SelfImprovementEngine:
             "variant_count": int(matrix.shape[1]),
             "n_combinations": int(result["n_combinations"]),
             "best_counts": np.asarray(result["best_counts"], dtype=int).tolist(),
+        }
+
+    def _selective_inference_diagnostics(self, records: list[dict[str, Any]]) -> dict[str, Any]:
+        matrix, periods = self._performance_matrix(records)
+        if matrix.shape[0] < 5 or matrix.shape[1] < 2:
+            return {
+                "method": "spa_romano_wolf_diagnostics_v1",
+                "diagnostic_only": True,
+                "blocked": True,
+                "reason": "insufficient_variants_or_periods_for_selective_inference",
+                "period_count": int(matrix.shape[0]),
+                "variant_count": int(matrix.shape[1]),
+            }
+        try:
+            spa = spa_reality_check(matrix, n_boot=200, rng=29)
+            romano_wolf = romano_wolf_stepdown_pvalues(matrix, n_boot=200, rng=31)
+        except ValueError as exc:
+            return {
+                "method": "spa_romano_wolf_diagnostics_v1",
+                "diagnostic_only": True,
+                "blocked": True,
+                "reason": str(exc),
+                "period_count": int(matrix.shape[0]),
+                "variant_count": int(matrix.shape[1]),
+            }
+        return {
+            "method": "spa_romano_wolf_diagnostics_v1",
+            "diagnostic_only": True,
+            "blocked": False,
+            "period_kind": "monthly_realized_r_buckets",
+            "period_count": len(periods),
+            "variant_count": int(matrix.shape[1]),
+            "spa": spa,
+            "romano_wolf": romano_wolf,
         }
 
     @staticmethod

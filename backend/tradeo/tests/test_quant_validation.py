@@ -5,6 +5,7 @@ import numpy as np
 from tradeo.research.quant_validation import (
     average_uniqueness_weights,
     benjamini_hochberg,
+    cpcv_multipath_splits,
     cusum_drift,
     deflated_sharpe_ratio,
     expected_max_sharpe,
@@ -15,6 +16,8 @@ from tradeo.research.quant_validation import (
     purged_walk_forward,
     sample_skew_kurt,
     select_nonoverlapping_events,
+    romano_wolf_stepdown_pvalues,
+    spa_reality_check,
     stationary_bootstrap_ci,
     summarize_pattern_validation,
     triple_barrier_outcome,
@@ -274,6 +277,54 @@ def test_purged_walk_forward_never_leaks_labels_into_train() -> None:
         test_start = starts[test_idx].min()
         assert np.all(ends[train_idx] < test_start - embargo)
         assert np.intersect1d(train_idx, test_idx).size == 0
+
+
+def test_spa_reality_check_detects_best_variant_after_selection() -> None:
+    rng = np.random.default_rng(202)
+    perf = rng.normal(0.0, 0.2, size=(80, 4))
+    perf[:, 2] += 0.25
+
+    report = spa_reality_check(perf, n_boot=300, mean_block=5, rng=7)
+
+    assert report["blocked"] is False
+    assert report["diagnostic_only"] is True
+    assert report["best_variant"] == 2
+    assert report["p_value"] < 0.05
+
+
+def test_romano_wolf_stepdown_controls_family_and_is_deterministic() -> None:
+    rng = np.random.default_rng(203)
+    perf = rng.normal(0.0, 0.2, size=(80, 4))
+    perf[:, 1] += 0.30
+
+    first = romano_wolf_stepdown_pvalues(perf, n_boot=300, mean_block=5, rng=11)
+    second = romano_wolf_stepdown_pvalues(perf, n_boot=300, mean_block=5, rng=11)
+
+    assert first == second
+    assert first["blocked"] is False
+    assert first["rejected"][1] is True
+    assert all(0.0 <= p <= 1.0 for p in first["adjusted_p_values"])
+
+
+def test_cpcv_multipath_splits_purge_embargo_overlaps() -> None:
+    starts = np.arange(0, 120, 3)
+    ends = starts + 2
+    splits = cpcv_multipath_splits(
+        starts,
+        ends,
+        n_groups=6,
+        test_groups=2,
+        embargo=3,
+        max_splits=4,
+        rng=13,
+    )
+
+    assert len(splits) == 4
+    for train_idx, test_idx in splits:
+        test_start = starts[test_idx].min() - 3
+        test_end = ends[test_idx].max() + 3
+        assert np.intersect1d(train_idx, test_idx).size == 0
+        assert np.all((ends[train_idx] < test_start) | (starts[train_idx] > test_end))
 
 
 def test_cusum_triggers_down_on_regime_break() -> None:

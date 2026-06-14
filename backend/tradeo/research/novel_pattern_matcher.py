@@ -14,6 +14,12 @@ from sqlalchemy.orm import Session
 from tradeo.core.config import Settings, get_settings
 from tradeo.db.models import DiscoveredPattern, DiscoveredPatternMatch, DiscoveredPatternStatus
 from tradeo.research.pattern_embedding_engine import PatternEmbeddingEngine
+from tradeo.research.shape_verifier import (
+    DEFAULT_SHAPE_CHANNELS,
+    SHAPE_VERIFIER_METHOD,
+    shape_distance,
+    shape_matrix_from_chart,
+)
 from tradeo.services.data_provider import MarketDataProvider, pick_symbols
 from tradeo.services.entry_variants import (
     build_entry_audit_context,
@@ -270,6 +276,7 @@ class NovelPatternMatcher:
                                 "side": pattern.side,
                                 "similarity": round(similarity, 6),
                                 "similarity_threshold_used": round(effective_threshold, 6),
+                                "shape_verifier": diagnostic.get("shape_verifier"),
                                 "match_ambiguity": ambiguity,
                                 "ambiguity_ratio": ambiguity["ambiguity_ratio"],
                                 "ambiguity_gate": ambiguity_gate,
@@ -305,6 +312,7 @@ class NovelPatternMatcher:
                                         **feature_parity_contract,
                                         "vector_length": int(len(vector)),
                                     },
+                                    "shape_verifier": diagnostic.get("shape_verifier"),
                                     "match_ambiguity": ambiguity,
                                     "ambiguity_gate": ambiguity_gate,
                                     "features": features,
@@ -701,7 +709,7 @@ class NovelPatternMatcher:
     ) -> dict[str, Any] | None:
         if cached is None:
             return None
-        _, vector, _, _ = cached
+        _, vector, _, chart = cached
         scaler_mean, scaler_scale = self._scaler(pattern)
         centroid = np.asarray(pattern.centroid_json, dtype=float)
         if scaler_mean is None or scaler_scale is None or len(centroid) == 0:
@@ -736,6 +744,11 @@ class NovelPatternMatcher:
         passed_threshold = similarity >= effective_threshold
         if prototype is not None:
             passed_threshold = passed_threshold and bool(prototype["passed"])
+        shape_verifier = None
+        if passed_threshold:
+            shape_verifier = self._shape_verifier_diagnostic(pattern, chart)
+            if shape_verifier is not None and shape_verifier.get("hard_gate_applied"):
+                passed_threshold = passed_threshold and bool(shape_verifier.get("passed"))
         return {
             "similarity": round(similarity, 6),
             "normalized_distance": round(normalized_distance, 6),
@@ -746,6 +759,78 @@ class NovelPatternMatcher:
                 "gamma": temporal[0] if temporal is not None else None,
             },
             "prototype_match": prototype,
+            "shape_verifier": shape_verifier,
+        }
+
+    def _shape_verifier_diagnostic(
+        self,
+        pattern: DiscoveredPattern,
+        chart: dict[str, list[float]],
+    ) -> dict[str, Any] | None:
+        settings = self.settings
+        if settings is None or not settings.discovery_match_shape_dtw_enabled:
+            return None
+        metrics = pattern.metrics_json or {}
+        contract = metrics.get("shape_verifier")
+        hard_gate_enabled = bool(settings.discovery_match_shape_dtw_hard_gate_enabled)
+        base = {
+            "method": SHAPE_VERIFIER_METHOD,
+            "enabled": True,
+            "hard_gate_enabled": hard_gate_enabled,
+            "hard_gate_applied": False,
+        }
+        if not isinstance(contract, dict) or contract.get("status") != "ok":
+            return {
+                **base,
+                "status": "missing_research_contract",
+                "enforceable": False,
+                "passed": None,
+            }
+        channels = contract.get("channels")
+        if not isinstance(channels, list) or not channels:
+            channels = list(DEFAULT_SHAPE_CHANNELS)
+        channels = [str(channel) for channel in channels]
+        points = int(contract.get("points_per_channel") or 48)
+        current = shape_matrix_from_chart(chart, channels=channels, length=points)
+        prototype = shape_matrix_from_chart(
+            contract.get("prototype") if isinstance(contract.get("prototype"), dict) else None,
+            channels=channels,
+            length=points,
+        )
+        threshold = contract.get("distance_threshold")
+        try:
+            threshold = float(threshold)
+        except (TypeError, ValueError):
+            threshold = math.nan
+        if current is None or prototype is None or not math.isfinite(threshold):
+            return {
+                **base,
+                "status": "invalid_shape_inputs",
+                "enforceable": False,
+                "passed": None,
+            }
+        band = int(contract.get("band") or max(1, math.ceil(points * settings.discovery_match_shape_dtw_band_pct)))
+        method = str(contract.get("distance") or settings.discovery_match_shape_dtw_method)
+        distance = shape_distance(
+            current,
+            prototype,
+            method=method,
+            band=band,
+            gamma=float(contract.get("soft_dtw_gamma") or settings.discovery_match_shape_soft_dtw_gamma),
+        )
+        passed = bool(math.isfinite(distance) and distance <= threshold)
+        return {
+            **base,
+            "status": "ok",
+            "enforceable": True,
+            "hard_gate_applied": hard_gate_enabled,
+            "passed": passed,
+            "distance": round(float(distance), 6) if math.isfinite(distance) else None,
+            "distance_threshold": round(float(threshold), 6),
+            "channels": channels,
+            "points_per_channel": int(points),
+            "band": int(band),
+            "distance_method": method,
         }
 
     def _prototype_diagnostic(

@@ -209,6 +209,10 @@ def test_director_review_gate_marks_candidate_after_ten_closed_lab_trades() -> N
     assert pattern.metrics_json["lab_execution"]["unique_lab_days"] == 10
     assert pattern.metrics_json["lab_execution"]["trades_remaining_for_director_review"] == 0
     assert pattern.metrics_json["lab_execution"]["director_review_trigger_trades"] == 10
+    sequential = pattern.metrics_json["lab_execution"]["sequential_evaluation"]
+    assert sequential["msprt"]["method"] == "normal_mixture_sprt_v1"
+    assert sequential["alpha_spending"]["method"] == "alpha_spending_sequential_mean_v1"
+    assert sequential["alpha_spending"]["diagnostic_only"] is True
 
 
 def test_director_review_gate_blocks_until_effective_lab_trade_minimum() -> None:

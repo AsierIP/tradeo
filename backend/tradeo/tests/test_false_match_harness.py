@@ -10,6 +10,7 @@ from tradeo.research.cluster_research_engine import ClusterResearchEngine
 from tradeo.research.false_match_harness import FalseMatchHarness
 from tradeo.research.novel_pattern_matcher import NovelPatternMatcher
 from tradeo.research.pattern_embedding_engine import PatternEmbeddingEngine
+from tradeo.research.shape_verifier import bounded_dtw_distance, shape_distance
 from tradeo.research.types import ForwardOutcome, WindowSample
 
 DIM = 24
@@ -120,6 +121,22 @@ def test_temporal_weighting_downweights_early_window_differences() -> None:
     sim_early_uw = FalseMatchHarness._similarities(early_diff, centroid)[0]
     sim_late_uw = FalseMatchHarness._similarities(late_diff, centroid)[0]
     assert sim_early_uw == pytest.approx(sim_late_uw)
+
+
+def test_bounded_dtw_shape_distance_handles_small_phase_shift() -> None:
+    base = np.vstack(
+        [
+            np.r_[np.linspace(0.0, 1.0, 12), np.linspace(1.0, 0.4, 12)],
+            np.r_[np.zeros(8), np.linspace(0.0, 1.0, 16)],
+        ]
+    )
+    shifted = np.roll(base, 2, axis=1)
+    euclidean = float(np.linalg.norm(base - shifted) / np.sqrt(base.size))
+    dtw = bounded_dtw_distance(base, shifted, band=4)
+    soft = shape_distance(base, shifted, method="soft_dtw", band=4, gamma=0.05)
+
+    assert dtw < euclidean
+    assert soft >= 0.0
 
 
 def _sample(symbol: str, vector: np.ndarray, end: str = "2024-01-31") -> WindowSample:
@@ -252,6 +269,75 @@ def test_matcher_temporal_weighting_gated_by_flag_and_pattern_metrics(tmp_path) 
     )
     assert diag_fallback["temporal_weighting"]["enabled"] is False
     assert diag_fallback["similarity"] == pytest.approx(diag_off["similarity"])
+
+
+def test_matcher_shape_dtw_is_diagnostic_until_hard_gate_enabled(tmp_path) -> None:
+    centroid = [0.0, 0.0]
+    prototype = {
+        "close_norm": [0.0] * 48,
+        "volume_rel": [0.0] * 48,
+    }
+    metrics = {
+        "scaler_mean": [0.0, 0.0],
+        "scaler_scale": [1.0, 1.0],
+        "match_tau_similarity": 0.45,
+        "shape_verifier": {
+            "status": "ok",
+            "method": "bounded_dtw_shape_verifier_v1",
+            "channels": ["close_norm", "volume_rel"],
+            "points_per_channel": 48,
+            "distance": "dtw",
+            "band": 8,
+            "distance_threshold": 0.01,
+            "prototype": prototype,
+        },
+    }
+    bad_chart = {
+        "close_norm": [1.0] * 48,
+        "volume_rel": [0.0] * 48,
+    }
+    cached = (None, np.zeros(2, dtype=float), {}, bad_chart)
+
+    diagnostic_only = _matcher(
+        tmp_path,
+        discovery_match_shape_dtw_enabled=True,
+        discovery_match_shape_dtw_hard_gate_enabled=False,
+    )._similarity_diagnostic(_PatternStub(dict(metrics), centroid), cached, 0.45)
+    assert diagnostic_only["shape_verifier"]["passed"] is False
+    assert diagnostic_only["shape_verifier"]["hard_gate_applied"] is False
+    assert diagnostic_only["passed_threshold"] is True
+
+    hard_gate = _matcher(
+        tmp_path,
+        discovery_match_shape_dtw_enabled=True,
+        discovery_match_shape_dtw_hard_gate_enabled=True,
+    )._similarity_diagnostic(_PatternStub(dict(metrics), centroid), cached, 0.45)
+    assert hard_gate["shape_verifier"]["hard_gate_applied"] is True
+    assert hard_gate["passed_threshold"] is False
+
+
+def test_matcher_shape_dtw_hard_gate_requires_research_contract(tmp_path) -> None:
+    metrics = {
+        "scaler_mean": [0.0, 0.0],
+        "scaler_scale": [1.0, 1.0],
+        "match_tau_similarity": 0.45,
+    }
+    cached = (
+        None,
+        np.zeros(2, dtype=float),
+        {},
+        {"close_norm": [1.0] * 48, "volume_rel": [0.0] * 48},
+    )
+
+    diag = _matcher(
+        tmp_path,
+        discovery_match_shape_dtw_enabled=True,
+        discovery_match_shape_dtw_hard_gate_enabled=True,
+    )._similarity_diagnostic(_PatternStub(metrics, [0.0, 0.0]), cached, 0.45)
+
+    assert diag["shape_verifier"]["status"] == "missing_research_contract"
+    assert diag["shape_verifier"]["hard_gate_applied"] is False
+    assert diag["passed_threshold"] is True
 
 
 def test_contract_matcher_scaling_bumps_with_gamma() -> None:

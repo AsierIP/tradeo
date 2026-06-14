@@ -134,6 +134,10 @@ class Settings(BaseSettings):
     discovery_max_windows_per_symbol: int = 450
     discovery_min_cluster_size: int = 60
     discovery_max_clusters_per_window: int = 12
+    discovery_clusterer_method: str = "auto"
+    discovery_clusterer_min_samples: int = 0
+    discovery_cluster_consensus_repeats: int = 8
+    discovery_cluster_consensus_subsample_pct: float = 0.80
     discovery_min_samples: int = 100
     # Gate over the effective sample size (sum of average-uniqueness weights of
     # deduplicated occurrences). Raw overlapping windows overstate evidence by
@@ -190,6 +194,12 @@ class Settings(BaseSettings):
     # research run already publishes both curves per pattern.
     discovery_match_temporal_weighting_enabled: bool = False
     discovery_match_temporal_gamma: float = 0.97
+    discovery_match_shape_dtw_enabled: bool = False
+    discovery_match_shape_dtw_hard_gate_enabled: bool = False
+    discovery_match_shape_dtw_method: str = "dtw"
+    discovery_match_shape_dtw_band_pct: float = 0.15
+    discovery_match_shape_dtw_threshold_quantile: float = 0.90
+    discovery_match_shape_soft_dtw_gamma: float = 0.05
     discovery_match_ambiguity_hard_gate_enabled: bool = True
     discovery_match_ambiguity_ratio_threshold: float = 0.95
     discovery_match_ambiguity_entry_score_margin: float = 0.10

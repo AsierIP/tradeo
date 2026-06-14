@@ -28,11 +28,32 @@ from tradeo.research.quant_validation import (
 )
 from tradeo.research.pattern_embedding_engine import PatternEmbeddingEngine
 from tradeo.research.reward_risk_analyzer import RewardRiskAnalyzer
+from tradeo.research.shape_verifier import (
+    DEFAULT_SHAPE_CHANNELS,
+    SHAPE_VERIFIER_METHOD,
+    shape_distance,
+    shape_matrix_from_chart,
+)
 from tradeo.research.types import ClusterCandidate, Side, WindowSample
 from tradeo.services.market_regime import (
     INSUFFICIENT_HISTORY,
     regime_keys_for_dates,
 )
+
+try:  # scikit-learn >=1.3
+    from sklearn.cluster import HDBSCAN
+except Exception:  # noqa: BLE001
+    HDBSCAN = None  # type: ignore[assignment]
+
+
+@dataclass(slots=True)
+class ClusterFitResult:
+    method: str
+    requested_method: str
+    train_labels: np.ndarray
+    all_labels: np.ndarray
+    centroids: dict[int, np.ndarray]
+    metadata: dict[str, object]
 
 
 @dataclass(slots=True)
@@ -55,6 +76,17 @@ class ClusterResearchEngine:
     # Diagnostic gamma for the temporal-weighting variant of the false-match
     # harness (audit §2.2.a); live matcher adoption is gated separately.
     match_temporal_gamma: float = 0.97
+    clusterer_method: str = "auto"
+    clusterer_min_samples: int | None = None
+    density_holdout_radius_multiplier: float = 1.25
+    consensus_repeats: int = 8
+    consensus_subsample_pct: float = 0.80
+    consensus_max_members: int = 120
+    shape_dtw_points: int = 48
+    shape_dtw_band_pct: float = 0.15
+    shape_dtw_threshold_quantile: float = 0.90
+    shape_dtw_method: str = "dtw"
+    shape_soft_dtw_gamma: float = 0.05
     quant_bootstrap_draws: int = 500
     benchmark_regime_table: pd.DataFrame | None = None
 
@@ -78,19 +110,26 @@ class ClusterResearchEngine:
         scaler = StandardScaler()
         matrix_train_scaled = scaler.fit_transform(matrix_train)
         matrix_all_scaled = scaler.transform(matrix_all)
-        n_clusters = min(self.max_clusters_per_window, max(2, len(train_samples) // self.min_cluster_size))
-        model = MiniBatchKMeans(
-            n_clusters=n_clusters,
-            random_state=self.random_state,
-            n_init=10,
-            batch_size=min(2048, max(128, len(train_samples))),
+        target_clusters = min(self.max_clusters_per_window, max(2, len(train_samples) // self.min_cluster_size))
+        fit = self._fit_clusters(
+            matrix_train_scaled,
+            matrix_all_scaled,
+            target_clusters=target_clusters,
         )
-        train_labels = model.fit_predict(matrix_train_scaled)
-        all_labels = model.predict(matrix_all_scaled)
+        train_labels = fit.train_labels
+        all_labels = fit.all_labels
+        cluster_ids = sorted(label for label in set(train_labels.tolist()) if int(label) >= 0)
+        if not cluster_ids:
+            return []
+        consensus_ensemble = self._cluster_consensus_ensemble(
+            matrix_train_scaled,
+            target_clusters=target_clusters,
+            method=fit.method,
+        )
         candidates: list[ClusterCandidate] = []
         embedding_contract = PatternEmbeddingEngine().contract()
         holdout_ids = {id(sample) for sample in holdout_samples}
-        for cluster_id in sorted(set(train_labels.tolist())):
+        for cluster_id in cluster_ids:
             train_idxs = np.flatnonzero(train_labels == cluster_id)
             if len(train_idxs) < max(10, self.min_cluster_size // 2):
                 continue
@@ -99,9 +138,9 @@ class ClusterResearchEngine:
             cluster_train_samples = [train_samples[int(i)] for i in train_idxs]
             cluster_holdout_samples = [sample for sample in cluster_samples if id(sample) in holdout_ids]
             cluster_vectors = matrix_all_scaled[all_idxs]
-            centroid_scaled = model.cluster_centers_[cluster_id]
+            centroid_scaled = fit.centroids[int(cluster_id)]
             rr_trial_count = len(self.rr_levels or [1.5, 2.0, 2.5, 3.0, 4.0, 5.0])
-            tested_trials = n_clusters * 2 * rr_trial_count
+            tested_trials = len(cluster_ids) * 2 * rr_trial_count
             long_metrics = self._metrics_for_side(
                 cluster_train_samples,
                 cluster_samples,
@@ -126,6 +165,24 @@ class ClusterResearchEngine:
             metrics["window_size"] = window_size
             metrics["side"] = side
             metrics["target_r"] = self.target_r
+            metrics["clusterer_method"] = fit.method
+            metrics["clusterer"] = {
+                **fit.metadata,
+                "cluster_id": int(cluster_id),
+                "cluster_sample_count": int(len(all_idxs)),
+                "train_cluster_sample_count": int(len(train_idxs)),
+            }
+            metrics["density_noise"] = {
+                "method": fit.method,
+                "train_noise_count": int(np.sum(train_labels == -1)),
+                "train_noise_rate": round(float(np.mean(train_labels == -1)), 6)
+                if len(train_labels)
+                else 0.0,
+                "all_noise_count": int(np.sum(all_labels == -1)),
+                "all_noise_rate": round(float(np.mean(all_labels == -1)), 6)
+                if len(all_labels)
+                else 0.0,
+            }
             metrics["embedding_length"] = int(matrix_all.shape[1])
             metrics["feature_parity_contract"] = {
                 **embedding_contract,
@@ -163,7 +220,7 @@ class ClusterResearchEngine:
             metrics["model_holdout_sample_count"] = len(holdout_samples)
             metrics["real_variant_count"] = tested_trials
             metrics["real_variant_dimensions"] = {
-                "clusters": n_clusters,
+                "clusters": len(cluster_ids),
                 "sides": 2,
                 "rr_levels": rr_trial_count,
             }
@@ -217,6 +274,7 @@ class ClusterResearchEngine:
                 metrics["match_conformal_similarity_threshold"] = conformal["similarity_threshold"]
             prototype = self._prototype_match_contract(cluster_vectors, centroid_scaled)
             metrics.update(prototype)
+            metrics.update(self._shape_match_contract(cluster_train_samples))
             false_match = self._false_match_metrics(
                 cluster_id=int(cluster_id),
                 all_labels=all_labels,
@@ -236,12 +294,17 @@ class ClusterResearchEngine:
             metrics["cluster_signature"] = signature
             metrics["medoid"] = signature["medoid"]
             metrics["concentration_checks"] = signature["concentration_checks"]
+            consensus = self._coassignment_stability(train_idxs, consensus_ensemble)
+            metrics["coassignment_consensus"] = consensus
             metrics["cluster_stability"] = {
-                "method": "outcome_diversity_concentration_proxy",
+                "method": "outcome_diversity_concentration_proxy+coassignment_consensus",
                 "stability_score": metrics["stability_score"],
                 "stability_year": metrics["stability_year"],
                 "stability_symbol": metrics["stability_symbol"],
                 "concentration_passed": signature["concentration_checks"]["passed"],
+                "coassignment_consensus": consensus,
+                "clusterer_method": fit.method,
+                "noise_rate_train": metrics["density_noise"]["train_noise_rate"],
             }
             metrics["foundation_teacher"] = FoundationChartTeacher().analyze(
                 cluster_samples,
@@ -605,6 +668,411 @@ class ClusterResearchEngine:
         split = int(len(samples) * (1.0 - self.out_of_sample_pct))
         split = min(max(1, split), len(samples) - 1)
         return samples[:split], samples[split:]
+
+    def _fit_clusters(
+        self,
+        matrix_train_scaled: np.ndarray,
+        matrix_all_scaled: np.ndarray,
+        *,
+        target_clusters: int,
+    ) -> ClusterFitResult:
+        requested = str(self.clusterer_method or "auto").lower().strip()
+        if requested in {"auto", "hdbscan", "density"}:
+            density = self._fit_hdbscan_clusters(
+                matrix_train_scaled,
+                matrix_all_scaled,
+                target_clusters=target_clusters,
+                requested_method=requested,
+            )
+            if density is not None and density.centroids:
+                return density
+            fallback_reason = "hdbscan_unavailable_or_no_dense_clusters"
+        else:
+            fallback_reason = ""
+        return self._fit_kmeans_clusters(
+            matrix_train_scaled,
+            matrix_all_scaled,
+            target_clusters=target_clusters,
+            requested_method=requested,
+            fallback_reason=fallback_reason,
+        )
+
+    def _fit_hdbscan_clusters(
+        self,
+        matrix_train_scaled: np.ndarray,
+        matrix_all_scaled: np.ndarray,
+        *,
+        target_clusters: int,
+        requested_method: str,
+    ) -> ClusterFitResult | None:
+        if HDBSCAN is None:
+            return None
+        n_train = int(matrix_train_scaled.shape[0])
+        if n_train < 5:
+            return None
+        min_cluster_size = max(5, min(int(self.min_cluster_size), max(2, n_train // 2)))
+        configured_min_samples = int(self.clusterer_min_samples or 0)
+        if configured_min_samples > 0:
+            min_samples = max(1, min(configured_min_samples, min_cluster_size))
+        else:
+            min_samples = max(2, min(min_cluster_size, int(math.sqrt(n_train))))
+        try:
+            model = HDBSCAN(
+                min_cluster_size=min_cluster_size,
+                min_samples=min_samples,
+                metric="euclidean",
+                copy=False,
+            )
+            train_labels = np.asarray(model.fit_predict(matrix_train_scaled), dtype=int)
+        except Exception:  # noqa: BLE001
+            return None
+        centroids = self._centroids_from_labels(matrix_train_scaled, train_labels)
+        if not centroids:
+            return None
+        all_labels = np.full(matrix_all_scaled.shape[0], -1, dtype=int)
+        all_labels[:n_train] = train_labels
+        if matrix_all_scaled.shape[0] > n_train:
+            all_labels[n_train:] = self._assign_density_holdout_labels(
+                matrix_all_scaled[n_train:],
+                matrix_train_scaled,
+                train_labels,
+                centroids,
+            )
+        metadata = self._clusterer_metadata(
+            method="hdbscan",
+            requested_method=requested_method,
+            target_clusters=target_clusters,
+            train_labels=train_labels,
+            all_labels=all_labels,
+            extra={
+                "hdbscan_available": True,
+                "hdbscan_min_cluster_size": int(min_cluster_size),
+                "hdbscan_min_samples": int(min_samples),
+                "holdout_assignment": "nearest_train_centroid_with_member_radius",
+                "holdout_radius_multiplier": round(float(self.density_holdout_radius_multiplier), 6),
+            },
+        )
+        return ClusterFitResult(
+            method="hdbscan",
+            requested_method=requested_method,
+            train_labels=train_labels,
+            all_labels=all_labels,
+            centroids=centroids,
+            metadata=metadata,
+        )
+
+    def _fit_kmeans_clusters(
+        self,
+        matrix_train_scaled: np.ndarray,
+        matrix_all_scaled: np.ndarray,
+        *,
+        target_clusters: int,
+        requested_method: str,
+        fallback_reason: str = "",
+    ) -> ClusterFitResult:
+        n_clusters = max(1, min(int(target_clusters), matrix_train_scaled.shape[0]))
+        model = MiniBatchKMeans(
+            n_clusters=n_clusters,
+            random_state=self.random_state,
+            n_init=10,
+            batch_size=min(2048, max(128, len(matrix_train_scaled))),
+        )
+        train_labels = np.asarray(model.fit_predict(matrix_train_scaled), dtype=int)
+        all_labels = np.asarray(model.predict(matrix_all_scaled), dtype=int)
+        centroids = {int(i): np.asarray(center, dtype=float) for i, center in enumerate(model.cluster_centers_)}
+        extra: dict[str, object] = {"hdbscan_available": HDBSCAN is not None}
+        if fallback_reason:
+            extra["fallback_reason"] = fallback_reason
+        metadata = self._clusterer_metadata(
+            method="kmeans",
+            requested_method=requested_method,
+            target_clusters=target_clusters,
+            train_labels=train_labels,
+            all_labels=all_labels,
+            extra=extra,
+        )
+        return ClusterFitResult(
+            method="kmeans",
+            requested_method=requested_method,
+            train_labels=train_labels,
+            all_labels=all_labels,
+            centroids=centroids,
+            metadata=metadata,
+        )
+
+    @staticmethod
+    def _centroids_from_labels(matrix: np.ndarray, labels: np.ndarray) -> dict[int, np.ndarray]:
+        centroids: dict[int, np.ndarray] = {}
+        for label in sorted({int(value) for value in labels.tolist() if int(value) >= 0}):
+            idxs = np.flatnonzero(labels == label)
+            if len(idxs):
+                centroids[int(label)] = np.mean(matrix[idxs], axis=0)
+        return centroids
+
+    def _assign_density_holdout_labels(
+        self,
+        holdout_scaled: np.ndarray,
+        matrix_train_scaled: np.ndarray,
+        train_labels: np.ndarray,
+        centroids: dict[int, np.ndarray],
+    ) -> np.ndarray:
+        if holdout_scaled.size == 0 or not centroids:
+            return np.empty((0,), dtype=int)
+        dim = max(1.0, math.sqrt(float(matrix_train_scaled.shape[1])))
+        radii: dict[int, float] = {}
+        for label, centroid in centroids.items():
+            members = matrix_train_scaled[train_labels == label]
+            if members.size == 0:
+                continue
+            distances = np.linalg.norm(members - centroid, axis=1) / dim
+            radius = float(np.quantile(distances, 0.90)) if len(distances) else 0.0
+            radii[int(label)] = max(radius * float(self.density_holdout_radius_multiplier), 1e-9)
+        labels = np.full(holdout_scaled.shape[0], -1, dtype=int)
+        ordered_labels = sorted(centroids)
+        centroid_matrix = np.vstack([centroids[label] for label in ordered_labels])
+        for row_idx, vector in enumerate(holdout_scaled):
+            distances = np.linalg.norm(centroid_matrix - vector, axis=1) / dim
+            nearest_pos = int(np.argmin(distances))
+            nearest_label = int(ordered_labels[nearest_pos])
+            if float(distances[nearest_pos]) <= radii.get(nearest_label, 0.0):
+                labels[row_idx] = nearest_label
+        return labels
+
+    @staticmethod
+    def _clusterer_metadata(
+        *,
+        method: str,
+        requested_method: str,
+        target_clusters: int,
+        train_labels: np.ndarray,
+        all_labels: np.ndarray,
+        extra: dict[str, object] | None = None,
+    ) -> dict[str, object]:
+        cluster_labels = sorted({int(label) for label in train_labels.tolist() if int(label) >= 0})
+        train_noise_count = int(np.sum(train_labels == -1))
+        all_noise_count = int(np.sum(all_labels == -1))
+        metadata: dict[str, object] = {
+            "method": method,
+            "requested_method": requested_method,
+            "target_clusters": int(target_clusters),
+            "cluster_count": int(len(cluster_labels)),
+            "cluster_labels": cluster_labels,
+            "noise_label": -1,
+            "noise_count_train": train_noise_count,
+            "noise_rate_train": round(float(train_noise_count / max(1, len(train_labels))), 6),
+            "noise_count_all": all_noise_count,
+            "noise_rate_all": round(float(all_noise_count / max(1, len(all_labels))), 6),
+            "fit_scope": "train_only",
+        }
+        if extra:
+            metadata.update(extra)
+        return metadata
+
+    def _cluster_consensus_ensemble(
+        self,
+        matrix_train_scaled: np.ndarray,
+        *,
+        target_clusters: int,
+        method: str,
+    ) -> list[tuple[np.ndarray, np.ndarray]]:
+        repeats = max(0, int(self.consensus_repeats))
+        n_train = int(matrix_train_scaled.shape[0])
+        if repeats == 0 or n_train < 4:
+            return []
+        size = int(math.ceil(n_train * float(self.consensus_subsample_pct)))
+        size = min(n_train, max(2, size))
+        ensemble: list[tuple[np.ndarray, np.ndarray]] = []
+        for repeat in range(repeats):
+            rng = np.random.default_rng(self.random_state + 7919 * (repeat + 1))
+            subset = np.sort(rng.choice(n_train, size=size, replace=False))
+            subset_matrix = matrix_train_scaled[subset]
+            labels = self._consensus_labels(
+                subset_matrix,
+                target_clusters=target_clusters,
+                method=method,
+                seed=self.random_state + 1543 * (repeat + 1),
+            )
+            if labels is not None and len(labels) == len(subset):
+                ensemble.append((subset, labels))
+        return ensemble
+
+    def _consensus_labels(
+        self,
+        matrix: np.ndarray,
+        *,
+        target_clusters: int,
+        method: str,
+        seed: int,
+    ) -> np.ndarray | None:
+        if method == "hdbscan" and HDBSCAN is not None and matrix.shape[0] >= 5:
+            min_cluster_size = max(5, min(int(self.min_cluster_size), max(2, matrix.shape[0] // 2)))
+            configured_min_samples = int(self.clusterer_min_samples or 0)
+            min_samples = (
+                max(1, min(configured_min_samples, min_cluster_size))
+                if configured_min_samples > 0
+                else max(2, min(min_cluster_size, int(math.sqrt(matrix.shape[0]))))
+            )
+            try:
+                return np.asarray(
+                    HDBSCAN(
+                        min_cluster_size=min_cluster_size,
+                        min_samples=min_samples,
+                        metric="euclidean",
+                        copy=False,
+                    ).fit_predict(matrix),
+                    dtype=int,
+                )
+            except Exception:  # noqa: BLE001
+                return None
+        n_clusters = max(1, min(int(target_clusters), matrix.shape[0]))
+        try:
+            return np.asarray(
+                MiniBatchKMeans(
+                    n_clusters=n_clusters,
+                    random_state=seed,
+                    n_init=5,
+                    batch_size=min(2048, max(128, len(matrix))),
+                ).fit_predict(matrix),
+                dtype=int,
+            )
+        except Exception:  # noqa: BLE001
+            return None
+
+    def _coassignment_stability(
+        self,
+        train_idxs: np.ndarray,
+        ensemble: list[tuple[np.ndarray, np.ndarray]],
+    ) -> dict[str, object]:
+        members = np.asarray(train_idxs, dtype=int)
+        if len(members) > int(self.consensus_max_members):
+            positions = np.linspace(0, len(members) - 1, int(self.consensus_max_members), dtype=int)
+            members = members[positions]
+        if len(members) < 2 or not ensemble:
+            return {
+                "method": "subsample_coassignment_consensus_v1",
+                "status": "insufficient_pairs",
+                "repeats": int(self.consensus_repeats),
+                "subsample_pct": round(float(self.consensus_subsample_pct), 6),
+                "member_count": int(len(train_idxs)),
+                "members_evaluated": int(len(members)),
+                "pair_observations": 0,
+                "coassignment_rate": None,
+                "stability_score": None,
+                "mean_noise_vote_rate": None,
+            }
+        member_set = {int(idx) for idx in members.tolist()}
+        pairs = [(int(a), int(b)) for a, b in combinations(members.tolist(), 2)]
+        pair_observations = 0
+        coassigned = 0
+        noise_rates: list[float] = []
+        for subset, labels in ensemble:
+            positions = {int(idx): pos for pos, idx in enumerate(subset.tolist()) if int(idx) in member_set}
+            present = [idx for idx in members.tolist() if int(idx) in positions]
+            if present:
+                present_labels = np.asarray([labels[positions[int(idx)]] for idx in present], dtype=int)
+                noise_rates.append(float(np.mean(present_labels == -1)))
+            for left, right in pairs:
+                left_pos = positions.get(left)
+                right_pos = positions.get(right)
+                if left_pos is None or right_pos is None:
+                    continue
+                pair_observations += 1
+                left_label = int(labels[left_pos])
+                right_label = int(labels[right_pos])
+                if left_label >= 0 and left_label == right_label:
+                    coassigned += 1
+        if pair_observations == 0:
+            status = "insufficient_pairs"
+            rate = None
+        else:
+            status = "ok"
+            rate = coassigned / pair_observations
+        return {
+            "method": "subsample_coassignment_consensus_v1",
+            "status": status,
+            "repeats": int(self.consensus_repeats),
+            "subsample_pct": round(float(self.consensus_subsample_pct), 6),
+            "member_count": int(len(train_idxs)),
+            "members_evaluated": int(len(members)),
+            "pair_observations": int(pair_observations),
+            "coassigned_pairs": int(coassigned),
+            "coassignment_rate": round(float(rate), 6) if rate is not None else None,
+            "stability_score": round(float(rate), 6) if rate is not None else None,
+            "mean_noise_vote_rate": round(float(np.mean(noise_rates)), 6) if noise_rates else None,
+        }
+
+    def _shape_match_contract(self, cluster_train_samples: list[WindowSample]) -> dict[str, object]:
+        channels = list(DEFAULT_SHAPE_CHANNELS)
+        length = max(4, int(self.shape_dtw_points))
+        band = max(1, int(math.ceil(length * float(self.shape_dtw_band_pct))))
+        matrices: list[np.ndarray] = []
+        for sample in cluster_train_samples:
+            matrix = shape_matrix_from_chart(sample.chart, channels=channels, length=length)
+            if matrix is not None:
+                matrices.append(matrix)
+        base: dict[str, object] = {
+            "method": SHAPE_VERIFIER_METHOD,
+            "channels": channels,
+            "points_per_channel": int(length),
+            "distance": str(self.shape_dtw_method).lower().replace("-", "_"),
+            "band": int(band),
+            "band_pct": round(float(self.shape_dtw_band_pct), 6),
+            "threshold_quantile": round(float(self.shape_dtw_threshold_quantile), 6),
+            "fit_scope": "train_cluster_members_only",
+            "enabled_in_matcher_default": False,
+            "member_count": int(len(matrices)),
+        }
+        if len(matrices) < 3:
+            return {
+                "shape_verifier": {
+                    **base,
+                    "status": "insufficient_shape_snippets",
+                    "distance_threshold": None,
+                    "prototype": {},
+                }
+            }
+        stacked = np.stack(matrices)
+        prototype = np.median(stacked, axis=0)
+        distances = np.asarray(
+            [
+                shape_distance(
+                    matrix,
+                    prototype,
+                    method=str(self.shape_dtw_method),
+                    band=band,
+                    gamma=float(self.shape_soft_dtw_gamma),
+                )
+                for matrix in matrices
+            ],
+            dtype=float,
+        )
+        finite = distances[np.isfinite(distances)]
+        if finite.size == 0:
+            return {
+                "shape_verifier": {
+                    **base,
+                    "status": "invalid_member_distances",
+                    "distance_threshold": None,
+                    "prototype": {},
+                }
+            }
+        quantile = min(1.0, max(0.0, float(self.shape_dtw_threshold_quantile)))
+        threshold = float(np.quantile(finite, quantile))
+        return {
+            "shape_verifier": {
+                **base,
+                "status": "ok",
+                "distance_threshold": round(threshold, 6),
+                "member_distance_p50": round(float(np.quantile(finite, 0.50)), 6),
+                "member_distance_p90": round(float(np.quantile(finite, 0.90)), 6),
+                "member_distance_max": round(float(np.max(finite)), 6),
+                "soft_dtw_gamma": round(float(self.shape_soft_dtw_gamma), 6),
+                "prototype": {
+                    channel: np.round(prototype[idx], 6).tolist()
+                    for idx, channel in enumerate(channels)
+                },
+            }
+        }
 
     def _null_baseline(
         self,
@@ -2005,11 +2473,11 @@ class ClusterResearchEngine:
         """False-match harness per pattern (audit §3.1.5) + temporal variant (§2.2.a).
 
         Negative banks are disjoint: same-symbol windows outside the cluster are
-        the hard negatives; the remaining members of other clusters with the same
-        window_size cover cross-pattern confusion. Shadow occurrences only exist
-        lab-side, so that bank is empty at research time. The temporal variant
-        reweights the same banks with the gamma ramp and its own tau, so the
-        gamma change is adopted only if this curve improves (§2.2.a gate).
+        the hard negatives; labeled members of other clusters cover cross-pattern
+        confusion; density noise is reported separately. Shadow occurrences only
+        exist lab-side, so that bank is empty at research time. The temporal
+        variant reweights the same banks with the gamma ramp and its own tau, so
+        the gamma change is adopted only if this curve improves (§2.2.a gate).
         """
         outside = np.flatnonzero(np.asarray(all_labels) != cluster_id)
         cluster_symbols = {sample.symbol for sample in cluster_samples}
@@ -2017,9 +2485,12 @@ class ClusterResearchEngine:
             [ordered_samples[int(i)].symbol in cluster_symbols for i in outside],
             dtype=bool,
         )
+        outside_labels = np.asarray(all_labels)[outside]
+        noise_mask = outside_labels == -1
         banks = {
             "same_symbol_outside_cluster": matrix_all_scaled[outside[same_symbol_mask]],
-            "other_cluster_members": matrix_all_scaled[outside[~same_symbol_mask]],
+            "other_cluster_members": matrix_all_scaled[outside[(~same_symbol_mask) & (~noise_mask)]],
+            "noise_windows": matrix_all_scaled[outside[(~same_symbol_mask) & noise_mask]],
             "shadow_occurrences": np.empty((0, matrix_all_scaled.shape[1])),
         }
         harness = FalseMatchHarness(random_state=self.random_state)

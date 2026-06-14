@@ -59,6 +59,26 @@ def _research_sample(
     )
 
 
+def _research_vector_sample(
+    index: int,
+    *,
+    vector: np.ndarray,
+    chart: dict | None = None,
+    symbol: str | None = None,
+) -> WindowSample:
+    sample = _research_sample(
+        index,
+        vector_value=0.0,
+        highs=[104.0],
+        lows=[99.0],
+        closes=[103.0],
+    )
+    sample.vector = np.asarray(vector, dtype=np.float32)
+    sample.chart = chart or {}
+    sample.symbol = symbol or f"LAB{index % 8}"
+    return sample
+
+
 def test_window_sampler_generates_forward_labeled_samples() -> None:
     df = fixture_ohlcv("LABX", bars=320)
     samples = WindowSampler().sample(
@@ -149,6 +169,42 @@ def test_cluster_engine_returns_candidates_or_empty_without_crashing() -> None:
         assert "concentration_checks" in candidate.metrics
 
 
+def test_cluster_engine_hdbscan_persists_noise_and_consensus_metadata() -> None:
+    rng = np.random.default_rng(123)
+    samples: list[WindowSample] = []
+    for i in range(56):
+        if i % 14 == 0:
+            vector = np.asarray([18.0 + i, -12.0], dtype=float)
+        elif i % 2 == 0:
+            vector = np.asarray([0.0, 0.0], dtype=float) + rng.normal(0.0, 0.03, 2)
+        else:
+            vector = np.asarray([5.0, 5.0], dtype=float) + rng.normal(0.0, 0.03, 2)
+        samples.append(_research_vector_sample(i, vector=vector, symbol=f"DNS{i % 6}"))
+
+    candidates = ClusterResearchEngine(
+        min_cluster_size=6,
+        max_clusters_per_window=4,
+        out_of_sample_pct=0.1,
+        rr_levels=[2.0],
+        min_samples=1,
+        clusterer_method="hdbscan",
+        clusterer_min_samples=3,
+        consensus_repeats=3,
+        quant_bootstrap_draws=50,
+        event_ledger_limit=0,
+    ).discover(samples)
+
+    assert candidates
+    metrics = candidates[0].metrics
+    assert metrics["clusterer_method"] == "hdbscan"
+    assert metrics["clusterer"]["noise_count_train"] > 0
+    assert metrics["density_noise"]["train_noise_count"] == metrics["clusterer"]["noise_count_train"]
+    consensus = metrics["cluster_stability"]["coassignment_consensus"]
+    assert consensus["method"] == "subsample_coassignment_consensus_v1"
+    assert consensus["pair_observations"] > 0
+    assert consensus["coassignment_rate"] is not None
+
+
 def test_cluster_engine_fits_scaler_on_train_only() -> None:
     samples = [
         _research_sample(i, vector_value=0.01 * (i % 2), highs=[101.0], lows=[99.0], closes=[100.0])
@@ -219,6 +275,32 @@ def test_cluster_signature_records_medoid_and_concentration() -> None:
     assert checks["passed"] is False
     assert checks["max_symbol_share"] == 1.0
     assert "symbol_concentration_gt_40pct" in checks["reasons"]
+
+
+def test_cluster_research_persists_shape_verifier_contract() -> None:
+    base_close = np.linspace(0.0, 1.0, 48)
+    base_volume = np.linspace(0.2, 1.0, 48)
+    samples = [
+        _research_vector_sample(
+            i,
+            vector=np.asarray([0.0, 0.0]),
+            chart={
+                "close_norm": (base_close + i * 0.001).round(6).tolist(),
+                "volume_rel": (base_volume + i * 0.001).round(6).tolist(),
+            },
+        )
+        for i in range(8)
+    ]
+
+    contract = ClusterResearchEngine()._shape_match_contract(samples)
+
+    verifier = contract["shape_verifier"]
+    assert verifier["status"] == "ok"
+    assert verifier["method"] == "bounded_dtw_shape_verifier_v1"
+    assert verifier["distance_threshold"] > 0
+    assert verifier["fit_scope"] == "train_cluster_members_only"
+    assert len(verifier["prototype"]["close_norm"]) == 48
+    assert len(verifier["prototype"]["volume_rel"]) == 48
 
 
 def test_cluster_research_persists_matcher_prototype_contract() -> None:

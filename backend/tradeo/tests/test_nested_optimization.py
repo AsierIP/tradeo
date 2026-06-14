@@ -158,6 +158,11 @@ def test_engine_nested_guard_accepts_persistent_edge_report(tmp_path) -> None:
     engine = _engine(tmp_path)
     guards, summary = engine._anti_overfit_guards(_records_from_matrix(_robust_matrix()))
     assert summary["nested"]["passed"] is True
+    diagnostics = summary["selective_inference_diagnostics"]
+    assert diagnostics["diagnostic_only"] is True
+    assert diagnostics["blocked"] is False
+    assert diagnostics["spa"]["method"] == "studentized_stationary_bootstrap_spa_v1"
+    assert diagnostics["romano_wolf"]["method"] == "romano_wolf_stepdown_stationary_bootstrap_v1"
     assert guards[0]["nested_passed"] is True
 
 

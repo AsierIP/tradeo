@@ -9,7 +9,9 @@ from sqlalchemy.orm import Session, joinedload
 from tradeo.core.config import Settings
 from tradeo.db.models import AuditLog, DiscoveredPattern, DiscoveredPatternStatus, Trade, TradeStatus
 from tradeo.research.sequential_tests import (
+    alpha_spending_evaluation,
     ks_two_sample,
+    normal_msprt_edge,
     posterior_probability_edge,
     sprt_inferiority,
 )
@@ -779,6 +781,22 @@ class DirectorReviewGate:
             alpha=self.sprt_alpha,
             beta=self.sprt_beta,
         )
+        msprt = normal_msprt_edge(
+            lab_r,
+            null_mean=0.0,
+            prior_mean=research_expectancy,
+            prior_sd=prior_sd,
+            sigma=sigma,
+            alpha=self.sprt_alpha,
+        )
+        alpha_spending = alpha_spending_evaluation(
+            lab_r,
+            max_looks=max(self.min_closed_lab_trades, int(self.min_effective_lab_trades)),
+            min_edge_r=self.posterior_min_edge_r,
+            sigma=sigma,
+            alpha=self.sprt_alpha,
+            method="obrien_fleming",
+        )
         ks = (
             ks_two_sample(lab_r, research_r)
             if len(lab_r) >= 10 and len(research_r) >= 10
@@ -797,6 +815,8 @@ class DirectorReviewGate:
                 "research_r_count": len(research_r),
                 "posterior": posterior,
                 "sprt": sprt,
+                "msprt": msprt,
+                "alpha_spending": alpha_spending,
                 "ks": ks,
             }
         )
