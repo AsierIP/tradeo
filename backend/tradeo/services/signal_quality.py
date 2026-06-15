@@ -189,12 +189,16 @@ def _quality_flags(
     flags: list[str] = []
     if not bool(getattr(risk, "approved", True)):
         flags.append("risk_rejected")
+    risk_warnings = set(getattr(risk, "warnings", []) or [])
     entry_gate = ((match.get("metrics") or {}).get("entry_gate") or {})
     if settings.entry_gate_enabled and not bool(entry_gate.get("passed", False)):
         flags.append("entry_gate_failed")
     if settings.entry_gate_enabled and entry_gate.get("regime_ok") is False:
         flags.append("regime_filter_failed")
-    if avg_dollar_volume < settings.min_avg_dollar_volume:
+    if (
+        avg_dollar_volume < settings.min_avg_dollar_volume
+        and "liquidity_filter_failed" not in risk_warnings
+    ):
         flags.append("thin_liquidity")
     if settings.entry_gate_enabled and volume_ratio and volume_ratio < settings.entry_min_volume_ratio:
         flags.append("weak_volume_confirmation")

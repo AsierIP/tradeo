@@ -20,7 +20,7 @@ from tradeo.research.shape_verifier import (
     shape_distance,
     shape_matrix_from_chart,
 )
-from tradeo.services.data_provider import MarketDataProvider, pick_symbols
+from tradeo.services.data_provider import MarketDataProvider, load_universe, pick_symbols
 from tradeo.services.entry_variants import (
     build_entry_audit_context,
     build_entry_variants,
@@ -58,6 +58,7 @@ class NovelPatternMatcher:
         symbols: list[str] | None = None,
         limit: int | None = None,
         max_patterns: int | None = None,
+        max_results: int | None = None,
         similarity_threshold: float | None = None,
         module: Literal["laboratory", "fox_hunter"] = "laboratory",
         store: bool = True,
@@ -65,7 +66,7 @@ class NovelPatternMatcher:
         settings = self.settings
         assert settings is not None
         statuses = self._statuses_for_module(module)
-        pattern_limit = max_patterns or settings.discovery_match_max_patterns
+        pattern_limit = _optional_limit(max_patterns, settings.discovery_match_max_patterns)
         pattern_query = (
             db.query(DiscoveredPattern)
             .filter(DiscoveredPattern.validation_passed.is_(True))
@@ -77,11 +78,14 @@ class NovelPatternMatcher:
                 pattern
                 for pattern in pattern_query.all()
                 if production_manifest_is_active(pattern)
-            ][:pattern_limit]
+            ]
+            if pattern_limit is not None:
+                patterns = patterns[:pattern_limit]
         else:
-            patterns = pattern_query.limit(pattern_limit).all()
+            patterns = pattern_query.limit(pattern_limit).all() if pattern_limit is not None else pattern_query.all()
         if symbols is None:
-            symbols = pick_symbols(limit=limit or settings.discovery_match_symbol_limit)
+            symbol_limit = _optional_limit(limit, settings.discovery_match_symbol_limit)
+            symbols = _pick_symbols(settings, symbol_limit)
         else:
             symbols = [s.upper().strip() for s in symbols if s.strip()]
         threshold = similarity_threshold or settings.discovery_match_similarity_threshold
@@ -332,9 +336,10 @@ class NovelPatternMatcher:
                             exc,
                         )
                         continue
-        matches = sorted(matches, key=lambda m: m["score"], reverse=True)[
-            : settings.discovery_match_max_results
-        ]
+        result_limit = self._result_limit(module, max_results)
+        matches = sorted(matches, key=lambda m: m["score"], reverse=True)
+        if result_limit is not None:
+            matches = matches[:result_limit]
         if store:
             self._store_matches(db, matches)
         return {
@@ -342,6 +347,7 @@ class NovelPatternMatcher:
             "symbols_checked": len(symbols),
             "matches": matches,
             "stored_matches": len(matches) if store else 0,
+            "max_results": result_limit,
             "module": module,
             "similarity_threshold": threshold,
             "feature_parity_contract": feature_parity_contract,
@@ -352,6 +358,23 @@ class NovelPatternMatcher:
             "ambiguity_gate_blocked": ambiguity_gate_blocked,
             "generated_at": datetime.now(timezone.utc).isoformat(),
         }
+
+    def _result_limit(
+        self,
+        module: Literal["laboratory", "fox_hunter"],
+        max_results: int | None,
+    ) -> int | None:
+        settings = self.settings
+        assert settings is not None
+        configured = (
+            settings.laboratory_match_max_results
+            if module == "laboratory"
+            else settings.discovery_match_max_results
+        )
+        raw_limit = configured if max_results is None else max_results
+        if int(raw_limit) <= 0:
+            return None
+        return int(raw_limit)
 
     def _benchmark_frames(
         self,
@@ -1139,3 +1162,17 @@ class NovelPatternMatcher:
             str(metrics.get("entry_variant_id") or ""),
             str(match.window_end or ""),
         )
+
+
+def _optional_limit(value: int | None, fallback: int) -> int | None:
+    raw = fallback if value is None else value
+    if int(raw) <= 0:
+        return None
+    return int(raw)
+
+
+def _pick_symbols(settings: Settings, limit: int | None) -> list[str]:
+    if limit is not None:
+        return pick_symbols(limit=limit)
+    df = load_universe(settings.universe_file)
+    return [str(symbol).upper().strip() for symbol in df["symbol"].tolist() if str(symbol).strip()]

@@ -27,6 +27,7 @@ class FoxHunterScanner:
         symbols: list[str] | None = None,
         limit: int | None = None,
         max_patterns: int | None = None,
+        max_results: int | None = None,
         similarity_threshold: float | None = None,
         store_signals: bool | None = None,
         execute_orders: bool | None = None,
@@ -37,6 +38,7 @@ class FoxHunterScanner:
             symbols=symbols,
             limit=limit,
             max_patterns=max_patterns,
+            max_results=max_results,
             similarity_threshold=similarity_threshold,
             store_signals=store_signals,
             execute_orders=execute_orders,
@@ -44,4 +46,3 @@ class FoxHunterScanner:
 
     def status(self, db: Session) -> dict[str, Any]:
         return self._scanner().status(db)["fox_hunter"]
-

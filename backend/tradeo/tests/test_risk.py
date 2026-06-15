@@ -132,3 +132,105 @@ def test_rejects_when_pattern_family_position_cap_reached() -> None:
 
     assert not decision.approved
     assert "pattern_family_position_cap_1_reached" in decision.hard_rejections
+
+
+def test_laboratory_context_does_not_apply_research_collection_limits() -> None:
+    engine = create_engine("sqlite:///:memory:", future=True)
+    Base.metadata.create_all(bind=engine)
+    db = sessionmaker(bind=engine, future=True)()
+    for idx in range(4):
+        signal = Signal(
+            symbol=f"AAA{idx}",
+            pattern="PATTERN_A",
+            side="long",
+            entry=10.0,
+            stop=9.0,
+            target=14.0,
+            reward_risk=4.0,
+            confidence=0.8,
+            composite_score=0.8,
+            risk_usd=10.0,
+            suggested_qty=1,
+            strategy_version="laboratory_pattern_1",
+            status=SignalStatus.EXECUTED,
+            metadata_json={"pattern_family_key": "family-a"},
+        )
+        db.add(signal)
+        db.flush()
+        db.add(
+            Trade(
+                signal_id=signal.id,
+                symbol=signal.symbol,
+                pattern="PATTERN_A",
+                side="long",
+                qty=1,
+                entry=10.0,
+                stop=9.0,
+                target=14.0,
+                status=TradeStatus.OPEN,
+                opened_at=datetime.now(timezone.utc),
+                metadata_json={"execution_mode": "ibkr"},
+            )
+        )
+    db.commit()
+    candidate = PatternCandidate(
+        symbol="LAB",
+        entry=100_000.0,
+        stop=99_990.0,
+        target=100_010.0,
+        reward_risk=1.0,
+        confidence=0.5,
+        rule_score=0.8,
+        ml_score=0.8,
+        vision_score=0.8,
+        composite_score=0.8,
+        features={
+            "avg_dollar_volume": 0,
+            "atr_pct": 9.0,
+            "pattern_family_key": "family-a",
+        },
+    )
+    settings = Settings(
+        max_open_positions=4,
+        max_open_positions_per_pattern_family=1,
+        min_reward_risk=2.5,
+        min_avg_dollar_volume=1_000_000,
+        max_atr_pct=1.0,
+    )
+
+    decision = RiskManager(settings).validate_candidate(
+        candidate,
+        db,
+        execution_context="laboratory",
+    )
+
+    assert decision.approved
+    assert decision.hard_rejections == []
+    assert "reward_risk_below_2.5" in decision.warnings
+    assert "liquidity_filter_failed" in decision.warnings
+    assert "atr_filter_failed" in decision.warnings
+    assert "laboratory_minimum_qty_1" in decision.warnings
+
+
+def test_laboratory_context_keeps_grave_safety_gate_hard() -> None:
+    candidate = PatternCandidate(
+        symbol="LAB",
+        entry=10.0,
+        stop=9.5,
+        target=12.0,
+        reward_risk=4.0,
+        confidence=0.8,
+        rule_score=0.8,
+        ml_score=0.8,
+        vision_score=0.8,
+        composite_score=0.8,
+        features={"avg_dollar_volume": 10_000_000, "atr_pct": 0.04},
+    )
+
+    decision = RiskManager(Settings(kill_switch_enabled=True)).validate_candidate(
+        candidate,
+        execution_context="laboratory",
+    )
+
+    assert not decision.approved
+    assert decision.hard_rejections == ["kill_switch_enabled"]

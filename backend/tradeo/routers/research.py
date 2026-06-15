@@ -154,6 +154,7 @@ def match_current_patterns(
         symbols=request.symbols,
         limit=request.limit,
         max_patterns=request.max_patterns,
+        max_results=request.max_results,
         similarity_threshold=request.similarity_threshold,
         module=request.module,
         store=request.store,

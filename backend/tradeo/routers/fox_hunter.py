@@ -42,6 +42,7 @@ def scan_fox_hunter(
             symbols=request.symbols,
             limit=request.limit,
             max_patterns=request.max_patterns,
+            max_results=request.max_results,
             similarity_threshold=request.similarity_threshold,
             store_signals=request.store_signals,
             execute_orders=request.execute_orders,

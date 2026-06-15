@@ -225,8 +225,11 @@ class Settings(BaseSettings):
     # paper-mode, kill-switch, live-armed and IBKR live-port safety gates.
     laboratory_scanner_enabled: bool = True
     laboratory_scan_minutes: int = 5
-    laboratory_symbol_limit: int = 80
-    laboratory_max_patterns: int = 25
+    # Laboratory paper validation should observe every Research opportunity by
+    # default. Use 0 for no cap; Fox/live keeps separate hard limits below.
+    laboratory_symbol_limit: int = 0
+    laboratory_max_patterns: int = 0
+    laboratory_match_max_results: int = 0
     laboratory_similarity_threshold: float = 0.45
     laboratory_store_signals: bool = True
     laboratory_auto_submit_paper_orders: bool = True

@@ -79,6 +79,7 @@ class PatternEntryScanner:
         symbols: list[str] | None = None,
         limit: int | None = None,
         max_patterns: int | None = None,
+        max_results: int | None = None,
         similarity_threshold: float | None = None,
         store_signals: bool | None = None,
         execute_orders: bool | None = None,
@@ -90,6 +91,7 @@ class PatternEntryScanner:
             module,
             limit=limit,
             max_patterns=max_patterns,
+            max_results=max_results,
             similarity_threshold=similarity_threshold,
             store_signals=store_signals,
             execute_orders=execute_orders,
@@ -114,6 +116,7 @@ class PatternEntryScanner:
             symbols=symbols,
             limit=resolved["limit"],
             max_patterns=resolved["max_patterns"],
+            max_results=resolved["max_results"],
             similarity_threshold=resolved["similarity_threshold"],
             module=module,
             store=True,
@@ -183,24 +186,71 @@ class PatternEntryScanner:
                         near_miss_trade_ids.append(observation.id)
                         continue
                 continue
+            duplicate_signal = self._duplicate_signal(db, match, module=module)
+            if duplicate_signal is not None:
+                if (
+                    module == "laboratory"
+                    and resolved["execute_orders"]
+                    and self._can_submit_duplicate_lab_signal(db, duplicate_signal)
+                ):
+                    try:
+                        trade = IBKRBroker(settings).submit_signal_bracket(
+                            db,
+                            duplicate_signal,
+                            reason=self._execution_reason(module),
+                        )
+                        orders_submitted += 1
+                        trade_ids.append(trade.id)
+                        db.add(
+                            AuditLog(
+                                actor=module,
+                                action="duplicate_entry_signal_order_submitted",
+                                entity_type="signal",
+                                entity_id=str(duplicate_signal.id),
+                                details_json={"match": match, "trade_id": trade.id},
+                            )
+                        )
+                        db.commit()
+                    except Exception as exc:  # noqa: BLE001
+                        outcome = mark_signal_order_failure(duplicate_signal, str(exc))
+                        order_errors.append(
+                            {
+                                "signal_id": duplicate_signal.id,
+                                "symbol": duplicate_signal.symbol,
+                                "error": str(exc),
+                                "reason_code": outcome["reason_code"],
+                                "retryable": outcome["retryable"],
+                                "next_action": outcome["next_action"],
+                            }
+                        )
+                        db.add(
+                            AuditLog(
+                                actor=module,
+                                action="duplicate_entry_signal_order_submission_failed",
+                                entity_type="signal",
+                                entity_id=str(duplicate_signal.id),
+                                details_json={"error": str(exc), "outcome": outcome, "match": match},
+                            )
+                        )
+                        db.commit()
+                else:
+                    skipped_duplicates += 1
+                    db.add(
+                        AuditLog(
+                            actor=module,
+                            action="entry_match_skipped_idempotent",
+                            entity_type="discovered_pattern_match",
+                            entity_id=str(match.get("pattern_id", "")),
+                            details_json={
+                                "signal_idempotency_key": self._signal_idempotency_key(module, match),
+                                "reason": "signal_already_exists_for_pattern_symbol_variant_bar",
+                            },
+                        )
+                    )
+                    db.commit()
+                continue
             if self._has_active_exposure(db, match, module=module):
                 skipped_duplicates += 1
-                continue
-            if self._has_duplicate_signal(db, match, module=module):
-                skipped_duplicates += 1
-                db.add(
-                    AuditLog(
-                        actor=module,
-                        action="entry_match_skipped_idempotent",
-                        entity_type="discovered_pattern_match",
-                        entity_id=str(match.get("pattern_id", "")),
-                        details_json={
-                            "signal_idempotency_key": self._signal_idempotency_key(module, match),
-                            "reason": "signal_already_exists_for_pattern_symbol_variant_bar",
-                        },
-                    )
-                )
-                db.commit()
                 continue
             if self._has_recent_signal(db, match, module=module):
                 skipped_cooldown += 1
@@ -219,7 +269,11 @@ class PatternEntryScanner:
                 db.commit()
                 continue
             candidate = self._candidate_from_match(match)
-            risk = RiskManager(settings).validate_candidate(candidate, db)
+            risk = RiskManager(settings).validate_candidate(
+                candidate,
+                db,
+                execution_context="laboratory" if module == "laboratory" else "live",
+            )
             if not risk.approved:
                 rejected_by_risk += 1
                 db.add(
@@ -240,7 +294,11 @@ class PatternEntryScanner:
                 execution_requested=bool(resolved["execute_orders"]),
                 market_session=session,
             )
-            if entry_quality["score"] < settings.entry_min_quality_score or entry_quality["flags"]:
+            quality_rejected = (
+                entry_quality["score"] < settings.entry_min_quality_score
+                or entry_quality["flags"]
+            )
+            if module != "laboratory" and quality_rejected:
                 rejected_by_entry_quality += 1
                 db.add(
                     AuditLog(
@@ -418,7 +476,10 @@ class PatternEntryScanner:
             and not settings.live_armed
             and int(settings.ibkr_port) not in {7496, 4001}
         )
-        paper_orders_allowed = settings.laboratory_auto_submit_paper_orders and paper_order_safety_ok
+        # Lab paper order permission is intentionally independent from the
+        # auto-submit toggle: paper mode should stay available unless a severe
+        # safety gate blocks it or the operator explicitly disables scanning.
+        paper_orders_allowed = paper_order_safety_ok
         live_orders_allowed = (
             settings.fox_hunter_auto_submit_live_orders
             and settings.live_armed
@@ -471,8 +532,6 @@ class PatternEntryScanner:
 
     @staticmethod
     def _paper_order_block_reason(settings: Settings, paper_order_safety_ok: bool) -> str:
-        if not settings.laboratory_auto_submit_paper_orders:
-            return "paper_auto_submit_disabled"
         if settings.kill_switch_enabled:
             return "kill_switch_enabled"
         if settings.trading_mode != "paper":
@@ -555,6 +614,7 @@ class PatternEntryScanner:
             defaults = {
                 "limit": settings.fox_hunter_symbol_limit,
                 "max_patterns": settings.fox_hunter_max_patterns,
+                "max_results": settings.discovery_match_max_results,
                 "similarity_threshold": settings.fox_hunter_similarity_threshold,
                 "store_signals": settings.fox_hunter_store_signals,
                 "execute_orders": settings.fox_hunter_auto_submit_live_orders,
@@ -563,6 +623,7 @@ class PatternEntryScanner:
             defaults = {
                 "limit": settings.laboratory_symbol_limit,
                 "max_patterns": settings.laboratory_max_patterns,
+                "max_results": settings.laboratory_match_max_results,
                 "similarity_threshold": settings.laboratory_similarity_threshold,
                 "store_signals": settings.laboratory_store_signals,
                 "execute_orders": settings.laboratory_auto_submit_paper_orders,
@@ -689,8 +750,11 @@ class PatternEntryScanner:
         )
 
     def _has_duplicate_signal(self, db: Session, match: dict[str, Any], *, module: EntryModule) -> bool:
+        return self._duplicate_signal(db, match, module=module) is not None
+
+    def _duplicate_signal(self, db: Session, match: dict[str, Any], *, module: EntryModule) -> Signal | None:
         if not str(match.get("window_end") or ""):
-            return False
+            return None
         key = self._signal_idempotency_key(module, match)
         existing = (
             db.query(Signal)
@@ -701,8 +765,17 @@ class PatternEntryScanner:
         for signal in existing:
             metadata = signal.metadata_json or {}
             if str(metadata.get("signal_idempotency_key") or "") == key:
-                return True
-        return False
+                return signal
+        return None
+
+    def _can_submit_duplicate_lab_signal(self, db: Session, signal: Signal) -> bool:
+        metadata = signal.metadata_json or {}
+        if signal.status != SignalStatus.PAPER_APPROVED:
+            return False
+        if metadata.get("near_miss") or metadata.get("near_miss_shadow"):
+            return False
+        existing_trade = db.query(Trade).filter(Trade.signal_id == signal.id).first()
+        return existing_trade is None
 
     def _has_recent_signal(self, db: Session, match: dict[str, Any], *, module: EntryModule) -> bool:
         settings = self.settings
@@ -868,7 +941,11 @@ class PatternEntryScanner:
         if self._has_recent_signal(db, match, module="laboratory"):
             return None
         candidate = self._candidate_from_match(match)
-        risk = RiskManager(settings).validate_candidate(candidate, db)
+        risk = RiskManager(settings).validate_candidate(
+            candidate,
+            db,
+            execution_context="laboratory",
+        )
         if not risk.approved:
             db.add(
                 AuditLog(

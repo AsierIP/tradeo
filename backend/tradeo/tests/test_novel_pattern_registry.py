@@ -6,7 +6,7 @@ from sqlalchemy.orm import sessionmaker
 
 from tradeo.db.models import DiscoveredPattern, DiscoveredPatternStatus
 from tradeo.db.session import Base
-from tradeo.research.novel_pattern_matcher import NovelPatternMatcher
+from tradeo.research.novel_pattern_matcher import NovelPatternMatcher, _optional_limit
 from tradeo.research.novel_pattern_registry import NovelPatternRegistry
 from tradeo.research.types import ClusterCandidate
 
@@ -15,6 +15,13 @@ def session_factory():
     engine = create_engine("sqlite:///:memory:", future=True)
     Base.metadata.create_all(bind=engine)
     return sessionmaker(bind=engine, future=True)()
+
+
+def test_zero_match_limit_means_unbounded() -> None:
+    assert _optional_limit(0, 25) is None
+    assert _optional_limit(None, 0) is None
+    assert _optional_limit(None, 25) == 25
+    assert _optional_limit(10, 25) == 10
 
 
 def _candidate(pattern_key: str, centroid: list[float], score: float = 0.8) -> ClusterCandidate:

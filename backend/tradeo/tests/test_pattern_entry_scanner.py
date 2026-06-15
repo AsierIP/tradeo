@@ -321,6 +321,80 @@ def test_laboratory_scanner_creates_paper_signal_for_validated_lab_pattern() -> 
     assert observation.metadata_json["no_ibkr_order"] is True
 
 
+def test_laboratory_status_allows_paper_when_auto_submit_is_disabled() -> None:
+    db = session_factory()
+    provider = FixtureProvider()
+    add_pattern(db, provider, status=DiscoveredPatternStatus.LAB_CANDIDATE)
+
+    status = scanner(provider, laboratory_auto_submit_paper_orders=False).status(db)
+    lab = status["laboratory"]
+
+    assert lab["auto_submit_paper_orders"] is False
+    assert lab["paper_order_safety_ok"] is True
+    assert lab["paper_orders_allowed"] is True
+    assert lab["execution_block_reason"] is None
+
+
+def test_laboratory_status_blocks_paper_on_grave_safety_gate() -> None:
+    db = session_factory()
+    provider = FixtureProvider()
+
+    status = scanner(provider, kill_switch_enabled=True).status(db)
+    lab = status["laboratory"]
+
+    assert lab["paper_order_safety_ok"] is False
+    assert lab["paper_orders_allowed"] is False
+    assert lab["execution_block_reason"] == "kill_switch_enabled"
+
+
+def test_laboratory_scanner_keeps_paper_observation_when_collection_filters_fail() -> None:
+    db = session_factory()
+    provider = FixtureProvider()
+    match = match_payload(
+        reward_risk=1.0,
+        target_price=11.0,
+        metrics={
+            "pattern_score": 0.95,
+            "pattern_expectancy_r": 0.8,
+            "pattern_profit_factor": 4.0,
+            "pattern_stability_score": 0.95,
+            "features": {"avg_dollar_volume": 0, "atr_pct": 9.0},
+            "entry_gate": {
+                "passed": True,
+                "trigger": "breakout",
+                "entry_score": 1.0,
+                "volume_ratio": 5.0,
+                "extension_atr": 0.1,
+                "regime_ok": True,
+            },
+        },
+    )
+    settings = scanner(
+        provider,
+        min_reward_risk=2.5,
+        min_avg_dollar_volume=1_000_000,
+        max_atr_pct=1.0,
+        entry_min_quality_score=0.99,
+    ).settings
+
+    result = PatternEntryScanner(
+        settings=settings,
+        matcher=StaticMatcher(provider, [match]),
+    ).scan(db, module="laboratory", symbols=[provider.symbol], store_signals=True)
+
+    assert result["rejected_by_risk"] == 0
+    assert result["rejected_by_entry_quality"] == 0
+    assert result["signals_created"] == 1
+    assert result["paper_observations_opened"] == 1
+    signal = db.get(Signal, result["signal_ids"][0])
+    assert signal.metadata_json["entry_quality"]["score"] < 0.99
+    warnings = signal.metadata_json["signal_snapshot"]["risk"]["warnings"]
+    assert "reward_risk_below_2.5" in warnings
+    assert "liquidity_filter_failed" in warnings
+    assert "atr_filter_failed" in warnings
+    assert "thin_liquidity" not in signal.metadata_json["entry_quality"]["flags"]
+
+
 def test_laboratory_matcher_records_feature_parity_and_ambiguity_ratio() -> None:
     db = session_factory()
     provider = FixtureProvider()
@@ -377,6 +451,56 @@ def test_laboratory_matcher_records_feature_parity_and_ambiguity_ratio() -> None
     contract = matches[first.id]["metrics"]["feature_parity_contract"]
     assert contract["research_lab_shared_path"] is True
     assert contract["contract_id"] == PatternEmbeddingEngine.CONTRACT_ID
+
+
+def test_laboratory_matcher_can_disable_research_result_cap() -> None:
+    db = session_factory()
+    provider = FixtureProvider()
+    first = add_pattern(db, provider, status=DiscoveredPatternStatus.LAB_CANDIDATE)
+    vector, _, _ = PatternEmbeddingEngine().embed(provider.df.iloc[-20:])
+    second = DiscoveredPattern(
+        pattern_key="lab_candidate_key_uncapped",
+        name="lab_candidate_pattern_uncapped",
+        status=DiscoveredPatternStatus.LAB_CANDIDATE,
+        side="long",
+        timeframe="1d",
+        window_size=20,
+        sample_count=120,
+        symbol_count=12,
+        year_count=3,
+        score=0.88,
+        reward_risk_estimate=4.0,
+        expectancy_r=0.35,
+        profit_factor=2.0,
+        win_rate=0.54,
+        stability_score=0.78,
+        out_of_sample_expectancy_r=0.25,
+        out_of_sample_profit_factor=1.8,
+        best_rr=4.0,
+        validation_passed=True,
+        promotion_status=DiscoveredPatternStatus.LAB_CANDIDATE.value,
+        centroid_json=[float(value) + 0.005 for value in vector.tolist()],
+        metrics_json={"scaler_mean": [0.0] * len(vector), "scaler_scale": [1.0] * len(vector)},
+    )
+    db.add(second)
+    db.commit()
+
+    matcher = NovelPatternMatcher(
+        provider=provider,
+        settings=Settings(
+            discovery_match_complete_bars_only=False,
+            discovery_match_max_patterns=10,
+            discovery_match_max_results=1,
+            laboratory_match_max_results=0,
+            discovery_match_ambiguity_hard_gate_enabled=False,
+            entry_gate_enabled=False,
+        ),
+    )
+
+    result = matcher.match_current(db, symbols=[provider.symbol], module="laboratory", store=False)
+
+    assert result["max_results"] is None
+    assert {int(match["pattern_id"]) for match in result["matches"]} >= {first.id, second.id}
 
 
 def test_laboratory_matcher_hard_blocks_ambiguous_weak_entry() -> None:
@@ -825,6 +949,78 @@ def test_laboratory_scanner_marks_ibkr_bracket_failure_retryable(monkeypatch) ->
     assert outcome["next_action"] == "retry_order_submission"
 
 
+def test_laboratory_resubmits_duplicate_signal_without_broker_trade(monkeypatch) -> None:
+    db = session_factory()
+    provider = FixtureProvider()
+    pattern = add_pattern(db, provider, status=DiscoveredPatternStatus.LAB_CANDIDATE)
+    match = match_payload(pattern_id=pattern.id, pattern_name=pattern.name, pattern_key=pattern.pattern_key)
+    cfg = scanner(provider, ibkr_readonly=False).settings
+    idempotency_key = PatternEntryScanner._signal_idempotency_key("laboratory", match)
+    signal = Signal(
+        symbol=match["symbol"],
+        pattern=match["pattern_name"],
+        side="long",
+        entry=10.0,
+        stop=9.0,
+        target=14.0,
+        reward_risk=4.0,
+        confidence=0.8,
+        composite_score=0.8,
+        risk_usd=10.0,
+        suggested_qty=1,
+        strategy_version=f"laboratory_pattern_{pattern.id}",
+        status=SignalStatus.PAPER_APPROVED,
+        metadata_json={
+            "entry_module": "laboratory",
+            "pattern_id": pattern.id,
+            "signal_idempotency_key": idempotency_key,
+            "entry_variant_id": match["entry_variant_id"],
+            "no_ibkr_order": True,
+        },
+    )
+    db.add(signal)
+    db.commit()
+
+    class PaperBroker:
+        def __init__(self, settings) -> None:
+            self.settings = settings
+
+        def submit_signal_bracket(self, db, signal, *, reason: str = "manual"):
+            trade = Trade(
+                signal_id=signal.id,
+                symbol=signal.symbol,
+                pattern=signal.pattern,
+                side=signal.side,
+                qty=signal.suggested_qty,
+                entry=signal.entry,
+                stop=signal.stop,
+                target=signal.target,
+                status=TradeStatus.OPEN,
+                opened_at=datetime.now(timezone.utc),
+                broker_order_id="paper-backfill",
+                metadata_json={"execution_mode": "ibkr", "reason": reason},
+            )
+            db.add(trade)
+            db.commit()
+            db.refresh(trade)
+            return trade
+
+    monkeypatch.setattr("tradeo.modules.shared.entry_scanner.IBKRBroker", PaperBroker)
+
+    result = PatternEntryScanner(settings=cfg, matcher=StaticMatcher(provider, [match])).scan(
+        db,
+        module="laboratory",
+        symbols=[provider.symbol],
+        store_signals=True,
+        execute_orders=True,
+    )
+
+    assert result["signals_created"] == 0
+    assert result["skipped_duplicates"] == 0
+    assert result["orders_submitted"] == 1
+    assert db.query(Trade).filter(Trade.signal_id == signal.id).count() == 1
+
+
 def test_laboratory_scanner_rejects_match_without_entry_trigger() -> None:
     db = session_factory()
     provider = FixtureProvider()
@@ -879,7 +1075,7 @@ def test_laboratory_scanner_rejects_match_without_entry_trigger() -> None:
     assert db.query(Signal).count() == 0
 
 
-def test_laboratory_scanner_rejects_low_quality_match() -> None:
+def test_laboratory_scanner_records_low_quality_match_without_blocking() -> None:
     db = session_factory()
     provider = FixtureProvider()
     add_pattern(db, provider, status=DiscoveredPatternStatus.LAB_CANDIDATE)
@@ -938,9 +1134,12 @@ def test_laboratory_scanner_rejects_low_quality_match() -> None:
         store_signals=True,
     )
 
-    assert result["rejected_by_entry_quality"] == 1
-    assert result["signals_created"] == 0
-    assert db.query(Signal).count() == 0
+    assert result["rejected_by_entry_quality"] == 0
+    assert result["signals_created"] == 1
+    assert result["paper_observations_opened"] == 1
+    signal = db.query(Signal).one()
+    assert signal.metadata_json["entry_quality"]["score"] < 0.8
+    assert signal.metadata_json["entry_quality"]["label"] == "weak"
 
 
 def test_laboratory_scanner_processes_best_ranked_opportunity_first() -> None:

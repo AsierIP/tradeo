@@ -331,6 +331,7 @@ class NovelPatternMatchRequest(BaseModel):
     symbols: list[str] | None = None
     limit: int | None = None
     max_patterns: int | None = None
+    max_results: int | None = None
     similarity_threshold: float | None = None
     module: Literal["laboratory", "fox_hunter"] = "laboratory"
     store: bool = True
@@ -383,6 +384,7 @@ class PatternEntryScanRequest(BaseModel):
     symbols: list[str] | None = None
     limit: int | None = None
     max_patterns: int | None = None
+    max_results: int | None = None
     similarity_threshold: float | None = None
     store_signals: bool | None = None
     execute_orders: bool | None = None
