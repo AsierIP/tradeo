@@ -20,6 +20,7 @@ from tradeo.db.session import Base
 from tradeo.research.novel_pattern_matcher import NovelPatternMatcher
 from tradeo.research.pattern_embedding_engine import PatternEmbeddingEngine
 from tradeo.services.evidence import EvidenceQuality, EvidenceType, FillProvenance
+from tradeo.services.system_controls import activate_runtime_kill_switch
 from tradeo.modules.fox_hunter.production_manifest import build_production_manifest
 from tradeo.modules.laboratory.paper_observations import LAB_SHADOW_EXECUTION_MODE, LabPaperObservationService
 from tradeo.modules.shared.entry_scanner import (
@@ -345,6 +346,51 @@ def test_laboratory_status_blocks_paper_on_grave_safety_gate() -> None:
     assert lab["paper_order_safety_ok"] is False
     assert lab["paper_orders_allowed"] is False
     assert lab["execution_block_reason"] == "kill_switch_enabled"
+
+
+def test_laboratory_status_blocks_paper_on_runtime_kill_switch() -> None:
+    db = session_factory()
+    provider = FixtureProvider()
+    activate_runtime_kill_switch(
+        db,
+        reason="reconciliation divergence",
+        actor="test",
+        details={"symbol": "AAPL"},
+    )
+
+    status = scanner(provider).status(db)
+    lab = status["laboratory"]
+
+    assert lab["paper_order_safety_ok"] is False
+    assert lab["paper_orders_allowed"] is False
+    assert lab["runtime_kill_switch_enabled"] is True
+    assert lab["runtime_kill_switch_reason"] == "reconciliation divergence"
+    assert lab["execution_block_reason"] == "runtime_kill_switch_enabled"
+
+
+def test_fox_status_blocks_live_on_runtime_kill_switch() -> None:
+    db = session_factory()
+    provider = FixtureProvider()
+    activate_runtime_kill_switch(
+        db,
+        reason="reconciliation divergence",
+        actor="test",
+        details={"symbol": "AAPL"},
+    )
+
+    status = scanner(
+        provider,
+        fox_hunter_auto_submit_live_orders=True,
+        trading_mode="live",
+        live_trading_enabled=True,
+        live_trading_confirmation_value="I_ACCEPT_LIVE_MARKET_RISK",
+    ).status(db)
+    fox = status["fox_hunter"]
+
+    assert fox["live_orders_allowed"] is False
+    assert fox["runtime_kill_switch_enabled"] is True
+    assert fox["runtime_kill_switch_reason"] == "reconciliation divergence"
+    assert fox["execution_block_reason"] == "runtime_kill_switch_enabled"
 
 
 def test_laboratory_scanner_keeps_paper_observation_when_collection_filters_fail() -> None:
@@ -947,6 +993,36 @@ def test_laboratory_scanner_marks_ibkr_bracket_failure_retryable(monkeypatch) ->
     assert result["order_errors"][0]["retryable"] is True
     assert outcome["status"] == "retry_order_submission"
     assert outcome["next_action"] == "retry_order_submission"
+
+
+def test_laboratory_runtime_kill_switch_downgrades_to_shadow_observation(monkeypatch) -> None:
+    db = session_factory()
+    provider = FixtureProvider()
+    pattern = add_pattern(db, provider, status=DiscoveredPatternStatus.LAB_CANDIDATE)
+    activate_runtime_kill_switch(db, reason="reconciliation divergence", actor="test")
+
+    class FailBroker:
+        def __init__(self, settings) -> None:
+            self.settings = settings
+
+        def submit_signal_bracket(self, db, signal, *, reason: str = "manual"):
+            raise AssertionError("runtime kill switch should prevent broker calls")
+
+    monkeypatch.setattr("tradeo.modules.shared.entry_scanner.IBKRBroker", FailBroker)
+    match = match_payload(pattern_id=pattern.id, pattern_name=pattern.name, pattern_key=pattern.pattern_key)
+
+    result = PatternEntryScanner(
+        settings=scanner(provider, laboratory_auto_submit_paper_orders=True).settings,
+        matcher=StaticMatcher(provider, [match]),
+    ).scan(db, module="laboratory", symbols=[provider.symbol], store_signals=True)
+
+    assert result["execute_orders"] is False
+    assert result["signals_created"] == 1
+    assert result["orders_submitted"] == 0
+    assert result["order_errors"] == []
+    assert result["paper_observations_opened"] == 1
+    signal = db.get(Signal, result["signal_ids"][0])
+    assert signal.metadata_json["no_ibkr_order"] is True
 
 
 def test_laboratory_resubmits_duplicate_signal_without_broker_trade(monkeypatch) -> None:

@@ -96,6 +96,11 @@ class PatternEntryScanner:
             store_signals=store_signals,
             execute_orders=execute_orders,
         )
+        if module == "laboratory" and resolved["execute_orders"]:
+            from tradeo.services.system_controls import runtime_kill_switch_active
+
+            if runtime_kill_switch_active(db):
+                resolved["execute_orders"] = False
         observation_lifecycle = self._close_lab_observations(db, module)
         session = market_session_status()
         if self._requires_market_hours(module) and not bool(session["regular_session_open"]):
@@ -470,8 +475,13 @@ class PatternEntryScanner:
         fox_state = "ok" if fox_hunter_ok else "market_closed" if not fox_market_ok else "stopped"
         laboratory_entry_status = entry_scan_status("laboratory", settings)
         fox_entry_status = entry_scan_status("fox_hunter", settings)
+        from tradeo.services.system_controls import runtime_kill_switch, runtime_kill_switch_active
+
+        runtime_kill_switch_enabled = runtime_kill_switch_active(db)
+        runtime_kill_switch_control = runtime_kill_switch(db)
         paper_order_safety_ok = (
             not settings.kill_switch_enabled
+            and not runtime_kill_switch_enabled
             and settings.trading_mode == "paper"
             and not settings.live_armed
             and int(settings.ibkr_port) not in {7496, 4001}
@@ -484,6 +494,7 @@ class PatternEntryScanner:
             settings.fox_hunter_auto_submit_live_orders
             and settings.live_armed
             and not settings.kill_switch_enabled
+            and not runtime_kill_switch_enabled
         )
         return {
             "research": {"purpose": "discover_new_patterns"},
@@ -497,10 +508,18 @@ class PatternEntryScanner:
                 "auto_submit_paper_orders": settings.laboratory_auto_submit_paper_orders,
                 "paper_orders_allowed": paper_orders_allowed,
                 "paper_order_safety_ok": paper_order_safety_ok,
+                "runtime_kill_switch_enabled": runtime_kill_switch_enabled,
+                "runtime_kill_switch_reason": (
+                    runtime_kill_switch_control.reason if runtime_kill_switch_control else None
+                ),
                 "blocked_but_healthy": laboratory_ok and not paper_orders_allowed,
                 "execution_block_reason": None
                 if paper_orders_allowed
-                else self._paper_order_block_reason(settings, paper_order_safety_ok),
+                else self._paper_order_block_reason(
+                    settings,
+                    paper_order_safety_ok,
+                    runtime_kill_switch_enabled=runtime_kill_switch_enabled,
+                ),
                 "eligible_patterns": laboratory_patterns,
                 "legacy_runtime_blocked_patterns": legacy_runtime_blocked_patterns,
                 "symbols_checked": laboratory_entry_status["symbols_checked"],
@@ -516,10 +535,17 @@ class PatternEntryScanner:
                 "worker": worker_status,
                 "auto_submit_live_orders": settings.fox_hunter_auto_submit_live_orders,
                 "live_orders_allowed": live_orders_allowed,
+                "runtime_kill_switch_enabled": runtime_kill_switch_enabled,
+                "runtime_kill_switch_reason": (
+                    runtime_kill_switch_control.reason if runtime_kill_switch_control else None
+                ),
                 "blocked_but_healthy": fox_hunter_ok and not live_orders_allowed,
                 "execution_block_reason": None
                 if live_orders_allowed
-                else self._live_order_block_reason(settings),
+                else self._live_order_block_reason(
+                    settings,
+                    runtime_kill_switch_enabled=runtime_kill_switch_enabled,
+                ),
                 "eligible_patterns": len(production_manifest_patterns),
                 "production_status_patterns": len(production_patterns),
                 "production_manifest_required": True,
@@ -553,9 +579,16 @@ class PatternEntryScanner:
         }
 
     @staticmethod
-    def _paper_order_block_reason(settings: Settings, paper_order_safety_ok: bool) -> str:
+    def _paper_order_block_reason(
+        settings: Settings,
+        paper_order_safety_ok: bool,
+        *,
+        runtime_kill_switch_enabled: bool = False,
+    ) -> str:
         if settings.kill_switch_enabled:
             return "kill_switch_enabled"
+        if runtime_kill_switch_enabled:
+            return "runtime_kill_switch_enabled"
         if settings.trading_mode != "paper":
             return "trading_mode_not_paper"
         if settings.live_armed:
@@ -565,13 +598,19 @@ class PatternEntryScanner:
         return "unknown"
 
     @staticmethod
-    def _live_order_block_reason(settings: Settings) -> str:
+    def _live_order_block_reason(
+        settings: Settings,
+        *,
+        runtime_kill_switch_enabled: bool = False,
+    ) -> str:
         if not settings.fox_hunter_auto_submit_live_orders:
             return "live_auto_submit_disabled"
         if not settings.live_armed:
             return "live_armed_false"
         if settings.kill_switch_enabled:
             return "kill_switch_enabled"
+        if runtime_kill_switch_enabled:
+            return "runtime_kill_switch_enabled"
         return "unknown"
 
     def _requires_market_hours(self, module: EntryModule) -> bool:

@@ -18,7 +18,11 @@ def classify_order_failure(error: str) -> dict[str, Any]:
         reason = "IBKR could not qualify the contract"
         next_action = "review_symbol_then_retry"
         retryable = False
-    elif "readonly=true" in normalized or "blocks order submission" in normalized:
+    elif (
+        "readonly=true" in normalized
+        or "blocks order submission" in normalized
+        or "runtime kill switch" in normalized
+    ):
         reason_code = "order_blocked_by_safety"
         reason = "Order submission is blocked by safety settings"
         next_action = "fix_configuration_then_retry"
