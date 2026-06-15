@@ -249,10 +249,10 @@ class PatternEntryScanner:
                     )
                     db.commit()
                 continue
-            if self._has_active_exposure(db, match, module=module):
+            if module != "laboratory" and self._has_active_exposure(db, match, module=module):
                 skipped_duplicates += 1
                 continue
-            if self._has_recent_signal(db, match, module=module):
+            if module != "laboratory" and self._has_recent_signal(db, match, module=module):
                 skipped_cooldown += 1
                 db.add(
                     AuditLog(
@@ -505,6 +505,7 @@ class PatternEntryScanner:
                 "legacy_runtime_blocked_patterns": legacy_runtime_blocked_patterns,
                 "symbols_checked": laboratory_entry_status["symbols_checked"],
                 "last_symbols_checked": laboratory_entry_status["last_symbols_checked"],
+                "last_scan": self._entry_status_summary(laboratory_entry_status),
             },
             "fox_hunter": {
                 "purpose": "live_trade_production_patterns",
@@ -526,8 +527,29 @@ class PatternEntryScanner:
                 - len(production_manifest_patterns),
                 "symbols_checked": fox_entry_status["symbols_checked"],
                 "last_symbols_checked": fox_entry_status["last_symbols_checked"],
+                "last_scan": self._entry_status_summary(fox_entry_status),
                 "live_armed": settings.live_armed,
             },
+        }
+
+    @staticmethod
+    def _entry_status_summary(entry_status: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "patterns_checked": entry_status.get("patterns_checked", 0),
+            "matches_found": entry_status.get("matches_found", 0),
+            "execute_orders": entry_status.get("execute_orders", True),
+            "signals_created": entry_status.get("signals_created", 0),
+            "orders_submitted": entry_status.get("orders_submitted", 0),
+            "skipped_duplicates": entry_status.get("skipped_duplicates", 0),
+            "skipped_cooldown": entry_status.get("skipped_cooldown", 0),
+            "rejected_by_entry_gate": entry_status.get("rejected_by_entry_gate", 0),
+            "rejected_by_entry_quality": entry_status.get("rejected_by_entry_quality", 0),
+            "rejected_by_risk": entry_status.get("rejected_by_risk", 0),
+            "order_errors": entry_status.get("order_errors", []),
+            "zero_order_scan_streak": entry_status.get("zero_order_scan_streak", 0),
+            "zero_order_alert": entry_status.get("zero_order_alert", False),
+            "zero_order_block_reason": entry_status.get("zero_order_block_reason"),
+            "generated_at": entry_status.get("generated_at"),
         }
 
     @staticmethod
@@ -934,11 +956,7 @@ class PatternEntryScanner:
         if not resolved["store_signals"]:
             return None
         entry_gate = ((match.get("metrics") or {}).get("entry_gate") or {})
-        if self._has_active_exposure(db, match, module="laboratory"):
-            return None
         if self._has_duplicate_signal(db, match, module="laboratory"):
-            return None
-        if self._has_recent_signal(db, match, module="laboratory"):
             return None
         candidate = self._candidate_from_match(match)
         risk = RiskManager(settings).validate_candidate(
