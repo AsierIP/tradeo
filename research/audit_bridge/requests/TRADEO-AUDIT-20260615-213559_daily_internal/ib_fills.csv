@@ -1,0 +1,1 @@
+fill_id_hash,trade_id,order_id_hash,ib_execution_time,timezone,ticker,side,quantity,price,commission,liquidity_flag,exchange,order_type,account_id_redacted,raw_status,notes
