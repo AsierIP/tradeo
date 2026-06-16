@@ -11,6 +11,7 @@ Covers the trade state machine end to end:
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
 import pandas as pd
 import pytest
@@ -33,7 +34,13 @@ from tradeo.services.evidence import (
     FillProvenance,
     evidence_type_for_metadata,
 )
-from tradeo.services.ibkr_broker import IBKRBroker, IBKRSafetyError
+from tradeo.services.ibkr_broker import (
+    IBKRBroker,
+    IBKRSafetyError,
+    _bracket_acknowledged,
+    _operational_bracket_prices,
+    _parent_order_acknowledged,
+)
 from tradeo.services.paper_broker import PaperBroker
 from tradeo.services.reconciliation import ReconciliationService
 from tradeo.services.system_controls import (
@@ -107,11 +114,18 @@ class FakeBroker:
         *,
         positions: list[dict] | None = None,
         open_orders: list[dict] | None = None,
+        fills: list[dict] | None = None,
         error: Exception | None = None,
     ) -> None:
         self._positions = positions or []
         self._open_orders = open_orders or []
+        self._fills = fills or []
         self._error = error
+
+    def fills(self) -> list[dict]:
+        if self._error is not None:
+            raise self._error
+        return self._fills
 
     def positions(self) -> list[dict]:
         if self._error is not None:
@@ -683,6 +697,239 @@ def test_reconciliation_partial_fill_is_audited_warning_never_divergence() -> No
     assert audit.details_json["warnings"][0]["kind"] == "partial_fill_open_order"
 
 
+def test_reconciliation_ingests_entry_fill_as_paper_fill_evidence() -> None:
+    db = session_factory()
+    trade = add_open_trade(
+        db,
+        symbol="AAPL",
+        broker_order_id="101",
+        metadata={
+            "ibkr_mode": "paper",
+            "order_ids": [101, 102, 103],
+            "perm_ids": [1001, 1002, 1003],
+            "parent_order_id": 101,
+            "submitted_at": "2026-06-01T15:00:00+00:00",
+        },
+    )
+    fill = {
+        "symbol": "AAPL",
+        "side": "BUY",
+        "quantity": 5.0,
+        "price": 10.05,
+        "order_id": 101,
+        "perm_id": 1001,
+        "exec_id": "entry-fill-1",
+        "execution_time": "2026-06-01T15:00:12+00:00",
+        "commission": 0.35,
+        "commission_currency": "USD",
+    }
+    broker = FakeBroker(positions=[{"symbol": "AAPL", "position": 5.0}], fills=[fill])
+
+    result = reconciliation_service(broker).reconcile(db)
+    db.refresh(trade)
+
+    assert result["fills_ingested"] == 1
+    assert result["trades_updated_from_fills"] == 1
+    assert result["divergences"] == []
+    assert runtime_kill_switch_active(db) is False
+    assert trade.status == TradeStatus.OPEN
+    assert trade.evidence_type == EvidenceType.IBKR_PAPER_FILL.value
+    assert trade.evidence_quality == EvidenceQuality.NORMAL.value
+    assert trade.metadata_json["fill_provenance"] == FillProvenance.BROKER_EXECUTION.value
+    assert trade.metadata_json["entry_fill_price"] == 10.05
+    assert trade.metadata_json["entry_fill_qty"] == 5.0
+    assert trade.metadata_json["entry_fill_time"] == "2026-06-01T15:00:12+00:00"
+    assert trade.metadata_json["commission_usd"] == 0.35
+    assert trade.metadata_json["cost_provenance_reconciled"] is True
+    assert trade.metadata_json["slippage_provenance_reconciled"] is True
+    assert trade.metadata_json["execution_quality"]["commission_usd"] == 0.35
+    assert "ibkr_fills_ingested" in audit_actions(db)
+
+
+def test_reconciliation_does_not_match_identified_fill_by_symbol_only() -> None:
+    db = session_factory()
+    trade = add_open_trade(
+        db,
+        symbol="AAPL",
+        broker_order_id="101",
+        metadata={
+            "ibkr_mode": "paper",
+            "order_ids": [101, 102, 103],
+            "perm_ids": [1001, 1002, 1003],
+            "parent_order_id": 101,
+        },
+    )
+    fill = {
+        "symbol": "AAPL",
+        "side": "BUY",
+        "quantity": 5.0,
+        "price": 10.05,
+        "order_id": 999,
+        "perm_id": 9999,
+        "exec_id": "unrelated-entry-fill",
+        "execution_time": "2026-06-01T15:00:12+00:00",
+        "commission": 0.35,
+        "commission_currency": "USD",
+    }
+    broker = FakeBroker(positions=[{"symbol": "AAPL", "position": 5.0}], fills=[fill])
+
+    result = reconciliation_service(broker).reconcile(db)
+    db.refresh(trade)
+
+    assert result["fills_ingested"] == 0
+    assert result["trades_updated_from_fills"] == 0
+    assert result["unmatched_fills"] == 1
+    assert result["divergences"] == []
+    assert "entry_fill_price" not in trade.metadata_json
+
+
+def test_reconciliation_prunes_existing_fills_from_other_orders() -> None:
+    db = session_factory()
+    trade = add_open_trade(
+        db,
+        symbol="LRN",
+        side="short",
+        qty=4,
+        broker_order_id="7",
+        metadata={
+            "ibkr_mode": "paper",
+            "order_ids": [7, 8, 9],
+            "perm_ids": [7001, 7002, 7003],
+            "parent_order_id": 7,
+            "ibkr_fills": [
+                {
+                    "fill_id_hash": "old-fill",
+                    "broker_execution_hash": "old-fill",
+                    "leg": "entry",
+                    "symbol": "LRN",
+                    "side": "SELL",
+                    "quantity": 1.0,
+                    "price": 84.17,
+                    "order_id": "4",
+                    "perm_id": "4001",
+                    "execution_time": "2026-06-01T14:00:00+00:00",
+                }
+            ],
+        },
+    )
+    fill = {
+        "symbol": "LRN",
+        "side": "SELL",
+        "quantity": 4.0,
+        "price": 85.09,
+        "order_id": 7,
+        "perm_id": 7001,
+        "exec_id": "entry-fill-7",
+        "execution_time": "2026-06-01T15:00:12+00:00",
+        "commission": 0.35,
+        "commission_currency": "USD",
+    }
+    broker = FakeBroker(positions=[{"symbol": "LRN", "position": -4.0}], fills=[fill])
+
+    result = reconciliation_service(broker).reconcile(db)
+    db.refresh(trade)
+
+    assert result["fills_ingested"] == 1
+    assert result["trades_updated_from_fills"] == 1
+    assert result["divergences"] == []
+    assert trade.metadata_json["entry_fill_qty"] == 4.0
+    assert [record["order_id"] for record in trade.metadata_json["ibkr_fills"]] == ["7"]
+
+
+def test_reconciliation_fill_without_commission_is_degraded_until_report_arrives() -> None:
+    db = session_factory()
+    trade = add_open_trade(
+        db,
+        symbol="AAPL",
+        broker_order_id="101",
+        metadata={
+            "ibkr_mode": "paper",
+            "order_ids": [101, 102, 103],
+            "perm_ids": [1001, 1002, 1003],
+            "parent_order_id": 101,
+        },
+    )
+    fill = {
+        "symbol": "AAPL",
+        "side": "BUY",
+        "quantity": 5.0,
+        "price": 10.05,
+        "order_id": 101,
+        "perm_id": 1001,
+        "exec_id": "entry-fill-1",
+        "execution_time": "2026-06-01T15:00:12+00:00",
+    }
+    broker = FakeBroker(positions=[{"symbol": "AAPL", "position": 5.0}], fills=[fill])
+
+    result = reconciliation_service(broker).reconcile(db)
+    db.refresh(trade)
+
+    assert result["divergences"] == []
+    assert trade.evidence_type == EvidenceType.IBKR_PAPER_FILL.value
+    assert trade.evidence_quality == EvidenceQuality.DEGRADED.value
+    assert trade.metadata_json["commission_missing"] is True
+    assert trade.metadata_json.get("cost_provenance_reconciled") is not True
+
+
+def test_reconciliation_ingests_exit_fill_and_closes_without_missing_broker_false_positive() -> None:
+    db = session_factory()
+    trade = add_open_trade(
+        db,
+        symbol="AAPL",
+        broker_order_id="101",
+        metadata={
+            "ibkr_mode": "paper",
+            "order_ids": [101, 102, 103],
+            "perm_ids": [1001, 1002, 1003],
+            "parent_order_id": 101,
+        },
+    )
+    fills = [
+        {
+            "symbol": "AAPL",
+            "side": "BUY",
+            "quantity": 5.0,
+            "price": 10.05,
+            "order_id": 101,
+            "perm_id": 1001,
+            "exec_id": "entry-fill-1",
+            "execution_time": "2026-06-01T15:00:12+00:00",
+            "commission": 0.35,
+            "commission_currency": "USD",
+        },
+        {
+            "symbol": "AAPL",
+            "side": "SELL",
+            "quantity": 5.0,
+            "price": 14.0,
+            "order_id": 102,
+            "perm_id": 1002,
+            "exec_id": "exit-fill-1",
+            "execution_time": "2026-06-01T16:30:00+00:00",
+            "commission": 0.35,
+            "commission_currency": "USD",
+        },
+    ]
+    broker = FakeBroker(positions=[], open_orders=[], fills=fills)
+
+    result = reconciliation_service(broker).reconcile(db)
+    db.refresh(trade)
+
+    assert result["db_open_ibkr_trades"] == 0
+    assert result["trades_closed_from_fills"] == 1
+    assert result["divergences"] == []
+    assert result["kill_switch_activated"] is False
+    assert runtime_kill_switch_active(db) is False
+    assert trade.status == TradeStatus.CLOSED
+    assert trade.evidence_type == EvidenceType.IBKR_PAPER_FILL.value
+    assert trade.evidence_quality == EvidenceQuality.NORMAL.value
+    assert trade.exit_price == 14.0
+    assert trade.r_multiple == 3.95
+    assert trade.metadata_json["exit_reason"] == "target_hit"
+    assert trade.metadata_json["exit_fill_time"] == "2026-06-01T16:30:00+00:00"
+    assert trade.metadata_json["commission_usd"] == 0.7
+
+
 def test_reconciliation_trade_without_order_id_skips_order_matching() -> None:
     db = session_factory()
     add_open_trade(db, symbol="AAPL", broker_order_id=None)
@@ -709,6 +956,68 @@ def test_active_kill_switch_blocks_ibkr_order_submission() -> None:
 
     assert db.query(Trade).count() == 0
     assert signal.status == SignalStatus.PAPER_APPROVED
+
+
+def _fake_ib_trade(order_id: int, perm_id: int | None, status: str = "PendingSubmit"):
+    return SimpleNamespace(
+        order=SimpleNamespace(orderId=order_id, parentId=0),
+        orderStatus=SimpleNamespace(permId=perm_id or 0, status=status),
+        log=[],
+    )
+
+
+def test_paper_bracket_accepts_child_order_ids_without_child_perm_ids() -> None:
+    trades = [
+        _fake_ib_trade(4, 2002693128, "PreSubmitted"),
+        _fake_ib_trade(5, None, "PendingSubmit"),
+        _fake_ib_trade(6, None, "PendingSubmit"),
+    ]
+
+    assert _bracket_acknowledged(trades, paper_mode=True) is True
+    assert _bracket_acknowledged(trades, paper_mode=False) is False
+
+
+def test_paper_bracket_rejects_terminal_child_status() -> None:
+    trades = [
+        _fake_ib_trade(4, 2002693128, "PreSubmitted"),
+        _fake_ib_trade(5, None, "Cancelled"),
+        _fake_ib_trade(6, None, "PendingSubmit"),
+    ]
+
+    assert _bracket_acknowledged(trades, paper_mode=True) is False
+
+
+def test_paper_short_bracket_caps_distant_target_for_ibkr_price_bands() -> None:
+    signal = SimpleNamespace(side="short", entry=83.54, stop=90.2568, target=49.9561)
+
+    prices = _operational_bracket_prices(signal, paper_mode=True, max_distance_pct=0.20)
+
+    assert prices["entry"] == 83.54
+    assert prices["stop"] == 90.2568
+    assert prices["target"] == 66.832
+    assert prices["requested"]["target"] == 49.9561
+    assert prices["adjusted"] is True
+
+
+def test_live_bracket_keeps_requested_target() -> None:
+    signal = SimpleNamespace(side="short", entry=83.54, stop=90.2568, target=49.9561)
+
+    prices = _operational_bracket_prices(signal, paper_mode=False, max_distance_pct=0.20)
+
+    assert prices["target"] == 49.9561
+    assert prices["adjusted"] is False
+
+
+def test_parent_order_acknowledged_requires_order_id_perm_id_and_non_terminal_status() -> None:
+    trade = SimpleNamespace(
+        order=SimpleNamespace(orderId=4),
+        orderStatus=SimpleNamespace(permId=2002693161, status="Submitted"),
+    )
+
+    assert _parent_order_acknowledged(trade) is True
+
+    trade.orderStatus.status = "Cancelled"
+    assert _parent_order_acknowledged(trade) is False
 
 
 def test_kill_switch_activation_is_idempotent_and_audited() -> None:

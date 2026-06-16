@@ -45,3 +45,22 @@ def test_ibkr_account_operational_error_stays_502(monkeypatch: pytest.MonkeyPatc
 
     assert excinfo.value.status_code == 502
     assert excinfo.value.detail == "gateway down"
+
+
+def test_ibkr_reconcile_route_uses_threadpool_wrapper(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[str] = []
+
+    def fake_reconcile() -> dict[str, object]:
+        return {"ok": True, "fills_ingested": 1}
+
+    async def fake_run(func, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003
+        calls.append(func.__name__)
+        return func(*args, **kwargs)
+
+    monkeypatch.setattr(ibkr, "_reconcile_sync", fake_reconcile)
+    monkeypatch.setattr(ibkr, "_run_ibkr_call", fake_run)
+
+    result = asyncio.run(ibkr.ibkr_reconcile("admin"))
+
+    assert result == {"ok": True, "fills_ingested": 1}
+    assert calls == ["fake_reconcile"]

@@ -19,9 +19,14 @@ from tradeo.db.models import (
 from tradeo.db.session import Base
 from tradeo.research.novel_pattern_matcher import NovelPatternMatcher
 from tradeo.research.pattern_embedding_engine import PatternEmbeddingEngine
+from tradeo.services.director_review_gate import DirectorReviewGate
 from tradeo.services.evidence import EvidenceQuality, EvidenceType, FillProvenance
 from tradeo.services.system_controls import activate_runtime_kill_switch
-from tradeo.modules.fox_hunter.production_manifest import build_production_manifest
+from tradeo.modules.fox_hunter.production_manifest import (
+    build_production_manifest,
+    production_manifest_hash,
+    production_manifest_status,
+)
 from tradeo.modules.laboratory.paper_observations import LAB_SHADOW_EXECUTION_MODE, LabPaperObservationService
 from tradeo.modules.shared.entry_scanner import (
     PatternEntryScanner,
@@ -111,6 +116,35 @@ def add_pattern(
     db.commit()
     db.refresh(pattern)
     return pattern
+
+
+def production_gate_evidence_packet(
+    *,
+    paper_fills: int = 30,
+    symbols: int = 3,
+    days: int = 10,
+) -> dict:
+    return {
+        "gate_scope": "director_production_gate",
+        "approved_for_production": True,
+        "blockers": [],
+        "ibkr_paper_fills": paper_fills,
+        "min_paper_fills": paper_fills,
+        "unique_fill_symbols": symbols,
+        "min_fill_symbols": symbols,
+        "unique_fill_days": days,
+        "min_fill_trading_days": days,
+        "scientific_contracts": {
+            "blockers": [],
+            "director_gate_passed": True,
+            "evidence_packet": {"ref": "test-production-packet", "hash": "packet-hash"},
+            "execution_provenance": {
+                "costs_reconciled": True,
+                "slippage_reconciled": True,
+                "fills_reconciled": True,
+            },
+        },
+    }
 
 
 def add_shadow_observation(
@@ -322,6 +356,142 @@ def test_laboratory_scanner_creates_paper_signal_for_validated_lab_pattern() -> 
     assert observation.metadata_json["no_ibkr_order"] is True
 
 
+def test_laboratory_open_market_default_auto_submits_paper_order_for_director(
+    monkeypatch,
+) -> None:
+    db = session_factory()
+    provider = FixtureProvider()
+    pattern = add_pattern(db, provider, status=DiscoveredPatternStatus.LAB_CANDIDATE)
+    match = match_payload(
+        pattern_id=pattern.id,
+        pattern_name=pattern.name,
+        pattern_key=pattern.pattern_key,
+    )
+    submitted_signal_metadata: list[dict] = []
+
+    monkeypatch.setattr(
+        "tradeo.modules.shared.entry_scanner.market_session_status",
+        lambda: {
+            "market": "us_equities",
+            "timezone": "America/New_York",
+            "regular_session_open": True,
+            "state": "regular",
+            "checked_at": "2026-06-09T10:30:00-04:00",
+            "regular_hours": "09:30-16:00",
+        },
+    )
+
+    class PaperBroker:
+        def __init__(self, settings) -> None:
+            self.settings = settings
+
+        def submit_signal_bracket(self, db, signal, *, reason: str = "manual"):
+            submitted_signal_metadata.append(dict(signal.metadata_json or {}))
+            trade = Trade(
+                signal_id=signal.id,
+                symbol=signal.symbol,
+                pattern=signal.pattern,
+                side=signal.side,
+                qty=signal.suggested_qty,
+                entry=signal.entry,
+                stop=signal.stop,
+                target=signal.target,
+                status=TradeStatus.OPEN,
+                opened_at=datetime(2026, 6, 9, 14, 31, tzinfo=timezone.utc),
+                broker_order_id="paper-parent-1",
+                evidence_type=EvidenceType.IBKR_PAPER_ORDER.value,
+                evidence_quality=EvidenceQuality.NORMAL.value,
+                metadata_json={
+                    "execution_mode": "ibkr",
+                    "ibkr_mode": "paper",
+                    "evidence_type": EvidenceType.IBKR_PAPER_ORDER.value,
+                    "evidence_quality": EvidenceQuality.NORMAL.value,
+                    "reason": reason,
+                    "broker_order_id": "paper-parent-1",
+                    "order_ids": [1001, 1002, 1003],
+                    "perm_ids": [2001, 2002, 2003],
+                },
+            )
+            signal.status = SignalStatus.EXECUTED
+            db.add(signal)
+            db.add(trade)
+            db.commit()
+            db.refresh(trade)
+            return trade
+
+    monkeypatch.setattr("tradeo.modules.shared.entry_scanner.IBKRBroker", PaperBroker)
+
+    cfg = scanner(
+        provider,
+        laboratory_auto_submit_paper_orders=True,
+        laboratory_market_hours_only=True,
+        ibkr_readonly=False,
+    ).settings
+    result = PatternEntryScanner(settings=cfg, matcher=StaticMatcher(provider, [match])).scan(
+        db,
+        module="laboratory",
+        symbols=[provider.symbol],
+        store_signals=True,
+    )
+
+    assert result["requested_execute_orders"] is True
+    assert result["execute_orders"] is True
+    assert result["execution_mode"] == "ibkr_paper"
+    assert result["execution_degraded_to_shadow"] is False
+    assert result["orders_submitted"] == 1
+    assert result["paper_observations_opened"] == 0
+    assert result["shadow_no_order_observations_opened"] == 0
+    signal = db.get(Signal, result["signal_ids"][0])
+    assert signal.metadata_json["evidence_type"] == EvidenceType.IBKR_PAPER_ORDER.value
+    assert signal.metadata_json["execution_mode"] == "ibkr"
+    assert signal.metadata_json["paper_order_requested"] is True
+    assert signal.metadata_json["execution_request_mode"] == "ibkr_paper"
+    assert signal.metadata_json["no_ibkr_order"] is False
+    assert submitted_signal_metadata[0]["evidence_type"] == EvidenceType.IBKR_PAPER_ORDER.value
+    assert submitted_signal_metadata[0]["paper_order_requested"] is True
+
+    trade = db.get(Trade, result["trade_ids"][0])
+    assert trade.evidence_type == EvidenceType.IBKR_PAPER_ORDER.value
+    assert trade.metadata_json["execution_mode"] == "ibkr"
+    assert trade.metadata_json["ibkr_mode"] == "paper"
+
+    trade.status = TradeStatus.CLOSED
+    trade.closed_at = datetime(2026, 6, 9, 15, 45, tzinfo=timezone.utc)
+    trade.pnl_usd = 100.0
+    trade.r_multiple = 1.0
+    trade.evidence_type = EvidenceType.IBKR_PAPER_FILL.value
+    trade.evidence_quality = EvidenceQuality.NORMAL.value
+    trade.metadata_json = {
+        **(trade.metadata_json or {}),
+        "evidence_type": EvidenceType.IBKR_PAPER_FILL.value,
+        "evidence_quality": EvidenceQuality.NORMAL.value,
+        "fill_provenance": FillProvenance.BROKER_EXECUTION.value,
+        "broker_execution_hash": "director-ready-fill-1",
+        "broker_execution_time": "2026-06-09T15:45:00+00:00",
+        "commission": 0.0,
+    }
+    db.add(trade)
+    db.commit()
+
+    review = DirectorReviewGate(
+        min_closed_lab_trades=1,
+        min_effective_lab_trades=1,
+        min_lab_symbols=1,
+        min_lab_trading_days=1,
+        min_baseline_edge_r=0.0,
+        min_lab_profit_factor=0.0,
+        sequential_evaluation_enabled=False,
+        min_slippage_samples=99,
+    ).refresh(db)
+    db.refresh(pattern)
+
+    assert review["marked_for_director_review"] == 1
+    assert pattern.status == DiscoveredPatternStatus.DIRECTOR_REVIEW
+    assert pattern.metrics_json["lab_execution"]["closed_lab_trades"] == 1
+    assert pattern.metrics_json["lab_execution"]["paper_fill_trades"] == 1
+    assert pattern.metrics_json["lab_execution"]["excluded_lab_evidence_trades"] == 0
+
+
 def test_laboratory_status_allows_paper_when_auto_submit_is_disabled() -> None:
     db = session_factory()
     provider = FixtureProvider()
@@ -333,7 +503,24 @@ def test_laboratory_status_allows_paper_when_auto_submit_is_disabled() -> None:
     assert lab["auto_submit_paper_orders"] is False
     assert lab["paper_order_safety_ok"] is True
     assert lab["paper_orders_allowed"] is True
+    assert lab["default_execute_orders"] is False
+    assert lab["default_execution_mode"] == LAB_SHADOW_EXECUTION_MODE
+    assert lab["default_shadow_only"] is True
     assert lab["execution_block_reason"] is None
+
+
+def test_laboratory_status_reports_paper_execution_default_when_enabled() -> None:
+    db = session_factory()
+    provider = FixtureProvider()
+    add_pattern(db, provider, status=DiscoveredPatternStatus.LAB_CANDIDATE)
+
+    lab = scanner(provider, laboratory_auto_submit_paper_orders=True).status(db)["laboratory"]
+
+    assert lab["auto_submit_paper_orders"] is True
+    assert lab["paper_orders_allowed"] is True
+    assert lab["default_execute_orders"] is True
+    assert lab["default_execution_mode"] == "ibkr_paper"
+    assert lab["default_shadow_only"] is False
 
 
 def test_laboratory_status_blocks_paper_on_grave_safety_gate() -> None:
@@ -391,6 +578,119 @@ def test_fox_status_blocks_live_on_runtime_kill_switch() -> None:
     assert fox["runtime_kill_switch_enabled"] is True
     assert fox["runtime_kill_switch_reason"] == "reconciliation divergence"
     assert fox["execution_block_reason"] == "runtime_kill_switch_enabled"
+
+
+def test_fox_status_reports_production_manifest_block_reasons() -> None:
+    db = session_factory()
+    provider = FixtureProvider("FOXX")
+    add_pattern(db, provider, status=DiscoveredPatternStatus.PRODUCTION)
+
+    fox = scanner(provider).status(db)["fox_hunter"]
+
+    assert fox["production_status_patterns"] == 1
+    assert fox["eligible_patterns"] == 0
+    assert fox["production_manifest_blocked_patterns"] == 1
+    assert fox["production_manifest_blocked_reason_counts"] == {
+        "missing_production_manifest": 1
+    }
+    assert fox["production_gate_required"] == "DirectorProductionGate"
+    assert fox["production_manifest_policy"] == (
+        "canonical_manifest_with_director_production_gate_paper_fill_evidence"
+    )
+    assert fox["live_readiness"] == {
+        "orders_allowed": False,
+        "live_armed": False,
+        "auto_submit_live_orders": False,
+        "eligible_production_manifests": 0,
+        "production_status_patterns": 1,
+        "block_reason": "live_auto_submit_disabled",
+    }
+
+
+def test_production_manifest_requires_canonical_hash_algorithm() -> None:
+    db = session_factory()
+    provider = FixtureProvider("HASH")
+    pattern = add_pattern(db, provider, status=DiscoveredPatternStatus.PRODUCTION)
+    manifest = build_production_manifest(
+        pattern,
+        reviewer="test_director",
+        evidence_packet=production_gate_evidence_packet(),
+    )
+    manifest["hash_algorithm"] = "sha256"
+    pattern.metrics_json = {**(pattern.metrics_json or {}), "production_manifest": manifest}
+    db.add(pattern)
+    db.commit()
+
+    status = production_manifest_status(pattern)
+
+    assert status["valid"] is False
+    assert status["reason_code"] == "unsupported_manifest_hash_algorithm"
+    assert "unsupported_manifest_hash_algorithm" in status["errors"]
+
+
+def test_production_manifest_requires_canonical_schema_even_with_matching_hash() -> None:
+    db = session_factory()
+    provider = FixtureProvider("SCMA")
+    pattern = add_pattern(db, provider, status=DiscoveredPatternStatus.PRODUCTION)
+    manifest = build_production_manifest(
+        pattern,
+        reviewer="test_director",
+        evidence_packet=production_gate_evidence_packet(),
+    )
+    manifest["schema"] = "tradeo.production_manifest.v999"
+    manifest["manifest_hash"] = production_manifest_hash(manifest)
+    pattern.metrics_json = {**(pattern.metrics_json or {}), "production_manifest": manifest}
+    db.add(pattern)
+    db.commit()
+
+    status = production_manifest_status(pattern)
+
+    assert status["valid"] is False
+    assert status["reason_code"] == "unsupported_manifest_schema"
+    assert status["hash_verified"] is False
+    assert "unsupported_manifest_schema" in status["errors"]
+
+
+def test_production_manifest_rejects_canonical_hash_mismatch() -> None:
+    db = session_factory()
+    provider = FixtureProvider("MISM")
+    pattern = add_pattern(db, provider, status=DiscoveredPatternStatus.PRODUCTION)
+    manifest = build_production_manifest(
+        pattern,
+        reviewer="test_director",
+        evidence_packet=production_gate_evidence_packet(),
+    )
+    manifest["manifest_hash"] = "not-the-canonical-hash"
+    pattern.metrics_json = {**(pattern.metrics_json or {}), "production_manifest": manifest}
+    db.add(pattern)
+    db.commit()
+
+    status = production_manifest_status(pattern)
+
+    assert status["valid"] is False
+    assert status["reason_code"] == "manifest_hash_mismatch"
+    assert "manifest_hash_mismatch" in status["errors"]
+
+
+def test_production_manifest_requires_director_production_gate_evidence() -> None:
+    db = session_factory()
+    provider = FixtureProvider("DGTE")
+    pattern = add_pattern(db, provider, status=DiscoveredPatternStatus.PRODUCTION)
+    manifest = build_production_manifest(
+        pattern,
+        reviewer="test_director",
+        evidence_packet={"approved_for_production": True, "ibkr_paper_fills": 30},
+    )
+    pattern.metrics_json = {**(pattern.metrics_json or {}), "production_manifest": manifest}
+    db.add(pattern)
+    db.commit()
+
+    status = production_manifest_status(pattern)
+
+    assert status["valid"] is False
+    assert status["reason_code"] == "missing_director_production_gate_evidence"
+    assert "paper_fill_evidence_thresholds_missing" in status["errors"]
+    assert status["evidence_packet_complete"] is False
 
 
 def test_laboratory_scanner_keeps_paper_observation_when_collection_filters_fail() -> None:
@@ -803,6 +1103,7 @@ def test_fox_hunter_does_not_open_lab_near_miss_shadow_observation() -> None:
 
     assert result["rejected_by_entry_gate"] == 0
     assert result["rejected_by_production_manifest"] == 1
+    assert result["production_manifest_rejection_reason_counts"] == {"missing_pattern": 1}
     assert result["signals_created"] == 0
     assert result["paper_observations_opened"] == 0
     assert result["near_miss_shadow_observations_opened"] == 0
@@ -995,6 +1296,45 @@ def test_laboratory_scanner_marks_ibkr_bracket_failure_retryable(monkeypatch) ->
     assert outcome["next_action"] == "retry_order_submission"
 
 
+def test_laboratory_symbol_broker_failure_cools_down_same_symbol(monkeypatch) -> None:
+    db = session_factory()
+    provider = FixtureProvider()
+    first = match_payload(pattern_id=1, pattern_name="first_pattern", pattern_key="first_key")
+    second = match_payload(pattern_id=2, pattern_name="second_pattern", pattern_key="second_key")
+    broker_calls = 0
+
+    class BrokenBroker:
+        def __init__(self, settings) -> None:
+            self.settings = settings
+
+        def submit_signal_bracket(self, db, signal, *, reason: str = "manual"):
+            nonlocal broker_calls
+            broker_calls += 1
+            raise RuntimeError("IBKR did not acknowledge the bracket safely: []")
+
+    monkeypatch.setattr("tradeo.modules.shared.entry_scanner.IBKRBroker", BrokenBroker)
+
+    cfg = scanner(
+        provider,
+        ibkr_readonly=False,
+        laboratory_auto_submit_paper_orders=True,
+        entry_cooldown_minutes=0,
+    ).settings
+    result = PatternEntryScanner(settings=cfg, matcher=StaticMatcher(provider, [first, second])).scan(
+        db,
+        module="laboratory",
+        symbols=[provider.symbol],
+        store_signals=True,
+    )
+
+    assert broker_calls == 1
+    assert result["orders_submitted"] == 0
+    assert len(result["order_errors"]) == 1
+    assert result["order_errors"][0]["reason_code"] == "ibkr_bracket_not_accepted"
+    assert result["skipped_duplicates"] == 1
+    assert db.query(Trade).count() == 0
+
+
 def test_laboratory_runtime_kill_switch_downgrades_to_shadow_observation(monkeypatch) -> None:
     db = session_factory()
     provider = FixtureProvider()
@@ -1062,6 +1402,11 @@ def test_laboratory_resubmits_duplicate_signal_without_broker_trade(monkeypatch)
             self.settings = settings
 
         def submit_signal_bracket(self, db, signal, *, reason: str = "manual"):
+            assert signal.human_approved is True
+            assert signal.metadata_json["evidence_type"] == EvidenceType.IBKR_PAPER_ORDER.value
+            assert signal.metadata_json["execution_mode"] == "ibkr"
+            assert signal.metadata_json["paper_order_requested"] is True
+            assert "no_ibkr_order" not in signal.metadata_json
             trade = Trade(
                 signal_id=signal.id,
                 symbol=signal.symbol,
@@ -1074,7 +1419,15 @@ def test_laboratory_resubmits_duplicate_signal_without_broker_trade(monkeypatch)
                 status=TradeStatus.OPEN,
                 opened_at=datetime.now(timezone.utc),
                 broker_order_id="paper-backfill",
-                metadata_json={"execution_mode": "ibkr", "reason": reason},
+                evidence_type=EvidenceType.IBKR_PAPER_ORDER.value,
+                evidence_quality=EvidenceQuality.NORMAL.value,
+                metadata_json={
+                    "execution_mode": "ibkr",
+                    "ibkr_mode": "paper",
+                    "reason": reason,
+                    "evidence_type": EvidenceType.IBKR_PAPER_ORDER.value,
+                    "evidence_quality": EvidenceQuality.NORMAL.value,
+                },
             )
             db.add(trade)
             db.commit()
@@ -1094,7 +1447,105 @@ def test_laboratory_resubmits_duplicate_signal_without_broker_trade(monkeypatch)
     assert result["signals_created"] == 0
     assert result["skipped_duplicates"] == 0
     assert result["orders_submitted"] == 1
+    db.refresh(signal)
+    assert signal.metadata_json["evidence_type"] == EvidenceType.IBKR_PAPER_ORDER.value
+    assert signal.metadata_json["paper_order_requested"] is True
+    assert "no_ibkr_order" not in signal.metadata_json
     assert db.query(Trade).filter(Trade.signal_id == signal.id).count() == 1
+
+
+def test_laboratory_does_not_resubmit_duplicate_signal_after_final_order_failure() -> None:
+    db = session_factory()
+    provider = FixtureProvider()
+    pattern = add_pattern(db, provider, status=DiscoveredPatternStatus.LAB_CANDIDATE)
+    match = match_payload(pattern_id=pattern.id, pattern_name=pattern.name, pattern_key=pattern.pattern_key)
+    signal = Signal(
+        symbol=match["symbol"],
+        pattern=match["pattern_name"],
+        side="long",
+        entry=10.0,
+        stop=9.0,
+        target=14.0,
+        reward_risk=4.0,
+        confidence=0.8,
+        composite_score=0.8,
+        risk_usd=10.0,
+        suggested_qty=1,
+        strategy_version=f"laboratory_pattern_{pattern.id}",
+        status=SignalStatus.PAPER_APPROVED,
+        metadata_json={
+            "entry_module": "laboratory",
+            "pattern_id": pattern.id,
+            "signal_idempotency_key": PatternEntryScanner._signal_idempotency_key("laboratory", match),
+            "entry_variant_id": match["entry_variant_id"],
+            "execution_outcome": {
+                "reason_code": "order_blocked_by_safety",
+                "retryable": False,
+                "updated_at": "2026-06-09T14:31:00+00:00",
+            },
+        },
+    )
+    db.add(signal)
+    db.commit()
+
+    result = PatternEntryScanner(
+        settings=scanner(provider, laboratory_auto_submit_paper_orders=True).settings,
+        matcher=StaticMatcher(provider, [match]),
+    ).scan(db, module="laboratory", symbols=[provider.symbol], store_signals=True)
+
+    assert result["signals_created"] == 0
+    assert result["orders_submitted"] == 0
+    assert result["skipped_duplicates"] == 1
+    assert db.query(Trade).filter(Trade.signal_id == signal.id).count() == 0
+
+
+def test_laboratory_defers_recent_retryable_duplicate_signal_order_failure() -> None:
+    db = session_factory()
+    provider = FixtureProvider()
+    pattern = add_pattern(db, provider, status=DiscoveredPatternStatus.LAB_CANDIDATE)
+    match = match_payload(pattern_id=pattern.id, pattern_name=pattern.name, pattern_key=pattern.pattern_key)
+    signal = Signal(
+        symbol=match["symbol"],
+        pattern=match["pattern_name"],
+        side="long",
+        entry=10.0,
+        stop=9.0,
+        target=14.0,
+        reward_risk=4.0,
+        confidence=0.8,
+        composite_score=0.8,
+        risk_usd=10.0,
+        suggested_qty=1,
+        strategy_version=f"laboratory_pattern_{pattern.id}",
+        status=SignalStatus.PAPER_APPROVED,
+        metadata_json={
+            "entry_module": "laboratory",
+            "pattern_id": pattern.id,
+            "signal_idempotency_key": PatternEntryScanner._signal_idempotency_key("laboratory", match),
+            "entry_variant_id": match["entry_variant_id"],
+            "execution_outcome": {
+                "reason_code": "ibkr_bracket_not_accepted",
+                "retryable": True,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            },
+        },
+    )
+    db.add(signal)
+    db.commit()
+
+    result = PatternEntryScanner(
+        settings=scanner(
+            provider,
+            entry_cooldown_minutes=60,
+            laboratory_auto_submit_paper_orders=True,
+        ).settings,
+        matcher=StaticMatcher(provider, [match]),
+    ).scan(db, module="laboratory", symbols=[provider.symbol], store_signals=True)
+
+    assert result["signals_created"] == 0
+    assert result["orders_submitted"] == 0
+    assert result["skipped_duplicates"] == 1
+    assert db.query(Trade).filter(Trade.signal_id == signal.id).count() == 0
 
 
 def test_laboratory_scanner_rejects_match_without_entry_trigger() -> None:
@@ -1441,7 +1892,7 @@ def test_laboratory_scanner_ignores_symbol_pattern_cooldown() -> None:
     assert result["signals_created"] == 1
 
 
-def test_laboratory_scanner_ignores_active_exposure_for_new_lab_observation() -> None:
+def test_laboratory_scanner_skips_active_exposure_for_new_lab_observation() -> None:
     db = session_factory()
     provider = FixtureProvider()
     pattern = add_pattern(db, provider, status=DiscoveredPatternStatus.LAB_CANDIDATE)
@@ -1476,8 +1927,9 @@ def test_laboratory_scanner_ignores_active_exposure_for_new_lab_observation() ->
         matcher=StaticMatcher(provider, [match]),
     ).scan(db, module="laboratory", symbols=[provider.symbol], store_signals=True)
 
-    assert result["skipped_duplicates"] == 0
-    assert result["signals_created"] == 1
+    assert result["skipped_duplicates"] == 1
+    assert result["signals_created"] == 0
+    assert result["paper_observations_opened"] == 0
 
 
 def test_laboratory_scanner_skips_signal_creation_when_market_closed(monkeypatch) -> None:
@@ -1534,6 +1986,32 @@ def test_fox_hunter_ignores_lab_patterns_and_uses_production_only() -> None:
             production,
             reviewer="test_director",
             evidence_packet={"approved_for_production": True, "ibkr_paper_fills": 30},
+        ),
+    }
+    db.add(production)
+    db.commit()
+
+    still_blocked = scanner(provider).scan(
+        db,
+        module="fox_hunter",
+        symbols=[provider.symbol],
+        store_signals=True,
+        execute_orders=False,
+    )
+    assert still_blocked["patterns_checked"] == 0
+    assert still_blocked["signals_created"] == 0
+    status = scanner(provider).status(db)["fox_hunter"]
+    assert status["eligible_patterns"] == 0
+    assert status["production_manifest_blocked_reason_counts"] == {
+        "missing_director_production_gate_evidence": 1
+    }
+
+    production.metrics_json = {
+        **(production.metrics_json or {}),
+        "production_manifest": build_production_manifest(
+            production,
+            reviewer="test_director",
+            evidence_packet=production_gate_evidence_packet(),
         ),
     }
     db.add(production)

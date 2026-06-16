@@ -136,6 +136,87 @@ def test_legacy_ibkr_paper_smoke_order_is_laboratory_history() -> None:
     assert lab["trades"][0]["status"] == "open"
 
 
+def test_laboratory_overview_collapses_duplicate_active_exposures() -> None:
+    db = session_factory()
+    for index in range(3):
+        signal = Signal(
+            symbol="LRN",
+            pattern=f"lab_shadow_{index}",
+            side="short",
+            entry=83.54,
+            stop=90.2568,
+            target=73.4648,
+            reward_risk=1.5,
+            confidence=0.48,
+            composite_score=0.56,
+            risk_usd=26.87,
+            suggested_qty=4,
+            strategy_version=f"laboratory_pattern_{index}",
+            status=SignalStatus.PAPER_APPROVED,
+            metadata_json={"entry_module": "laboratory"},
+        )
+        db.add(signal)
+        db.flush()
+        db.add(
+            Trade(
+                signal_id=signal.id,
+                symbol="LRN",
+                pattern=signal.pattern,
+                side="short",
+                qty=4,
+                entry=83.54,
+                stop=90.2568,
+                target=73.4648,
+                status=TradeStatus.OPEN,
+                metadata_json={"execution_mode": "lab_shadow_observation", "evidence_type": "shadow_no_order"},
+            )
+        )
+    broker_signal = Signal(
+        symbol="LRN",
+        pattern="lab_broker_order",
+        side="short",
+        entry=83.54,
+        stop=90.2568,
+        target=66.832,
+        reward_risk=2.5,
+        confidence=0.6,
+        composite_score=0.7,
+        risk_usd=26.87,
+        suggested_qty=4,
+        strategy_version="laboratory_pattern_broker",
+        status=SignalStatus.EXECUTED,
+        human_approved=True,
+        metadata_json={"entry_module": "laboratory"},
+    )
+    db.add(broker_signal)
+    db.flush()
+    db.add(
+        Trade(
+            signal_id=broker_signal.id,
+            symbol="LRN",
+            pattern="lab_broker_order",
+            side="short",
+            qty=4,
+            entry=83.54,
+            stop=90.2568,
+            target=66.832,
+            status=TradeStatus.OPEN,
+            broker_order_id="7",
+            metadata_json={
+                "execution_mode": "ibkr",
+                "ibkr_mode": "paper",
+                "evidence_type": EvidenceType.IBKR_PAPER_ORDER.value,
+            },
+        )
+    )
+    db.commit()
+
+    lab = module_overview(db, "laboratory")
+
+    assert lab["stats"]["open_trades"] == 1
+    assert [trade["pattern"] for trade in lab["trades"]] == ["lab_broker_order"]
+
+
 def test_cancelled_paper_trade_is_signal_status_not_operation() -> None:
     db = session_factory()
     signal = Signal(
