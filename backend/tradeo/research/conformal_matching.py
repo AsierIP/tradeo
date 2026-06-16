@@ -21,10 +21,18 @@ def split_conformal_similarity_threshold(
     ``ceil((n + 1) * (1 - alpha)) / n``. A new match passes if its similarity is
     at least the returned threshold.
     """
-    sims = np.asarray(calibration_similarities, dtype=float)
+    try:
+        sims = np.asarray(calibration_similarities, dtype=float)
+    except (TypeError, ValueError):
+        return _blocked("calibration_similarities_must_be_numeric")
     if sims.ndim != 1:
         return _blocked("calibration_similarities_must_be_1d")
-    sims = sims[np.isfinite(sims)]
+    if not np.isfinite(sims).all():
+        return _blocked(
+            "similarities_must_be_finite",
+            calibration_count=int(np.isfinite(sims).sum()),
+            invalid_count=int(np.size(sims) - np.isfinite(sims).sum()),
+        )
     n = int(sims.size)
     if n < int(min_calibration_count):
         return _blocked(
@@ -62,16 +70,32 @@ def false_positive_rate_at_threshold(
     *,
     threshold: float,
 ) -> dict[str, Any]:
-    sims = np.asarray(negative_similarities, dtype=float)
+    try:
+        sims = np.asarray(negative_similarities, dtype=float)
+    except (TypeError, ValueError):
+        return _blocked(
+            "negative_similarities_must_be_numeric",
+            method="fpr_at_similarity_threshold_v1",
+        )
     if sims.ndim != 1:
-        return _blocked("negative_similarities_must_be_1d")
-    sims = sims[np.isfinite(sims)]
+        return _blocked("negative_similarities_must_be_1d", method="fpr_at_similarity_threshold_v1")
+    if not np.isfinite(sims).all():
+        return _blocked(
+            "negative_similarities_must_be_finite",
+            method="fpr_at_similarity_threshold_v1",
+            negative_count=int(np.isfinite(sims).sum()),
+            invalid_count=int(np.size(sims) - np.isfinite(sims).sum()),
+        )
     n = int(sims.size)
     if n == 0:
-        return _blocked("no_negative_similarities")
+        return _blocked("no_negative_similarities", method="fpr_at_similarity_threshold_v1")
     threshold = float(threshold)
     if not 0.0 <= threshold <= 1.0:
-        return _blocked("threshold_must_be_unit_interval", negative_count=n)
+        return _blocked(
+            "threshold_must_be_unit_interval",
+            method="fpr_at_similarity_threshold_v1",
+            negative_count=n,
+        )
     hits = int(np.sum(sims >= threshold))
     return {
         "method": "fpr_at_similarity_threshold_v1",
@@ -85,7 +109,7 @@ def false_positive_rate_at_threshold(
     }
 
 
-def _blocked(reason: str, **extra: Any) -> dict[str, Any]:
-    out: dict[str, Any] = {"method": METHOD, "blocked": True, "passed": False, "reason": reason}
+def _blocked(reason: str, *, method: str = METHOD, **extra: Any) -> dict[str, Any]:
+    out: dict[str, Any] = {"method": method, "blocked": True, "passed": False, "reason": reason}
     out.update(extra)
     return out

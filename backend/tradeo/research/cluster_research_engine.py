@@ -46,6 +46,40 @@ except Exception:  # noqa: BLE001
     HDBSCAN = None  # type: ignore[assignment]
 
 
+def _json_safe_features(features: dict[str, object]) -> dict[str, object]:
+    output: dict[str, object] = {}
+    for key, value in features.items():
+        try:
+            number = float(value)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            output[key] = value
+            continue
+        if math.isfinite(number):
+            output[key] = round(number, 6)
+        else:
+            output[key] = None
+    return output
+
+
+def _numeric_feature_values(samples: list[WindowSample], key: str) -> np.ndarray:
+    values: list[float] = []
+    for sample in samples:
+        raw = sample.features.get(key, 0.0)
+        try:
+            number = float(raw)
+        except (TypeError, ValueError):
+            return np.asarray([], dtype=float)
+        if not math.isfinite(number):
+            return np.asarray([], dtype=float)
+        values.append(number)
+    return np.asarray(values, dtype=float)
+
+
+def _numeric_feature_keys(samples: list[WindowSample]) -> list[str]:
+    keys = sorted({key for sample in samples for key in sample.features})
+    return [key for key in keys if len(_numeric_feature_values(samples, key)) == len(samples)]
+
+
 @dataclass(slots=True)
 class ClusterFitResult:
     method: str
@@ -1825,10 +1859,9 @@ class ClusterResearchEngine:
     def _feature_summary(samples: list[WindowSample]) -> dict[str, object]:
         if not samples:
             return {}
-        keys = sorted({key for s in samples for key in s.features})
         summary: dict[str, object] = {}
-        for key in keys:
-            values = np.asarray([s.features.get(key, 0.0) for s in samples], dtype=float)
+        for key in _numeric_feature_keys(samples):
+            values = _numeric_feature_values(samples, key)
             summary[key] = {
                 "mean": round(float(np.mean(values)), 6),
                 "median": round(float(np.median(values)), 6),
@@ -1938,7 +1971,8 @@ class ClusterResearchEngine:
             "atr_pct",
         ]
         available = {key for sample in samples + baseline_samples for key in sample.features}
-        return [key for key in preferred if key in available]
+        numeric = set(_numeric_feature_keys(samples + baseline_samples))
+        return [key for key in preferred if key in available and key in numeric]
 
     @staticmethod
     def _feature_label(key: str) -> str:
@@ -2191,7 +2225,7 @@ class ClusterResearchEngine:
                     "similarity": round(similarity, 6),
                     "kind": kind,
                     "chart": sample.chart,
-                    "features": {k: round(float(v), 6) for k, v in sample.features.items()},
+                    "features": _json_safe_features(sample.features),
                 }
             )
         return examples
@@ -2257,7 +2291,7 @@ class ClusterResearchEngine:
                 "similarity": round(float(similarities[medoid_idx]), 6),
                 "distance": round(float(distances[medoid_idx]), 6),
                 "chart": medoid_sample.chart,
-                "features": {k: round(float(v), 6) for k, v in medoid_sample.features.items()},
+                "features": _json_safe_features(medoid_sample.features),
             },
             "similarity_distribution": {
                 "p05": round(float(np.quantile(similarities, 0.05)), 6),

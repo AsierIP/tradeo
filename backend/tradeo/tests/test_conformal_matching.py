@@ -30,6 +30,11 @@ def test_split_conformal_similarity_threshold_blocks_invalid_inputs() -> None:
     assert out_of_range["blocked"] is True
     assert out_of_range["reason"] == "similarities_must_be_unit_interval"
 
+    non_finite = split_conformal_similarity_threshold([0.8] * 20 + [float("nan")])
+    assert non_finite["blocked"] is True
+    assert non_finite["reason"] == "similarities_must_be_finite"
+    assert non_finite["invalid_count"] == 1
+
     bad_alpha = split_conformal_similarity_threshold([0.8] * 20, alpha=1.0)
     assert bad_alpha["blocked"] is True
     assert bad_alpha["reason"] == "alpha_must_be_between_0_and_1"
@@ -48,4 +53,14 @@ def test_false_positive_rate_blocks_empty_bank() -> None:
     report = false_positive_rate_at_threshold([], threshold=0.5)
 
     assert report["blocked"] is True
+    assert report["method"] == "fpr_at_similarity_threshold_v1"
     assert report["reason"] == "no_negative_similarities"
+
+
+def test_false_positive_rate_blocks_non_finite_inputs() -> None:
+    report = false_positive_rate_at_threshold([0.2, float("inf")], threshold=0.5)
+
+    assert report["blocked"] is True
+    assert report["method"] == "fpr_at_similarity_threshold_v1"
+    assert report["reason"] == "negative_similarities_must_be_finite"
+    assert report["invalid_count"] == 1

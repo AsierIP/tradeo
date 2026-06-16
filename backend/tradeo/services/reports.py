@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -9,6 +11,8 @@ from sqlalchemy.orm import Session
 
 from tradeo.core.config import Settings, get_settings
 from tradeo.db.models import AuditLog, EquityPoint, PatternMetric, Signal, Trade
+from tradeo.services.runtime_status import entry_scan_status, worker_runtime_status
+from tradeo.services.system_controls import runtime_kill_switch
 
 
 class ReportService:
@@ -17,16 +21,55 @@ class ReportService:
 
     def generate_review_pack(self, db: Session) -> dict[str, Any]:
         now = datetime.now(timezone.utc)
-        signals = db.query(Signal).order_by(Signal.created_at.desc()).limit(50).all()
-        trades = db.query(Trade).order_by(Trade.opened_at.desc()).limit(50).all()
+        row_limits = {
+            "signals": 50,
+            "trades": 50,
+            "equity": 200,
+            "audit_tail": 100,
+        }
+        signals = (
+            db.query(Signal).order_by(Signal.created_at.desc()).limit(row_limits["signals"]).all()
+        )
+        trades = db.query(Trade).order_by(Trade.opened_at.desc()).limit(row_limits["trades"]).all()
         metrics = db.query(PatternMetric).all()
-        equity = db.query(EquityPoint).order_by(EquityPoint.timestamp.desc()).limit(200).all()
-        audits = db.query(AuditLog).order_by(AuditLog.timestamp.desc()).limit(100).all()
+        equity = (
+            db.query(EquityPoint)
+            .order_by(EquityPoint.timestamp.desc())
+            .limit(row_limits["equity"])
+            .all()
+        )
+        audits = (
+            db.query(AuditLog)
+            .order_by(AuditLog.timestamp.desc())
+            .limit(row_limits["audit_tail"])
+            .all()
+        )
+        runtime_control = runtime_kill_switch(db)
         pack: dict[str, Any] = {
             "generated_at_utc": now.isoformat(),
             "mode": self.settings.trading_mode,
             "live_armed": self.settings.live_armed,
             "kill_switch_enabled": self.settings.kill_switch_enabled,
+            "runtime_kill_switch_enabled": bool(runtime_control and runtime_control.enabled),
+            "runtime_kill_switch": self._runtime_kill_switch_to_dict(runtime_control),
+            "runtime_status": {
+                "worker": worker_runtime_status(self.settings),
+                "entry_scans": {
+                    "laboratory": entry_scan_status("laboratory", self.settings),
+                    "fox_hunter": entry_scan_status("fox_hunter", self.settings),
+                },
+            },
+            "report_metadata": {
+                "schema_version": 1,
+                "row_limits": row_limits,
+                "returned_counts": {
+                    "signals": len(signals),
+                    "trades": len(trades),
+                    "metrics": len(metrics),
+                    "equity": len(equity),
+                    "audit_tail": len(audits),
+                },
+            },
             "risk_policy": {
                 "initial_capital_usd": self.settings.initial_capital_usd,
                 "risk_per_trade_pct": self.settings.risk_per_trade_pct,
@@ -70,24 +113,41 @@ class ReportService:
 
     def latest_report(self) -> dict[str, Any] | None:
         reports = sorted(self.settings.reports_path.glob("tradeo_review_*.json"), reverse=True)
-        if not reports:
-            return None
-        return json.loads(reports[0].read_text())
+        skipped_invalid: list[dict[str, str]] = []
+        for path in reports:
+            try:
+                report = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as exc:
+                skipped_invalid.append({"path": str(path), "reason": exc.__class__.__name__})
+                continue
+            if not isinstance(report, dict):
+                skipped_invalid.append({"path": str(path), "reason": "non_object_json"})
+                continue
+            report["_latest_report_read"] = {
+                "path": str(path),
+                "skipped_invalid_count": len(skipped_invalid),
+                "skipped_invalid_reports": skipped_invalid[:5],
+            }
+            return report
+        return None
 
     def _write_json(self, pack: dict[str, Any], now: datetime) -> Path:
         path = self.settings.reports_path / f"tradeo_review_{now:%Y%m%d_%H%M%S}.json"
-        path.write_text(json.dumps(pack, indent=2, default=str))
+        _write_text_atomic(path, json.dumps(pack, indent=2, default=str))
         return path
 
     def _write_markdown(self, pack: dict[str, Any], now: datetime) -> Path:
         path = self.settings.reports_path / f"tradeo_review_{now:%Y%m%d_%H%M%S}.md"
+        runtime = pack["runtime_status"]
         lines = [
             f"# Tradeo review pack - {pack['generated_at_utc']}",
             "",
             "## Estado",
             f"- Modo: {pack['mode']}",
             f"- Live armado: {pack['live_armed']}",
-            f"- Kill switch: {pack['kill_switch_enabled']}",
+            f"- Kill switch env: {pack['kill_switch_enabled']}",
+            f"- Kill switch runtime: {pack['runtime_kill_switch_enabled']}",
+            f"- Worker: {runtime['worker']['state']} ({runtime['worker']['reason']})",
             "",
             "## Riesgo",
             f"- Capital inicial: {pack['risk_policy']['initial_capital_usd']} USD",
@@ -103,7 +163,7 @@ class ReportService:
                 f"RR={s['reward_risk']} conf={s['confidence']}"
             )
         lines.extend(["", "## Prompt para revisión externa", "", pack["director_prompt"]])
-        path.write_text("\n".join(lines))
+        _write_text_atomic(path, "\n".join(lines))
         return path
 
     def _director_prompt(self) -> str:
@@ -163,3 +223,40 @@ class ReportService:
             "max_drawdown_pct": m.max_drawdown_pct,
             "avg_r_multiple": m.avg_r_multiple,
         }
+
+    @staticmethod
+    def _runtime_kill_switch_to_dict(control: Any | None) -> dict[str, Any]:
+        if control is None:
+            return {
+                "enabled": False,
+                "reason": None,
+                "actor": None,
+                "updated_at": None,
+                "details": {},
+            }
+        return {
+            "enabled": bool(control.enabled),
+            "reason": control.reason,
+            "actor": control.actor,
+            "updated_at": control.updated_at.isoformat() if control.updated_at else None,
+            "details": control.details_json or {},
+        }
+
+
+def _write_text_atomic(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        dir=path.parent,
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        os.replace(tmp_name, path)
+    except Exception:
+        try:
+            os.unlink(tmp_name)
+        except FileNotFoundError:
+            pass
+        raise

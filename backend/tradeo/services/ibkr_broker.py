@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import random
 import time
 from dataclasses import dataclass
@@ -60,7 +62,10 @@ class IBKRBroker:
 
     @property
     def order_timeout(self) -> float:
-        return float(getattr(self.settings, "ibkr_order_timeout_seconds", 20.0))
+        timeout = float(getattr(self.settings, "ibkr_order_timeout_seconds", 20.0))
+        if self.settings.trading_mode == "paper":
+            return max(timeout, 45.0)
+        return timeout
 
     def _connect(self):
         _ensure_event_loop()
@@ -200,6 +205,23 @@ class IBKRBroker:
             if ib.isConnected():
                 ib.disconnect()
 
+    def fills(self) -> list[dict[str, Any]]:
+        """Return recent IBKR executions normalized for DB reconciliation."""
+        ib = self._connect()
+        try:
+            try:
+                from ib_insync import ExecutionFilter
+
+                raw_fills = ib.reqExecutions(ExecutionFilter())
+            except TypeError:
+                raw_fills = ib.reqExecutions()
+            except Exception:  # noqa: BLE001 - fall back to session fills if request fails.
+                raw_fills = ib.fills()
+            return [_normalize_fill(fill) for fill in raw_fills]
+        finally:
+            if ib.isConnected():
+                ib.disconnect()
+
     def _stock_contract(self, symbol: str):
         from ib_insync import Stock
 
@@ -334,36 +356,69 @@ class IBKRBroker:
                 raise IBKRSafetyError(f"IBKR could not qualify contract for {signal.symbol}")
             contract = qualified[0]
             action = self._action_for_signal(signal)
+            bracket_prices = _operational_bracket_prices(
+                signal,
+                paper_mode=self.settings.trading_mode == "paper",
+                max_distance_pct=float(
+                    getattr(self.settings, "ibkr_paper_bracket_max_distance_pct", 0.20)
+                ),
+            )
             bracket = ib.bracketOrder(
                 action=action,
                 quantity=int(signal.suggested_qty),
-                limitPrice=_finite_price(signal.entry, "entry"),
-                takeProfitPrice=_finite_price(signal.target, "target"),
-                stopLossPrice=_finite_price(signal.stop, "stop"),
+                limitPrice=bracket_prices["entry"],
+                takeProfitPrice=bracket_prices["target"],
+                stopLossPrice=bracket_prices["stop"],
             )
             for order in bracket:
                 order.tif = "DAY"
                 if self.settings.ibkr_account:
                     order.account = self.settings.ibkr_account
+            if action == "SELL":
+                bracket[0].shortSaleSlot = 1
             trades = []
             for order in bracket:
                 trades.append(ib.placeOrder(contract, order))
                 ib.sleep(0.25)
+            bracket_degraded_to_parent_only = False
+            bracket_failure_snapshot: list[dict[str, Any]] | None = None
             deadline = time.monotonic() + self.order_timeout
             while time.monotonic() < deadline:
                 ib.sleep(0.5)
-                if all(t.orderStatus.permId for t in trades):
+                if _bracket_acknowledged(trades, paper_mode=self.settings.trading_mode != "live"):
                     break
-            if not all(t.orderStatus.permId for t in trades):
+            if not _bracket_acknowledged(trades, paper_mode=self.settings.trading_mode != "live"):
+                status_snapshot = _bracket_status_snapshot(trades)
                 for trade_status in trades:
                     ib.cancelOrder(trade_status.order)
                 ib.sleep(1.0)
-                raise IBKRSafetyError("IBKR did not acknowledge every bracket leg with a permId")
+                if self.settings.trading_mode != "paper":
+                    raise IBKRSafetyError(
+                        "IBKR did not acknowledge the bracket safely: "
+                        f"{json.dumps(status_snapshot, sort_keys=True)}"
+                    )
+                parent_order = self._build_parent_limit_order(signal)
+                parent_trade = ib.placeOrder(contract, parent_order)
+                fallback_deadline = time.monotonic() + self.order_timeout
+                while time.monotonic() < fallback_deadline:
+                    ib.sleep(0.5)
+                    if _parent_order_acknowledged(parent_trade):
+                        break
+                if not _parent_order_acknowledged(parent_trade):
+                    ib.cancelOrder(parent_order)
+                    ib.sleep(1.0)
+                    raise IBKRSafetyError(
+                        "IBKR did not acknowledge the bracket safely: "
+                        f"{json.dumps(status_snapshot, sort_keys=True)}"
+                    )
+                trades = [parent_trade]
+                bracket_degraded_to_parent_only = True
+                bracket_failure_snapshot = status_snapshot
 
             parent_trade = trades[0]
             parent_order = parent_trade.order
             order_ids = [t.order.orderId for t in trades]
-            perm_ids = [t.orderStatus.permId for t in trades]
+            perm_ids = [t.orderStatus.permId or None for t in trades]
             now = datetime.now(timezone.utc)
             signal_metadata = signal.metadata_json or {}
             evidence_type = (
@@ -382,15 +437,26 @@ class IBKRBroker:
                 "order_ids": order_ids,
                 "perm_ids": perm_ids,
             }
+            bracket_legs = {
+                "entry": {"order_id": order_ids[0], "perm_id": perm_ids[0]},
+                "target": {
+                    "order_id": order_ids[1] if len(order_ids) > 1 else None,
+                    "perm_id": perm_ids[1] if len(perm_ids) > 1 else None,
+                },
+                "stop": {
+                    "order_id": order_ids[2] if len(order_ids) > 2 else None,
+                    "perm_id": perm_ids[2] if len(perm_ids) > 2 else None,
+                },
+            }
             trade = Trade(
                 signal_id=signal.id,
                 symbol=signal.symbol,
                 pattern=signal.pattern,
                 side=signal.side,
                 qty=signal.suggested_qty,
-                entry=signal.entry,
-                stop=signal.stop,
-                target=signal.target,
+                entry=bracket_prices["entry"],
+                stop=bracket_prices["stop"],
+                target=bracket_prices["target"],
                 status=TradeStatus.OPEN,
                 opened_at=now,
                 broker_order_id=str(parent_order.orderId),
@@ -416,8 +482,20 @@ class IBKRBroker:
                         "exchange": contract.exchange,
                         "currency": contract.currency,
                     },
+                    "requested_bracket": bracket_prices["requested"],
+                    "submitted_bracket": bracket_prices["submitted"],
+                    "paper_bracket_adjusted": bracket_prices["adjusted"],
+                    "paper_bracket_degraded_to_parent_only": bracket_degraded_to_parent_only,
+                    "bracket_failure_snapshot": bracket_failure_snapshot,
                     "order_ids": order_ids,
                     "perm_ids": perm_ids,
+                    "bracket_legs": bracket_legs,
+                    "entry_order_id": order_ids[0],
+                    "target_order_id": order_ids[1] if len(order_ids) > 1 else None,
+                    "stop_order_id": order_ids[2] if len(order_ids) > 2 else None,
+                    "entry_perm_id": perm_ids[0],
+                    "target_perm_id": perm_ids[1] if len(perm_ids) > 1 else None,
+                    "stop_perm_id": perm_ids[2] if len(perm_ids) > 2 else None,
                     "parent_order_id": parent_order.orderId,
                     "submitted_at": now.isoformat(),
                     "readonly": self.settings.ibkr_readonly,
@@ -456,3 +534,164 @@ class IBKRBroker:
         finally:
             if ib.isConnected():
                 ib.disconnect()
+
+
+def _normalize_fill(fill: Any) -> dict[str, Any]:
+    contract = getattr(fill, "contract", None)
+    execution = getattr(fill, "execution", fill)
+    commission_report = getattr(fill, "commissionReport", None)
+    executed_at = _iso_ts(getattr(execution, "time", None) or getattr(fill, "time", None))
+    exec_id = _str_or_none(getattr(execution, "execId", None))
+    order_id = _str_or_none(getattr(execution, "orderId", None))
+    perm_id = _str_or_none(getattr(execution, "permId", None))
+    symbol = _str_or_none(getattr(contract, "symbol", None) or getattr(execution, "symbol", None))
+    raw = {
+        "exec_id": exec_id,
+        "order_id": order_id,
+        "perm_id": perm_id,
+        "symbol": symbol,
+        "time": executed_at,
+    }
+    fill_id_hash = hashlib.sha256(json.dumps(raw, sort_keys=True).encode("utf-8")).hexdigest()
+    return {
+        "symbol": symbol,
+        "sec_type": _str_or_none(getattr(contract, "secType", None)),
+        "exchange": _str_or_none(getattr(execution, "exchange", None) or getattr(contract, "exchange", None)),
+        "currency": _str_or_none(
+            getattr(commission_report, "currency", None) or getattr(contract, "currency", None)
+        ),
+        "side": _normalize_side(getattr(execution, "side", None)),
+        "quantity": _float_or_none(getattr(execution, "shares", None)),
+        "price": _float_or_none(getattr(execution, "price", None) or getattr(execution, "avgPrice", None)),
+        "avg_price": _float_or_none(getattr(execution, "avgPrice", None)),
+        "order_id": order_id,
+        "perm_id": perm_id,
+        "exec_id": exec_id,
+        "execution_time": executed_at,
+        "commission": _float_or_none(getattr(commission_report, "commission", None)),
+        "commission_currency": _str_or_none(getattr(commission_report, "currency", None)),
+        "realized_pnl": _float_or_none(getattr(commission_report, "realizedPNL", None)),
+        "fill_id_hash": fill_id_hash,
+        "broker_execution_hash": fill_id_hash,
+        "account_id_redacted": True,
+    }
+
+
+def _bracket_acknowledged(trades: list[Any], *, paper_mode: bool) -> bool:
+    if len(trades) != 3:
+        return False
+    if _bracket_has_terminal_rejection(trades):
+        return False
+    if not getattr(trades[0].orderStatus, "permId", 0):
+        return False
+    if not all(getattr(trade.order, "orderId", 0) for trade in trades):
+        return False
+    if paper_mode:
+        return True
+    return all(getattr(trade.orderStatus, "permId", 0) for trade in trades)
+
+
+def _bracket_has_terminal_rejection(trades: list[Any]) -> bool:
+    bad_statuses = {"cancelled", "apicancelled", "inactive"}
+    for trade in trades:
+        status = str(getattr(trade.orderStatus, "status", "") or "").lower()
+        if status in bad_statuses:
+            return True
+        log_entries = getattr(trade, "log", []) or []
+        for entry in log_entries:
+            entry_status = str(getattr(entry, "status", "") or "").lower()
+            if entry_status in bad_statuses:
+                return True
+            error_code = int(getattr(entry, "errorCode", 0) or 0)
+            if error_code and error_code not in {161, 10147}:
+                return True
+    return False
+
+
+def _parent_order_acknowledged(trade: Any) -> bool:
+    if not getattr(trade.order, "orderId", 0):
+        return False
+    if not getattr(trade.orderStatus, "permId", 0):
+        return False
+    status = str(getattr(trade.orderStatus, "status", "") or "").lower()
+    return status not in {"cancelled", "apicancelled", "inactive"}
+
+
+def _bracket_status_snapshot(trades: list[Any]) -> list[dict[str, Any]]:
+    rows = []
+    for trade in trades:
+        rows.append(
+            {
+                "order_id": getattr(trade.order, "orderId", None),
+                "parent_id": getattr(trade.order, "parentId", None),
+                "action": getattr(trade.order, "action", None),
+                "order_type": getattr(trade.order, "orderType", None),
+                "perm_id": getattr(trade.orderStatus, "permId", None),
+                "status": getattr(trade.orderStatus, "status", None),
+            }
+        )
+    return rows
+
+
+def _operational_bracket_prices(
+    signal: Signal,
+    *,
+    paper_mode: bool,
+    max_distance_pct: float,
+) -> dict[str, Any]:
+    entry = _finite_price(signal.entry, "entry")
+    stop = _finite_price(signal.stop, "stop")
+    target = _finite_price(signal.target, "target")
+    requested = {"entry": entry, "stop": stop, "target": target}
+    submitted = dict(requested)
+    if paper_mode and max_distance_pct > 0:
+        distance = max(0.01, float(max_distance_pct))
+        side = signal.side.lower().strip()
+        if side == "long":
+            submitted["target"] = min(target, round(entry * (1 + distance), 4))
+            submitted["stop"] = max(stop, round(entry * (1 - distance), 4))
+        elif side == "short":
+            submitted["target"] = max(target, round(entry * (1 - distance), 4))
+            submitted["stop"] = min(stop, round(entry * (1 + distance), 4))
+    return {
+        "entry": submitted["entry"],
+        "stop": submitted["stop"],
+        "target": submitted["target"],
+        "requested": requested,
+        "submitted": submitted,
+        "adjusted": submitted != requested,
+    }
+
+
+def _normalize_side(value: Any) -> str | None:
+    side = str(value or "").upper().strip()
+    if side in {"BOT", "BUY", "BOUGHT"}:
+        return "BUY"
+    if side in {"SLD", "SELL", "SOLD"}:
+        return "SELL"
+    return side or None
+
+
+def _float_or_none(value: Any) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number
+
+
+def _str_or_none(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _iso_ts(value: Any) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        return value.isoformat()
+    return str(value)

@@ -6,8 +6,15 @@ import tarfile
 from pathlib import Path
 
 
+def _repo_root() -> Path:
+    for parent in Path(__file__).resolve().parents:
+        if (parent / "ops/scripts/backup_tradeo.sh").exists():
+            return parent
+    raise AssertionError("could not find repository root")
+
+
 def test_backup_script_includes_pg_dump_when_available(tmp_path: Path) -> None:
-    repo_root = Path(__file__).resolve().parents[3]
+    repo_root = _repo_root()
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
     pg_dump = fake_bin / "pg_dump"

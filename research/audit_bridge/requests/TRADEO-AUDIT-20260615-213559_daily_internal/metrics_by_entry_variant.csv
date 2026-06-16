@@ -1,0 +1,2 @@
+pattern_id,entry_variant_id,analysis_available,empty_reason,trade_count,event_count,gross_pnl,net_pnl,avg_trade,expectancy_r,winrate,profit_factor,max_drawdown,best_trade,worst_trade,first_seen,last_seen,notes
+,,false,no_closed_lab_trades: missing closed_lab_trades with signal.metadata_json.entry_variant_id; paper_trades.csv has no matching closed trades.,0,0,0,0,,,,,,,,,,Explicit empty bucket for Director audit contract.

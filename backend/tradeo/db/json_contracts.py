@@ -24,7 +24,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 
 class _FreeformDict(BaseModel):
@@ -117,7 +117,31 @@ def validate_payload(table: str, column: str, payload: Any) -> Any:
     fields = contract.validator.model_fields
     if "root" in fields and isinstance(payload, list):
         return contract.validator(root=payload)
-    return contract.validator.model_validate(payload)
+    validated = contract.validator.model_validate(payload)
+
+    if "schema_version" not in fields:
+        return validated
+
+    actual_version = getattr(validated, "schema_version")
+    if actual_version != contract.schema_version:
+        raise ValidationError.from_exception_data(
+            f"{contract.table}.{contract.column}",
+            [
+                {
+                    "type": "value_error",
+                    "loc": ("schema_version",),
+                    "msg": "Value error, schema_version mismatch",
+                    "input": actual_version,
+                    "ctx": {
+                        "error": ValueError(
+                            f"schema_version {actual_version} does not match registered "
+                            f"contract version {contract.schema_version}"
+                        )
+                    },
+                }
+            ],
+        )
+    return validated
 
 
 def stamp_schema_version(payload: dict[str, Any], table: str, column: str) -> dict[str, Any]:
