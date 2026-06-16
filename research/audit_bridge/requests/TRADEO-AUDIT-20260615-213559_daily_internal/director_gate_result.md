@@ -1,0 +1,9163 @@
+# Director Gate Result
+
+- Created at: `2026-06-15T21:36:08+00:00`
+- Package: `/home/vboxuser/tradeo/research/audit_bridge/requests/TRADEO-AUDIT-20260615-213559_daily_internal`
+- Status: `blocked`
+
+## Blockers
+
+- paper_trades.csv has zero rows; no pattern can be approved beyond research/watchlist.
+- ib_fills.csv has zero rows; execution, commission, spread and slippage validation are unavailable.
+- promoted statuses require linked paper trades; offenders: PATTERN_000282, PATTERN_000364, PATTERN_000366
+- promoted statuses require at least 30 IB Paper fills; package has 0.
+- 500 event rows have blank anti-lookahead contract values.
+- duplicate_group_id repeats exceed gate: 432/5849 rows (7.39%).
+- 500 event rows are not verified independent samples.
+- 500 event rows have pending/unknown independence labels.
+- no experiment has explicit out_of_sample_start/out_of_sample_end boundaries.
+- 2953 experiment rows lack event_ledger_hash.
+- 2965 experiment rows lack nested_discovery_replay evidence.
+- 30 experiment rows have nested_discovery_replay not implemented/passed.
+- 2251 experiment rows lack edge_claim=NO_DEMOSTRADO.
+- experiment rows report active blockers: EXP_PATTERN_000490_RR_1_5, EXP_PATTERN_000490_RR_2, EXP_PATTERN_000490_RR_2_5, EXP_PATTERN_000490_RR_3, EXP_PATTERN_000490_RR_4, EXP_PATTERN_000490_RR_5, EXP_PATTERN_000560_RR_1_5, EXP_PATTERN_000560_RR_2, EXP_PATTERN_000560_RR_2_5, EXP_PATTERN_000560_RR_3 (+182 more)
+- 2965 experiment rows lack registry_hash.
+- 2965 experiment rows lack registry_run_manifest_hash.
+
+## Recommendations
+
+- `P0` `keep_all_patterns_research_only`: paper_trades.csv has zero rows; no closed_lab_trades can confirm any pattern
+- `P0` `ingest_ib_paper_fills`: fills, commissions, spread and slippage are unavailable
+- `P0` `deduplicate_or_explain_events`: duplicate event rows can inflate sample counts and apparent edge
+- `P0` `add_oos_and_train_only_evidence`: Director cannot separate discovery from validation without split evidence
+
+## Pattern Actions
+
+- `PATTERN_000366` trades=0 remaining=30: freeze promoted status; needs 30 more linked paper trades before promotion evidence exists; entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id; regime performance unavailable; missing closed_lab_trades with regime_key
+- `PATTERN_000364` trades=0 remaining=30: freeze promoted status; needs 30 more linked paper trades before promotion evidence exists; entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id; regime performance unavailable; missing closed_lab_trades with regime_key
+- `PATTERN_000282` trades=0 remaining=30: freeze promoted status; needs 30 more linked paper trades before promotion evidence exists; entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id; regime performance unavailable; missing closed_lab_trades with regime_key
+- `PATTERN_000265` trades=0 remaining=30: collect 30 more closed paper trades before Director review; entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id; regime performance unavailable; missing closed_lab_trades with regime_key
+- `PATTERN_000019` trades=0 remaining=30: collect 30 more closed paper trades before Director review; entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id; regime performance unavailable; missing closed_lab_trades with regime_key
+- `PATTERN_000020` trades=0 remaining=30: collect 30 more closed paper trades before Director review; entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id; regime performance unavailable; missing closed_lab_trades with regime_key
+- `PATTERN_000543` trades=0 remaining=30: collect 30 more closed paper trades before Director review; entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id; regime performance unavailable; missing closed_lab_trades with regime_key
+- `PATTERN_000522` trades=0 remaining=30: collect 30 more closed paper trades before Director review; entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id; regime performance unavailable; missing closed_lab_trades with regime_key
+- `PATTERN_000523` trades=0 remaining=30: collect 30 more closed paper trades before Director review; entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id; regime performance unavailable; missing closed_lab_trades with regime_key
+- `PATTERN_000625` trades=0 remaining=30: collect 30 more closed paper trades before Director review; entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id; regime performance unavailable; missing closed_lab_trades with regime_key
+- `PATTERN_000266` trades=0 remaining=30: collect 30 more closed paper trades before Director review; entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id; regime performance unavailable; missing closed_lab_trades with regime_key
+- `PATTERN_000525` trades=0 remaining=30: collect 30 more closed paper trades before Director review; entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id; regime performance unavailable; missing closed_lab_trades with regime_key
+- `PATTERN_000396` trades=0 remaining=30: collect 30 more closed paper trades before Director review; entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id; regime performance unavailable; missing closed_lab_trades with regime_key
+- `PATTERN_000588` trades=0 remaining=30: collect 30 more closed paper trades before Director review; entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id; regime performance unavailable; missing closed_lab_trades with regime_key
+- `PATTERN_000477` trades=0 remaining=30: collect 30 more closed paper trades before Director review; entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id; regime performance unavailable; missing closed_lab_trades with regime_key
+- `PATTERN_000627` trades=0 remaining=30: collect 30 more closed paper trades before Director review; entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id; regime performance unavailable; missing closed_lab_trades with regime_key
+- `PATTERN_000589` trades=0 remaining=30: collect 30 more closed paper trades before Director review; entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id; regime performance unavailable; missing closed_lab_trades with regime_key
+- `PATTERN_000544` trades=0 remaining=30: collect 30 more closed paper trades before Director review; entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id; regime performance unavailable; missing closed_lab_trades with regime_key
+- `PATTERN_000478` trades=0 remaining=30: collect 30 more closed paper trades before Director review; entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id; regime performance unavailable; missing closed_lab_trades with regime_key
+- `PATTERN_000590` trades=0 remaining=30: collect 30 more closed paper trades before Director review; entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id; regime performance unavailable; missing closed_lab_trades with regime_key
+- `PATTERN_000397` trades=0 remaining=30: collect 30 more closed paper trades before Director review; entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id; regime performance unavailable; missing closed_lab_trades with regime_key
+- `PATTERN_000268` trades=0 remaining=30: collect 30 more closed paper trades before Director review; entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id; regime performance unavailable; missing closed_lab_trades with regime_key
+- `PATTERN_000479` trades=0 remaining=30: collect 30 more closed paper trades before Director review; entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id; regime performance unavailable; missing closed_lab_trades with regime_key
+- `PATTERN_000269` trades=0 remaining=30: collect 30 more closed paper trades before Director review; entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id; regime performance unavailable; missing closed_lab_trades with regime_key
+- `PATTERN_000480` trades=0 remaining=30: collect 30 more closed paper trades before Director review; entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id; regime performance unavailable; missing closed_lab_trades with regime_key
+- `PATTERN_000529` trades=0 remaining=30: collect 30 more closed paper trades before Director review; entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id; regime performance unavailable; missing closed_lab_trades with regime_key
+- `PATTERN_000499` trades=0 remaining=30: collect 30 more closed paper trades before Director review; entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id; regime performance unavailable; missing closed_lab_trades with regime_key
+- `PATTERN_000023` trades=0 remaining=30: collect 30 more closed paper trades before Director review; entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id; regime performance unavailable; missing closed_lab_trades with regime_key
+- `PATTERN_000530` trades=0 remaining=30: collect 30 more closed paper trades before Director review; entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id; regime performance unavailable; missing closed_lab_trades with regime_key
+- `PATTERN_000500` trades=0 remaining=30: collect 30 more closed paper trades before Director review; entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id; regime performance unavailable; missing closed_lab_trades with regime_key
+- `PATTERN_000628` trades=0 remaining=30: collect 30 more closed paper trades before Director review; entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id; regime performance unavailable; missing closed_lab_trades with regime_key
+- `PATTERN_000531` trades=0 remaining=30: collect 30 more closed paper trades before Director review; entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id; regime performance unavailable; missing closed_lab_trades with regime_key
+- `PATTERN_000569` trades=0 remaining=30: collect 30 more closed paper trades before Director review; entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id; regime performance unavailable; missing closed_lab_trades with regime_key
+- `PATTERN_000630` trades=0 remaining=30: collect 30 more closed paper trades before Director review; entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id; regime performance unavailable; missing closed_lab_trades with regime_key
+- `PATTERN_000483` trades=0 remaining=30: collect 30 more closed paper trades before Director review; entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id; regime performance unavailable; missing closed_lab_trades with regime_key
+- `PATTERN_000031` trades=0 remaining=30: collect 30 more closed paper trades before Director review; entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id; regime performance unavailable; missing closed_lab_trades with regime_key
+- `PATTERN_000547` trades=0 remaining=30: collect 30 more closed paper trades before Director review; entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id; regime performance unavailable; missing closed_lab_trades with regime_key
+- `PATTERN_000024` trades=0 remaining=30: collect 30 more closed paper trades before Director review; entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id; regime performance unavailable; missing closed_lab_trades with regime_key
+- `PATTERN_000631` trades=0 remaining=30: collect 30 more closed paper trades before Director review; entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id; regime performance unavailable; missing closed_lab_trades with regime_key
+- `PATTERN_000272` trades=0 remaining=30: collect 30 more closed paper trades before Director review; entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id; regime performance unavailable; missing closed_lab_trades with regime_key
+
+## Summary
+
+```json
+{
+  "patterns": 500,
+  "events": 5849,
+  "paper_trades": 0,
+  "fills": 0,
+  "experiments": 2995,
+  "promoted_patterns": 3,
+  "promoted_pattern_ids_preview": [
+    "PATTERN_000282",
+    "PATTERN_000364",
+    "PATTERN_000366"
+  ],
+  "unknown_statuses": [],
+  "duplicate_repeated_rows": 432,
+  "duplicate_repeated_row_share": 0.073859,
+  "non_independent_event_rows": 500,
+  "pending_independence_rows": 500,
+  "sample_count_mismatch_patterns": 0,
+  "missing_oos_experiments": 2995,
+  "missing_lookahead_columns": [],
+  "research_metric_column_offenders": 0,
+  "train_only_evidence_missing": false,
+  "scientific_contracts": {
+    "blockers": [
+      "2953 experiment rows lack event_ledger_hash.",
+      "2965 experiment rows lack nested_discovery_replay evidence.",
+      "30 experiment rows have nested_discovery_replay not implemented/passed.",
+      "2251 experiment rows lack edge_claim=NO_DEMOSTRADO.",
+      "experiment rows report active blockers: EXP_PATTERN_000490_RR_1_5, EXP_PATTERN_000490_RR_2, EXP_PATTERN_000490_RR_2_5, EXP_PATTERN_000490_RR_3, EXP_PATTERN_000490_RR_4, EXP_PATTERN_000490_RR_5, EXP_PATTERN_000560_RR_1_5, EXP_PATTERN_000560_RR_2, EXP_PATTERN_000560_RR_2_5, EXP_PATTERN_000560_RR_3 (+182 more)",
+      "2965 experiment rows lack registry_hash.",
+      "2965 experiment rows lack registry_run_manifest_hash."
+    ],
+    "event_ledger_hash_rows": 42,
+    "nested_replay_passed_rows": 0,
+    "registry_hash_rows": 30,
+    "registry_run_manifest_hash_rows": 30,
+    "paper_trades_with_fill_rows": 0,
+    "paper_trades": 0,
+    "promotion_allowed": false
+  },
+  "by_regime": {
+    "available": false,
+    "buckets": [],
+    "empty_reason": "no_closed_lab_trades: missing closed_lab_trades with signal.metadata_json.regime.regime_key; paper_trades.csv has no matching closed trades."
+  },
+  "by_entry_variant": {
+    "available": false,
+    "buckets": [],
+    "empty_reason": "no_closed_lab_trades: missing closed_lab_trades with signal.metadata_json.entry_variant_id; paper_trades.csv has no matching closed trades."
+  },
+  "actionable_recommendations": [
+    {
+      "action": "keep_all_patterns_research_only",
+      "priority": "P0",
+      "reason": "paper_trades.csv has zero rows; no closed_lab_trades can confirm any pattern",
+      "required_data": "at least 30 linked paper trades for any promoted pattern"
+    },
+    {
+      "action": "ingest_ib_paper_fills",
+      "priority": "P0",
+      "reason": "fills, commissions, spread and slippage are unavailable",
+      "required_data": "at least 30 anonymized IB Paper fills for promoted patterns"
+    },
+    {
+      "action": "deduplicate_or_explain_events",
+      "priority": "P0",
+      "reason": "duplicate event rows can inflate sample counts and apparent edge"
+    },
+    {
+      "action": "add_oos_and_train_only_evidence",
+      "priority": "P0",
+      "reason": "Director cannot separate discovery from validation without split evidence"
+    }
+  ],
+  "pattern_recommendation_count": 500,
+  "pattern_recommendations": [
+    {
+      "pattern_id": "PATTERN_000366",
+      "pattern_name": "DISCOVERED_SHORT_W50_C06_D53F85BD",
+      "status": "paper_candidate",
+      "independent_sample_count": 11,
+      "ticker_count": 19,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "freeze promoted status; needs 30 more linked paper trades before promotion evidence exists",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000364",
+      "pattern_name": "DISCOVERED_SHORT_W50_C05_BBCCAF14",
+      "status": "paper_candidate",
+      "independent_sample_count": 11,
+      "ticker_count": 18,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "freeze promoted status; needs 30 more linked paper trades before promotion evidence exists",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000282",
+      "pattern_name": "DISCOVERED_LONG_W20_C05_43AA830F",
+      "status": "paper_candidate",
+      "independent_sample_count": 11,
+      "ticker_count": 8,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "freeze promoted status; needs 30 more linked paper trades before promotion evidence exists",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000265",
+      "pattern_name": "DISCOVERED_LONG_W20_C10_52FDCBEA",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 27,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000019",
+      "pattern_name": "DISCOVERED_LONG_W20_C00_BB49F870",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 27,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000020",
+      "pattern_name": "DISCOVERED_LONG_W20_C10_99CDC926",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 27,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000543",
+      "pattern_name": "DISCOVERED_LONG_W20_C01_556D6DEA",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 27,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000522",
+      "pattern_name": "DISCOVERED_LONG_W20_C01_476D76DE",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 27,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000523",
+      "pattern_name": "DISCOVERED_LONG_W20_C09_1414C751",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 27,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000625",
+      "pattern_name": "DISCOVERED_LONG_W20_C10_BDC054CE",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 27,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000266",
+      "pattern_name": "DISCOVERED_LONG_W20_C09_24D08DB0",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 27,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000525",
+      "pattern_name": "DISCOVERED_LONG_W20_C03_FCB57F7A",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 27,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000396",
+      "pattern_name": "DISCOVERED_LONG_W20_C07_9A873206",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 27,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000588",
+      "pattern_name": "DISCOVERED_LONG_W20_C08_30F41225",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 27,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000477",
+      "pattern_name": "DISCOVERED_LONG_W20_C00_2E0D5E95",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 27,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000627",
+      "pattern_name": "DISCOVERED_LONG_W20_C03_FACF5D3A",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 27,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000589",
+      "pattern_name": "DISCOVERED_LONG_W20_C01_7A792C9A",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 27,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000544",
+      "pattern_name": "DISCOVERED_SHORT_W20_C04_8DEB273D",
+      "status": "lab_watchlist",
+      "independent_sample_count": 11,
+      "ticker_count": 27,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000478",
+      "pattern_name": "DISCOVERED_SHORT_W20_C09_3597EC9B",
+      "status": "lab_watchlist",
+      "independent_sample_count": 11,
+      "ticker_count": 27,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000590",
+      "pattern_name": "DISCOVERED_LONG_W20_C03_5C5E3D2B",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 27,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000397",
+      "pattern_name": "DISCOVERED_LONG_W20_C04_C17D07C5",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 27,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000268",
+      "pattern_name": "DISCOVERED_SHORT_W20_C08_55CFE785",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 27,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000479",
+      "pattern_name": "DISCOVERED_LONG_W20_C03_54495ACA",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 27,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000269",
+      "pattern_name": "DISCOVERED_LONG_W20_C03_70E7C15F",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 27,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000480",
+      "pattern_name": "DISCOVERED_LONG_W20_C04_74D8DE76",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 27,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000529",
+      "pattern_name": "DISCOVERED_LONG_W20_C00_3F0D7815",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 27,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000499",
+      "pattern_name": "DISCOVERED_SHORT_W20_C06_2A2558CF",
+      "status": "lab_watchlist",
+      "independent_sample_count": 11,
+      "ticker_count": 27,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000023",
+      "pattern_name": "DISCOVERED_LONG_W20_C11_A8CF022A",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 27,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000530",
+      "pattern_name": "DISCOVERED_LONG_W20_C02_AF8992B9",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 27,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000500",
+      "pattern_name": "DISCOVERED_SHORT_W20_C11_589EBFC2",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 27,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000628",
+      "pattern_name": "DISCOVERED_LONG_W20_C05_DF9E4342",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 27,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000531",
+      "pattern_name": "DISCOVERED_LONG_W20_C05_F37A7C6C",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 27,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000569",
+      "pattern_name": "DISCOVERED_LONG_W20_C04_B46F2FCA",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 27,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000630",
+      "pattern_name": "DISCOVERED_LONG_W20_C00_F4977896",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 27,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000483",
+      "pattern_name": "DISCOVERED_LONG_W20_C11_65347EAC",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 27,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000031",
+      "pattern_name": "DISCOVERED_SHORT_W20_C02_C983171A",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 27,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000547",
+      "pattern_name": "DISCOVERED_LONG_W20_C03_D59B7984",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 27,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000024",
+      "pattern_name": "DISCOVERED_LONG_W20_C04_53B26AF4",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 27,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000631",
+      "pattern_name": "DISCOVERED_LONG_W20_C11_22658033",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 27,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000272",
+      "pattern_name": "DISCOVERED_LONG_W20_C02_24EC33FB",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 27,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000594",
+      "pattern_name": "DISCOVERED_LONG_W20_C10_9929DB96",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 27,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000402",
+      "pattern_name": "DISCOVERED_LONG_W20_C03_DACB1736",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 27,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000571",
+      "pattern_name": "DISCOVERED_LONG_W20_C00_33F614D3",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 27,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000374",
+      "pattern_name": "DISCOVERED_LONG_W20_C00_659CABD7",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 27,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000273",
+      "pattern_name": "DISCOVERED_SHORT_W20_C07_78E7E2B9",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 27,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000403",
+      "pattern_name": "DISCOVERED_SHORT_W20_C05_76056E6F",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 27,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000376",
+      "pattern_name": "DISCOVERED_SHORT_W20_C07_A7D07551",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 27,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000377",
+      "pattern_name": "DISCOVERED_LONG_W20_C11_08DEA78E",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 27,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000532",
+      "pattern_name": "DISCOVERED_LONG_W20_C06_FDB0C003",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 27,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000025",
+      "pattern_name": "DISCOVERED_LONG_W20_C03_075A1E53",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 27,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000484",
+      "pattern_name": "DISCOVERED_LONG_W20_C01_711218B8",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 27,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000572",
+      "pattern_name": "DISCOVERED_LONG_W20_C03_0070B1A3",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 27,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000633",
+      "pattern_name": "DISCOVERED_SHORT_W20_C06_A632D672",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 27,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000275",
+      "pattern_name": "DISCOVERED_LONG_W20_C06_7A57C575",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 27,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000486",
+      "pattern_name": "DISCOVERED_LONG_W20_C07_0C23BE10",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 27,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000634",
+      "pattern_name": "DISCOVERED_LONG_W20_C02_CFD064DF",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 27,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000574",
+      "pattern_name": "DISCOVERED_SHORT_W20_C05_4224040B",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 27,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000551",
+      "pattern_name": "DISCOVERED_LONG_W20_C08_5C360351",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 27,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000595",
+      "pattern_name": "DISCOVERED_LONG_W20_C11_816F3B99",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 27,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000596",
+      "pattern_name": "DISCOVERED_SHORT_W20_C05_1FE2A639",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 27,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000406",
+      "pattern_name": "DISCOVERED_LONG_W20_C09_CAF6546E",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 27,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000027",
+      "pattern_name": "DISCOVERED_SHORT_W20_C01_326BBE79",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 27,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000553",
+      "pattern_name": "DISCOVERED_SHORT_W20_C10_3BCDD43C",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 27,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000577",
+      "pattern_name": "DISCOVERED_LONG_W20_C07_281A38D6",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 27,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000597",
+      "pattern_name": "DISCOVERED_LONG_W20_C04_FC7A590A",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 27,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000554",
+      "pattern_name": "DISCOVERED_LONG_W20_C07_FA8E52A6",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 27,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000276",
+      "pattern_name": "DISCOVERED_LONG_W20_C01_A2B5CA7A",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 27,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000555",
+      "pattern_name": "DISCOVERED_LONG_W20_C11_0B6E62A2",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 27,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000379",
+      "pattern_name": "DISCOVERED_LONG_W20_C02_B89CD780",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 27,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000636",
+      "pattern_name": "DISCOVERED_SHORT_W20_C09_2BA2AA49",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 27,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000036",
+      "pattern_name": "DISCOVERED_LONG_W20_C08_85949F07",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 27,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000029",
+      "pattern_name": "DISCOVERED_LONG_W20_C08_519EBA3A",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 27,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000534",
+      "pattern_name": "DISCOVERED_SHORT_W20_C11_8CF28483",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 27,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000487",
+      "pattern_name": "DISCOVERED_LONG_W20_C05_BECF1229",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 27,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000380",
+      "pattern_name": "DISCOVERED_SHORT_W20_C01_DA35BF44",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 27,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000367",
+      "pattern_name": "DISCOVERED_SHORT_W20_C04_C12BF955",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 26,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000393",
+      "pattern_name": "DISCOVERED_LONG_W20_C11_DB2257B2",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 26,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000021",
+      "pattern_name": "DISCOVERED_LONG_W20_C06_6EF60B39",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 26,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000566",
+      "pattern_name": "DISCOVERED_LONG_W20_C09_AA9C308D",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 26,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000476",
+      "pattern_name": "DISCOVERED_SHORT_W20_C10_436D77D8",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 26,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000270",
+      "pattern_name": "DISCOVERED_LONG_W20_C05_88D6B1E7",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 26,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000549",
+      "pattern_name": "DISCOVERED_LONG_W20_C00_2A3EEBA9",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 26,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000632",
+      "pattern_name": "DISCOVERED_LONG_W20_C01_29FAB2E0",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 26,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000502",
+      "pattern_name": "DISCOVERED_SHORT_W20_C09_92CAE690",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 26,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000654",
+      "pattern_name": "DISCOVERED_LONG_W20_C08_F56589B3",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 26,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000378",
+      "pattern_name": "DISCOVERED_SHORT_W20_C08_E42F0101",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 26,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000578",
+      "pattern_name": "DISCOVERED_SHORT_W20_C10_E32CD737",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 25,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000653",
+      "pattern_name": "DISCOVERED_SHORT_W50_C04_D626058A",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 24,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000047",
+      "pattern_name": "DISCOVERED_LONG_W20_C01_AF0AFDF9",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 24,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000605",
+      "pattern_name": "DISCOVERED_LONG_W20_C02_2F394B3C",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 24,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000207",
+      "pattern_name": "DISCOVERED_LONG_W20_C08_97DB76B4",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 24,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000001",
+      "pattern_name": "DISCOVERED_LONG_W20_C05_798BAA44",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 24,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000048",
+      "pattern_name": "DISCOVERED_LONG_W20_C04_DBC9C574",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 24,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000086",
+      "pattern_name": "DISCOVERED_LONG_W20_C01_3A48D7EF",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 24,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000521",
+      "pattern_name": "DISCOVERED_SHORT_W50_C03_656612E3",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 24,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000606",
+      "pattern_name": "DISCOVERED_LONG_W20_C04_27615711",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 24,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000003",
+      "pattern_name": "DISCOVERED_LONG_W20_C01_06E08FF8",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 24,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000087",
+      "pattern_name": "DISCOVERED_LONG_W20_C04_EF417066",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 24,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000211",
+      "pattern_name": "DISCOVERED_SHORT_W20_C00_EF9774FC",
+      "status": "lab_watchlist",
+      "independent_sample_count": 11,
+      "ticker_count": 24,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000051",
+      "pattern_name": "DISCOVERED_SHORT_W20_C02_76FE4B00",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 24,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000607",
+      "pattern_name": "DISCOVERED_SHORT_W20_C03_D52A3250",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 24,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000006",
+      "pattern_name": "DISCOVERED_LONG_W20_C06_D227716A",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 24,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000608",
+      "pattern_name": "DISCOVERED_LONG_W20_C07_604018DE",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 24,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000052",
+      "pattern_name": "DISCOVERED_LONG_W20_C11_979E9B0E",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 24,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000215",
+      "pattern_name": "DISCOVERED_LONG_W20_C01_01232DBE",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 24,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000216",
+      "pattern_name": "DISCOVERED_LONG_W20_C10_BC6A527E",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 24,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000217",
+      "pattern_name": "DISCOVERED_LONG_W20_C09_B18A8045",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 24,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000093",
+      "pattern_name": "DISCOVERED_SHORT_W20_C06_EA20B4BF",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 24,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000005",
+      "pattern_name": "DISCOVERED_LONG_W20_C09_069B7D53",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 24,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000218",
+      "pattern_name": "DISCOVERED_LONG_W20_C03_42ABEBEE",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 24,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000219",
+      "pattern_name": "DISCOVERED_LONG_W20_C04_70DFA8A1",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 24,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000611",
+      "pattern_name": "DISCOVERED_LONG_W20_C01_4348D299",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 24,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000694",
+      "pattern_name": "DISCOVERED_SHORT_W50_C09_1305EF64",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 23,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000586",
+      "pattern_name": "DISCOVERED_SHORT_W20_C00_53B25BBC",
+      "status": "lab_watchlist",
+      "independent_sample_count": 11,
+      "ticker_count": 23,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000496",
+      "pattern_name": "DISCOVERED_LONG_W20_C08_3D2EAA0B",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 23,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000002",
+      "pattern_name": "DISCOVERED_SHORT_W20_C03_6A9EDC74",
+      "status": "lab_watchlist",
+      "independent_sample_count": 11,
+      "ticker_count": 23,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000090",
+      "pattern_name": "DISCOVERED_SHORT_W20_C00_7C7F0CBB",
+      "status": "lab_watchlist",
+      "independent_sample_count": 11,
+      "ticker_count": 23,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000092",
+      "pattern_name": "DISCOVERED_SHORT_W20_C11_094B2306",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 23,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000030",
+      "pattern_name": "DISCOVERED_SHORT_W50_C01_42C2B407",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 23,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000053",
+      "pattern_name": "DISCOVERED_SHORT_W20_C07_E4BD4F9F",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 23,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000088",
+      "pattern_name": "DISCOVERED_LONG_W20_C08_017D87FF",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 22,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000004",
+      "pattern_name": "DISCOVERED_LONG_W20_C07_72CBA230",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 22,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000482",
+      "pattern_name": "DISCOVERED_SHORT_W50_C01_B0B33DA2",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 22,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000593",
+      "pattern_name": "DISCOVERED_SHORT_W50_C10_CBD546DE",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 22,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000274",
+      "pattern_name": "DISCOVERED_SHORT_W50_C01_1D6ACFE4",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 22,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000091",
+      "pattern_name": "DISCOVERED_SHORT_W20_C07_6390EA15",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 22,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000550",
+      "pattern_name": "DISCOVERED_SHORT_W50_C06_B091F795",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 22,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000485",
+      "pattern_name": "DISCOVERED_SHORT_W20_C08_9F6063A9",
+      "status": "lab_watchlist",
+      "independent_sample_count": 11,
+      "ticker_count": 22,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000672",
+      "pattern_name": "DISCOVERED_SHORT_W50_C06_E64C069E",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 21,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000527",
+      "pattern_name": "DISCOVERED_SHORT_W50_C04_2687AC02",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 21,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000050",
+      "pattern_name": "DISCOVERED_LONG_W20_C05_81F57EE8",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 21,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000591",
+      "pattern_name": "DISCOVERED_SHORT_W50_C00_B70ED71B",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 21,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000212",
+      "pattern_name": "DISCOVERED_LONG_W20_C11_88DE1FDF",
+      "status": "lab_watchlist",
+      "independent_sample_count": 11,
+      "ticker_count": 21,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000568",
+      "pattern_name": "DISCOVERED_SHORT_W50_C00_5B392478",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 21,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000405",
+      "pattern_name": "DISCOVERED_SHORT_W50_C05_860F8D8C",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 21,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000258",
+      "pattern_name": "DISCOVERED_SHORT_W50_C04_DB295C4E",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 20,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000016",
+      "pattern_name": "DISCOVERED_SHORT_W50_C06_6C7C8BB7",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 20,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000494",
+      "pattern_name": "DISCOVERED_SHORT_W50_C10_58F162DA",
+      "status": "lab_watchlist",
+      "independent_sample_count": 11,
+      "ticker_count": 20,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000471",
+      "pattern_name": "DISCOVERED_SHORT_W50_C04_D17AA402",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 20,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000110",
+      "pattern_name": "DISCOVERED_LONG_W20_C04_3A82821D",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 20,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000371",
+      "pattern_name": "DISCOVERED_SHORT_W50_C00_E21E3237",
+      "status": "lab_watchlist",
+      "independent_sample_count": 11,
+      "ticker_count": 20,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000372",
+      "pattern_name": "DISCOVERED_SHORT_W50_C01_DA2F6F88",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 20,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000114",
+      "pattern_name": "DISCOVERED_LONG_W20_C10_A4E0B752",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 20,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000210",
+      "pattern_name": "DISCOVERED_SHORT_W50_C01_BEB4FEC6",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 20,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000115",
+      "pattern_name": "DISCOVERED_LONG_W20_C05_07F5B55F",
+      "status": "lab_watchlist",
+      "independent_sample_count": 11,
+      "ticker_count": 20,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000022",
+      "pattern_name": "DISCOVERED_LONG_W50_C07_99947AB8",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 20,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000116",
+      "pattern_name": "DISCOVERED_LONG_W20_C02_C086EFC5",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 20,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000481",
+      "pattern_name": "DISCOVERED_SHORT_W50_C09_C87858FE",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 20,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000117",
+      "pattern_name": "DISCOVERED_SHORT_W20_C01_7BDA6ED8",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 20,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000118",
+      "pattern_name": "DISCOVERED_SHORT_W20_C08_1032567B",
+      "status": "lab_watchlist",
+      "independent_sample_count": 11,
+      "ticker_count": 20,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000575",
+      "pattern_name": "DISCOVERED_LONG_W50_C06_C5D456FB",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 20,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000503",
+      "pattern_name": "DISCOVERED_SHORT_W50_C09_BA0D5198",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 20,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000744",
+      "pattern_name": "DISCOVERED_SHORT_W50_C09_CF98DF42",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 19,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000262",
+      "pattern_name": "DISCOVERED_SHORT_W50_C02_DA0B95F5",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 19,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000621",
+      "pattern_name": "DISCOVERED_SHORT_W50_C03_BD6A8746",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 19,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000373",
+      "pattern_name": "DISCOVERED_SHORT_W50_C10_75E92215",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 19,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000635",
+      "pattern_name": "DISCOVERED_LONG_W50_C11_7176D1B4",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 19,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000598",
+      "pattern_name": "DISCOVERED_LONG_W50_C05_E97D37E9",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 19,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000104",
+      "pattern_name": "DISCOVERED_SHORT_W50_C03_910C25FE",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 18,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000520",
+      "pattern_name": "DISCOVERED_SHORT_W50_C01_36023B1E",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 18,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000028",
+      "pattern_name": "DISCOVERED_SHORT_W50_C04_68EE8AB8",
+      "status": "lab_watchlist",
+      "independent_sample_count": 11,
+      "ticker_count": 18,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000475",
+      "pattern_name": "DISCOVERED_SHORT_W50_C03_CE6B76D8",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 18,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000524",
+      "pattern_name": "DISCOVERED_LONG_W20_C07_943E3CAC",
+      "status": "lab",
+      "independent_sample_count": 11,
+      "ticker_count": 18,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000497",
+      "pattern_name": "DISCOVERED_SHORT_W50_C06_64356745",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 18,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000552",
+      "pattern_name": "DISCOVERED_LONG_W50_C08_686E4005",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 18,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000618",
+      "pattern_name": "DISCOVERED_SHORT_W50_C09_2A26CD6D",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 17,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000560",
+      "pattern_name": "DISCOVERED_SHORT_W50_C02_18ED21F8",
+      "status": "lab_candidate",
+      "independent_sample_count": 11,
+      "ticker_count": 17,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000582",
+      "pattern_name": "DISCOVERED_SHORT_W50_C08_16CE35DA",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 17,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000516",
+      "pattern_name": "DISCOVERED_SHORT_W50_C00_2087414A",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 17,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000472",
+      "pattern_name": "DISCOVERED_LONG_W50_C11_3C8C89A5",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 17,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000264",
+      "pattern_name": "DISCOVERED_SHORT_W50_C03_37004D9B",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 17,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000565",
+      "pattern_name": "DISCOVERED_SHORT_W50_C11_B95F6AC2",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 17,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000007",
+      "pattern_name": "DISCOVERED_LONG_W20_C10_44E97F61",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 17,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000034",
+      "pattern_name": "DISCOVERED_LONG_W50_C11_5C9E4593",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 17,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000277",
+      "pattern_name": "DISCOVERED_LONG_W50_C07_FF1EC9B7",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 17,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000490",
+      "pattern_name": "DISCOVERED_SHORT_W50_C03_38E81507",
+      "status": "lab_candidate",
+      "independent_sample_count": 11,
+      "ticker_count": 16,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000388",
+      "pattern_name": "DISCOVERED_SHORT_W50_C08_CC1A6072",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 16,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000583",
+      "pattern_name": "DISCOVERED_SHORT_W50_C11_B3A70DDE",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 16,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000584",
+      "pattern_name": "DISCOVERED_SHORT_W50_C06_0D7D93C3",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 16,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000517",
+      "pattern_name": "DISCOVERED_LONG_W50_C11_18982D2D",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 16,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000563",
+      "pattern_name": "DISCOVERED_SHORT_W50_C08_43336D3A",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 16,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000474",
+      "pattern_name": "DISCOVERED_LONG_W50_C07_C5A16B67",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 16,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000546",
+      "pattern_name": "DISCOVERED_SHORT_W50_C01_1813860C",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 16,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000556",
+      "pattern_name": "DISCOVERED_SHORT_W50_C00_B3448FDC",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 16,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000105",
+      "pattern_name": "DISCOVERED_SHORT_W50_C11_3DDBA7B3",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 15,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000470",
+      "pattern_name": "DISCOVERED_SHORT_W50_C06_7AE97930",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 15,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000108",
+      "pattern_name": "DISCOVERED_SHORT_W50_C01_2AC53356",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 15,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000587",
+      "pattern_name": "DISCOVERED_SHORT_W50_C04_9F21E25A",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 15,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000395",
+      "pattern_name": "DISCOVERED_SHORT_W50_C02_43E7BDEE",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 15,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000200",
+      "pattern_name": "DISCOVERED_SHORT_W50_C10_4142FAF4",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 14,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000492",
+      "pattern_name": "DISCOVERED_SHORT_W50_C01_85A05D85",
+      "status": "lab_candidate",
+      "independent_sample_count": 11,
+      "ticker_count": 14,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000365",
+      "pattern_name": "DISCOVERED_SHORT_W50_C02_B25A79C7",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 14,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000515",
+      "pattern_name": "DISCOVERED_SHORT_W50_C07_20B54A1F",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 13,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000538",
+      "pattern_name": "DISCOVERED_SHORT_W50_C02_134DBD4A",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 13,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000413",
+      "pattern_name": "DISCOVERED_LONG_W20_C03_27E7715B",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 13,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000415",
+      "pattern_name": "DISCOVERED_LONG_W20_C07_1DCBEBD1",
+      "status": "lab_watchlist",
+      "independent_sample_count": 11,
+      "ticker_count": 13,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000417",
+      "pattern_name": "DISCOVERED_LONG_W20_C05_3DB3B2A4",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 13,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000420",
+      "pattern_name": "DISCOVERED_LONG_W20_C01_28ADCDA7",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 13,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000422",
+      "pattern_name": "DISCOVERED_LONG_W20_C11_FEFA4E60",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 13,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000041",
+      "pattern_name": "DISCOVERED_LONG_W20_C08_78662FE9",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 13,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000424",
+      "pattern_name": "DISCOVERED_LONG_W20_C09_010A9409",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 13,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000425",
+      "pattern_name": "DISCOVERED_LONG_W20_C06_FAD48C17",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 13,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000426",
+      "pattern_name": "DISCOVERED_LONG_W20_C02_60E9A7DF",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 13,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000427",
+      "pattern_name": "DISCOVERED_SHORT_W20_C00_D5E7157D",
+      "status": "lab_watchlist",
+      "independent_sample_count": 11,
+      "ticker_count": 13,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000428",
+      "pattern_name": "DISCOVERED_LONG_W20_C04_3C9E6C67",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 13,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000391",
+      "pattern_name": "DISCOVERED_SHORT_W50_C01_3D5255B1",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 12,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000369",
+      "pattern_name": "DISCOVERED_SHORT_W50_C09_56A0F227",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 12,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000541",
+      "pattern_name": "DISCOVERED_SHORT_W50_C09_2C4C58C7",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 12,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000244",
+      "pattern_name": "DISCOVERED_LONG_W20_C08_8C6020C4",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 12,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000245",
+      "pattern_name": "DISCOVERED_LONG_W20_C09_296935E5",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 12,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000247",
+      "pattern_name": "DISCOVERED_LONG_W20_C05_DBAF031E",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 12,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000249",
+      "pattern_name": "DISCOVERED_SHORT_W20_C01_C3012E66",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 12,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000250",
+      "pattern_name": "DISCOVERED_LONG_W20_C06_3B514902",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 12,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000251",
+      "pattern_name": "DISCOVERED_SHORT_W20_C10_87064281",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 12,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000617",
+      "pattern_name": "DISCOVERED_SHORT_W50_C00_989C652E",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 11,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000411",
+      "pattern_name": "DISCOVERED_SHORT_W50_C02_AF94189C",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 11,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000204",
+      "pattern_name": "DISCOVERED_SHORT_W50_C07_22087A4C",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 11,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000240",
+      "pattern_name": "DISCOVERED_LONG_W20_C02_45E50362",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 11,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000267",
+      "pattern_name": "DISCOVERED_LONG_W50_C10_8A6A2246",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 11,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000375",
+      "pattern_name": "DISCOVERED_SHORT_W20_C06_34EFD49C",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 11,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000237",
+      "pattern_name": "DISCOVERED_SHORT_W50_C06_3282E3E4",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 10,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000537",
+      "pattern_name": "DISCOVERED_SHORT_W50_C03_6F238DAA",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 10,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000491",
+      "pattern_name": "DISCOVERED_SHORT_W50_C11_201AE277",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 10,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000518",
+      "pattern_name": "DISCOVERED_SHORT_W50_C08_41718DDD",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 10,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000208",
+      "pattern_name": "DISCOVERED_SHORT_W50_C03_09F8DF48",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 10,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000419",
+      "pattern_name": "DISCOVERED_LONG_W50_C08_9CD8429E",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 10,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000147",
+      "pattern_name": "DISCOVERED_SHORT_W50_C00_F3C1511C",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 10,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000148",
+      "pattern_name": "DISCOVERED_LONG_W20_C11_9FA17C7D",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 10,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000187",
+      "pattern_name": "DISCOVERED_LONG_W20_C00_7138F66D",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 10,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000149",
+      "pattern_name": "DISCOVERED_SHORT_W20_C09_75AEA334",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 10,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000152",
+      "pattern_name": "DISCOVERED_SHORT_W20_C06_519C04A3",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 10,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000404",
+      "pattern_name": "DISCOVERED_SHORT_W20_C00_F7540D2E",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 10,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000191",
+      "pattern_name": "DISCOVERED_SHORT_W20_C08_E541DC33",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 10,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000192",
+      "pattern_name": "DISCOVERED_LONG_W20_C10_C36E1106",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 10,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000015",
+      "pattern_name": "DISCOVERED_SHORT_W50_C08_E0DAC825",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 9,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000493",
+      "pattern_name": "DISCOVERED_SHORT_W50_C04_7F45363A",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 9,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000412",
+      "pattern_name": "DISCOVERED_LONG_W50_C03_54AE94BD",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 9,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000107",
+      "pattern_name": "DISCOVERED_SHORT_W50_C00_5BED805B",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 9,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000183",
+      "pattern_name": "DISCOVERED_SHORT_W50_C01_2F677116",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 9,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000540",
+      "pattern_name": "DISCOVERED_SHORT_W50_C05_1EC26341",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 9,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000146",
+      "pattern_name": "DISCOVERED_SHORT_W50_C03_A8E55DE4",
+      "status": "lab_watchlist",
+      "independent_sample_count": 11,
+      "ticker_count": 9,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000271",
+      "pattern_name": "DISCOVERED_SHORT_W50_C00_BC6D70B8",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 9,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000188",
+      "pattern_name": "DISCOVERED_LONG_W20_C05_87939540",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 9,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000190",
+      "pattern_name": "DISCOVERED_LONG_W20_C01_22ABEFAF",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 9,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000252",
+      "pattern_name": "DISCOVERED_SHORT_W50_C01_CBE84B68",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 9,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000143",
+      "pattern_name": "DISCOVERED_SHORT_W50_C09_E6436663",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 8,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000261",
+      "pattern_name": "DISCOVERED_SHORT_W50_C09_6412D8A7",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 8,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000284",
+      "pattern_name": "DISCOVERED_LONG_W20_C03_BEBBB87A",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 8,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000287",
+      "pattern_name": "DISCOVERED_LONG_W20_C06_5C5A8809",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 8,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000289",
+      "pattern_name": "DISCOVERED_LONG_W20_C00_D61D41F0",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 8,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000291",
+      "pattern_name": "DISCOVERED_LONG_W20_C10_817F04F9",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 8,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000292",
+      "pattern_name": "DISCOVERED_LONG_W20_C08_F227A7E4",
+      "status": "lab_watchlist",
+      "independent_sample_count": 11,
+      "ticker_count": 8,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000293",
+      "pattern_name": "DISCOVERED_LONG_W20_C07_188ED318",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 8,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000294",
+      "pattern_name": "DISCOVERED_LONG_W20_C09_677FF2E9",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 8,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000295",
+      "pattern_name": "DISCOVERED_LONG_W20_C04_CAE59E94",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 8,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000013",
+      "pattern_name": "DISCOVERED_SHORT_W50_C00_F47180E1",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 7,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000363",
+      "pattern_name": "DISCOVERED_SHORT_W50_C04_9A6C2079",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 7,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000163",
+      "pattern_name": "DISCOVERED_LONG_W20_C05_FE7034DB",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 7,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000164",
+      "pattern_name": "DISCOVERED_LONG_W20_C06_E8EC609E",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 7,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000526",
+      "pattern_name": "DISCOVERED_SHORT_W50_C06_6A2BA7D7",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 7,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000290",
+      "pattern_name": "DISCOVERED_LONG_W50_C00_62249A99",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 7,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000166",
+      "pattern_name": "DISCOVERED_LONG_W20_C11_DC23F717",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 7,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000167",
+      "pattern_name": "DISCOVERED_LONG_W20_C03_9CCDF4E3",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 7,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000168",
+      "pattern_name": "DISCOVERED_LONG_W20_C10_4B7CA7A6",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 7,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000153",
+      "pattern_name": "DISCOVERED_LONG_W20_C07_75FEAFBE",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 7,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000466",
+      "pattern_name": "DISCOVERED_SHORT_W50_C00_CE8AA7CF",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 6,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000561",
+      "pattern_name": "DISCOVERED_SHORT_W50_C10_33D735AC",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 6,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000389",
+      "pattern_name": "DISCOVERED_LONG_W50_C09_D2C613A0",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 6,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000473",
+      "pattern_name": "DISCOVERED_SHORT_W50_C02_667592D7",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 6,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000165",
+      "pattern_name": "DISCOVERED_LONG_W50_C02_6CD412C4",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 6,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000151",
+      "pattern_name": "DISCOVERED_SHORT_W50_C05_1BE15810",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 6,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000239",
+      "pattern_name": "DISCOVERED_SHORT_W50_C04_D85C37A7",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 5,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000161",
+      "pattern_name": "DISCOVERED_SHORT_W50_C00_C4C5E003",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 5,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000241",
+      "pattern_name": "DISCOVERED_SHORT_W20_C11_646FE24F",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 5,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000103",
+      "pattern_name": "DISCOVERED_SHORT_W50_C10_CC719DB4",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 4,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000058",
+      "pattern_name": "DISCOVERED_LONG_W20_C00_2123368A",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 4,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000224",
+      "pattern_name": "DISCOVERED_SHORT_W50_C00_41D516BE",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 4,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000350",
+      "pattern_name": "DISCOVERED_SHORT_W20_C09_E7AD1A5A",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 4,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000225",
+      "pattern_name": "DISCOVERED_LONG_W20_C04_04EF2C14",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 4,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000351",
+      "pattern_name": "DISCOVERED_SHORT_W50_C01_98900E01",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 4,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000337",
+      "pattern_name": "DISCOVERED_LONG_W20_C11_50CF6AD3",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 4,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000060",
+      "pattern_name": "DISCOVERED_LONG_W20_C04_A58C27FA",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 4,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000061",
+      "pattern_name": "DISCOVERED_LONG_W20_C02_897C0469",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 4,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000414",
+      "pattern_name": "DISCOVERED_SHORT_W50_C00_4125C10D",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 4,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000338",
+      "pattern_name": "DISCOVERED_SHORT_W20_C07_06677B6D",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 4,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000145",
+      "pattern_name": "DISCOVERED_SHORT_W50_C04_C6BA6EE4",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 4,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000339",
+      "pattern_name": "DISCOVERED_SHORT_W50_C01_977B0774",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 4,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000226",
+      "pattern_name": "DISCOVERED_LONG_W20_C07_703C6FBF",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 4,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000130",
+      "pattern_name": "DISCOVERED_SHORT_W20_C05_DF29BD47",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 4,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000228",
+      "pattern_name": "DISCOVERED_SHORT_W20_C10_D1578C4E",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 4,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000131",
+      "pattern_name": "DISCOVERED_SHORT_W20_C04_40AFCA01",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 4,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000132",
+      "pattern_name": "DISCOVERED_LONG_W20_C01_CE81F26F",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 4,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000352",
+      "pattern_name": "DISCOVERED_LONG_W20_C10_4F4E959B",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 4,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000340",
+      "pattern_name": "DISCOVERED_LONG_W20_C09_5926989F",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 4,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000354",
+      "pattern_name": "DISCOVERED_LONG_W20_C02_8529407B",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 4,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000355",
+      "pattern_name": "DISCOVERED_LONG_W20_C08_9656FD2F",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 4,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000341",
+      "pattern_name": "DISCOVERED_SHORT_W20_C03_5D832DFE",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 4,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000229",
+      "pattern_name": "DISCOVERED_SHORT_W20_C11_A71A4EC4",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 4,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000064",
+      "pattern_name": "DISCOVERED_LONG_W20_C01_0A98DC6F",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 4,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000133",
+      "pattern_name": "DISCOVERED_LONG_W20_C10_66A25591",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 4,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000134",
+      "pattern_name": "DISCOVERED_SHORT_W20_C07_473940B0",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 4,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000230",
+      "pattern_name": "DISCOVERED_LONG_W20_C05_CC9CB09A",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 4,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000135",
+      "pattern_name": "DISCOVERED_SHORT_W50_C02_E2ED68AE",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 4,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000358",
+      "pattern_name": "DISCOVERED_SHORT_W20_C11_9DA804BC",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 4,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000231",
+      "pattern_name": "DISCOVERED_LONG_W20_C03_1CD72ABD",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 4,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000342",
+      "pattern_name": "DISCOVERED_LONG_W20_C10_379374B0",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 4,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000298",
+      "pattern_name": "DISCOVERED_SHORT_W50_C01_094783A3",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 3,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000068",
+      "pattern_name": "DISCOVERED_LONG_W50_C01_4C05BFF3",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 3,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000070",
+      "pattern_name": "DISCOVERED_LONG_W20_C05_48C37C4A",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 3,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000046",
+      "pattern_name": "DISCOVERED_SHORT_W20_C01_13BE9FFF",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 3,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000127",
+      "pattern_name": "DISCOVERED_SHORT_W50_C00_C9B4835A",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 3,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000144",
+      "pattern_name": "DISCOVERED_LONG_W50_C01_8C9CBF25",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 3,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000299",
+      "pattern_name": "DISCOVERED_SHORT_W50_C00_CDDE5007",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 3,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000059",
+      "pattern_name": "DISCOVERED_LONG_W20_C11_484F3A29",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 3,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000336",
+      "pattern_name": "DISCOVERED_SHORT_W50_C00_65D8E1D4",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 3,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000453",
+      "pattern_name": "DISCOVERED_LONG_W20_C02_A1FABD04",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 3,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000300",
+      "pattern_name": "DISCOVERED_SHORT_W20_C02_E7115EE3",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 3,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000454",
+      "pattern_name": "DISCOVERED_LONG_W20_C11_F45EFE28",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 3,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000073",
+      "pattern_name": "DISCOVERED_LONG_W20_C00_DAD80BD8",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 3,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000074",
+      "pattern_name": "DISCOVERED_LONG_W20_C06_E6012259",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 3,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000455",
+      "pattern_name": "DISCOVERED_LONG_W20_C04_4D953324",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 3,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000301",
+      "pattern_name": "DISCOVERED_SHORT_W20_C01_3BD0F138",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 3,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000302",
+      "pattern_name": "DISCOVERED_SHORT_W20_C04_C1B80584",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 3,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000075",
+      "pattern_name": "DISCOVERED_LONG_W20_C01_76EF41D9",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 3,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000303",
+      "pattern_name": "DISCOVERED_LONG_W20_C06_84974698",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 3,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000076",
+      "pattern_name": "DISCOVERED_SHORT_W20_C04_FD950649",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 3,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000353",
+      "pattern_name": "DISCOVERED_LONG_W20_C00_52545769",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 3,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000078",
+      "pattern_name": "DISCOVERED_LONG_W20_C10_BF980C60",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 3,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000304",
+      "pattern_name": "DISCOVERED_LONG_W20_C05_9F0214E6",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 3,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000458",
+      "pattern_name": "DISCOVERED_LONG_W20_C09_E4253DC2",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 3,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000305",
+      "pattern_name": "DISCOVERED_SHORT_W20_C08_EFCC4F8D",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 3,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000357",
+      "pattern_name": "DISCOVERED_SHORT_W20_C01_CA7C172B",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 3,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000306",
+      "pattern_name": "DISCOVERED_SHORT_W20_C07_8CA032CE",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 3,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000459",
+      "pattern_name": "DISCOVERED_SHORT_W20_C03_A346AF36",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 3,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000307",
+      "pattern_name": "DISCOVERED_LONG_W20_C11_7D0683BC",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 3,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000460",
+      "pattern_name": "DISCOVERED_LONG_W50_C00_F4D70A2A",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 3,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000175",
+      "pattern_name": "DISCOVERED_LONG_W20_C02_FEF1E222",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 2,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000177",
+      "pattern_name": "DISCOVERED_SHORT_W20_C05_4A0EE5FC",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 2,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000129",
+      "pattern_name": "DISCOVERED_SHORT_W50_C01_BF7BA9DD",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 2,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000178",
+      "pattern_name": "DISCOVERED_LONG_W20_C04_2C5F379B",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 2,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000436",
+      "pattern_name": "DISCOVERED_LONG_W20_C05_C7E4258C",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 2,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000437",
+      "pattern_name": "DISCOVERED_LONG_W20_C11_BB7CFA28",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 2,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000440",
+      "pattern_name": "DISCOVERED_SHORT_W20_C01_F0569AAD",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 2,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000180",
+      "pattern_name": "DISCOVERED_SHORT_W20_C06_55A637E5",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 2,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000441",
+      "pattern_name": "DISCOVERED_LONG_W20_C09_5BE19335",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 2,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000432",
+      "pattern_name": "DISCOVERED_LONG_W20_C03_49116A34",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 1,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000080",
+      "pattern_name": "DISCOVERED_LONG_W20_C01_FAF17EEC",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 1,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000081",
+      "pattern_name": "DISCOVERED_LONG_W20_C00_4512D515",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 1,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000433",
+      "pattern_name": "DISCOVERED_LONG_W20_C01_4A2C6E6F",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 1,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000082",
+      "pattern_name": "DISCOVERED_LONG_W20_C05_5041888B",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 1,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000320",
+      "pattern_name": "DISCOVERED_LONG_W20_C03_A44DA73A",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 1,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000316",
+      "pattern_name": "DISCOVERED_LONG_W20_C02_F2E76BEA",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 1,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000317",
+      "pattern_name": "DISCOVERED_LONG_W20_C01_3DACCBDC",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 1,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000332",
+      "pattern_name": "DISCOVERED_SHORT_W20_C05_2A303029",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 1,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000448",
+      "pattern_name": "DISCOVERED_LONG_W20_C04_82EEDBB8",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 1,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000099",
+      "pattern_name": "DISCOVERED_SHORT_W20_C05_5213F8C4",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 1,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000449",
+      "pattern_name": "DISCOVERED_LONG_W20_C03_3AF2DE66",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 1,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000083",
+      "pattern_name": "DISCOVERED_SHORT_W20_C02_FFC30036",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 1,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000312",
+      "pattern_name": "DISCOVERED_SHORT_W20_C02_0B3E4E99",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 1,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000313",
+      "pattern_name": "DISCOVERED_SHORT_W20_C01_ABB1802F",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 1,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000322",
+      "pattern_name": "DISCOVERED_LONG_W20_C02_32892E5A",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 1,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000100",
+      "pattern_name": "DISCOVERED_LONG_W20_C00_F184347D",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 1,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000323",
+      "pattern_name": "DISCOVERED_LONG_W20_C04_27EA1B8B",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 1,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000327",
+      "pattern_name": "DISCOVERED_SHORT_W20_C01_5E8937EE",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 1,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000101",
+      "pattern_name": "DISCOVERED_SHORT_W20_C02_3E4FD186",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 1,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000346",
+      "pattern_name": "DISCOVERED_SHORT_W20_C03_8A107C50",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 1,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000328",
+      "pattern_name": "DISCOVERED_SHORT_W20_C00_E15CA01E",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 1,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000329",
+      "pattern_name": "DISCOVERED_SHORT_W20_C03_5474CDAD",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 1,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000084",
+      "pattern_name": "DISCOVERED_LONG_W20_C04_1D3FCC38",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 1,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000085",
+      "pattern_name": "DISCOVERED_SHORT_W20_C03_8970A473",
+      "status": "rejected",
+      "independent_sample_count": 11,
+      "ticker_count": 1,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000542",
+      "pattern_name": "DISCOVERED_LONG_W20_C02_A69F6809",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 27,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000528",
+      "pattern_name": "DISCOVERED_LONG_W20_C04_9988DDB3",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 27,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000398",
+      "pattern_name": "DISCOVERED_LONG_W20_C10_23AFD7D8",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 27,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000399",
+      "pattern_name": "DISCOVERED_SHORT_W20_C08_5A15403C",
+      "status": "lab_watchlist",
+      "independent_sample_count": 10,
+      "ticker_count": 27,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000592",
+      "pattern_name": "DISCOVERED_LONG_W20_C02_5E60C311",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 27,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000573",
+      "pattern_name": "DISCOVERED_LONG_W20_C08_08D6485C",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 27,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000576",
+      "pattern_name": "DISCOVERED_LONG_W20_C11_AAEE0E1C",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 27,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000533",
+      "pattern_name": "DISCOVERED_SHORT_W20_C08_34E86410",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 27,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000548",
+      "pattern_name": "DISCOVERED_LONG_W20_C06_62A04CCC",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 26,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000213",
+      "pattern_name": "DISCOVERED_LONG_W20_C06_65F79ACA",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 24,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000610",
+      "pattern_name": "DISCOVERED_SHORT_W20_C11_19E5133B",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 24,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000394",
+      "pattern_name": "DISCOVERED_SHORT_W50_C10_8BF524AA",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 22,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000501",
+      "pattern_name": "DISCOVERED_LONG_W20_C03_335AF000",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 22,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000612",
+      "pattern_name": "DISCOVERED_LONG_W20_C09_520F21CE",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 22,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000201",
+      "pattern_name": "DISCOVERED_SHORT_W50_C02_B1AF15AF",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 21,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000620",
+      "pattern_name": "DISCOVERED_SHORT_W50_C04_9BE87280",
+      "status": "lab_candidate",
+      "independent_sample_count": 10,
+      "ticker_count": 21,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000545",
+      "pattern_name": "DISCOVERED_SHORT_W50_C11_F3DB174B",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 21,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000392",
+      "pattern_name": "DISCOVERED_SHORT_W50_C11_C17D8008",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 20,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000629",
+      "pattern_name": "DISCOVERED_LONG_W50_C07_C5147EA3",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 20,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000010",
+      "pattern_name": "DISCOVERED_LONG_W20_C11_71DA78DD",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 20,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000119",
+      "pattern_name": "DISCOVERED_LONG_W20_C03_5723D149",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 20,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000112",
+      "pattern_name": "DISCOVERED_SHORT_W50_C07_CD0AE5F2",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 19,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000609",
+      "pattern_name": "DISCOVERED_LONG_W20_C00_A5555B6F",
+      "status": "lab",
+      "independent_sample_count": 10,
+      "ticker_count": 19,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000390",
+      "pattern_name": "DISCOVERED_SHORT_W50_C03_20DF1FD0",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 18,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000018",
+      "pattern_name": "DISCOVERED_SHORT_W50_C03_46AF3A56",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 18,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000570",
+      "pattern_name": "DISCOVERED_SHORT_W50_C03_F31E1892",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 18,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000567",
+      "pattern_name": "DISCOVERED_SHORT_W50_C05_C5E8623A",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 17,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000519",
+      "pattern_name": "DISCOVERED_SHORT_W50_C05_B51ABFCE",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 16,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000209",
+      "pattern_name": "DISCOVERED_SHORT_W50_C11_D5EC8E36",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 16,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000014",
+      "pattern_name": "DISCOVERED_SHORT_W50_C02_DDA81ECF",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 15,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000109",
+      "pattern_name": "DISCOVERED_SHORT_W50_C05_B4921D5C",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 15,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000370",
+      "pattern_name": "DISCOVERED_SHORT_W50_C07_1E48BA63",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 15,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000049",
+      "pattern_name": "DISCOVERED_LONG_W20_C08_0889C3CE",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 15,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000721",
+      "pattern_name": "DISCOVERED_SHORT_W50_C02_9D7D0D1B",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 15,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000469",
+      "pattern_name": "DISCOVERED_SHORT_W50_C05_B3502794",
+      "status": "lab_watchlist",
+      "independent_sample_count": 10,
+      "ticker_count": 14,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000562",
+      "pattern_name": "DISCOVERED_SHORT_W50_C01_DA0F1419",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 14,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000205",
+      "pattern_name": "DISCOVERED_LONG_W20_C02_141038FE",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 14,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000263",
+      "pattern_name": "DISCOVERED_SHORT_W50_C05_43DD1FAF",
+      "status": "lab_watchlist",
+      "independent_sample_count": 10,
+      "ticker_count": 14,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000495",
+      "pattern_name": "DISCOVERED_SHORT_W50_C07_DB192AF6",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 14,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000624",
+      "pattern_name": "DISCOVERED_SHORT_W50_C05_46C722DF",
+      "status": "lab_watchlist",
+      "independent_sample_count": 10,
+      "ticker_count": 14,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000745",
+      "pattern_name": "DISCOVERED_SHORT_W50_C04_2B11A874",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 14,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000468",
+      "pattern_name": "DISCOVERED_SHORT_W50_C08_705CA552",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 13,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000035",
+      "pattern_name": "DISCOVERED_SHORT_W50_C05_09EBA0CA",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 13,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000203",
+      "pattern_name": "DISCOVERED_SHORT_W50_C05_EB6227A7",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 13,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000623",
+      "pattern_name": "DISCOVERED_SHORT_W50_C02_841B5BDC",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 13,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000401",
+      "pattern_name": "DISCOVERED_SHORT_W50_C06_8D313156",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 13,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000260",
+      "pattern_name": "DISCOVERED_SHORT_W50_C06_C5C763DB",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 12,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000626",
+      "pattern_name": "DISCOVERED_SHORT_W20_C04_D5F9C680",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 12,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000400",
+      "pattern_name": "DISCOVERED_SHORT_W50_C07_4D54BCF9",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 12,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000248",
+      "pattern_name": "DISCOVERED_SHORT_W20_C04_EA57B3D6",
+      "status": "lab_watchlist",
+      "independent_sample_count": 10,
+      "ticker_count": 12,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000253",
+      "pattern_name": "DISCOVERED_LONG_W50_C05_51557FE0",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 12,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000467",
+      "pattern_name": "DISCOVERED_SHORT_W50_C10_2C28691B",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 11,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000206",
+      "pattern_name": "DISCOVERED_SHORT_W50_C06_65E830B2",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 11,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000564",
+      "pattern_name": "DISCOVERED_SHORT_W50_C04_1A25BC52",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 11,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000421",
+      "pattern_name": "DISCOVERED_SHORT_W50_C06_95958917",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 11,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000423",
+      "pattern_name": "DISCOVERED_LONG_W50_C07_BB514FEA",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 11,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000242",
+      "pattern_name": "DISCOVERED_SHORT_W50_C09_131BFAB3",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 11,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000017",
+      "pattern_name": "DISCOVERED_SHORT_W50_C09_DF73462A",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 10,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000184",
+      "pattern_name": "DISCOVERED_SHORT_W50_C02_841A1A33",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 10,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000111",
+      "pattern_name": "DISCOVERED_SHORT_W50_C06_9F72B423",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 10,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000243",
+      "pattern_name": "DISCOVERED_SHORT_W50_C03_9603309C",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 10,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000246",
+      "pattern_name": "DISCOVERED_SHORT_W50_C02_4C4CFBB3",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 9,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000283",
+      "pattern_name": "DISCOVERED_SHORT_W50_C02_8F29F884",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 8,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000285",
+      "pattern_name": "DISCOVERED_LONG_W20_C11_5DD631BF",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 8,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000622",
+      "pattern_name": "DISCOVERED_SHORT_W50_C10_1C444BC6",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 8,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000368",
+      "pattern_name": "DISCOVERED_SHORT_W50_C08_341C32D3",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 8,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000113",
+      "pattern_name": "DISCOVERED_SHORT_W50_C09_A28175F1",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 8,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000189",
+      "pattern_name": "DISCOVERED_SHORT_W50_C08_590995C6",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 8,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000416",
+      "pattern_name": "DISCOVERED_LONG_W50_C05_19A7F7DF",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 7,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000410",
+      "pattern_name": "DISCOVERED_SHORT_W50_C04_CD3D1332",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 6,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000160",
+      "pattern_name": "DISCOVERED_LONG_W20_C09_E469ED13",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 6,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000202",
+      "pattern_name": "DISCOVERED_SHORT_W50_C08_5A9FE370",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 6,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000286",
+      "pattern_name": "DISCOVERED_SHORT_W50_C03_F9594C79",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 6,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000288",
+      "pattern_name": "DISCOVERED_SHORT_W50_C01_723A97BF",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 6,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000418",
+      "pattern_name": "DISCOVERED_SHORT_W50_C09_7DA661D4",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 6,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000387",
+      "pattern_name": "DISCOVERED_SHORT_W50_C04_AE70270F",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 5,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000185",
+      "pattern_name": "DISCOVERED_SHORT_W20_C06_46643241",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 5,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000349",
+      "pattern_name": "DISCOVERED_SHORT_W50_C00_DB64E1F9",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 4,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000223",
+      "pattern_name": "DISCOVERED_LONG_W20_C02_6708F3E9",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 4,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000128",
+      "pattern_name": "DISCOVERED_LONG_W20_C08_2A34E2D6",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 4,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000182",
+      "pattern_name": "DISCOVERED_LONG_W50_C06_BDC79400",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 4,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000062",
+      "pattern_name": "DISCOVERED_LONG_W20_C07_44F85F04",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 4,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000162",
+      "pattern_name": "DISCOVERED_SHORT_W50_C03_288A654B",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 4,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000227",
+      "pattern_name": "DISCOVERED_SHORT_W20_C09_91747F8E",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 4,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000063",
+      "pattern_name": "DISCOVERED_LONG_W20_C03_D3869825",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 4,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000356",
+      "pattern_name": "DISCOVERED_LONG_W20_C07_686F1D97",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 4,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000136",
+      "pattern_name": "DISCOVERED_SHORT_W20_C00_BF04AD3A",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 4,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000232",
+      "pattern_name": "DISCOVERED_LONG_W20_C08_0391BB7F",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 4,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000072",
+      "pattern_name": "DISCOVERED_LONG_W20_C08_47A1C968",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 3,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000077",
+      "pattern_name": "DISCOVERED_SHORT_W20_C11_7B817880",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 3,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000456",
+      "pattern_name": "DISCOVERED_LONG_W20_C08_DE273848",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 3,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000457",
+      "pattern_name": "DISCOVERED_LONG_W20_C05_E11E2EB8",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 3,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000435",
+      "pattern_name": "DISCOVERED_LONG_W20_C04_FA9C1C2E",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 2,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000179",
+      "pattern_name": "DISCOVERED_SHORT_W20_C03_C13B75C6",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 2,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000439",
+      "pattern_name": "DISCOVERED_LONG_W20_C00_E28F7705",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 2,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000181",
+      "pattern_name": "DISCOVERED_LONG_W20_C11_EEEEADE3",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 2,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000319",
+      "pattern_name": "DISCOVERED_LONG_W20_C01_62C81CD3",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 1,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000069",
+      "pattern_name": "DISCOVERED_LONG_W50_C00_DB2FF044",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 1,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000315",
+      "pattern_name": "DISCOVERED_LONG_W20_C03_D3B42B39",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 1,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000331",
+      "pattern_name": "DISCOVERED_SHORT_W20_C02_DB7CF226",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 1,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000447",
+      "pattern_name": "DISCOVERED_LONG_W20_C00_13FD818C",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 1,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000325",
+      "pattern_name": "DISCOVERED_SHORT_W20_C05_0945756A",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 1,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000321",
+      "pattern_name": "DISCOVERED_LONG_W20_C00_4DA5A8D6",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 1,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000450",
+      "pattern_name": "DISCOVERED_SHORT_W20_C05_90D1E186",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 1,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000326",
+      "pattern_name": "DISCOVERED_LONG_W20_C04_8D9B85AF",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 1,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000334",
+      "pattern_name": "DISCOVERED_SHORT_W20_C01_BD8C58F0",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 1,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000434",
+      "pattern_name": "DISCOVERED_LONG_W20_C02_C3006706",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 1,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000347",
+      "pattern_name": "DISCOVERED_LONG_W20_C01_CA96AABE",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 1,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000314",
+      "pattern_name": "DISCOVERED_LONG_W20_C00_0088E221",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 1,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000451",
+      "pattern_name": "DISCOVERED_LONG_W20_C01_C665EAA5",
+      "status": "rejected",
+      "independent_sample_count": 10,
+      "ticker_count": 1,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000498",
+      "pattern_name": "DISCOVERED_SHORT_W50_C02_2D3806E9",
+      "status": "rejected",
+      "independent_sample_count": 9,
+      "ticker_count": 19,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000089",
+      "pattern_name": "DISCOVERED_LONG_W20_C09_4302CE0E",
+      "status": "rejected",
+      "independent_sample_count": 9,
+      "ticker_count": 18,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000585",
+      "pattern_name": "DISCOVERED_SHORT_W50_C01_BCEDCC30",
+      "status": "rejected",
+      "independent_sample_count": 9,
+      "ticker_count": 15,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000106",
+      "pattern_name": "DISCOVERED_SHORT_W50_C02_10656C72",
+      "status": "rejected",
+      "independent_sample_count": 9,
+      "ticker_count": 12,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000619",
+      "pattern_name": "DISCOVERED_SHORT_W50_C08_D1B0940D",
+      "status": "rejected",
+      "independent_sample_count": 9,
+      "ticker_count": 11,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000539",
+      "pattern_name": "DISCOVERED_SHORT_W50_C07_49AA6FDA",
+      "status": "rejected",
+      "independent_sample_count": 9,
+      "ticker_count": 10,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000214",
+      "pattern_name": "DISCOVERED_SHORT_W50_C00_46C7029B",
+      "status": "rejected",
+      "independent_sample_count": 9,
+      "ticker_count": 10,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000150",
+      "pattern_name": "DISCOVERED_LONG_W20_C02_BE597437",
+      "status": "rejected",
+      "independent_sample_count": 9,
+      "ticker_count": 10,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000259",
+      "pattern_name": "DISCOVERED_SHORT_W50_C08_8B47A583",
+      "status": "rejected",
+      "independent_sample_count": 9,
+      "ticker_count": 9,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000238",
+      "pattern_name": "DISCOVERED_SHORT_W50_C00_58E580BC",
+      "status": "rejected",
+      "independent_sample_count": 9,
+      "ticker_count": 8,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000186",
+      "pattern_name": "DISCOVERED_SHORT_W50_C07_03B538D0",
+      "status": "rejected",
+      "independent_sample_count": 9,
+      "ticker_count": 6,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000514",
+      "pattern_name": "DISCOVERED_SHORT_W50_C02_425F8549",
+      "status": "rejected",
+      "independent_sample_count": 9,
+      "ticker_count": 5,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000176",
+      "pattern_name": "DISCOVERED_LONG_W20_C09_58EDFF7A",
+      "status": "rejected",
+      "independent_sample_count": 9,
+      "ticker_count": 2,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000438",
+      "pattern_name": "DISCOVERED_LONG_W20_C08_8075773F",
+      "status": "rejected",
+      "independent_sample_count": 9,
+      "ticker_count": 2,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000311",
+      "pattern_name": "DISCOVERED_LONG_W20_C04_0A636D40",
+      "status": "rejected",
+      "independent_sample_count": 9,
+      "ticker_count": 1,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000071",
+      "pattern_name": "DISCOVERED_SHORT_W50_C02_720DF47C",
+      "status": "rejected",
+      "independent_sample_count": 9,
+      "ticker_count": 1,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000318",
+      "pattern_name": "DISCOVERED_SHORT_W20_C00_DC0278A5",
+      "status": "rejected",
+      "independent_sample_count": 9,
+      "ticker_count": 1,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000098",
+      "pattern_name": "DISCOVERED_SHORT_W20_C03_15300D35",
+      "status": "rejected",
+      "independent_sample_count": 9,
+      "ticker_count": 1,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000333",
+      "pattern_name": "DISCOVERED_LONG_W20_C00_149E7FFE",
+      "status": "rejected",
+      "independent_sample_count": 9,
+      "ticker_count": 1,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    },
+    {
+      "pattern_id": "PATTERN_000065",
+      "pattern_name": "DISCOVERED_SHORT_W20_C10_2D473577",
+      "status": "rejected",
+      "independent_sample_count": 8,
+      "ticker_count": 4,
+      "trade_count": 0,
+      "trades_remaining_for_promotion": 30,
+      "best_entry_variant": {},
+      "worst_entry_variant": {},
+      "best_regime": {},
+      "worst_regime": {},
+      "actions": [
+        "collect 30 more closed paper trades before Director review",
+        "entry_variant performance unavailable; missing closed_lab_trades with entry_variant_id",
+        "regime performance unavailable; missing closed_lab_trades with regime_key"
+      ]
+    }
+  ],
+  "director_gate": "blocked",
+  "director_gate_status": "blocked",
+  "schema_valid": true,
+  "package_valid": true,
+  "promotion_allowed": false,
+  "active_blocker_count": 16
+}
+```

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import math
 from typing import Any
 
 from tradeo.core.config import Settings
@@ -226,6 +227,7 @@ def _bounded(value: Any, *, default: float) -> float:
 
 def _safe_float(value: Any, default: float) -> float:
     try:
-        return float(value)
+        number = float(value)
     except (TypeError, ValueError):
         return default
+    return number if math.isfinite(number) else default

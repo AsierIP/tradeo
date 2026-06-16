@@ -403,6 +403,8 @@ class PatternEntryScanResponse(BaseModel):
     rejected_by_entry_gate: int = 0
     rejected_by_entry_quality: int = 0
     rejected_by_risk: int
+    rejected_by_production_manifest: int = 0
+    production_manifest_rejection_reason_counts: dict[str, int] = Field(default_factory=dict)
     order_errors: list[dict[str, Any]] = Field(default_factory=list)
     signal_ids: list[int] = Field(default_factory=list)
     trade_ids: list[int] = Field(default_factory=list)

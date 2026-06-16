@@ -1,0 +1,9 @@
+{
+  "data_source": "Interactive Brokers Paper",
+  "ibkr_host": "host.docker.internal",
+  "ibkr_port": "14002",
+  "ibkr_client_id": "128",
+  "ibkr_account": "REDACTED_OR_EMPTY",
+  "account_id_redacted": true,
+  "readonly": "false"
+}

@@ -51,3 +51,24 @@ def test_fox_hunter_scanner_uses_fox_hunter_module(monkeypatch) -> None:
     assert result["module"] == "fox_hunter"
     assert result["symbols"] == ["MSFT"]
 
+
+def test_fox_hunter_status_returns_fox_hunter_readiness(monkeypatch) -> None:
+    def fake_status(self, db):
+        return {
+            "laboratory": {"module": "laboratory"},
+            "fox_hunter": {
+                "module": "fox_hunter",
+                "production_gate_required": "DirectorProductionGate",
+                "live_readiness": {"orders_allowed": False},
+            },
+        }
+
+    monkeypatch.setattr("tradeo.modules.fox_hunter.scanner.PatternEntryScanner.status", fake_status)
+
+    result = FoxHunterScanner().status(object())
+
+    assert result == {
+        "module": "fox_hunter",
+        "production_gate_required": "DirectorProductionGate",
+        "live_readiness": {"orders_allowed": False},
+    }

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+import math
 from typing import Any, Literal
 
 from sqlalchemy.orm import Session, joinedload
@@ -22,7 +23,7 @@ from tradeo.modules.laboratory.paper_observations import LAB_SHADOW_EXECUTION_MO
 from tradeo.services.market_session import market_session_status
 from tradeo.services.order_outcomes import mark_signal_order_failure
 from tradeo.services.opportunity_ranking import rank_entry_matches
-from tradeo.modules.fox_hunter.production_manifest import production_manifest_is_active
+from tradeo.modules.fox_hunter.production_manifest import production_manifest_status
 from tradeo.services.risk_manager import RiskManager
 from tradeo.services.signal_quality import build_entry_quality, build_signal_snapshot
 
@@ -96,15 +97,26 @@ class PatternEntryScanner:
             store_signals=store_signals,
             execute_orders=execute_orders,
         )
+        requested_execute_orders = bool(resolved["execute_orders"])
+        execution_degrade_reason: str | None = None
         if module == "laboratory" and resolved["execute_orders"]:
             from tradeo.services.system_controls import runtime_kill_switch_active
 
             if runtime_kill_switch_active(db):
                 resolved["execute_orders"] = False
+                execution_degrade_reason = "runtime_kill_switch_enabled"
         observation_lifecycle = self._close_lab_observations(db, module)
         session = market_session_status()
         if self._requires_market_hours(module) and not bool(session["regular_session_open"]):
             result = self._market_closed_result(module, resolved, session)
+            result.update(
+                self._scan_execution_metadata(
+                    module,
+                    requested_execute_orders=requested_execute_orders,
+                    execute_orders=bool(resolved["execute_orders"]),
+                    execution_degrade_reason=execution_degrade_reason,
+                )
+            )
             result["paper_observations_opened"] = 0
             result["paper_observations_closed"] = observation_lifecycle["closed_observations"]
             result["paper_observation_trade_ids"] = []
@@ -134,6 +146,9 @@ class PatternEntryScanner:
         rejected_by_entry_quality = 0
         rejected_by_risk = 0
         rejected_by_production_manifest = 0
+        production_manifest_rejection_reason_counts: dict[str, int] = {}
+        production_manifest_status_cache: dict[int, dict[str, Any]] = {}
+        production_manifest_checked_at = datetime.now(timezone.utc)
         near_miss_shadow_observations_opened = 0
         order_errors: list[dict[str, Any]] = []
         signal_ids: list[int] = []
@@ -144,6 +159,7 @@ class PatternEntryScanner:
         paper_observations_opened = 0
         shadow_no_order_observations_opened = 0
         shadow_no_order_trade_ids: list[int] = []
+        broker_blocked_symbols: set[str] = set()
 
         all_ranked_matches = rank_entry_matches(
             match_result["matches"],
@@ -153,8 +169,33 @@ class PatternEntryScanner:
         ranked_matches = self._select_best_variant_per_exposure(all_ranked_matches)
 
         for match in ranked_matches:
-            if module == "fox_hunter" and not self._fox_match_has_active_manifest(db, match):
+            symbol = str(match["symbol"]).upper()
+            if module == "laboratory" and resolved["execute_orders"] and symbol in broker_blocked_symbols:
+                skipped_duplicates += 1
+                self._audit_lab_symbol_broker_cooldown(db, match=match, reason="same_scan_broker_failure")
+                continue
+            if (
+                module == "laboratory"
+                and resolved["execute_orders"]
+                and self._has_recent_lab_symbol_order_failure(db, symbol)
+            ):
+                skipped_duplicates += 1
+                self._audit_lab_symbol_broker_cooldown(db, match=match, reason="recent_symbol_broker_failure")
+                continue
+            production_manifest_check: dict[str, Any] | None = None
+            if module == "fox_hunter":
+                production_manifest_check = self._fox_match_production_manifest_status(
+                    db,
+                    match,
+                    cache=production_manifest_status_cache,
+                    now=production_manifest_checked_at,
+                )
+            if production_manifest_check is not None and not bool(production_manifest_check["valid"]):
                 rejected_by_production_manifest += 1
+                reason_code = str(production_manifest_check.get("reason_code") or "unknown")
+                production_manifest_rejection_reason_counts[reason_code] = (
+                    production_manifest_rejection_reason_counts.get(reason_code, 0) + 1
+                )
                 db.add(
                     AuditLog(
                         actor=module,
@@ -163,7 +204,8 @@ class PatternEntryScanner:
                         entity_id=str(match.get("pattern_id", "")),
                         details_json={
                             "match": match,
-                            "reason": "active_production_manifest_required",
+                            "reason": reason_code,
+                            "production_manifest_status": production_manifest_check,
                         },
                     )
                 )
@@ -199,6 +241,7 @@ class PatternEntryScanner:
                     and self._can_submit_duplicate_lab_signal(db, duplicate_signal)
                 ):
                     try:
+                        self._prepare_lab_signal_for_order_submission(duplicate_signal, match)
                         trade = IBKRBroker(settings).submit_signal_bracket(
                             db,
                             duplicate_signal,
@@ -228,6 +271,11 @@ class PatternEntryScanner:
                                 "next_action": outcome["next_action"],
                             }
                         )
+                        if outcome["reason_code"] in {
+                            "ibkr_bracket_not_accepted",
+                            "broker_submission_failed",
+                        }:
+                            broker_blocked_symbols.add(duplicate_signal.symbol.upper())
                         db.add(
                             AuditLog(
                                 actor=module,
@@ -254,8 +302,21 @@ class PatternEntryScanner:
                     )
                     db.commit()
                 continue
-            if module != "laboratory" and self._has_active_exposure(db, match, module=module):
+            if self._has_active_exposure(db, match, module=module):
                 skipped_duplicates += 1
+                db.add(
+                    AuditLog(
+                        actor=module,
+                        action="entry_match_skipped_active_exposure",
+                        entity_type="discovered_pattern_match",
+                        entity_id=str(match.get("pattern_id", "")),
+                        details_json={
+                            "match": match,
+                            "reason": "active_signal_or_trade_for_pattern_symbol",
+                        },
+                    )
+                )
+                db.commit()
                 continue
             if module != "laboratory" and self._has_recent_signal(db, match, module=module):
                 skipped_cooldown += 1
@@ -371,6 +432,8 @@ class PatternEntryScanner:
                         "next_action": outcome["next_action"],
                     }
                 )
+                if outcome["reason_code"] in {"ibkr_bracket_not_accepted", "broker_submission_failed"}:
+                    broker_blocked_symbols.add(signal.symbol.upper())
                 db.add(
                     AuditLog(
                         actor=module,
@@ -396,6 +459,7 @@ class PatternEntryScanner:
             "rejected_by_entry_quality": rejected_by_entry_quality,
             "rejected_by_risk": rejected_by_risk,
             "rejected_by_production_manifest": rejected_by_production_manifest,
+            "production_manifest_rejection_reason_counts": production_manifest_rejection_reason_counts,
             "near_miss_shadow_observations_opened": near_miss_shadow_observations_opened,
             "order_errors": order_errors,
             "signal_ids": signal_ids,
@@ -409,6 +473,12 @@ class PatternEntryScanner:
             "shadow_no_order_trade_ids": shadow_no_order_trade_ids,
             "paper_observation_lifecycle": observation_lifecycle,
             "top_opportunities": self._top_opportunities(ranked_matches),
+            **self._scan_execution_metadata(
+                module,
+                requested_execute_orders=requested_execute_orders,
+                execute_orders=bool(resolved["execute_orders"]),
+                execution_degrade_reason=execution_degrade_reason,
+            ),
             "store_signals": resolved["store_signals"],
             "execute_orders": resolved["execute_orders"],
             "similarity_threshold": match_result["similarity_threshold"],
@@ -449,9 +519,15 @@ class PatternEntryScanner:
             .filter(DiscoveredPattern.status == DiscoveredPatternStatus.PRODUCTION)
             .all()
         )
-        production_manifest_patterns = [
-            pattern for pattern in production_patterns if production_manifest_is_active(pattern)
+        production_manifest_statuses = [
+            production_manifest_status(pattern) for pattern in production_patterns
         ]
+        production_manifest_patterns = [
+            item for item in production_manifest_statuses if bool(item["valid"])
+        ]
+        production_manifest_blocked_reason_counts = self._reason_counts(
+            item for item in production_manifest_statuses if not bool(item["valid"])
+        )
         settings = self.settings
         assert settings is not None
         worker_status = worker_runtime_status(settings)
@@ -490,6 +566,9 @@ class PatternEntryScanner:
         # auto-submit toggle: paper mode should stay available unless a severe
         # safety gate blocks it or the operator explicitly disables scanning.
         paper_orders_allowed = paper_order_safety_ok
+        default_lab_execute_orders = (
+            settings.laboratory_auto_submit_paper_orders and paper_orders_allowed
+        )
         live_orders_allowed = (
             settings.fox_hunter_auto_submit_live_orders
             and settings.live_armed
@@ -508,6 +587,11 @@ class PatternEntryScanner:
                 "auto_submit_paper_orders": settings.laboratory_auto_submit_paper_orders,
                 "paper_orders_allowed": paper_orders_allowed,
                 "paper_order_safety_ok": paper_order_safety_ok,
+                "default_execute_orders": default_lab_execute_orders,
+                "default_execution_mode": (
+                    "ibkr_paper" if default_lab_execute_orders else LAB_SHADOW_EXECUTION_MODE
+                ),
+                "default_shadow_only": not default_lab_execute_orders,
                 "runtime_kill_switch_enabled": runtime_kill_switch_enabled,
                 "runtime_kill_switch_reason": (
                     runtime_kill_switch_control.reason if runtime_kill_switch_control else None
@@ -549,8 +633,26 @@ class PatternEntryScanner:
                 "eligible_patterns": len(production_manifest_patterns),
                 "production_status_patterns": len(production_patterns),
                 "production_manifest_required": True,
+                "production_gate_required": "DirectorProductionGate",
+                "production_manifest_policy": (
+                    "canonical_manifest_with_director_production_gate_paper_fill_evidence"
+                ),
                 "production_manifest_blocked_patterns": len(production_patterns)
                 - len(production_manifest_patterns),
+                "production_manifest_blocked_reason_counts": production_manifest_blocked_reason_counts,
+                "live_readiness": {
+                    "orders_allowed": live_orders_allowed,
+                    "live_armed": settings.live_armed,
+                    "auto_submit_live_orders": settings.fox_hunter_auto_submit_live_orders,
+                    "eligible_production_manifests": len(production_manifest_patterns),
+                    "production_status_patterns": len(production_patterns),
+                    "block_reason": None
+                    if live_orders_allowed
+                    else self._live_order_block_reason(
+                        settings,
+                        runtime_kill_switch_enabled=runtime_kill_switch_enabled,
+                    ),
+                },
                 "symbols_checked": fox_entry_status["symbols_checked"],
                 "last_symbols_checked": fox_entry_status["last_symbols_checked"],
                 "last_scan": self._entry_status_summary(fox_entry_status),
@@ -571,6 +673,10 @@ class PatternEntryScanner:
             "rejected_by_entry_gate": entry_status.get("rejected_by_entry_gate", 0),
             "rejected_by_entry_quality": entry_status.get("rejected_by_entry_quality", 0),
             "rejected_by_risk": entry_status.get("rejected_by_risk", 0),
+            "rejected_by_production_manifest": entry_status.get("rejected_by_production_manifest", 0),
+            "production_manifest_rejection_reason_counts": entry_status.get(
+                "production_manifest_rejection_reason_counts", {}
+            ),
             "order_errors": entry_status.get("order_errors", []),
             "zero_order_scan_streak": entry_status.get("zero_order_scan_streak", 0),
             "zero_order_alert": entry_status.get("zero_order_alert", False),
@@ -642,6 +748,7 @@ class PatternEntryScanner:
             "rejected_by_entry_quality": 0,
             "rejected_by_risk": 0,
             "rejected_by_production_manifest": 0,
+            "production_manifest_rejection_reason_counts": {},
             "near_miss_shadow_observations_opened": 0,
             "order_errors": [],
             "signal_ids": [],
@@ -667,6 +774,36 @@ class PatternEntryScanner:
             "market_session": session,
             "generated_at": datetime.now(timezone.utc).isoformat(),
         }
+
+    @staticmethod
+    def _scan_execution_metadata(
+        module: EntryModule,
+        *,
+        requested_execute_orders: bool,
+        execute_orders: bool,
+        execution_degrade_reason: str | None,
+    ) -> dict[str, Any]:
+        return {
+            "requested_execute_orders": requested_execute_orders,
+            "execution_mode": PatternEntryScanner._scan_execution_mode(
+                module,
+                execute_orders=execute_orders,
+            ),
+            "execution_degraded_to_shadow": (
+                module == "laboratory"
+                and requested_execute_orders
+                and not execute_orders
+            ),
+            "execution_degrade_reason": execution_degrade_reason,
+        }
+
+    @staticmethod
+    def _scan_execution_mode(module: EntryModule, *, execute_orders: bool) -> str | None:
+        if module == "laboratory":
+            return "ibkr_paper" if execute_orders else LAB_SHADOW_EXECUTION_MODE
+        if module == "fox_hunter" and execute_orders:
+            return "ibkr_live"
+        return None
 
     def _resolved_options(self, module: EntryModule, **overrides: Any) -> dict[str, Any]:
         settings = self.settings
@@ -725,14 +862,36 @@ class PatternEntryScanner:
 
     @staticmethod
     def _fox_match_has_active_manifest(db: Session, match: dict[str, Any]) -> bool:
+        return bool(
+            PatternEntryScanner._fox_match_production_manifest_status(
+                db,
+                match,
+                cache={},
+                now=datetime.now(timezone.utc),
+            )["valid"]
+        )
+
+    @staticmethod
+    def _fox_match_production_manifest_status(
+        db: Session,
+        match: dict[str, Any],
+        *,
+        cache: dict[int, dict[str, Any]],
+        now: datetime,
+    ) -> dict[str, Any]:
         try:
             pattern_id = int(match.get("pattern_id") or 0)
         except (TypeError, ValueError):
-            return False
+            return {"valid": False, "reason_code": "missing_pattern_id", "checked_at": now.isoformat()}
+        if pattern_id <= 0:
+            return {"valid": False, "reason_code": "missing_pattern_id", "checked_at": now.isoformat()}
+        cached = cache.get(pattern_id)
+        if cached is not None:
+            return cached
         pattern = db.get(DiscoveredPattern, pattern_id)
-        if pattern is None:
-            return False
-        return production_manifest_is_active(pattern)
+        status = production_manifest_status(pattern, now=now)
+        cache[pattern_id] = status
+        return status
 
     def _candidate_from_match(self, match: dict[str, Any]) -> PatternCandidate:
         metrics = match.get("metrics") or {}
@@ -835,8 +994,96 @@ class PatternEntryScanner:
             return False
         if metadata.get("near_miss") or metadata.get("near_miss_shadow"):
             return False
+        outcome = metadata.get("execution_outcome") or {}
+        if isinstance(outcome, dict):
+            if outcome.get("retryable") is False:
+                return False
+            updated_at = self._parse_datetime(outcome.get("updated_at"))
+            if updated_at is not None:
+                settings = self.settings
+                assert settings is not None
+                retry_after = timedelta(minutes=max(5, int(settings.entry_cooldown_minutes)))
+                if datetime.now(timezone.utc) - updated_at < retry_after:
+                    return False
         existing_trade = db.query(Trade).filter(Trade.signal_id == signal.id).first()
         return existing_trade is None
+
+    def _has_recent_lab_symbol_order_failure(self, db: Session, symbol: str) -> bool:
+        settings = self.settings
+        assert settings is not None
+        retry_after = timedelta(minutes=max(60, int(settings.entry_cooldown_minutes)))
+        cutoff = datetime.now(timezone.utc) - retry_after
+        signals = (
+            db.query(Signal)
+            .filter(Signal.symbol == symbol.upper())
+            .filter(Signal.status == SignalStatus.PAPER_APPROVED)
+            .all()
+        )
+        for signal in signals:
+            if not self._signal_belongs_to_module(signal, "laboratory"):
+                continue
+            outcome = (signal.metadata_json or {}).get("execution_outcome") or {}
+            if not isinstance(outcome, dict):
+                continue
+            if outcome.get("reason_code") not in {"ibkr_bracket_not_accepted", "broker_submission_failed"}:
+                continue
+            updated_at = self._parse_datetime(outcome.get("updated_at"))
+            if updated_at is not None and updated_at >= cutoff:
+                return True
+        return False
+
+    @staticmethod
+    def _audit_lab_symbol_broker_cooldown(db: Session, *, match: dict[str, Any], reason: str) -> None:
+        db.add(
+            AuditLog(
+                actor="laboratory",
+                action="entry_match_skipped_symbol_broker_cooldown",
+                entity_type="discovered_pattern_match",
+                entity_id=str(match.get("pattern_id", "")),
+                details_json={
+                    "match": match,
+                    "reason": reason,
+                    "symbol": str(match.get("symbol") or "").upper(),
+                },
+            )
+        )
+        db.commit()
+
+    @staticmethod
+    def _parse_datetime(value: Any) -> datetime | None:
+        if not value:
+            return None
+        try:
+            parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+
+    @staticmethod
+    def _prepare_lab_signal_for_order_submission(signal: Signal, match: dict[str, Any]) -> None:
+        metadata = dict(signal.metadata_json or {})
+        for key in ("no_ibkr_order", "observation_only", "paper_only"):
+            metadata.pop(key, None)
+        metadata.update(
+            {
+                "evidence_type": EvidenceType.IBKR_PAPER_ORDER.value,
+                "evidence_quality": EvidenceQuality.NORMAL.value,
+                "execution_mode": "ibkr",
+                "execution_requested": True,
+                "paper_order_requested": True,
+                "execution_request_mode": "ibkr_paper",
+                "entry_module": "laboratory",
+                "entry_variant_id": metadata.get("entry_variant_id") or match.get("entry_variant_id"),
+                "entry_variant": metadata.get("entry_variant") or match.get("entry_variant"),
+                "entry_audit": metadata.get("entry_audit") or match.get("entry_audit"),
+                "regime": metadata.get("regime") or match.get("regime"),
+                "regime_fit": metadata.get("regime_fit") or match.get("regime_fit"),
+            }
+        )
+        signal.metadata_json = metadata
+        signal.human_approved = True
 
     def _has_recent_signal(self, db: Session, match: dict[str, Any], *, module: EntryModule) -> bool:
         settings = self.settings
@@ -938,6 +1185,14 @@ class PatternEntryScanner:
         for index, match in enumerate(ordered, start=1):
             match["opportunity_rank"] = index
         return ordered
+
+    @staticmethod
+    def _reason_counts(statuses: Any) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for status in statuses:
+            reason = str(status.get("reason_code") or "unknown")
+            counts[reason] = counts.get(reason, 0) + 1
+        return counts
 
     def _execution_history(self, db: Session, module: EntryModule) -> dict[tuple[str, ...], dict[str, float]]:
         trades = (
@@ -1150,9 +1405,10 @@ class PatternEntryScanner:
     @staticmethod
     def _safe_float(value: Any, default: float) -> float:
         try:
-            return float(value)
+            number = float(value)
         except (TypeError, ValueError):
             return default
+        return number if math.isfinite(number) else default
 
     @staticmethod
     def _safe_int(value: Any) -> int | None:
@@ -1381,6 +1637,12 @@ class PatternEntryScanner:
                 "signal_snapshot": signal_snapshot,
                 "spread_snapshot": spread_snapshot,
                 "spread_observed_pct": spread_snapshot.get("spread_observed_pct"),
+                "execution_requested": execute_orders,
+                "execution_request_mode": self._scan_execution_mode(
+                    module,
+                    execute_orders=execute_orders,
+                ),
+                "paper_order_requested": module == "laboratory" and execute_orders,
                 "match": match,
                 "entry_gate": match.get("metrics", {}).get("entry_gate"),
                 "near_miss": bool(match.get("near_miss")),

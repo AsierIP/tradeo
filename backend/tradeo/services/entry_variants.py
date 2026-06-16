@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from hashlib import blake2b
+import math
 from typing import Any
 
 import pandas as pd
@@ -74,13 +75,15 @@ def build_entry_variants(
     previous = df.iloc[-21:-1] if len(df) >= 21 else df.iloc[:-1]
     if previous.empty:
         previous = df.iloc[-2:-1] if len(df) >= 2 else df.iloc[-1:]
-    close = _float(latest["close"], 0.0)
-    high = _float(latest["high"], close)
-    low = _float(latest["low"], close)
-    open_ = _float(latest["open"], close)
-    prev_close = _float(previous["close"].iloc[-1], close)
-    prev_high = _float(previous["high"].max(), high)
-    prev_low = _float(previous["low"].min(), low)
+    close = _required_float(latest["close"])
+    high = _required_float(latest["high"])
+    low = _required_float(latest["low"])
+    open_ = _required_float(latest["open"])
+    prev_close = _required_float(previous["close"].iloc[-1])
+    prev_high = _required_float(previous["high"].max())
+    prev_low = _required_float(previous["low"].min())
+    if None in {close, high, low, open_, prev_close, prev_high, prev_low}:
+        return []
     atr_value = _float(atr(df, 14).iloc[-1], max(close * 0.02, 0.01)) if len(df) >= 15 else max(close * 0.02, 0.01)
     risk = max(atr_value * 1.5, close * 0.015, 0.01)
     volume_ratio = _float(base_entry_gate.get("volume_ratio"), 1.0)
@@ -261,15 +264,32 @@ def _source_bar_hash(df: pd.DataFrame) -> str:
 
 
 def _timeframe_delta(timeframe: str) -> timedelta:
-    tf = timeframe.lower().strip()
-    if tf in {"1d", "1 day"}:
-        return timedelta(days=1)
-    if tf in {"1wk", "1 week"}:
-        return timedelta(weeks=1)
-    if tf.endswith("m"):
-        return timedelta(minutes=max(1, int(tf[:-1] or "1")))
-    if tf.endswith("h"):
-        return timedelta(hours=max(1, int(tf[:-1] or "1")))
+    compact = " ".join(str(timeframe).lower().strip().split()).replace(" ", "")
+    units: tuple[tuple[str, Any], ...] = (
+        ("minutes", lambda amount: timedelta(minutes=amount)),
+        ("minute", lambda amount: timedelta(minutes=amount)),
+        ("mins", lambda amount: timedelta(minutes=amount)),
+        ("min", lambda amount: timedelta(minutes=amount)),
+        ("hours", lambda amount: timedelta(hours=amount)),
+        ("hour", lambda amount: timedelta(hours=amount)),
+        ("hrs", lambda amount: timedelta(hours=amount)),
+        ("hr", lambda amount: timedelta(hours=amount)),
+        ("weeks", lambda amount: timedelta(weeks=amount)),
+        ("week", lambda amount: timedelta(weeks=amount)),
+        ("wks", lambda amount: timedelta(weeks=amount)),
+        ("wk", lambda amount: timedelta(weeks=amount)),
+        ("days", lambda amount: timedelta(days=amount)),
+        ("day", lambda amount: timedelta(days=amount)),
+        ("m", lambda amount: timedelta(minutes=amount)),
+        ("h", lambda amount: timedelta(hours=amount)),
+        ("w", lambda amount: timedelta(weeks=amount)),
+        ("d", lambda amount: timedelta(days=amount)),
+    )
+    for suffix, build_delta in units:
+        if compact.endswith(suffix):
+            amount = compact[: -len(suffix)]
+            if amount.isdigit() or amount == "":
+                return build_delta(max(1, int(amount or "1")))
     return timedelta(days=1)
 
 
@@ -292,6 +312,15 @@ def _bucket(value: float, *, low: float, high: float, labels: tuple[str, str, st
 
 def _float(value: Any, default: float) -> float:
     try:
-        return float(value)
+        number = float(value)
     except (TypeError, ValueError):
         return default
+    return number if math.isfinite(number) else default
+
+
+def _required_float(value: Any) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None

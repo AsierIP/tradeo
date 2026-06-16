@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from tradeo.core.config import Settings
+from tradeo.services import runtime_status
 from tradeo.services.runtime_status import entry_scan_status, write_entry_scan_status
 
 
@@ -106,7 +107,28 @@ def test_entry_scan_status_does_not_alert_when_execution_is_disabled(tmp_path) -
     assert status["zero_order_alert"] is False
 
 
-def test_writable_runtime_paths_fallback_when_data_volume_is_read_only(tmp_path, monkeypatch) -> None:
+def test_entry_scan_status_writes_with_atomic_replace(tmp_path, monkeypatch) -> None:
+    settings = Settings(artifacts_dir=str(tmp_path))
+    original_replace = runtime_status.os.replace
+    calls: list[tuple[str, str]] = []
+
+    def tracked_replace(src, dst) -> None:
+        calls.append((Path(src).name, Path(dst).name))
+        original_replace(src, dst)
+
+    monkeypatch.setattr(runtime_status.os, "replace", tracked_replace)
+
+    write_entry_scan_status("laboratory", {"symbols_checked": 7}, settings)
+
+    assert calls
+    assert calls[-1][1] == runtime_status.ENTRY_SCAN_STATUS
+    assert calls[-1][0].startswith(f".{runtime_status.ENTRY_SCAN_STATUS}.")
+    assert entry_scan_status("laboratory", settings)["symbols_checked"] == 7
+
+
+def test_writable_runtime_paths_fallback_when_data_volume_is_read_only(
+    tmp_path, monkeypatch
+) -> None:
     original_mkdir = Path.mkdir
     blocked = tmp_path / "readonly" / "ohlcv_cache"
 
