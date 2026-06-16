@@ -119,6 +119,9 @@ class PatternDiscoveryLabAgent:
                 shape_dtw_method=settings.discovery_match_shape_dtw_method,
                 shape_soft_dtw_gamma=settings.discovery_match_shape_soft_dtw_gamma,
                 benchmark_regime_table=benchmark_regime_table,
+                conformal_alpha=settings.discovery_match_conformal_alpha,
+                prototype_medoid_count=settings.discovery_match_prototype_medoids,
+                prototype_knn_k=settings.discovery_match_knn_k,
             )
             raw_candidates = engine.discover(samples)
             data_manifest = self._data_manifest(run.id, symbols, warnings)

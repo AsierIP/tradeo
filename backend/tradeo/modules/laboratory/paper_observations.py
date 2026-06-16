@@ -126,7 +126,14 @@ class LabPaperObservationService:
             ),
             "paper_only": True,
             "opened_reason": (
-                "lab_near_miss_volume_shadow_observation"
+                (
+                    "lab_near_miss_ambiguous_match_shadow_observation"
+                    if str(
+                        signal_metadata.get("near_miss_type") or match.get("near_miss_type") or ""
+                    )
+                    == "ambiguous_match_shadow"
+                    else "lab_near_miss_volume_shadow_observation"
+                )
                 if near_miss
                 else "lab_entry_candidate_shadow_observation"
             ),

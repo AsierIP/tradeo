@@ -14,6 +14,11 @@ from sqlalchemy.orm import Session
 from tradeo.core.config import Settings, get_settings
 from tradeo.db.models import DiscoveredPattern, DiscoveredPatternMatch, DiscoveredPatternStatus
 from tradeo.research.pattern_embedding_engine import PatternEmbeddingEngine
+from tradeo.research.prototype_bank import (
+    knn_distance,
+    mahalanobis_diag_distance,
+    parse_prototype_bank,
+)
 from tradeo.research.shape_verifier import (
     DEFAULT_SHAPE_CHANNELS,
     SHAPE_VERIFIER_METHOD,
@@ -281,6 +286,7 @@ class NovelPatternMatcher:
                                 "similarity": round(similarity, 6),
                                 "similarity_threshold_used": round(effective_threshold, 6),
                                 "shape_verifier": diagnostic.get("shape_verifier"),
+                                "conformal_gate": diagnostic.get("conformal_gate"),
                                 "match_ambiguity": ambiguity,
                                 "ambiguity_ratio": ambiguity["ambiguity_ratio"],
                                 "ambiguity_gate": ambiguity_gate,
@@ -319,6 +325,7 @@ class NovelPatternMatcher:
                                     "shape_verifier": diagnostic.get("shape_verifier"),
                                     "match_ambiguity": ambiguity,
                                     "ambiguity_gate": ambiguity_gate,
+                                    "conformal_gate": diagnostic.get("conformal_gate"),
                                     "features": features,
                                     "entry_gate": entry_gate,
                                     "base_entry_gate": base_gate,
@@ -808,26 +815,35 @@ class NovelPatternMatcher:
             centroid,
             floor=effective_threshold,
         )
+        conformal = self._conformal_gate(pattern, scaled)
         passed_threshold = similarity >= effective_threshold
         if prototype is not None:
             passed_threshold = passed_threshold and bool(prototype["passed"])
+        if conformal is not None:
+            passed_threshold = bool(similarity >= floor and conformal["passed"])
         shape_verifier = None
         if passed_threshold:
             shape_verifier = self._shape_verifier_diagnostic(pattern, chart)
             if shape_verifier is not None and shape_verifier.get("hard_gate_applied"):
                 passed_threshold = passed_threshold and bool(shape_verifier.get("passed"))
-        return {
+        diagnostic = {
             "similarity": round(similarity, 6),
             "normalized_distance": round(normalized_distance, 6),
-            "similarity_threshold_used": round(float(effective_threshold), 6),
+            "similarity_threshold_used": round(float(floor if conformal is not None else effective_threshold), 6),
             "passed_threshold": passed_threshold,
             "temporal_weighting": {
                 "enabled": temporal is not None,
                 "gamma": temporal[0] if temporal is not None else None,
             },
-            "prototype_match": prototype,
-            "shape_verifier": shape_verifier,
         }
+        if conformal is not None:
+            diagnostic["centroid_similarity_role"] = "diagnostic_only"
+            diagnostic["conformal_gate"] = conformal
+        if prototype is not None:
+            diagnostic["prototype_match"] = prototype
+        if shape_verifier is not None:
+            diagnostic["shape_verifier"] = shape_verifier
+        return diagnostic
 
     def _shape_verifier_diagnostic(
         self,
@@ -973,6 +989,41 @@ class NovelPatternMatcher:
                 passed = passed and bool(maha_passed)
         diag["passed"] = passed
         return diag
+
+    def _conformal_gate(
+        self,
+        pattern: DiscoveredPattern,
+        scaled: np.ndarray,
+    ) -> dict[str, Any] | None:
+        """kNN/Mahalanobis conformal gate when Research persisted a bank.
+
+        Returns None (legacy gate applies) when the flag is off, no valid bank
+        exists, or the bank dimension does not match the compared prefix.
+        """
+        settings = self.settings
+        if settings is None or not settings.discovery_match_conformal_gate_enabled:
+            return None
+        bank = parse_prototype_bank(pattern.metrics_json or {})
+        if bank is None or bank.dimension != len(scaled):
+            return None
+        d_knn = knn_distance(scaled, bank.medoids, bank.knn_k)
+        d_maha = mahalanobis_diag_distance(scaled, bank.maha_center, bank.maha_var)
+        knn_passed = d_knn <= bank.tau_knn_distance
+        maha_passed = d_maha <= bank.tau_maha_distance
+        return {
+            "method": "knn_medoids_mahalanobis_diag_split_conformal",
+            "knn_distance": round(d_knn, 6),
+            "tau_knn_distance": round(bank.tau_knn_distance, 6),
+            "knn_passed": bool(knn_passed),
+            "knn_similarity": round(1.0 / (1.0 + d_knn), 6),
+            "maha_distance": round(d_maha, 6),
+            "tau_maha_distance": round(bank.tau_maha_distance, 6),
+            "maha_passed": bool(maha_passed),
+            "alpha": round(bank.alpha, 6),
+            "knn_k": int(bank.knn_k),
+            "medoid_count": int(len(bank.medoids)),
+            "passed": bool(knn_passed and maha_passed),
+        }
 
     @staticmethod
     def _ambiguity_ratio(

@@ -204,6 +204,14 @@ class Settings(BaseSettings):
     discovery_match_ambiguity_ratio_threshold: float = 0.95
     discovery_match_ambiguity_entry_score_margin: float = 0.10
     discovery_match_knn_enabled: bool = True
+    # Conformal kNN/Mahalanobis gate (audit §3.1.1-3): when Research persisted a
+    # prototype_bank (medoids + diagonal covariance + split-conformal taus), the
+    # matcher gates on d_knn <= tau_knn AND d_maha <= tau_maha instead of the
+    # tau-percentile similarity. The global similarity threshold stays as floor;
+    # patterns without a bank keep the legacy per-pattern threshold.
+    discovery_match_conformal_gate_enabled: bool = True
+    discovery_match_conformal_alpha: float = 0.10
+    discovery_match_prototype_medoids: int = 16
     discovery_match_knn_k: int = 3
     discovery_match_max_results: int = 100
     discovery_registry_similarity_threshold: float = 0.96
@@ -219,6 +227,14 @@ class Settings(BaseSettings):
     entry_cooldown_minutes: int = 60
     entry_variant_max_per_pattern_symbol: int = 3
     entry_exploration_rate: float = 0.15
+    # Ambiguity with teeth (audit §3.1.4): two patterns nearly tied on the same
+    # window means the system does not know what it is seeing. Ambiguous matches
+    # must clear entry_min_quality_score + margin ("one level up"); otherwise
+    # the scanner abstains and records a near-miss shadow (ambiguous_match).
+    # The p_meta >= p* + 0.05 clause activates when the meta-model (§2.4) lands.
+    entry_ambiguity_gate_enabled: bool = True
+    entry_ambiguity_ratio_threshold: float = 0.95
+    entry_ambiguity_quality_margin: float = 0.10
 
     # Laboratory scans validated Research patterns in paper mode. Paper order
     # submission is enabled by default, but still passes through entry/risk,
