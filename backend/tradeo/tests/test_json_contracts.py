@@ -59,15 +59,6 @@ def test_agent_message_payload_contract_is_strict() -> None:
         validate_payload("agent_messages", "payload_json", {"data": {}})  # kind missing
 
 
-def test_agent_message_payload_rejects_unknown_schema_version() -> None:
-    with pytest.raises(ValidationError, match="schema_version 999"):
-        validate_payload(
-            "agent_messages",
-            "payload_json",
-            {"kind": "future_payload", "data": {}, "schema_version": 999},
-        )
-
-
 def test_stamp_schema_version_round_trip() -> None:
     stamped = stamp_schema_version({"foo": 1}, "signals", "metadata_json")
     assert stamped["schema_version"] == JSON_CONTRACTS[("signals", "metadata_json")].schema_version

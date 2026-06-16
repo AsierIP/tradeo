@@ -27,30 +27,19 @@ _INTRADAY_BAR_MINUTES = {
     "1m": 1,
     "1min": 1,
     "1 min": 1,
-    "1 mins": 1,
     "5m": 5,
     "5min": 5,
-    "5 min": 5,
     "5 mins": 5,
     "15m": 15,
     "15min": 15,
-    "15 min": 15,
     "15 mins": 15,
     "30m": 30,
     "30min": 30,
-    "30 min": 30,
     "30 mins": 30,
     "1h": 60,
     "60m": 60,
-    "60min": 60,
-    "60 min": 60,
-    "60 mins": 60,
     "1 hour": 60,
 }
-
-
-def _normalized_interval_key(interval: str) -> str:
-    return " ".join(str(interval).strip().lower().split())
 
 
 def load_universe(path: str | None = None) -> pd.DataFrame:
@@ -160,7 +149,7 @@ class CachedMarketDataProvider:
         wall-clock days (max), since a weekend gap on a 5m cache is routine.
         """
         symbol, period, interval = key
-        interval_lower = _normalized_interval_key(interval)
+        interval_lower = interval.lower()
         is_daily = interval_lower in _DAILY_INTERVALS
         bar_minutes = _INTRADAY_BAR_MINUTES.get(interval_lower)
         if not self.incremental_enabled or cached.empty:
@@ -289,7 +278,7 @@ class CachedMarketDataProvider:
 
     @staticmethod
     def _bar_complete_mask(index: pd.Index, interval: str) -> list[bool]:
-        interval_lower = _normalized_interval_key(interval)
+        interval_lower = interval.lower()
         if interval_lower in _DAILY_INTERVALS:
             today = datetime.now(UTC).date()
             return [pd.Timestamp(value).date() < today for value in index]
@@ -341,7 +330,7 @@ class CachedMarketDataProvider:
         tmp_path = path.with_name(f".{path.name}.{os.getpid()}.tmp")
         meta_path = path.with_suffix(".metadata.json")
         tmp_meta = meta_path.with_name(f".{meta_path.name}.{os.getpid()}.tmp")
-        interval_lower = _normalized_interval_key(key[2])
+        interval_lower = key[2].lower()
         incremental_supported = bool(
             self.incremental_enabled
             and (

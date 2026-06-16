@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import math
 from typing import Any
 
 from tradeo.core.config import Settings
@@ -160,7 +159,6 @@ def _bounded(value: Any, *, default: float) -> float:
 
 def _safe_float(value: Any, default: float) -> float:
     try:
-        number = float(value)
+        return float(value)
     except (TypeError, ValueError):
         return default
-    return number if math.isfinite(number) else default

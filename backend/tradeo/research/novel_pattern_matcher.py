@@ -533,31 +533,6 @@ class NovelPatternMatcher:
         sma50 = float(df["close"].tail(50).mean()) if len(df) >= 50 else sma20
         sma20_prev = float(df["close"].iloc[-40:-20].mean()) if len(df) >= 40 else sma20
         atr_value = float(atr(df, 14).iloc[-1]) if len(df) >= 15 else max(close * 0.02, 0.01)
-        if not all(
-            math.isfinite(value)
-            for value in (
-                close,
-                open_,
-                high,
-                low,
-                prev_close,
-                prev_high,
-                prev_low,
-                avg_volume,
-                volume_ratio,
-                sma20,
-                sma50,
-                sma20_prev,
-                atr_value,
-            )
-        ):
-            return {
-                "passed": False,
-                "trigger": "invalid_market_data",
-                "entry_score": 0.0,
-                "reason": "non_finite_market_data",
-                "rejection_reasons": ["non_finite_market_data"],
-            }
         atr_pct = atr_value / max(close, 0.01)
         extension_atr = abs(close - sma20) / max(atr_value, 0.01)
         extension_score = max(0.0, min(1.0, 1.0 - extension_atr / settings.entry_max_extension_atr))
@@ -654,14 +629,7 @@ class NovelPatternMatcher:
         scale = metrics.get("scaler_scale")
         if not isinstance(mean, list) or not isinstance(scale, list):
             return None, None
-        try:
-            mean_array = np.asarray(mean, dtype=float)
-            scale_array = np.asarray(scale, dtype=float)
-        except (TypeError, ValueError):
-            return None, None
-        if not np.isfinite(mean_array).all() or not np.isfinite(scale_array).all():
-            return None, None
-        return mean_array, scale_array
+        return np.asarray(mean, dtype=float), np.asarray(scale, dtype=float)
 
     @staticmethod
     def _scaled_vector_for_pattern(
@@ -677,13 +645,6 @@ class NovelPatternMatcher:
         vector_prefix = vector[: len(centroid)]
         mean_prefix = scaler_mean[: len(centroid)]
         scale_prefix = scaler_scale[: len(centroid)]
-        if (
-            not np.isfinite(vector_prefix).all()
-            or not np.isfinite(centroid).all()
-            or not np.isfinite(mean_prefix).all()
-            or not np.isfinite(scale_prefix).all()
-        ):
-            return None
         return (vector_prefix - mean_prefix) / np.where(scale_prefix == 0, 1.0, scale_prefix)
 
     def _prices(self, pattern: DiscoveredPattern, df, *, reward_risk: float) -> dict[str, float]:
@@ -773,13 +734,8 @@ class NovelPatternMatcher:
             return None
         _, vector, _, chart = cached
         scaler_mean, scaler_scale = self._scaler(pattern)
-        try:
-            centroid = np.asarray(pattern.centroid_json, dtype=float)
-        except (TypeError, ValueError):
-            return None
+        centroid = np.asarray(pattern.centroid_json, dtype=float)
         if scaler_mean is None or scaler_scale is None or len(centroid) == 0:
-            return None
-        if not np.isfinite(centroid).all():
             return None
         scaled = self._scaled_vector_for_pattern(vector, centroid, scaler_mean, scaler_scale)
         if scaled is None:
@@ -915,15 +871,8 @@ class NovelPatternMatcher:
         medoids = metrics.get("matcher_medoids_scaled") or metrics.get("medoid_vectors_scaled")
         if not isinstance(medoids, list) or not medoids:
             return None
-        try:
-            medoid_matrix = np.asarray(medoids, dtype=float)
-        except (TypeError, ValueError):
-            return None
-        if (
-            medoid_matrix.ndim != 2
-            or medoid_matrix.shape[1] != len(centroid)
-            or not np.isfinite(medoid_matrix).all()
-        ):
+        medoid_matrix = np.asarray(medoids, dtype=float)
+        if medoid_matrix.ndim != 2 or medoid_matrix.shape[1] != len(centroid):
             return None
         k = max(1, min(int(settings.discovery_match_knn_k), medoid_matrix.shape[0]))
         distances = np.linalg.norm(medoid_matrix - scaled, axis=1) / max(

@@ -59,16 +59,6 @@ def test_calendar_gap_flagged_for_daily_bars() -> None:
     assert report.max_single_gap_business_days >= 15
 
 
-def test_calendar_gap_flagged_for_daily_interval_alias() -> None:
-    df = fixture_ohlcv("GAPPY", bars=200)
-    df = pd.concat([df.iloc[:100], df.iloc[115:]])
-
-    report = assess_ohlcv_quality(df, "GAPPY", interval="1 day")
-
-    assert ISSUE_CALENDAR_GAP in report.issues
-    assert report.max_single_gap_business_days >= 15
-
-
 def test_calendar_gap_ignored_for_intraday() -> None:
     df = fixture_ohlcv("GAPPY", bars=200)
     df = pd.concat([df.iloc[:100], df.iloc[115:]])

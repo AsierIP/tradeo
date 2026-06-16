@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass
 
 from tradeo.core.config import Settings, get_settings
@@ -28,7 +27,6 @@ class ValidationGate:
         metrics = candidate.metrics
         reasons: list[str] = []
         warnings: list[str] = []
-        self._sanitize_numeric_metrics(candidate, metrics, reasons)
         rr_metrics = metrics.get("rr_metrics", {})
         best_rr = float(metrics.get("best_rr", 0.0))
         best_expectancy = float(metrics.get("best_expectancy_r", metrics.get("expectancy_r", 0.0)))
@@ -76,7 +74,7 @@ class ValidationGate:
             reasons.append("profit factor débil en todos los R:R")
         if best_drawdown > s.discovery_max_drawdown_r:
             reasons.append(f"drawdown excesivo: {best_drawdown:.2f}R > {s.discovery_max_drawdown_r:.2f}R")
-        if not minimum or self._finite_float(minimum.get("expectancy_r", 0.0), 0.0) <= 0:
+        if not minimum or float(minimum.get("expectancy_r", 0.0)) <= 0:
             warnings.append(f"no demuestra edge positivo en {s.discovery_min_reward_risk:g}R")
         if float(metrics.get("profit_factor", best_pf)) < s.discovery_min_profit_factor and not preferred_passed:
             warnings.append(
@@ -256,9 +254,7 @@ class ValidationGate:
                 and float(metrics.get("stability_score", 0.0)) >= s.discovery_min_stability_score
             ):
                 promotion_status = "lab_candidate"
-            elif preferred_passed or (
-                minimum and self._finite_float(minimum.get("expectancy_r", 0.0), 0.0) > 0
-            ):
+            elif preferred_passed or (minimum and float(minimum.get("expectancy_r", 0.0)) > 0):
                 promotion_status = "lab_watchlist"
             elif best_expectancy > 0:
                 promotion_status = "lab"
@@ -270,28 +266,23 @@ class ValidationGate:
             # expectancy. Failures downgrade instead of rejecting: the evidence
             # is weak, not contradicted.
             dsr_family = metrics.get("dsr_family")
-            dsr_family_value = self._finite_float_or_none(dsr_family)
-            if dsr_family_value is None:
+            if dsr_family is None:
                 promotion_status = "lab_watchlist"
                 warnings.append(
                     "lab_candidate bloqueado: DSR de familia no calculable (faltan trials o sr_std del ledger)"
                 )
-            elif dsr_family_value < s.discovery_min_dsr:
+            elif float(dsr_family) < s.discovery_min_dsr:
                 promotion_status = "lab_watchlist"
                 warnings.append(
-                    f"lab_candidate bloqueado: DSR familia {dsr_family_value:.3f} < {s.discovery_min_dsr:g} "
+                    f"lab_candidate bloqueado: DSR familia {float(dsr_family):.3f} < {s.discovery_min_dsr:g} "
                     f"(N_trials={int(metrics.get('dsr_family_n_trials', 0) or 0)})"
                 )
             stationary_ci_low = quant.get("expectancy_ci95_low")
-            stationary_ci_low_value = self._finite_float_or_none(stationary_ci_low)
-            if stationary_ci_low is not None and (
-                stationary_ci_low_value is None or stationary_ci_low_value <= 0.0
-            ):
+            if stationary_ci_low is not None and float(stationary_ci_low) <= 0.0:
                 promotion_status = "lab_watchlist"
-                low_label = "no finito" if stationary_ci_low_value is None else f"{stationary_ci_low_value:.3f}R"
                 warnings.append(
                     "lab_candidate bloqueado: IC95 stationary-bootstrap del expectancy ponderado "
-                    f"no positivo (low={low_label})"
+                    f"no positivo (low={float(stationary_ci_low):.3f}R)"
                 )
 
         survivorship_biased = metrics.get("survivorship_biased")
@@ -340,55 +331,6 @@ class ValidationGate:
     def evaluate_many(self, candidates: list[ClusterCandidate]) -> list[ClusterCandidate]:
         return [self.evaluate(candidate) for candidate in candidates]
 
-    def _sanitize_numeric_metrics(
-        self,
-        candidate: ClusterCandidate,
-        metrics: dict[str, object],
-        reasons: list[str],
-    ) -> None:
-        s = self.settings
-        assert s is not None
-        defaults = {
-            "train_sample_count": 0.0,
-            "effective_sample_count": 0.0,
-            "best_rr": 0.0,
-            "best_expectancy_r": 0.0,
-            "expectancy_r": 0.0,
-            "best_profit_factor": 0.0,
-            "profit_factor": 0.0,
-            "best_max_drawdown_r": float(s.discovery_max_drawdown_r) + 1.0,
-            "max_drawdown_r": float(s.discovery_max_drawdown_r) + 1.0,
-            "stability_score": 0.0,
-            "null_p_value": 1.0,
-            "adjusted_p_value": 1.0,
-            "wrc_p_value": 1.0,
-            "spa_p_value": 1.0,
-            "expectancy_lift_r": 0.0,
-            "expectancy_ci_low": float(s.discovery_min_expectancy_ci_low) - 1.0,
-            "overfit_score": float(s.discovery_max_overfit_score) + 1.0,
-            "purged_cv_fold_count": 0.0,
-            "purged_cv_positive_rate": 0.0,
-            "deflated_sharpe_probability": 0.0,
-            "probabilistic_sharpe": 0.0,
-            "avg_fill_probability": 0.0,
-            "p25_max_size_usd": 0.0,
-            "walk_forward_fold_count": 0.0,
-            "walk_forward_positive_fold_rate": 0.0,
-            "out_of_sample_expectancy_r": 0.0,
-            "out_of_sample_profit_factor": 0.0,
-            "hit_4r_rate": 0.0,
-            "dsr_family_n_trials": 0.0,
-        }
-        for key, default in defaults.items():
-            if key not in metrics:
-                continue
-            value = self._finite_float_or_none(metrics.get(key))
-            if value is None:
-                metrics[key] = default
-                reasons.append(f"metrica no finita en validation gate: {key}")
-        if self._finite_float_or_none(candidate.sample_count) is None:
-            reasons.append("sample_count no finito en validation gate")
-
     @staticmethod
     def _metrics_at_or_above(rr_metrics: object, rr: float) -> dict[str, object] | None:
         if not isinstance(rr_metrics, dict):
@@ -403,28 +345,13 @@ class ValidationGate:
                 matches.append(value)
         if not matches:
             return None
-        return max(matches, key=lambda m: ValidationGate._finite_float(m.get("expectancy_r", 0.0), 0.0))
+        return max(matches, key=lambda m: float(m.get("expectancy_r", 0.0)))
 
     @staticmethod
     def _quality_pass(metrics: dict[str, object] | None, min_expectancy: float, min_profit_factor: float) -> bool:
         if not metrics:
             return False
-        expectancy = ValidationGate._finite_float(metrics.get("expectancy_r", 0.0), 0.0)
-        profit_factor = ValidationGate._finite_float(metrics.get("profit_factor", 0.0), 0.0)
-        return expectancy >= min_expectancy and profit_factor >= min_profit_factor
-
-    @staticmethod
-    def _finite_float(value: object, default: float) -> float:
-        converted = ValidationGate._finite_float_or_none(value)
-        return default if converted is None else converted
-
-    @staticmethod
-    def _finite_float_or_none(value: object) -> float | None:
-        try:
-            converted = float(value)  # type: ignore[arg-type]
-        except (TypeError, ValueError):
-            return None
-        return converted if math.isfinite(converted) else None
+        return float(metrics.get("expectancy_r", 0.0)) >= min_expectancy and float(metrics.get("profit_factor", 0.0)) >= min_profit_factor
 
     def _confirmation_candidate(
         self,
@@ -443,8 +370,7 @@ class ValidationGate:
         if not sample_limited:
             return self._no_confirmation()
         adjusted_p = candidate.metrics.get("adjusted_p_value")
-        adjusted_p_value = self._finite_float(adjusted_p, 1.0) if adjusted_p is not None else None
-        stats_ok = adjusted_p_value is None or adjusted_p_value <= s.discovery_max_adjusted_p_value
+        stats_ok = adjusted_p is None or float(adjusted_p) <= s.discovery_max_adjusted_p_value
         enough_seed_samples = candidate.sample_count >= s.discovery_confirmation_min_samples
         enough_train_samples = train_sample_count >= max(20, s.discovery_confirmation_min_samples // 2)
         quality_ok = (

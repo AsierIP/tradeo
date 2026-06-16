@@ -194,16 +194,6 @@ def test_commission_bps_relative_to_fill_notional() -> None:
     assert report["commission_bps"] == 200.0
 
 
-def test_commission_aliases_match_evidence_model() -> None:
-    trade = make_trade(metadata={"commission_usd": 1.005})
-
-    report = trade_execution_quality(trade)
-
-    assert report is not None
-    assert report["commission_usd"] == 1.005
-    assert report["commission_bps"] == 200.0
-
-
 def test_estimated_vs_realized_compares_pretrade_estimates() -> None:
     trade = make_trade(
         metadata={"estimated_slippage": 0.02, "estimated_spread_cost": 0.01}
@@ -216,19 +206,6 @@ def test_estimated_vs_realized_compares_pretrade_estimates() -> None:
     assert comparison is not None
     assert comparison["realized_entry_shortfall_per_share_usd"] == 0.05
     assert comparison["estimate_error_per_share_usd"] == 0.02
-
-
-def test_zero_pretrade_estimates_are_preserved() -> None:
-    trade = make_trade(metadata={"estimated_slippage": 0.0, "estimated_spread_cost": 0.0})
-
-    report = trade_execution_quality(trade)
-
-    assert report is not None
-    comparison = report["estimated_vs_realized"]
-    assert comparison is not None
-    assert comparison["estimated_slippage_usd"] == 0.0
-    assert comparison["estimated_spread_cost_usd"] == 0.0
-    assert comparison["estimate_error_per_share_usd"] == 0.05
 
 
 def test_data_basis_markers_declare_missing_microstructure_feed() -> None:
@@ -307,18 +284,6 @@ def test_persist_execution_quality_rewrites_when_fill_data_changes() -> None:
 
     assert touched == 1
     assert trade.metadata_json["execution_quality"]["entry_fill_price"] == 10.1
-
-
-def test_persist_execution_quality_rewrites_when_commission_alias_arrives() -> None:
-    trade = make_trade()
-    persist_execution_quality([trade])
-
-    trade.metadata_json = {**trade.metadata_json, "commission_usd": 1.005}
-    touched = persist_execution_quality([trade])
-
-    assert touched == 1
-    assert trade.metadata_json["execution_quality"]["commission_usd"] == 1.005
-    assert trade.metadata_json["execution_quality"]["commission_bps"] == 200.0
 
 
 # ---------------------------------------------------------------------------

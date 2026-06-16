@@ -421,13 +421,7 @@ def main() -> int:
         if str(row.get("trade_id") or "").strip()
     }
     fill_rows = build_ib_fills(laboratory_overview, exported_trade_ids=exported_trade_ids)
-    experiment_rows = build_experiment_registry(
-        patterns,
-        examples_by_pattern,
-        runs,
-        context,
-        event_rows_by_pattern=group_event_rows_by_pattern(event_rows),
-    )
+    experiment_rows = build_experiment_registry(patterns, examples_by_pattern, runs, context)
     metrics_pattern_rows = build_metrics_by_pattern(
         patterns,
         examples_by_pattern,
@@ -558,9 +552,7 @@ def pattern_id(pattern: dict[str, Any]) -> str:
 def normalize_ts(value: Any) -> str:
     if value is None or value == "":
         return ""
-    text = str(value).strip()
-    if " " in text and "T" not in text:
-        text = text.replace(" ", "T", 1)
+    text = str(value)
     if re.search(r"(Z|[+-]\d\d:\d\d)$", text):
         return text.replace("Z", "+00:00")
     if re.fullmatch(r"\d{4}-\d{2}-\d{2}", text):
@@ -888,48 +880,27 @@ def build_pattern_events(
                 "features_used_json": features,
                 "notes": f"stored_example_kind={example.get('kind', '')}; outcome_r={example.get('outcome_r', '')}; similarity={example.get('similarity', '')}",
             })
-    seen_match_events: set[tuple[str, str, str, str, str]] = set()
     for match in matches:
         pattern = pattern_by_id.get(int(match["pattern_id"]))
         if not pattern:
             continue
         matched_at = normalize_ts(match.get("matched_at"))
-        window_end = normalize_ts(match.get("window_end"))
         event_id = f"EVT_{pattern_id(pattern)}_MATCH_{int(match['id']):06d}"
         metrics = match.get("metrics_json") or {}
         features = metrics.get("features") or {}
         audit = metrics.get("entry_audit") or {}
         regime = metrics.get("regime") or {}
-        source_bar_hash = audit.get("source_bar_hash") or stable_hash(
-            {
-                "pattern_id": pattern_id(pattern),
-                "symbol": match.get("symbol"),
-                "timeframe": match.get("timeframe", pattern.get("timeframe", "1d")),
-                "window_end": window_end,
-                "features": features,
-            }
-        )
-        event_fingerprint = (
-            pattern_id(pattern),
-            str(match.get("symbol", "")).upper(),
-            str(match.get("timeframe", pattern.get("timeframe", "1d"))),
-            window_end,
-            str(source_bar_hash),
-        )
-        if event_fingerprint in seen_match_events:
-            continue
-        seen_match_events.add(event_fingerprint)
         rows.append({
             "event_id": event_id,
             "pattern_id": pattern_id(pattern),
             "detected_at": matched_at,
-            "market_timestamp": window_end,
+            "market_timestamp": normalize_ts(match.get("window_end")),
             "timezone": "UTC",
             "ticker": match.get("symbol", ""),
             "exchange": "SMART/IBKR",
             "timeframe": match.get("timeframe", pattern.get("timeframe", "1d")),
             "bar_open_time": "",
-            "bar_close_time": window_end,
+            "bar_close_time": normalize_ts(match.get("window_end")),
             "signal_price": match.get("entry_price", ""),
             "bid_at_signal": "",
             "ask_at_signal": "",
@@ -942,32 +913,21 @@ def build_pattern_events(
             "was_trade_triggered": "false",
             "trade_id": "",
             "reason_not_traded": "Current lab watchlist match; execution disabled/read-only and requires paper validation.",
-            "duplicate_group_id": f"DUP_{pattern_id(pattern)}_{match.get('symbol', '')}_{window_end}",
-            "is_independent_sample": "true",
+            "duplicate_group_id": f"DUP_{pattern_id(pattern)}_{match.get('symbol', '')}_{normalize_ts(match.get('window_end'))}",
+            "is_independent_sample": "pending_review",
             "data_available_at_signal": "true",
-            "available_data_cutoff_ts": audit.get("available_data_cutoff_ts") or window_end,
+            "available_data_cutoff_ts": audit.get("available_data_cutoff_ts") or normalize_ts(match.get("window_end")),
             "decision_ts": audit.get("decision_ts") or matched_at,
             "entry_eligible_ts": audit.get("entry_eligible_ts")
-            or next_eligible_ts(window_end, match.get("timeframe", pattern.get("timeframe", "1d"))),
+            or next_eligible_ts(match.get("window_end"), match.get("timeframe", pattern.get("timeframe", "1d"))),
             "label_generated_ts": audit.get("label_generated_ts") or "",
-            "source_bar_hash": source_bar_hash,
-            "split_id": audit.get("split_id") or "live_forward_scan_unlabeled",
+            "source_bar_hash": audit.get("source_bar_hash")
+            or stable_hash({"match": match.get("id"), "window_end": match.get("window_end"), "features": features}),
+            "split_id": audit.get("split_id") or "live_forward_scan",
             "features_used_json": features,
-            "notes": (
-                f"similarity={match.get('similarity')}; score={match.get('score')}; "
-                f"status={match.get('status')}; outcome_pending=true"
-            ),
+            "notes": f"similarity={match.get('similarity')}; score={match.get('score')}; status={match.get('status')}",
         })
     return rows
-
-
-def group_event_rows_by_pattern(event_rows: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
-    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    for row in event_rows:
-        pid = str(row.get("pattern_id") or "").strip()
-        if pid:
-            grouped[pid].append(row)
-    return grouped
 
 
 def build_paper_trades(patterns: list[dict[str, Any]], laboratory_overview: dict[str, Any]) -> list[dict[str, Any]]:
@@ -1135,12 +1095,9 @@ def build_experiment_registry(
     examples_by_pattern: dict[int, list[dict[str, Any]]],
     runs: list[dict[str, Any]],
     context: dict[str, Any],
-    *,
-    event_rows_by_pattern: dict[str, list[dict[str, Any]]] | None = None,
 ) -> list[dict[str, Any]]:
     run_by_id = {r.get("id"): r for r in runs}
     rows: list[dict[str, Any]] = []
-    export_global_trial_count = 0
     for pattern in patterns:
         examples = examples_by_pattern.get(int(pattern["id"]), [])
         first_seen, last_seen = min_max_times(examples)
@@ -1153,68 +1110,31 @@ def build_experiment_registry(
         nested_replay = nested_discovery_replay_metadata(research_metrics)
         registry = registry_metadata(research_metrics)
         edge_claim = edge_claim_metadata(research_metrics)
-        stored_event_ledger_hash = event_ledger_hash_metadata(research_metrics)
-        event_ledger_hash = stored_event_ledger_hash
-        audit_pattern_id = pattern_id(pattern)
-        pattern_event_rows = (event_rows_by_pattern or {}).get(audit_pattern_id, [])
-        if not event_ledger_hash:
-            event_ledger_hash = exported_event_ledger_hash(audit_pattern_id, pattern_event_rows)
-        used_export_event_hash = not stored_event_ledger_hash and bool(event_ledger_hash)
-        split_bounds = experiment_split_bounds(examples, research_metrics)
+        event_ledger_hash = event_ledger_hash_metadata(research_metrics)
         active_blockers = active_blockers_metadata(research_metrics)
         for rr_key, metrics in sorted(rr_metrics.items(), key=lambda item: str(item[0])):
             variant_id = f"RR_{str(rr_key).replace('.', '_')}"
-            candidate_trial_count = experiment_trial_count(pattern, research_metrics)
-            global_trial_count = metric_value(pattern, research_metrics, "global_trial_count", "")
-            if global_trial_count in ("", None):
-                export_global_trial_count += max(1, int(candidate_trial_count or 1))
-                global_trial_count = export_global_trial_count
-            else:
-                parsed_global_trial_count = first_positive_int(global_trial_count)
-                if parsed_global_trial_count is not None:
-                    export_global_trial_count = max(export_global_trial_count, parsed_global_trial_count)
-            parameters_json = {
-                "rr": metrics.get("rr", rr_key) if isinstance(metrics, dict) else rr_key,
-                "window_size": pattern.get("window_size"),
-                "cluster_id": pattern.get("cluster_id"),
-                "side": pattern.get("side"),
-                "run_params": params,
-            }
-            stored_run_manifest_hash = registry.get("run_manifest_hash") or registry.get("latest_run_manifest_hash")
-            run_manifest_hash = (
-                stored_run_manifest_hash
-                or audit_run_manifest_hash(pattern, run, context)
-            )
-            stored_registry_hash = registry.get("registry_hash") or registry.get("hash") or registry.get("sha256")
-            registry_hash = (
-                stored_registry_hash
-                or audit_registry_row_hash(
-                    pattern=pattern,
-                    variant_id=variant_id,
-                    parameters_json=parameters_json,
-                    run_manifest_hash=run_manifest_hash,
-                )
-            )
-            used_audit_registry_hash = not (stored_registry_hash and stored_run_manifest_hash)
-            registry_path = registry.get("path") or "audit_package:experiment_registry.csv"
-            registry_hash_chain_valid = registry.get("hash_chain_valid", "")
-            if registry_hash_chain_valid == "":
-                registry_hash_chain_valid = bool(registry_hash and run_manifest_hash)
             rows.append({
                 "experiment_id": f"EXP_{pattern_id(pattern)}_{variant_id}",
-                "pattern_id": audit_pattern_id,
+                "pattern_id": pattern_id(pattern),
                 "variant_id": variant_id,
                 "created_at": normalize_ts(pattern.get("created_at")),
                 "tested_at": normalize_ts(pattern.get("updated_at") or pattern.get("created_at")),
                 "status": status_for_experiment(pattern),
                 "reason_status": reason_for(pattern),
-                "parameters_json": parameters_json,
+                "parameters_json": {
+                    "rr": metrics.get("rr", rr_key) if isinstance(metrics, dict) else rr_key,
+                    "window_size": pattern.get("window_size"),
+                    "cluster_id": pattern.get("cluster_id"),
+                    "side": pattern.get("side"),
+                    "run_params": params,
+                },
                 "dataset_start": first_seen,
                 "dataset_end": last_seen,
-                "in_sample_start": split_bounds.get("in_sample_start") or first_seen,
-                "in_sample_end": split_bounds.get("in_sample_end", ""),
-                "out_of_sample_start": split_bounds.get("out_of_sample_start", ""),
-                "out_of_sample_end": split_bounds.get("out_of_sample_end") or last_seen,
+                "in_sample_start": first_seen,
+                "in_sample_end": "",
+                "out_of_sample_start": "",
+                "out_of_sample_end": last_seen,
                 "paper_live_start": "",
                 "paper_live_end": "",
                 "number_of_assets_tested": pattern.get("symbol_count", ""),
@@ -1227,8 +1147,8 @@ def build_experiment_registry(
                 "sharpe": "",
                 "sortino": "",
                 "max_drawdown": metrics.get("max_drawdown_r", pattern.get("best_max_drawdown_r", "")) if isinstance(metrics, dict) else "",
-                "candidate_trial_count": candidate_trial_count,
-                "global_trial_count": global_trial_count,
+                "candidate_trial_count": metric_value(pattern, research_metrics, "candidate_trial_count"),
+                "global_trial_count": metric_value(pattern, research_metrics, "global_trial_count"),
                 "adjusted_p_value": metric_value(pattern, research_metrics, "adjusted_p_value"),
                 "wrc_p_value": metric_value(pattern, research_metrics, "wrc_p_value"),
                 "spa_p_value": metric_value(pattern, research_metrics, "spa_p_value"),
@@ -1241,16 +1161,14 @@ def build_experiment_registry(
                 "edge_claim": edge_claim,
                 "drift_status": metric_value(pattern, research_metrics, "drift_status", pattern.get("drift_status", "")),
                 "active_blockers": "; ".join(active_blockers),
-                "registry_path": registry_path,
-                "registry_hash": registry_hash,
+                "registry_path": registry.get("path", ""),
+                "registry_hash": registry.get("registry_hash") or registry.get("hash") or registry.get("sha256") or "",
                 "registry_previous_hash": registry.get("previous_registry_hash", ""),
-                "registry_run_manifest_hash": run_manifest_hash,
-                "registry_hash_chain_valid": registry_hash_chain_valid,
-                "notes": experiment_notes(
-                    used_export_event_hash=used_export_event_hash,
-                    used_audit_registry_hash=used_audit_registry_hash,
-                    split_source=split_bounds.get("source", ""),
+                "registry_run_manifest_hash": (
+                    registry.get("run_manifest_hash") or registry.get("latest_run_manifest_hash") or ""
                 ),
+                "registry_hash_chain_valid": registry.get("hash_chain_valid", ""),
+                "notes": "Research variant metrics are in R units; no paper trade PnL exists yet.",
             })
     return rows
 
@@ -1266,7 +1184,7 @@ def nested_discovery_replay_metadata(metrics: dict[str, Any]) -> dict[str, Any]:
         if isinstance(hypothesis, dict):
             nested = hypothesis.get("nested_discovery_replay")
     if not isinstance(nested, dict):
-        return {"status": "not_recorded_legacy", "implemented": False, "passed": False}
+        return {}
     status = str(nested.get("status") or "").strip().lower()
     passed = truthy(nested.get("passed")) or status in {"passed", "pass", "ok", "complete", "completed"}
     return {
@@ -1292,7 +1210,7 @@ def edge_claim_metadata(metrics: dict[str, Any]) -> str:
             value = str(payload.get("edge_claim") or "").strip()
             if value:
                 return value
-    return "NO_DEMOSTRADO"
+    return ""
 
 
 def event_ledger_hash_metadata(metrics: dict[str, Any]) -> str:
@@ -1307,162 +1225,6 @@ def event_ledger_hash_metadata(metrics: dict[str, Any]) -> str:
             if value:
                 return value
     return ""
-
-
-def exported_event_ledger_hash(pattern_id_value: str, event_rows: list[dict[str, Any]]) -> str:
-    if not event_rows:
-        return ""
-    canonical_rows = [
-        {
-            "event_id": row.get("event_id", ""),
-            "market_timestamp": row.get("market_timestamp", ""),
-            "ticker": row.get("ticker", ""),
-            "timeframe": row.get("timeframe", ""),
-            "source_bar_hash": row.get("source_bar_hash", ""),
-            "split_id": row.get("split_id", ""),
-        }
-        for row in sorted(event_rows, key=lambda item: str(item.get("event_id", "")))
-    ]
-    return stable_hash(
-        {
-            "schema": "tradeo.audit_export.event_ledger_hash.v1",
-            "pattern_id": pattern_id_value,
-            "events": canonical_rows,
-        }
-    )
-
-
-def selection_split_metadata(metrics: dict[str, Any]) -> dict[str, Any]:
-    for key in ("selection_split",):
-        value = metrics.get(key)
-        if isinstance(value, dict):
-            return value
-    for key in ("research_hypothesis", "research_hypothesis_package"):
-        payload = metrics.get(key)
-        if isinstance(payload, dict) and isinstance(payload.get("selection_split"), dict):
-            return payload["selection_split"]
-    return {}
-
-
-def experiment_split_bounds(examples: list[dict[str, Any]], metrics: dict[str, Any]) -> dict[str, str]:
-    split = selection_split_metadata(metrics)
-    bounds = {
-        "in_sample_start": normalize_ts(split.get("train_start") or metrics.get("train_start")),
-        "in_sample_end": normalize_ts(split.get("train_end") or metrics.get("train_cutoff")),
-        "out_of_sample_start": normalize_ts(split.get("holdout_start") or metrics.get("holdout_start")),
-        "out_of_sample_end": normalize_ts(split.get("holdout_end") or metrics.get("holdout_end")),
-        "source": "selection_split" if split else "",
-    }
-    if bounds["out_of_sample_start"] and bounds["out_of_sample_end"]:
-        return bounds
-
-    derived = derived_holdout_bounds_from_examples(examples, metrics)
-    for key, value in derived.items():
-        if not bounds.get(key):
-            bounds[key] = value
-    if derived and not bounds.get("source"):
-        bounds["source"] = "exported_event_temporal_holdout"
-    return bounds
-
-
-def derived_holdout_bounds_from_examples(
-    examples: list[dict[str, Any]],
-    metrics: dict[str, Any],
-) -> dict[str, str]:
-    values = sorted(normalize_ts(example.get("window_end")) for example in examples if example.get("window_end"))
-    values = [value for value in values if value]
-    if len(values) < 2:
-        return {}
-    holdout_count = first_positive_int(
-        metrics.get("holdout_sample_count"),
-        metrics.get("out_of_sample_sample_count"),
-        (metrics.get("out_of_sample_metrics") or {}).get("sample_count")
-        if isinstance(metrics.get("out_of_sample_metrics"), dict)
-        else None,
-    )
-    if holdout_count is None:
-        holdout_count = max(1, int(round(len(values) * 0.2)))
-    holdout_count = min(max(1, holdout_count), len(values) - 1)
-    split_index = len(values) - holdout_count
-    return {
-        "in_sample_start": values[0],
-        "in_sample_end": values[split_index - 1],
-        "out_of_sample_start": values[split_index],
-        "out_of_sample_end": values[-1],
-    }
-
-
-def first_positive_int(*values: Any) -> int | None:
-    for value in values:
-        try:
-            parsed = int(float(value))
-        except (TypeError, ValueError):
-            continue
-        if parsed > 0:
-            return parsed
-    return None
-
-
-def experiment_trial_count(pattern: dict[str, Any], metrics: dict[str, Any]) -> int:
-    value = first_positive_int(
-        metrics.get("candidate_trial_count"),
-        metrics.get("real_variant_count"),
-        metrics.get("multiple_testing_trials"),
-        pattern.get("variant_count"),
-    )
-    if value is not None:
-        return value
-    rr_metrics = pattern.get("rr_metrics_json")
-    if isinstance(rr_metrics, dict) and rr_metrics:
-        return len(rr_metrics)
-    return 1
-
-
-def audit_run_manifest_hash(pattern: dict[str, Any], run: dict[str, Any], context: dict[str, Any]) -> str:
-    return stable_hash(
-        {
-            "schema": "tradeo.audit_export.run_manifest.v1",
-            "run_id": pattern.get("run_id"),
-            "run_params": run.get("params_json") or {},
-            "repo_commit": context.get("git_commit", ""),
-        }
-    )
-
-
-def audit_registry_row_hash(
-    *,
-    pattern: dict[str, Any],
-    variant_id: str,
-    parameters_json: dict[str, Any],
-    run_manifest_hash: str,
-) -> str:
-    return stable_hash(
-        {
-            "schema": "tradeo.audit_export.registry_row.v1",
-            "pattern_id": pattern_id(pattern),
-            "variant_id": variant_id,
-            "run_id": pattern.get("run_id"),
-            "created_at": normalize_ts(pattern.get("created_at")),
-            "parameters_json": parameters_json,
-            "run_manifest_hash": run_manifest_hash,
-        }
-    )
-
-
-def experiment_notes(
-    *,
-    used_export_event_hash: bool,
-    used_audit_registry_hash: bool,
-    split_source: str,
-) -> str:
-    notes = ["Research variant metrics are in R units; no paper trade PnL exists yet."]
-    if used_export_event_hash:
-        notes.append("event_ledger_hash derived from exported pattern_events.csv rows.")
-    if used_audit_registry_hash:
-        notes.append("registry hashes derived from audit export manifest inputs.")
-    if split_source:
-        notes.append(f"out_of_sample boundaries source={split_source}.")
-    return " ".join(notes)
 
 
 def active_blockers_metadata(metrics: dict[str, Any]) -> list[str]:

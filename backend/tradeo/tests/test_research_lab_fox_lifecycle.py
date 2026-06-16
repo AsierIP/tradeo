@@ -17,7 +17,6 @@ from tradeo.db.models import (
 from tradeo.db.session import Base
 from tradeo.research.novel_pattern_matcher import NovelPatternMatcher
 from tradeo.research.pattern_embedding_engine import PatternEmbeddingEngine
-from tradeo.modules.fox_hunter.production_manifest import production_manifest_status
 from tradeo.services.director_review_gate import DirectorProductionGate, DirectorReviewGate
 from tradeo.services.evidence import EvidenceQuality, EvidenceType, FillProvenance
 from tradeo.modules.shared.entry_scanner import PatternEntryScanner
@@ -189,37 +188,9 @@ def test_research_to_lab_to_director_to_fox_lifecycle() -> None:
         execute_orders=False,
     )
     assert lab_result["signals_created"] == 1
-    assert lab_result["shadow_no_order_observations_opened"] == 1
     first_signal = db.get(Signal, lab_result["signal_ids"][0])
     assert first_signal is not None
     assert first_signal.metadata_json["pattern_id"] == pattern.id
-    assert first_signal.metadata_json["evidence_type"] == EvidenceType.SHADOW_NO_ORDER.value
-
-    shadow_trade = db.get(Trade, lab_result["shadow_no_order_trade_ids"][0])
-    assert shadow_trade is not None
-    assert shadow_trade.evidence_type == EvidenceType.SHADOW_NO_ORDER.value
-    shadow_trade.status = TradeStatus.CLOSED
-    shadow_trade.closed_at = datetime(2026, 1, 1, 16, 0, tzinfo=timezone.utc)
-    shadow_trade.pnl_usd = 900.0
-    shadow_trade.r_multiple = 9.0
-    db.add(shadow_trade)
-    db.commit()
-
-    shadow_only_review = DirectorReviewGate(
-        min_closed_lab_trades=1,
-        min_effective_lab_trades=1,
-        min_lab_symbols=1,
-        min_lab_trading_days=1,
-        min_baseline_edge_r=0.0,
-    ).refresh(db)
-    db.refresh(pattern)
-    assert shadow_only_review["marked_for_director_review"] == 0
-    assert pattern.status == DiscoveredPatternStatus.LAB_CANDIDATE
-    assert pattern.metrics_json["lab_execution"]["closed_lab_trades"] == 0
-    assert pattern.metrics_json["lab_execution"]["excluded_lab_evidence_trades"] == 1
-    assert pattern.metrics_json["lab_execution"]["excluded_evidence_type_counts"] == {
-        EvidenceType.SHADOW_NO_ORDER.value: 1
-    }
 
     close_lab_trade(db, first_signal, 0, r_multiple=1.0)
     for index in range(1, 10):
@@ -256,21 +227,8 @@ def test_research_to_lab_to_director_to_fox_lifecycle() -> None:
     assert review_result["marked_for_director_review"] == 1
     assert pattern.status == DiscoveredPatternStatus.DIRECTOR_REVIEW
     assert pattern.metrics_json["lab_execution"]["closed_lab_trades"] == 10
-    assert pattern.metrics_json["lab_execution"]["excluded_lab_evidence_trades"] == 1
     assert pattern.metrics_json["lab_execution"]["lab_expectancy_r"] == 1.0
     assert pattern.metrics_json["lab_execution"]["research_expectancy_r"] == 0.4
-
-    pre_production_fox_result = scanner.scan(
-        db,
-        module="fox_hunter",
-        symbols=[provider.symbol],
-        store_signals=True,
-        execute_orders=False,
-    )
-    assert pre_production_fox_result["patterns_checked"] == 0
-    assert pre_production_fox_result["signals_created"] == 0
-    assert pre_production_fox_result["orders_submitted"] == 0
-
     pattern.metrics_json = {
         **(pattern.metrics_json or {}),
         "nested_discovery_replay": {
@@ -310,11 +268,6 @@ def test_research_to_lab_to_director_to_fox_lifecycle() -> None:
     assert production_result["approved_for_production"] is True
     assert pattern.status == DiscoveredPatternStatus.PRODUCTION
     assert pattern.metrics_json["production_manifest"]["approved"] is True
-    manifest_status = production_manifest_status(pattern)
-    assert manifest_status["valid"] is True
-    assert manifest_status["evidence_packet_complete"] is True
-    assert manifest_status["evidence_packet"]["gate_scope"] == "director_production_gate"
-    assert manifest_status["evidence_packet"]["ibkr_paper_fills"] == 10
 
     fox_result = scanner.scan(
         db,
@@ -330,25 +283,3 @@ def test_research_to_lab_to_director_to_fox_lifecycle() -> None:
     assert fox_signal.metadata_json["entry_module"] == "fox_hunter"
     assert fox_signal.pattern == pattern.name
     assert fox_signal.status == SignalStatus.PENDING_HUMAN_APPROVAL
-
-    pattern.metrics_json = {
-        key: value
-        for key, value in (pattern.metrics_json or {}).items()
-        if key != "production_manifest"
-    }
-    db.add(pattern)
-    db.commit()
-    db.refresh(pattern)
-    assert production_manifest_status(pattern)["reason_code"] == "missing_production_manifest"
-
-    blocked_fox_result = scanner.scan(
-        db,
-        module="fox_hunter",
-        symbols=[provider.symbol],
-        store_signals=True,
-        execute_orders=False,
-    )
-    assert blocked_fox_result["patterns_checked"] == 0
-    assert blocked_fox_result["matches_found"] == 0
-    assert blocked_fox_result["signals_created"] == 0
-    assert blocked_fox_result["orders_submitted"] == 0

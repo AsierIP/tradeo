@@ -10,8 +10,6 @@ from tradeo.research.pattern_embedding_engine import PatternEmbeddingEngine
 from tradeo.research.types import ForwardOutcome, WindowSample
 from tradeo.services.technical_indicators import atr, normalize_ohlcv
 
-_LINEAGE_COLUMNS = ("adjusted", "what_to_show", "bar_complete")
-
 
 @dataclass(slots=True)
 class WindowSampler:
@@ -37,29 +35,22 @@ class WindowSampler:
         max_windows_per_symbol: int = 450,
         benchmark_frames: dict[str, pd.DataFrame] | None = None,
     ) -> list[WindowSample]:
-        window_sizes = sorted({int(size) for size in window_sizes if int(size) >= 10})
-        if not window_sizes:
-            return []
+        df = normalize_ohlcv(df).dropna()
         forward_bars = sorted({int(x) for x in forward_bars if int(x) > 0})
         if not forward_bars:
             raise ValueError("at least one forward horizon is required")
-        max_windows_per_symbol = max(0, int(max_windows_per_symbol))
-        if max_windows_per_symbol == 0:
-            return []
-        stride = max(1, int(stride))
-        df = self._normalize_with_lineage(df).dropna(subset=["open", "high", "low", "close", "volume"])
         max_forward = max(forward_bars)
         if len(df) < max(window_sizes) + max_forward + 5:
             return []
 
         atr_series = atr(df, 14).bfill().fillna(df["close"] * self.min_risk_pct)
         samples: list[WindowSample] = []
-        for window_size in window_sizes:
+        for window_size in sorted({int(x) for x in window_sizes if int(x) >= 10}):
             if len(df) < window_size + max_forward + 2:
                 continue
             # Sample from old to new. A stride keeps the system cheap enough to
             # run continuously, while still covering overlapping market states.
-            for end_pos in range(window_size - 1, len(df) - max_forward - 1, stride):
+            for end_pos in range(window_size - 1, len(df) - max_forward - 1, max(1, stride)):
                 window = df.iloc[end_pos - window_size + 1 : end_pos + 1]
                 future = df.iloc[end_pos + 1 : end_pos + 1 + max_forward]
                 if future.empty:
@@ -105,19 +96,6 @@ class WindowSampler:
                 if len(samples) >= max_windows_per_symbol:
                     return samples
         return samples
-
-    @staticmethod
-    def _normalize_with_lineage(df: pd.DataFrame) -> pd.DataFrame:
-        raw = df.copy()
-        if isinstance(raw.columns, pd.MultiIndex):
-            raw.columns = [str(column[0]).lower() for column in raw.columns]
-        else:
-            raw.columns = [str(column).lower().replace(" ", "_") for column in raw.columns]
-        out = normalize_ohlcv(df)
-        lineage_columns = [column for column in _LINEAGE_COLUMNS if column in raw.columns]
-        if lineage_columns:
-            out = out.join(raw[lineage_columns].reindex(out.index), how="left")
-        return out
 
     def _forward_outcome(
         self,

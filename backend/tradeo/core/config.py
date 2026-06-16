@@ -296,7 +296,6 @@ class Settings(BaseSettings):
     ibkr_connect_timeout_seconds: float = 8.0
     ibkr_order_timeout_seconds: float = 20.0
     ibkr_max_order_value_usd: float = 1500.0
-    ibkr_paper_bracket_max_distance_pct: float = 0.20
     ibkr_allow_market_orders: bool = False
     ibkr_allowed_symbols: str = ""
 

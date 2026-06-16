@@ -38,7 +38,7 @@ import numpy as np
 from sqlalchemy.orm import Session
 
 from tradeo.db.models import AgentMessageSeverity, AuditLog, Trade
-from tradeo.services.evidence import COMMISSION_KEYS, REAL_FILL_PROVENANCE
+from tradeo.services.evidence import REAL_FILL_PROVENANCE
 from tradeo.services.agent_messages import build_idempotency_key, publish_agent_message
 from tradeo.services.implementation_shortfall import trade_slippage_r
 
@@ -90,28 +90,6 @@ def _positive_float(value: Any) -> float | None:
     return number if number > 0 else None
 
 
-def _non_negative_float(value: Any) -> float | None:
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return None
-    return number if number >= 0 else None
-
-
-def _first_float_for_keys(metadata: dict[str, Any], keys: tuple[str, ...]) -> float | None:
-    for key in keys:
-        value = metadata.get(key)
-        if value is None or value == "":
-            continue
-        try:
-            number = float(value)
-        except (TypeError, ValueError):
-            continue
-        if np.isfinite(number):
-            return number
-    return None
-
-
 def trade_execution_quality(trade: Trade) -> dict[str, Any] | None:
     """Entry-quality report for one real-fill trade, or None.
 
@@ -144,7 +122,11 @@ def trade_execution_quality(trade: Trade) -> dict[str, Any] | None:
         if delta >= 0:
             time_to_fill_s = round(delta, 3)
 
-    commission_usd = _first_float_for_keys(metadata, COMMISSION_KEYS)
+    commission_usd: float | None
+    try:
+        commission_usd = float(metadata.get("commission"))
+    except (TypeError, ValueError):
+        commission_usd = None
     notional = fill_entry * abs(int(trade.qty or 0))
     commission_bps = (
         round(abs(commission_usd) / notional * 10_000.0, 4)
@@ -152,8 +134,8 @@ def trade_execution_quality(trade: Trade) -> dict[str, Any] | None:
         else None
     )
 
-    estimated_slippage = _non_negative_float(metadata.get("estimated_slippage"))
-    estimated_spread_cost = _non_negative_float(metadata.get("estimated_spread_cost"))
+    estimated_slippage = _positive_float(metadata.get("estimated_slippage"))
+    estimated_spread_cost = _positive_float(metadata.get("estimated_spread_cost"))
     estimated_vs_realized: dict[str, Any] | None = None
     if estimated_slippage is not None or estimated_spread_cost is not None:
         estimated_total = (estimated_slippage or 0.0) + (estimated_spread_cost or 0.0)
@@ -204,9 +186,7 @@ def persist_execution_quality(trades: Iterable[Trade]) -> int:
                 "entry_fill_price",
                 "entry_slippage_bps",
                 "time_to_fill_s",
-                "commission_usd",
                 "commission_bps",
-                "estimated_vs_realized",
             )
         ):
             continue

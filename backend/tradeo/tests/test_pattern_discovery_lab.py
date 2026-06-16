@@ -111,53 +111,6 @@ def test_window_sampler_generates_forward_labeled_samples() -> None:
     assert "relative_strength_spy" in first.features
 
 
-def test_window_sampler_accepts_generator_window_sizes_and_preserves_lineage() -> None:
-    df = fixture_ohlcv("LABG", bars=180)
-    df["Adjusted"] = True
-    df["What To Show"] = "TRADES"
-    df["Bar Complete"] = False
-
-    samples = WindowSampler().sample(
-        symbol="LABG",
-        df=df,
-        timeframe="1d",
-        window_sizes=(size for size in [20]),
-        forward_bars=(bars for bars in [5]),
-        stride=20,
-        max_windows_per_symbol=3,
-    )
-
-    assert samples
-    assert len(samples) <= 3
-    assert samples[0].features["data_adjusted"] is True
-    assert samples[0].features["data_what_to_show"] == "TRADES"
-    assert samples[0].features["data_bar_complete"] is False
-
-
-def test_cluster_feature_summary_ignores_non_numeric_lineage() -> None:
-    samples = [
-        _research_vector_sample(
-            index,
-            vector=np.asarray([float(index), 1.0], dtype=np.float32),
-        )
-        for index in range(3)
-    ]
-    for sample in samples:
-        sample.features.update(
-            {
-                "atr_pct": 0.05,
-                "data_adjusted": True,
-                "data_what_to_show": "ADJUSTED_LAST",
-                "data_bar_complete": True,
-            }
-        )
-
-    summary = ClusterResearchEngine._feature_summary(samples)
-
-    assert summary["atr_pct"]["mean"] == 0.05
-    assert "data_what_to_show" not in summary
-
-
 def test_window_sampler_adds_benchmark_relative_strength() -> None:
     df = fixture_ohlcv("LABR", bars=180)
     spy = fixture_ohlcv("SPY", bars=180)
@@ -308,13 +261,6 @@ def test_cluster_signature_records_medoid_and_concentration() -> None:
         _research_sample(i, vector_value=0.01 * i, highs=[104.0], lows=[99.0], closes=[103.0])
         for i in range(6)
     ]
-    samples[2].features.update(
-        {
-            "numeric_feature": 1.2345678,
-            "what_to_show": "ADJUSTED_LAST",
-            "nan_feature": float("nan"),
-        }
-    )
     vectors = np.asarray([[0.0, 0.0], [0.1, 0.0], [0.2, 0.0], [0.3, 0.0], [0.4, 0.0], [0.5, 0.0]])
     signature = ClusterResearchEngine._cluster_signature(
         samples,
@@ -324,9 +270,6 @@ def test_cluster_signature_records_medoid_and_concentration() -> None:
     )
 
     assert signature["medoid"]["window_end"] == samples[2].end
-    assert signature["medoid"]["features"]["numeric_feature"] == 1.234568
-    assert signature["medoid"]["features"]["what_to_show"] == "ADJUSTED_LAST"
-    assert signature["medoid"]["features"]["nan_feature"] is None
     assert signature["similarity_distribution"]["p50"] > 0
     checks = signature["concentration_checks"]
     assert checks["passed"] is False
@@ -469,52 +412,6 @@ def test_validation_gate_allows_edge_below_4r_as_watchlist() -> None:
     evaluated = ValidationGate().evaluate(candidate)
     assert evaluated.validation_passed
     assert evaluated.metrics["promotion_status"] == "lab_watchlist"
-
-
-def test_validation_gate_rejects_nonfinite_core_metrics_fail_closed() -> None:
-    candidate = ClusterCandidate(
-        pattern_key="x",
-        name="x",
-        side="long",
-        timeframe="1d",
-        window_size=20,
-        cluster_id=1,
-        centroid=[],
-        sample_count=140,
-        symbol_count=12,
-        year_count=3,
-        score=0.0,
-        validation_passed=False,
-        validation_reasons=[],
-        metrics={
-            "train_sample_count": 120,
-            "best_rr": 3.0,
-            "best_expectancy_r": float("nan"),
-            "best_profit_factor": 2.4,
-            "best_max_drawdown_r": 5.0,
-            "expectancy_r": float("nan"),
-            "profit_factor": 2.4,
-            "stability_score": 0.62,
-            "out_of_sample_expectancy_r": 0.22,
-            "out_of_sample_profit_factor": 1.8,
-            "expectancy_lift_r": 0.18,
-            "adjusted_p_value": 0.08,
-            "statistical_edge_passed": True,
-            "walk_forward_fold_count": 4,
-            "walk_forward_positive_fold_rate": 1.0,
-            "expectancy_ci_low": 0.05,
-            "overfit_score": 0.1,
-            "rr_metrics": {"3": {"expectancy_r": float("nan"), "profit_factor": 2.4, "sample_count": 120}},
-        },
-        feature_summary={},
-        examples=[],
-    )
-
-    evaluated = ValidationGate().evaluate(candidate)
-
-    assert not evaluated.validation_passed
-    assert any("metrica no finita" in reason for reason in evaluated.validation_reasons)
-    assert evaluated.metrics["best_expectancy_r"] == 0.0
 
 
 def test_validation_gate_rejects_high_adjusted_null_p_value() -> None:

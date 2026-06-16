@@ -11,7 +11,6 @@ from tradeo.schemas import TradeOut
 from tradeo.services.ibkr_broker import IBKRBroker, IBKROperationalError, IBKRSafetyError
 from tradeo.services.ibkr_data_provider import inspect_ibkr_connection
 from tradeo.services.order_outcomes import mark_signal_order_failure
-from tradeo.services.reconciliation import ReconciliationService
 
 router = APIRouter(prefix="/ibkr", tags=["ibkr"])
 
@@ -50,14 +49,6 @@ async def ibkr_positions(_: str = Depends(require_admin)) -> list[dict[str, obje
 async def ibkr_open_orders(_: str = Depends(require_admin)) -> list[dict[str, object]]:
     try:
         return await _run_ibkr_call(IBKRBroker().open_orders)
-    except (IBKROperationalError, RuntimeError, ValueError, OSError) as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
-
-
-@router.post("/reconcile")
-async def ibkr_reconcile(_: str = Depends(require_admin)) -> dict[str, object]:
-    try:
-        return await _run_ibkr_call(_reconcile_sync)
     except (IBKROperationalError, RuntimeError, ValueError, OSError) as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
@@ -124,13 +115,5 @@ def _submit_signal_bracket_sync(signal_id: int, reason: str):
             mark_signal_order_failure(signal, str(exc))
             db.commit()
             raise
-    finally:
-        db.close()
-
-
-def _reconcile_sync() -> dict[str, object]:
-    db = SessionLocal()
-    try:
-        return ReconciliationService().reconcile(db)
     finally:
         db.close()

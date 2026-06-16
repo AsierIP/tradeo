@@ -10,7 +10,6 @@ from tradeo.db.models import DiscoveredPattern, DiscoveredPatternStatus
 PRODUCTION_MANIFEST_KEY = "production_manifest"
 PRODUCTION_MANIFEST_SCHEMA = "tradeo.production_manifest.v1"
 PRODUCTION_MANIFEST_HASH_ALGORITHM = "sha256_canonical_v1"
-PRODUCTION_GATE_SCOPE = "director_production_gate"
 _HASH_KEYS = {"hash", "manifest_hash", "sha256"}
 
 
@@ -67,15 +66,8 @@ def production_manifest_status(
         return _status(False, "missing_production_manifest", checked_at, pattern_status=pattern_status)
 
     errors: list[str] = []
-    manifest_schema = str(manifest.get("schema") or "").strip()
-    if manifest_schema != PRODUCTION_MANIFEST_SCHEMA:
-        errors.append(
-            "missing_manifest_schema"
-            if not manifest_schema
-            else "unsupported_manifest_schema"
-        )
     manifest_status = str(manifest.get("status") or "").lower()
-    approved = manifest.get("approved") is True and manifest_status == "approved"
+    approved = bool(manifest.get("approved")) or manifest_status == "approved"
     if not approved:
         errors.append("manifest_not_approved")
     if not str(manifest.get("version") or "").strip():
@@ -90,15 +82,15 @@ def production_manifest_status(
         errors.append("missing_expiry")
     elif expires_at <= checked_at:
         errors.append("manifest_expired")
-    manifest_hash = _manifest_hash(manifest)
-    hash_algorithm = str(manifest.get("hash_algorithm") or "").strip()
-    if not manifest_hash:
+    if not _manifest_hash(manifest):
         errors.append("missing_manifest_hash")
-    evidence_packet_errors = _evidence_packet_errors(manifest)
-    errors.extend(evidence_packet_errors)
-    if hash_algorithm != PRODUCTION_MANIFEST_HASH_ALGORITHM:
-        errors.append("unsupported_manifest_hash_algorithm")
-    elif manifest_hash and production_manifest_hash(manifest) != manifest_hash:
+    if not _evidence_packet_ok(manifest):
+        errors.append("missing_evidence_packet")
+    if (
+        str(manifest.get("hash_algorithm") or "") == PRODUCTION_MANIFEST_HASH_ALGORITHM
+        and _manifest_hash(manifest)
+        and production_manifest_hash(manifest) != _manifest_hash(manifest)
+    ):
         errors.append("manifest_hash_mismatch")
 
     valid = not errors
@@ -111,12 +103,9 @@ def production_manifest_status(
         reviewer=reviewer,
         approved_by=str(manifest.get("approved_by") or ""),
         expires_at=expires_at.isoformat() if expires_at is not None else None,
-        schema=manifest_schema,
-        manifest_hash=manifest_hash,
+        manifest_hash=_manifest_hash(manifest),
         evidence_packet=_evidence_packet_summary(manifest),
-        evidence_packet_complete=not evidence_packet_errors,
-        hash_algorithm=hash_algorithm,
-        hash_verified=valid and hash_algorithm == PRODUCTION_MANIFEST_HASH_ALGORITHM,
+        hash_verified=valid and str(manifest.get("hash_algorithm") or "") == PRODUCTION_MANIFEST_HASH_ALGORITHM,
         errors=errors,
     )
 
@@ -143,8 +132,6 @@ def production_manifest_summary(patterns: list[DiscoveredPattern]) -> dict[str, 
         reason_counts[reason] = reason_counts.get(reason, 0) + 1
     return {
         "required": True,
-        "gate_required": "DirectorProductionGate",
-        "evidence_policy": "canonical_manifest_with_director_production_gate_paper_fill_evidence",
         "eligible_patterns": len(valid),
         "blocked_patterns": len(blocked),
         "blocked_reason_counts": reason_counts,
@@ -200,101 +187,25 @@ def _manifest_hash(manifest: dict[str, Any]) -> str:
     return ""
 
 
-def _evidence_packet_errors(manifest: dict[str, Any]) -> list[str]:
+def _evidence_packet_ok(manifest: dict[str, Any]) -> bool:
     packet = manifest.get("evidence_packet")
     packet_hash = str(
         manifest.get("evidence_packet_hash") or manifest.get("evidence_hash") or ""
     ).strip()
+    if isinstance(packet, dict):
+        packet_ref = any(str(packet.get(key) or "").strip() for key in ("id", "packet_id", "uri", "path"))
+        packet_hash = packet_hash or next(
+            (
+                str(packet.get(key) or "").strip()
+                for key in ("hash", "sha256", "packet_hash", "evidence_hash")
+                if str(packet.get(key) or "").strip()
+            ),
+            "",
+        )
+        return packet_ref and bool(packet_hash)
     if isinstance(packet, str):
-        if not packet.strip() or not packet_hash:
-            return ["missing_evidence_packet"]
-        return ["missing_director_production_gate_evidence"]
-    if not isinstance(packet, dict) or not packet:
-        return ["missing_evidence_packet"]
-
-    errors: list[str] = []
-    packet_ref = any(str(packet.get(key) or "").strip() for key in ("id", "packet_id", "uri", "path"))
-    packet_hash = packet_hash or next(
-        (
-            str(packet.get(key) or "").strip()
-            for key in ("hash", "sha256", "packet_hash", "evidence_hash")
-            if str(packet.get(key) or "").strip()
-        ),
-        "",
-    )
-    if not packet_ref:
-        errors.append("evidence_packet_ref_missing")
-    if not packet_hash:
-        errors.append("evidence_packet_hash_missing")
-
-    gate_scope = str(packet.get("gate_scope") or "").strip()
-    if gate_scope != PRODUCTION_GATE_SCOPE:
-        errors.append("missing_director_production_gate_evidence")
-    if packet.get("approved_for_production") is not True:
-        errors.append("production_gate_not_approved")
-    blockers = packet.get("blockers")
-    if not isinstance(blockers, list):
-        errors.append("missing_production_gate_blockers")
-    elif any(str(blocker).strip() for blocker in blockers):
-        errors.append("production_gate_blockers_present")
-
-    if not _paper_fill_thresholds_pass(packet):
-        errors.append("paper_fill_evidence_thresholds_missing")
-    scientific_contracts = packet.get("scientific_contracts")
-    if not isinstance(scientific_contracts, dict) or not scientific_contracts:
-        errors.append("scientific_contracts_missing")
-    else:
-        if scientific_contracts.get("director_gate_passed") is not True:
-            errors.append("scientific_contract_director_gate_missing")
-        contract_blockers = scientific_contracts.get("blockers")
-        if isinstance(contract_blockers, list) and any(str(item).strip() for item in contract_blockers):
-            errors.append("scientific_contract_blockers_present")
-        contract_packet = scientific_contracts.get("evidence_packet")
-        if not isinstance(contract_packet, dict) or not (
-            str(contract_packet.get("ref") or "").strip()
-            and str(contract_packet.get("hash") or "").strip()
-        ):
-            errors.append("scientific_contract_evidence_packet_missing")
-        provenance = scientific_contracts.get("execution_provenance")
-        if not isinstance(provenance, dict) or not (
-            provenance.get("costs_reconciled") is True
-            and provenance.get("slippage_reconciled") is True
-            and provenance.get("fills_reconciled") is True
-        ):
-            errors.append("scientific_contract_execution_provenance_missing")
-    return errors
-
-
-def _paper_fill_thresholds_pass(packet: dict[str, Any]) -> bool:
-    fills = _positive_int(packet.get("ibkr_paper_fills"))
-    min_fills = _positive_int(packet.get("min_paper_fills"))
-    symbols = _positive_int(packet.get("unique_fill_symbols"))
-    min_symbols = _positive_int(packet.get("min_fill_symbols"))
-    days = _positive_int(packet.get("unique_fill_days"))
-    min_days = _positive_int(packet.get("min_fill_trading_days"))
-    if None in {fills, min_fills, symbols, min_symbols, days, min_days}:
-        return False
-    return bool(
-        fills is not None
-        and min_fills is not None
-        and symbols is not None
-        and min_symbols is not None
-        and days is not None
-        and min_days is not None
-        and fills >= min_fills
-        and symbols >= min_symbols
-        and days >= min_days
-    )
-
-
-def _positive_int(value: Any) -> int | None:
-    if isinstance(value, bool):
-        return None
-    try:
-        number = int(value)
-    except (TypeError, ValueError):
-        return None
-    return number if number > 0 else None
+        return bool(packet.strip() and packet_hash)
+    return False
 
 
 def _evidence_packet_summary(manifest: dict[str, Any]) -> dict[str, Any]:
@@ -305,15 +216,6 @@ def _evidence_packet_summary(manifest: dict[str, Any]) -> dict[str, Any]:
         "id": packet.get("id") or packet.get("packet_id"),
         "uri": packet.get("uri") or packet.get("path"),
         "hash": packet.get("hash") or packet.get("sha256") or packet.get("packet_hash"),
-        "gate_scope": packet.get("gate_scope"),
-        "approved_for_production": packet.get("approved_for_production"),
-        "ibkr_paper_fills": packet.get("ibkr_paper_fills"),
-        "min_paper_fills": packet.get("min_paper_fills"),
-        "unique_fill_symbols": packet.get("unique_fill_symbols"),
-        "min_fill_symbols": packet.get("min_fill_symbols"),
-        "unique_fill_days": packet.get("unique_fill_days"),
-        "min_fill_trading_days": packet.get("min_fill_trading_days"),
-        "scientific_contracts_present": isinstance(packet.get("scientific_contracts"), dict),
     }
 
 

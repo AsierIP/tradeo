@@ -181,8 +181,6 @@ def test_research_director_writes_memory_graph_papers_and_agenda(tmp_path: Path)
         _sample(i, symbol=f"S{i % 6}", year=2021 + i % 3, win=i % 5 != 0)
         for i in range(36)
     ]
-    for sample in samples:
-        sample.features["data_what_to_show"] = "ADJUSTED_LAST"
     replay = MarketReplayEngine().analyze(samples, "long", 3.0)
     causal = CausalInvariantTester(min_bucket_samples=1).analyze(samples, "long", 3.0)
     teacher = FoundationChartTeacher().analyze(samples, side="long", rr=3.0, baseline_samples=samples)

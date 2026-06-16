@@ -40,9 +40,7 @@ def module_overview(db: Session, module: EntryModule, *, limit: int = 80) -> dic
         if _trade_module(trade) == module or (trade.signal_id in signal_ids)
     ][:limit]
     signal_trade_statuses = _signal_trade_statuses(all_trades)
-    trades = _dashboard_trades(
-        [trade for trade in all_trades if _status_value(trade.status) != "cancelled"]
-    )
+    trades = [trade for trade in all_trades if _status_value(trade.status) != "cancelled"]
     execution_trades = [trade for trade in trades if _is_normal_fill_evidence(trade)]
     pnl_points = _pnl_points(list(reversed(execution_trades)))
     total_pnl = pnl_points[-1]["total_pnl_usd"] if pnl_points else 0.0
@@ -154,46 +152,6 @@ def _pnl_points(trades: list[Trade]) -> list[dict[str, Any]]:
             }
         )
     return points
-
-
-def _dashboard_trades(trades: list[Trade]) -> list[Trade]:
-    visible: list[Trade] = []
-    active_exposures: dict[tuple[str, str, str], Trade] = {}
-    for trade in trades:
-        if _status_value(trade.status) != "open":
-            visible.append(trade)
-            continue
-        key = _active_exposure_key(trade)
-        current = active_exposures.get(key)
-        if current is None or _dashboard_trade_priority(trade) > _dashboard_trade_priority(current):
-            active_exposures[key] = trade
-    active_ids = {trade.id for trade in active_exposures.values()}
-    for trade in trades:
-        if _status_value(trade.status) != "open":
-            continue
-        if trade.id not in active_ids:
-            continue
-        visible.append(trade)
-    return visible
-
-
-def _active_exposure_key(trade: Trade) -> tuple[str, str, str]:
-    return (
-        str(trade.symbol or "").upper(),
-        str(trade.side or "").lower(),
-        f"{float(trade.entry or 0.0):.4f}",
-    )
-
-
-def _dashboard_trade_priority(trade: Trade) -> int:
-    evidence_type = _trade_evidence_type(trade)
-    if _is_normal_fill_evidence(trade):
-        return 3
-    if evidence_type in {"ibkr_paper_order", "live_order"} or trade.broker_order_id:
-        return 2
-    if evidence_type not in SHADOW_EVIDENCE_TYPES:
-        return 1
-    return 0
 
 
 def _status_value(status: Any) -> str:

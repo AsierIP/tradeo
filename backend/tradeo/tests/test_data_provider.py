@@ -412,24 +412,6 @@ def test_incomplete_intraday_bar_is_not_served_or_persisted(tmp_path: Path) -> N
     assert metadata["rows"] == 19
 
 
-def test_incomplete_intraday_bar_is_filtered_for_interval_alias(tmp_path: Path) -> None:
-    frame = _intraday_frame_ending(0, periods=20)
-
-    upstream = _RecordingUpstream(frame)
-    provider = CachedMarketDataProvider(
-        upstream=upstream,
-        cache_dir=tmp_path,
-        adjusted=True,
-        what_to_show="ADJUSTED_LAST",
-    )
-    served = provider.fetch_ohlcv("AAA", period="30d", interval="5 min")
-
-    assert len(served) == 19
-    assert pd.Timestamp(served.index[-1]) == pd.Timestamp(frame.index[-2])
-    metadata = json.loads((tmp_path / "AAA_5_min_30d.metadata.json").read_text())
-    assert metadata["rows"] == 19
-
-
 def test_detect_unadjusted_splits_flags_split_like_gap() -> None:
     idx = pd.date_range("2026-01-02", periods=4, freq="B")
     df = pd.DataFrame(

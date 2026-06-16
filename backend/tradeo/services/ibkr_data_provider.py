@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import math
 import random
 import threading
 from dataclasses import dataclass
@@ -28,46 +27,23 @@ def _duration_from_period(period: str) -> str:
     if p.endswith("y"):
         return f"{int(p[:-1])} Y"
     if p.endswith("mo"):
-        months = int(p[:-2])
-        if months > 12:
-            return f"{math.ceil(months / 12)} Y"
-        return f"{months} M"
+        return f"{int(p[:-2])} M"
     if p.endswith("d"):
         return f"{int(p[:-1])} D"
     return "2 Y"
 
 
 def _bar_size_from_interval(interval: str) -> str:
-    interval_key = " ".join(str(interval).strip().lower().split())
     mapping = {
         "1d": "1 day",
-        "1day": "1 day",
-        "1 day": "1 day",
         "1wk": "1 week",
-        "1 week": "1 week",
         "1h": "1 hour",
-        "60m": "1 hour",
-        "60min": "1 hour",
-        "60 min": "1 hour",
-        "60 mins": "1 hour",
-        "1 hour": "1 hour",
         "30m": "30 mins",
-        "30min": "30 mins",
-        "30 min": "30 mins",
-        "30 mins": "30 mins",
         "15m": "15 mins",
-        "15min": "15 mins",
-        "15 min": "15 mins",
-        "15 mins": "15 mins",
         "5m": "5 mins",
-        "5min": "5 mins",
-        "5 min": "5 mins",
-        "5 mins": "5 mins",
         "1m": "1 min",
-        "1min": "1 min",
-        "1 min": "1 min",
     }
-    return mapping.get(interval_key, "1 day")
+    return mapping.get(interval.lower(), "1 day")
 
 
 def _ensure_event_loop() -> None:
