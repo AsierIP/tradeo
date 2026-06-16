@@ -164,7 +164,20 @@ class FoundationChartTeacher:
         alignments: list[dict[str, float | str]] = []
         keys = sorted({key for sample in samples for key in sample.features})
         for key in keys:
-            values = np.asarray([float(sample.features.get(key, 0.0)) for sample in samples], dtype=float)
+            numeric_values: list[float] = []
+            for sample in samples:
+                try:
+                    value = float(sample.features.get(key, 0.0))
+                except (TypeError, ValueError):
+                    numeric_values = []
+                    break
+                if not np.isfinite(value):
+                    numeric_values = []
+                    break
+                numeric_values.append(value)
+            if not numeric_values:
+                continue
+            values = np.asarray(numeric_values, dtype=float)
             corr = self._corr(values, outcomes)
             if abs(corr) >= 0.08:
                 alignments.append({"feature": key, "corr_to_future_r": round(float(corr), 5)})

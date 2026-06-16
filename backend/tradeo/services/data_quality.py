@@ -23,6 +23,7 @@ ISSUE_ZERO_VOLUME = "excess_zero_volume_bars"
 ISSUE_STALE_CLOSES = "stale_close_run"
 ISSUE_CALENDAR_GAP = "calendar_gap"
 ISSUE_SUSPECT_BAR_RETURN = "suspect_split_or_bad_tick"
+_DAILY_INTERVALS = {"1d", "1day", "1 day"}
 
 
 @dataclass(frozen=True)
@@ -64,11 +65,18 @@ def _max_business_day_gap(index: pd.Index) -> int:
     if not isinstance(index, pd.DatetimeIndex) or len(index) < 2:
         return 0
     idx = index.tz_localize(None) if index.tz is not None else index
+    idx = pd.DatetimeIndex(idx).sort_values().unique()
+    if len(idx) < 2:
+        return 0
     starts = idx[:-1].to_numpy(dtype="datetime64[D]")
     ends = idx[1:].to_numpy(dtype="datetime64[D]")
     # Missing business days strictly between consecutive bars.
     gaps = np.busday_count(starts, ends) - 1
     return int(gaps.max()) if len(gaps) else 0
+
+
+def _normalized_interval_key(interval: str) -> str:
+    return " ".join(str(interval).strip().lower().split())
 
 
 def assess_ohlcv_quality(
@@ -102,7 +110,11 @@ def assess_ohlcv_quality(
 
     zero_volume_pct = float((df["volume"] <= 0).mean())
     stale_run = _longest_constant_run(df["close"])
-    gap_days = _max_business_day_gap(df.index) if interval == "1d" else 0
+    gap_days = (
+        _max_business_day_gap(df.index)
+        if _normalized_interval_key(interval) in _DAILY_INTERVALS
+        else 0
+    )
     ratios = (df["close"] / df["close"].shift(1)).dropna()
     if ratios.empty:
         return_ratio = 1.0

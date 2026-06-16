@@ -6,9 +6,24 @@ from typing import Any
 from tradeo.db.models import Signal
 
 
+SAFETY_BLOCK_PHRASES = (
+    "readonly=true",
+    "blocks order submission",
+    "runtime kill switch",
+    "kill switch is enabled",
+    "requires live_armed=true",
+    "short orders are disabled",
+    "not in tradeo_ibkr_allowed_symbols",
+)
+
+
 def classify_order_failure(error: str) -> dict[str, Any]:
     normalized = error.lower()
-    if "did not acknowledge every bracket leg" in normalized or "permid" in normalized:
+    if (
+        "did not acknowledge every bracket leg" in normalized
+        or "did not acknowledge the bracket safely" in normalized
+        or "permid" in normalized
+    ):
         reason_code = "ibkr_bracket_not_accepted"
         reason = "IBKR did not acknowledge every bracket leg"
         next_action = "retry_order_submission"
@@ -18,11 +33,7 @@ def classify_order_failure(error: str) -> dict[str, Any]:
         reason = "IBKR could not qualify the contract"
         next_action = "review_symbol_then_retry"
         retryable = False
-    elif (
-        "readonly=true" in normalized
-        or "blocks order submission" in normalized
-        or "runtime kill switch" in normalized
-    ):
+    elif any(phrase in normalized for phrase in SAFETY_BLOCK_PHRASES):
         reason_code = "order_blocked_by_safety"
         reason = "Order submission is blocked by safety settings"
         next_action = "fix_configuration_then_retry"
