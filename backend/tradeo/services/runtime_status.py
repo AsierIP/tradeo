@@ -75,6 +75,17 @@ def write_entry_scan_status(
     )
     matches_found = int(result.get("matches_found") or 0)
     orders_submitted = int(result.get("orders_submitted") or 0)
+    scan_duration_ms = _optional_float(result.get("scan_duration_ms"))
+    rates = _scan_rates(
+        duration_ms=scan_duration_ms,
+        symbols=last_symbols_checked,
+        patterns=int(result.get("patterns_checked") or 0),
+        matches=matches_found,
+        signals=int(result.get("signals_created") or 0),
+        orders=orders_submitted,
+        candidates=int(result.get("entry_variants_considered") or matches_found),
+    )
+    funnel = _entry_scan_funnel(result)
     execute_orders = bool(result.get("execute_orders", True))
     skipped_reason = result.get("skipped_reason")
     zero_order_scan = (
@@ -89,6 +100,10 @@ def write_entry_scan_status(
         "cumulative_symbols_checked": cumulative_symbols_checked,
         "patterns_checked": int(result.get("patterns_checked") or 0),
         "matches_found": matches_found,
+        "entry_variants_considered": int(result.get("entry_variants_considered") or 0),
+        "scan_duration_ms": scan_duration_ms,
+        "scan_rates_per_minute": rates,
+        "funnel": funnel,
         "execute_orders": execute_orders,
         "signals_created": int(result.get("signals_created") or 0),
         "orders_submitted": orders_submitted,
@@ -96,7 +111,20 @@ def write_entry_scan_status(
         "skipped_cooldown": int(result.get("skipped_cooldown") or 0),
         "rejected_by_entry_gate": int(result.get("rejected_by_entry_gate") or 0),
         "rejected_by_entry_quality": int(result.get("rejected_by_entry_quality") or 0),
+        "rejected_by_ambiguity": int(result.get("rejected_by_ambiguity") or 0),
         "rejected_by_risk": int(result.get("rejected_by_risk") or 0),
+        "rejected_by_production_manifest": int(result.get("rejected_by_production_manifest") or 0),
+        "production_manifest_rejection_reason_counts": dict(
+            result.get("production_manifest_rejection_reason_counts") or {}
+        ),
+        "near_miss_shadow_observations_opened": int(
+            result.get("near_miss_shadow_observations_opened") or 0
+        ),
+        "shadow_no_order_observations_opened": int(
+            result.get("shadow_no_order_observations_opened") or 0
+        ),
+        "paper_observations_opened": int(result.get("paper_observations_opened") or 0),
+        "paper_observations_closed": int(result.get("paper_observations_closed") or 0),
         "order_errors": list(result.get("order_errors") or []),
         "order_skip_reason_counts": dict(result.get("order_skip_reason_counts") or {}),
         "zero_order_scan_streak": zero_order_scan_streak,
@@ -142,6 +170,10 @@ def entry_scan_status(module: str, settings: Settings | None = None) -> dict[str
         ),
         "patterns_checked": int(data.get("patterns_checked") or 0),
         "matches_found": int(data.get("matches_found") or 0),
+        "entry_variants_considered": int(data.get("entry_variants_considered") or 0),
+        "scan_duration_ms": _optional_float(data.get("scan_duration_ms")),
+        "scan_rates_per_minute": dict(data.get("scan_rates_per_minute") or {}),
+        "funnel": dict(data.get("funnel") or {}),
         "execute_orders": bool(data.get("execute_orders", True)),
         "signals_created": int(data.get("signals_created") or 0),
         "orders_submitted": int(data.get("orders_submitted") or 0),
@@ -149,7 +181,20 @@ def entry_scan_status(module: str, settings: Settings | None = None) -> dict[str
         "skipped_cooldown": int(data.get("skipped_cooldown") or 0),
         "rejected_by_entry_gate": int(data.get("rejected_by_entry_gate") or 0),
         "rejected_by_entry_quality": int(data.get("rejected_by_entry_quality") or 0),
+        "rejected_by_ambiguity": int(data.get("rejected_by_ambiguity") or 0),
         "rejected_by_risk": int(data.get("rejected_by_risk") or 0),
+        "rejected_by_production_manifest": int(data.get("rejected_by_production_manifest") or 0),
+        "production_manifest_rejection_reason_counts": dict(
+            data.get("production_manifest_rejection_reason_counts") or {}
+        ),
+        "near_miss_shadow_observations_opened": int(
+            data.get("near_miss_shadow_observations_opened") or 0
+        ),
+        "shadow_no_order_observations_opened": int(
+            data.get("shadow_no_order_observations_opened") or 0
+        ),
+        "paper_observations_opened": int(data.get("paper_observations_opened") or 0),
+        "paper_observations_closed": int(data.get("paper_observations_closed") or 0),
         "order_errors": list(data.get("order_errors") or []),
         "order_skip_reason_counts": dict(data.get("order_skip_reason_counts") or {}),
         "zero_order_scan_streak": int(data.get("zero_order_scan_streak") or 0),
@@ -185,6 +230,62 @@ def _entry_scan_zero_order_reason(result: dict[str, Any]) -> str:
     return "unknown"
 
 
+def _optional_float(value: Any) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if number < 0:
+        return None
+    return round(number, 3)
+
+
+def _scan_rates(
+    *,
+    duration_ms: float | None,
+    symbols: int,
+    patterns: int,
+    matches: int,
+    signals: int,
+    orders: int,
+    candidates: int,
+) -> dict[str, float]:
+    if duration_ms is None or duration_ms <= 0:
+        return {}
+    minutes = max(duration_ms / 60000.0, 1e-9)
+    return {
+        "symbols_per_min": round(symbols / minutes, 3),
+        "patterns_per_min": round(patterns / minutes, 3),
+        "candidates_per_min": round(candidates / minutes, 3),
+        "matches_per_min": round(matches / minutes, 3),
+        "signals_per_min": round(signals / minutes, 3),
+        "orders_per_min": round(orders / minutes, 3),
+    }
+
+
+def _entry_scan_funnel(result: dict[str, Any]) -> dict[str, int]:
+    keys = (
+        "symbols_checked",
+        "patterns_checked",
+        "entry_variants_considered",
+        "matches_found",
+        "signals_created",
+        "orders_submitted",
+        "skipped_duplicates",
+        "skipped_cooldown",
+        "rejected_by_entry_gate",
+        "rejected_by_entry_quality",
+        "rejected_by_ambiguity",
+        "rejected_by_risk",
+        "rejected_by_production_manifest",
+        "near_miss_shadow_observations_opened",
+        "shadow_no_order_observations_opened",
+        "paper_observations_opened",
+        "paper_observations_closed",
+    )
+    return {key: int(result.get(key) or 0) for key in keys}
+
+
 def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_name = tempfile.mkstemp(
@@ -196,6 +297,10 @@ def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(json.dumps(payload))
         os.replace(tmp_name, path)
+        try:
+            os.chmod(path, 0o644)
+        except OSError:
+            pass
     except Exception:
         try:
             os.unlink(tmp_name)

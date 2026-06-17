@@ -3,6 +3,7 @@ from __future__ import annotations
 import gzip
 import hashlib
 import json
+from collections import Counter
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -109,6 +110,27 @@ def test_window_sampler_generates_forward_labeled_samples() -> None:
     assert "execution_fill_probability" in first.features
     assert "weekly_return" in first.features
     assert "relative_strength_spy" in first.features
+
+
+def test_window_sampler_stratifies_budget_by_window_size() -> None:
+    df = fixture_ohlcv("LABW", bars=360)
+
+    samples = WindowSampler().sample(
+        symbol="LABW",
+        df=df,
+        timeframe="1d",
+        window_sizes=[20, 50, 100, 200],
+        forward_bars=[20],
+        stride=5,
+        max_windows_per_symbol=40,
+    )
+
+    counts = Counter(sample.window_size for sample in samples)
+
+    assert len(samples) <= 40
+    assert set(counts) == {20, 50, 100, 200}
+    assert all(count <= 10 for count in counts.values())
+    assert all(sample.features["sample_window_size_quota"] == 10 for sample in samples)
 
 
 def test_window_sampler_accepts_generator_window_sizes_and_preserves_lineage() -> None:
@@ -822,7 +844,7 @@ def test_lab_agent_persists_compressed_event_ledger(tmp_path: Path) -> None:
     assert len(candidate.metrics["event_ledger_preview"]) == 2
 
 
-def test_global_experiment_registry_accumulates_trials_once_per_experiment(tmp_path: Path) -> None:
+def test_global_experiment_registry_does_not_recount_repeated_experiments(tmp_path: Path) -> None:
     candidate = ClusterCandidate(
         pattern_key="pattern-a",
         name="pattern-a",
@@ -846,11 +868,19 @@ def test_global_experiment_registry_accumulates_trials_once_per_experiment(tmp_p
     first = registry.register([candidate], run_id=1, params={"interval": "1d"})
     duplicate = registry.register([candidate], run_id=1, params={"interval": "1d"})
     second = registry.register([candidate], run_id=2, params={"interval": "1d"})
+    payload = registry.load()
 
     assert first["global_trial_count"] == 12
     assert duplicate["global_trial_count"] == 12
-    assert second["global_trial_count"] == 24
+    assert duplicate["repeated_experiments"] == 1
+    assert second["global_trial_count"] == 12
+    assert second["repeated_experiments"] == 1
+    assert len(payload["experiments"]) == 1
+    assert payload["experiments"][0]["replication_count"] == 3
     assert candidate.metrics["global_experiment_registry"]["edge_claim"] == "NO_DEMOSTRADO"
+    assert candidate.metrics["global_experiment_registry"]["global_trial_count_increased"] is False
+    assert candidate.metrics["global_experiment_registry"]["is_repeated_experiment"] is True
+    assert candidate.metrics["global_experiment_registry"]["replication_count"] == 3
 
 
 def test_global_experiment_registry_hash_chain_atomic_write_and_backup(tmp_path: Path) -> None:

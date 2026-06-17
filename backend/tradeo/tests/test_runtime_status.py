@@ -19,6 +19,36 @@ def test_entry_scan_status_accumulates_symbols(tmp_path) -> None:
     assert status["last_symbols_checked"] == 40
 
 
+def test_entry_scan_status_records_throughput_and_funnel(tmp_path) -> None:
+    settings = Settings(artifacts_dir=str(tmp_path))
+
+    write_entry_scan_status(
+        "laboratory",
+        {
+            "symbols_checked": 20,
+            "patterns_checked": 80,
+            "entry_variants_considered": 12,
+            "matches_found": 6,
+            "signals_created": 3,
+            "orders_submitted": 1,
+            "rejected_by_entry_gate": 2,
+            "rejected_by_ambiguity": 1,
+            "shadow_no_order_observations_opened": 2,
+            "scan_duration_ms": 30000,
+        },
+        settings,
+    )
+
+    status = entry_scan_status("laboratory", settings)
+
+    assert status["scan_duration_ms"] == 30000
+    assert status["scan_rates_per_minute"]["patterns_per_min"] == 160
+    assert status["scan_rates_per_minute"]["signals_per_min"] == 6
+    assert status["funnel"]["entry_variants_considered"] == 12
+    assert status["funnel"]["rejected_by_ambiguity"] == 1
+    assert status["shadow_no_order_observations_opened"] == 2
+
+
 def test_entry_scan_status_keeps_market_closed_reason(tmp_path) -> None:
     settings = Settings(artifacts_dir=str(tmp_path))
 
@@ -143,6 +173,7 @@ def test_entry_scan_status_writes_with_atomic_replace(tmp_path, monkeypatch) -> 
     assert calls[-1][1] == runtime_status.ENTRY_SCAN_STATUS
     assert calls[-1][0].startswith(f".{runtime_status.ENTRY_SCAN_STATUS}.")
     assert entry_scan_status("laboratory", settings)["symbols_checked"] == 7
+    assert (tmp_path / runtime_status.ENTRY_SCAN_STATUS).stat().st_mode & 0o777 == 0o644
 
 
 def test_writable_runtime_paths_fallback_when_data_volume_is_read_only(

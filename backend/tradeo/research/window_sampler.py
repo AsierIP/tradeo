@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 from typing import Iterable
 
 import numpy as np
@@ -54,11 +55,18 @@ class WindowSampler:
 
         atr_series = atr(df, 14).bfill().fillna(df["close"] * self.min_risk_pct)
         samples: list[WindowSample] = []
+        window_quotas = self._window_size_quotas(window_sizes, max_windows_per_symbol)
         for window_size in window_sizes:
             if len(df) < window_size + max_forward + 2:
                 continue
+            window_quota = window_quotas.get(window_size, max_windows_per_symbol)
+            if window_quota <= 0:
+                continue
+            window_count = 0
             # Sample from old to new. A stride keeps the system cheap enough to
             # run continuously, while still covering overlapping market states.
+            # The per-window quota prevents short windows from consuming the
+            # whole symbol budget before W100/W200 get any research coverage.
             for end_pos in range(window_size - 1, len(df) - max_forward - 1, stride):
                 window = df.iloc[end_pos - window_size + 1 : end_pos + 1]
                 future = df.iloc[end_pos + 1 : end_pos + 1 + max_forward]
@@ -85,6 +93,7 @@ class WindowSampler:
                 vector, features, chart = self.embedding_engine.embed(window, benchmark_frames=benchmark_frames)
                 features.update(self._data_lineage_features(window))
                 features.update({f"execution_{k}": float(v) for k, v in execution_metrics.items()})
+                features["sample_window_size_quota"] = int(window_quota)
                 start_idx = window.index[0]
                 end_idx = window.index[-1]
                 year = self._year(end_idx)
@@ -102,9 +111,21 @@ class WindowSampler:
                         features=features,
                     )
                 )
-                if len(samples) >= max_windows_per_symbol:
-                    return samples
-        return samples
+                window_count += 1
+                if len(samples) >= max_windows_per_symbol or window_count >= window_quota:
+                    break
+        return samples[:max_windows_per_symbol]
+
+    @staticmethod
+    def _window_size_quotas(window_sizes: list[int], max_windows_per_symbol: int) -> dict[int, int]:
+        if not window_sizes:
+            return {}
+        base = int(math.floor(max_windows_per_symbol / len(window_sizes)))
+        remainder = max(0, max_windows_per_symbol - base * len(window_sizes))
+        quotas: dict[int, int] = {}
+        for index, window_size in enumerate(window_sizes):
+            quotas[int(window_size)] = base + (1 if index < remainder else 0)
+        return quotas
 
     @staticmethod
     def _normalize_with_lineage(df: pd.DataFrame) -> pd.DataFrame:

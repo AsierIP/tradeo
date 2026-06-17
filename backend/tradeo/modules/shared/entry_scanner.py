@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import math
+import time
 from typing import Any, Literal
 
 from sqlalchemy.orm import Session, joinedload
@@ -87,6 +88,7 @@ class PatternEntryScanner:
     ) -> dict[str, Any]:
         settings = self.settings
         assert settings is not None
+        scan_started = time.perf_counter()
         self._validate_module_execution(module, execute_orders=execute_orders)
         resolved = self._resolved_options(
             module,
@@ -123,6 +125,7 @@ class PatternEntryScanner:
             result["shadow_no_order_observations_opened"] = 0
             result["shadow_no_order_trade_ids"] = []
             result["paper_observation_lifecycle"] = observation_lifecycle
+            result["scan_duration_ms"] = round((time.perf_counter() - scan_started) * 1000.0, 3)
             from tradeo.services.runtime_status import write_entry_scan_status
 
             write_entry_scan_status(module, result, settings)
@@ -554,6 +557,7 @@ class PatternEntryScanner:
             "store_signals": resolved["store_signals"],
             "execute_orders": resolved["execute_orders"],
             "similarity_threshold": match_result["similarity_threshold"],
+            "scan_duration_ms": round((time.perf_counter() - scan_started) * 1000.0, 3),
             "generated_at": datetime.now(timezone.utc).isoformat(),
         }
         from tradeo.services.runtime_status import write_entry_scan_status
@@ -737,6 +741,10 @@ class PatternEntryScanner:
         return {
             "patterns_checked": entry_status.get("patterns_checked", 0),
             "matches_found": entry_status.get("matches_found", 0),
+            "entry_variants_considered": entry_status.get("entry_variants_considered", 0),
+            "scan_duration_ms": entry_status.get("scan_duration_ms"),
+            "scan_rates_per_minute": entry_status.get("scan_rates_per_minute", {}),
+            "funnel": entry_status.get("funnel", {}),
             "execute_orders": entry_status.get("execute_orders", True),
             "signals_created": entry_status.get("signals_created", 0),
             "orders_submitted": entry_status.get("orders_submitted", 0),
@@ -744,8 +752,17 @@ class PatternEntryScanner:
             "skipped_cooldown": entry_status.get("skipped_cooldown", 0),
             "rejected_by_entry_gate": entry_status.get("rejected_by_entry_gate", 0),
             "rejected_by_entry_quality": entry_status.get("rejected_by_entry_quality", 0),
+            "rejected_by_ambiguity": entry_status.get("rejected_by_ambiguity", 0),
             "rejected_by_risk": entry_status.get("rejected_by_risk", 0),
             "rejected_by_production_manifest": entry_status.get("rejected_by_production_manifest", 0),
+            "near_miss_shadow_observations_opened": entry_status.get(
+                "near_miss_shadow_observations_opened", 0
+            ),
+            "shadow_no_order_observations_opened": entry_status.get(
+                "shadow_no_order_observations_opened", 0
+            ),
+            "paper_observations_opened": entry_status.get("paper_observations_opened", 0),
+            "paper_observations_closed": entry_status.get("paper_observations_closed", 0),
             "production_manifest_rejection_reason_counts": entry_status.get(
                 "production_manifest_rejection_reason_counts", {}
             ),

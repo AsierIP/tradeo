@@ -53,29 +53,45 @@ class GlobalExperimentRegistry:
         now = datetime.now(timezone.utc).isoformat()
         payload["updated_at"] = now
         experiments = payload.setdefault("experiments", [])
-        existing = {
+        existing_by_id = {
             str(row.get("experiment_id")): row
             for row in experiments
             if isinstance(row, dict) and row.get("experiment_id")
         }
+        existing_by_canonical: dict[str, dict[str, Any]] = {}
+        for row in experiments:
+            if not isinstance(row, dict):
+                continue
+            canonical_id = self._canonical_experiment_id_from_row(row)
+            if canonical_id and canonical_id not in existing_by_canonical:
+                existing_by_canonical[canonical_id] = row
         global_trial_count = int(payload.get("global_trial_count", 0) or 0)
         added = 0
-        candidate_updates: list[tuple[ClusterCandidate, str, int, int]] = []
+        repeated = 0
+        candidate_updates: list[tuple[ClusterCandidate, str, int, int, bool, int]] = []
         for rank, candidate in enumerate(sorted(candidates, key=lambda c: c.score, reverse=True), start=1):
             trial_count = self._candidate_trial_count(candidate)
             variant_id = self._variant_id(candidate)
-            experiment_id = f"run={run_id}|pattern={candidate.pattern_key}|variant={variant_id}"
-            row = existing.get(experiment_id)
+            experiment_id = self._canonical_experiment_id(candidate, variant_id)
+            row = existing_by_id.get(experiment_id) or existing_by_canonical.get(experiment_id)
             if row is None:
                 global_trial_count += trial_count
                 row = {
                     "experiment_id": experiment_id,
-                    "run_id": run_id,
+                    "first_run_id": run_id,
+                    "latest_run_id": run_id,
+                    "run_ids": [run_id],
+                    "replication_count": 1,
                     "registered_at": now,
+                    "last_seen_at": now,
                     "pattern_key": candidate.pattern_key,
                     "family_id": self._family_id(candidate),
                     "variant_id": variant_id,
+                    "side": candidate.side,
+                    "timeframe": candidate.timeframe,
+                    "window_size": candidate.window_size,
                     "rank_by_lab_priority": rank,
+                    "latest_rank_by_lab_priority": rank,
                     "candidate_trial_count": trial_count,
                     "global_trial_count_after": global_trial_count,
                     "fit_scope": candidate.metrics.get("fit_scope", {}),
@@ -86,10 +102,46 @@ class GlobalExperimentRegistry:
                     "edge_claim": "NO_DEMOSTRADO",
                 }
                 experiments.append(row)
-                existing[experiment_id] = row
+                existing_by_id[experiment_id] = row
+                existing_by_canonical[experiment_id] = row
                 added += 1
+                is_repeated = False
+            else:
+                is_repeated = True
+                repeated += 1
+                legacy_id = str(row.get("experiment_id") or "")
+                if legacy_id and legacy_id != experiment_id:
+                    legacy_ids = list(row.get("legacy_experiment_ids") or [])
+                    if legacy_id not in legacy_ids:
+                        legacy_ids.append(legacy_id)
+                    row["legacy_experiment_ids"] = legacy_ids[-20:]
+                    row["experiment_id"] = experiment_id
+                    existing_by_id[experiment_id] = row
+                run_ids = list(row.get("run_ids") or [])
+                if not run_ids and row.get("run_id") is not None:
+                    run_ids.append(row.get("run_id"))
+                if run_id not in run_ids and str(run_id) not in {str(x) for x in run_ids}:
+                    run_ids.append(run_id)
+                row["run_ids"] = run_ids[-100:]
+                row.setdefault("first_run_id", row.get("run_id", run_id))
+                row["latest_run_id"] = run_id
+                row["last_seen_at"] = now
+                row["replication_count"] = int(row.get("replication_count") or 1) + 1
+                row["latest_rank_by_lab_priority"] = rank
+                row["latest_score"] = candidate.score
+                row["latest_lab_priority_score"] = candidate.metrics.get("lab_priority_score", candidate.score)
+                row["latest_promotion_status"] = candidate.metrics.get("promotion_status")
             candidate_global_count = int(row.get("global_trial_count_after", global_trial_count) or 0)
-            candidate_updates.append((candidate, experiment_id, trial_count, candidate_global_count))
+            candidate_updates.append(
+                (
+                    candidate,
+                    experiment_id,
+                    trial_count,
+                    candidate_global_count,
+                    is_repeated,
+                    int(row.get("replication_count") or 1),
+                )
+            )
         payload["global_trial_count"] = global_trial_count
         run_manifest = self._merge_run(
             payload,
@@ -98,27 +150,41 @@ class GlobalExperimentRegistry:
             candidates=candidates,
             params=params or {},
             added=added,
+            repeated=repeated,
             previous_registry_hash=previous_registry_hash,
-            experiment_ids=[experiment_id for _, experiment_id, _, _ in candidate_updates],
+            experiment_ids=[experiment_id for _, experiment_id, _, _, _, _ in candidate_updates],
         )
         payload["summary"] = {
             "run_count": len(payload.get("runs", [])),
             "experiment_count": len(experiments),
             "global_trial_count": global_trial_count,
             "new_experiments": added,
+            "repeated_experiments": repeated,
             "latest_run_manifest_hash": run_manifest["run_manifest_hash"],
         }
         payload["latest_run_manifest"] = run_manifest
         payload["registry_hash"] = self.registry_hash(payload)
         backup_path = self._backup_existing()
         self._atomic_write(payload)
-        for candidate, experiment_id, trial_count, candidate_global_count in candidate_updates:
+        for (
+            candidate,
+            experiment_id,
+            trial_count,
+            candidate_global_count,
+            is_repeated,
+            replication_count,
+        ) in candidate_updates:
             candidate.metrics["global_trial_count"] = candidate_global_count
             candidate.metrics["global_experiment_registry"] = {
                 "path": str(self.path),
                 "experiment_id": experiment_id,
                 "candidate_trial_count": trial_count,
                 "global_trial_count": candidate_global_count,
+                "global_trial_count_increased": not is_repeated,
+                "is_repeated_experiment": is_repeated,
+                "is_repeated_manifest": is_repeated,
+                "replication_count": replication_count,
+                "replication_of_experiment_id": experiment_id if is_repeated else "",
                 "edge_claim": "NO_DEMOSTRADO",
                 "hash_algorithm": self.hash_algorithm,
                 "previous_registry_hash": previous_registry_hash,
@@ -129,6 +195,7 @@ class GlobalExperimentRegistry:
         return {
             "path": str(self.path),
             "new_experiments": added,
+            "repeated_experiments": repeated,
             "experiment_count": len(experiments),
             "global_trial_count": global_trial_count,
             "hash_algorithm": self.hash_algorithm,
@@ -147,6 +214,7 @@ class GlobalExperimentRegistry:
         candidates: list[ClusterCandidate],
         params: dict[str, Any],
         added: int,
+        repeated: int,
         previous_registry_hash: str,
         experiment_ids: list[str],
     ) -> dict[str, Any]:
@@ -155,6 +223,7 @@ class GlobalExperimentRegistry:
             "registered_at": now,
             "candidate_count": len(candidates),
             "new_experiments": added,
+            "repeated_experiments": repeated,
             "experiment_count": len(payload.get("experiments", [])),
             "global_trial_count": int(payload.get("global_trial_count", 0) or 0),
             "previous_registry_hash": previous_registry_hash,
@@ -170,12 +239,28 @@ class GlobalExperimentRegistry:
                 "candidate_count": len(candidates),
                 "params": params,
                 "new_experiments": added,
+                "repeated_experiments": repeated,
                 "previous_registry_hash": previous_registry_hash,
                 "run_manifest_hash": run_manifest_hash,
             }
         )
         payload["runs"] = runs[-500:]
         return run_manifest
+
+    def _canonical_experiment_id(self, candidate: ClusterCandidate, variant_id: str) -> str:
+        family_id = self._family_id(candidate)
+        return f"family={family_id}|pattern={candidate.pattern_key}|variant={variant_id}"
+
+    @staticmethod
+    def _canonical_experiment_id_from_row(row: dict[str, Any]) -> str:
+        if not isinstance(row, dict):
+            return ""
+        family_id = str(row.get("family_id") or "")
+        pattern_key = str(row.get("pattern_key") or "")
+        variant_id = str(row.get("variant_id") or pattern_key)
+        if not pattern_key:
+            return str(row.get("experiment_id") or "")
+        return f"family={family_id}|pattern={pattern_key}|variant={variant_id}"
 
     @staticmethod
     def _candidate_trial_count(candidate: ClusterCandidate) -> int:
