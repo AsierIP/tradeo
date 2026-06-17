@@ -141,6 +141,29 @@ class FakeBroker:
         return self._open_orders
 
 
+class RepairingFakeBroker(FakeBroker):
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.repaired_trade_ids: list[int] = []
+
+    def repair_trade_exit_protection(self, db, trade, *, reason: str):
+        self.repaired_trade_ids.append(trade.id)
+        return {
+            "trade_id": trade.id,
+            "symbol": trade.symbol,
+            "target_order_id": 201,
+            "stop_order_id": 202,
+            "target_perm_id": 301,
+            "stop_perm_id": 302,
+            "oca_group": f"test-{trade.id}",
+            "submitted_bracket": {
+                "entry": trade.entry,
+                "stop": trade.stop,
+                "target": trade.target,
+            },
+        }
+
+
 def audit_actions(db) -> list[str]:
     return [row.action for row in db.query(AuditLog).all()]
 
@@ -426,6 +449,122 @@ def test_reconciliation_open_order_counts_as_consistent_state() -> None:
 
     assert result["divergences"] == []
     assert runtime_kill_switch_active(db) is False
+
+
+def test_reconciliation_repairs_missing_paper_exit_protection() -> None:
+    db = session_factory()
+    trade = add_open_trade(db, symbol="AAPL", broker_order_id="101")
+    broker = RepairingFakeBroker(positions=[{"symbol": "AAPL", "position": 5.0}])
+
+    result = reconciliation_service(
+        broker,
+        ibkr_readonly=False,
+        trading_mode="paper",
+        reconciliation_auto_repair_paper_exits=True,
+    ).reconcile(db)
+
+    assert broker.repaired_trade_ids == [trade.id]
+    assert result["divergences"] == []
+    assert result["exit_protection_repairs"] == [
+        {
+            "trade_id": trade.id,
+            "symbol": "AAPL",
+            "target_order_id": 201,
+            "stop_order_id": 202,
+            "target_perm_id": 301,
+            "stop_perm_id": 302,
+            "oca_group": f"test-{trade.id}",
+            "submitted_bracket": {
+                "entry": 10.0,
+                "stop": 9.0,
+                "target": 14.0,
+            },
+        }
+    ]
+    assert result["warnings"] == [
+        {
+            "kind": "exit_protection_repaired",
+            "symbol": "AAPL",
+            "trade_id": trade.id,
+            "target_order_id": 201,
+            "stop_order_id": 202,
+        }
+    ]
+    assert runtime_kill_switch_active(db) is False
+
+
+def test_reconciliation_does_not_repair_when_exit_protection_complete() -> None:
+    db = session_factory()
+    trade = add_open_trade(db, symbol="AAPL", broker_order_id="101")
+    broker = RepairingFakeBroker(
+        positions=[{"symbol": "AAPL", "position": 5.0}],
+        open_orders=[
+            {
+                "symbol": "AAPL",
+                "parent_order_id": 101,
+                "action": "SELL",
+                "order_type": "LMT",
+                "quantity": 5.0,
+                "remaining": 5.0,
+            },
+            {
+                "symbol": "AAPL",
+                "parent_order_id": 101,
+                "action": "SELL",
+                "order_type": "STP",
+                "quantity": 5.0,
+                "remaining": 5.0,
+            },
+        ],
+    )
+
+    result = reconciliation_service(
+        broker,
+        ibkr_readonly=False,
+        trading_mode="paper",
+        reconciliation_auto_repair_paper_exits=True,
+    ).reconcile(db)
+
+    assert broker.repaired_trade_ids == []
+    assert result["exit_protection_repairs"] == []
+    assert result["warnings"] == []
+    assert trade.status == TradeStatus.OPEN
+
+
+def test_reconciliation_repairs_unrelated_exit_protection_orders() -> None:
+    db = session_factory()
+    trade = add_open_trade(db, symbol="AAPL", broker_order_id="101")
+    broker = RepairingFakeBroker(
+        positions=[{"symbol": "AAPL", "position": 5.0}],
+        open_orders=[
+            {
+                "symbol": "AAPL",
+                "parent_order_id": 999,
+                "action": "SELL",
+                "order_type": "LMT",
+                "quantity": 5.0,
+                "remaining": 5.0,
+            },
+            {
+                "symbol": "AAPL",
+                "parent_order_id": 999,
+                "action": "SELL",
+                "order_type": "STP",
+                "quantity": 5.0,
+                "remaining": 5.0,
+            },
+        ],
+    )
+
+    result = reconciliation_service(
+        broker,
+        ibkr_readonly=False,
+        trading_mode="paper",
+        reconciliation_auto_repair_paper_exits=True,
+    ).reconcile(db)
+
+    assert broker.repaired_trade_ids == [trade.id]
+    assert result["exit_protection_repairs"][0]["trade_id"] == trade.id
 
 
 def test_reconciliation_db_trade_missing_at_broker_trips_kill_switch() -> None:
@@ -850,6 +989,60 @@ def test_reconciliation_does_not_match_identified_fill_by_symbol_only() -> None:
     assert "entry_fill_price" not in trade.metadata_json
 
 
+def test_reconciliation_does_not_cross_match_reused_order_ids_between_symbols() -> None:
+    db = session_factory()
+    lrn_trade = add_open_trade(
+        db,
+        symbol="LRN",
+        broker_order_id="7",
+        metadata={
+            "ibkr_mode": "paper",
+            "order_ids": [7, 8, 9],
+            "perm_ids": [7001, 7002, 7003],
+            "parent_order_id": 7,
+        },
+    )
+    carg_trade = add_open_trade(
+        db,
+        symbol="CARG",
+        broker_order_id="7",
+        metadata={
+            "ibkr_mode": "paper",
+            "order_ids": [7, 10, 11],
+            "perm_ids": [7001, 7010, 7011],
+            "parent_order_id": 7,
+        },
+    )
+    fill = {
+        "symbol": "CARG",
+        "side": "BUY",
+        "quantity": 5.0,
+        "price": 10.05,
+        "order_id": 7,
+        "perm_id": 7001,
+        "exec_id": "carg-entry-fill-7",
+        "execution_time": "2026-06-01T15:00:12+00:00",
+        "commission": 0.35,
+        "commission_currency": "USD",
+    }
+    broker = FakeBroker(
+        positions=[
+            {"symbol": "LRN", "position": 5.0},
+            {"symbol": "CARG", "position": 5.0},
+        ],
+        fills=[fill],
+    )
+
+    result = reconciliation_service(broker).reconcile(db)
+    db.refresh(lrn_trade)
+    db.refresh(carg_trade)
+
+    assert result["fills_ingested"] == 1
+    assert result["trades_updated_from_fills"] == 1
+    assert "entry_fill_price" not in lrn_trade.metadata_json
+    assert carg_trade.metadata_json["entry_fill_price"] == 10.05
+
+
 def test_reconciliation_prunes_existing_fills_from_other_orders() -> None:
     db = session_factory()
     trade = add_open_trade(
@@ -1036,6 +1229,60 @@ def test_reconciliation_ingests_exit_fill_and_closes_without_missing_broker_fals
     assert trade.metadata_json["commission_usd"] == 0.7
 
 
+def test_reconciliation_matches_repaired_exit_fill_metadata() -> None:
+    db = session_factory()
+    trade = add_open_trade(
+        db,
+        symbol="AAPL",
+        broker_order_id="101",
+        metadata={
+            "ibkr_mode": "paper",
+            "order_ids": [101],
+            "perm_ids": [1001],
+            "parent_order_id": 101,
+            "protective_orders": {
+                "target": {"order_id": 501, "perm_id": 5001},
+                "stop": {"order_id": 502, "perm_id": 5002},
+            },
+        },
+    )
+    fills = [
+        {
+            "symbol": "AAPL",
+            "side": "BUY",
+            "quantity": 5.0,
+            "price": 10.0,
+            "order_id": 101,
+            "perm_id": 1001,
+            "exec_id": "entry-fill-101",
+            "execution_time": "2026-06-01T15:00:12+00:00",
+            "commission": 0.35,
+            "commission_currency": "USD",
+        },
+        {
+            "symbol": "AAPL",
+            "side": "SELL",
+            "quantity": 5.0,
+            "price": 14.0,
+            "order_id": 501,
+            "perm_id": 5001,
+            "exec_id": "repaired-target-fill-501",
+            "execution_time": "2026-06-01T16:30:00+00:00",
+            "commission": 0.35,
+            "commission_currency": "USD",
+        },
+    ]
+    broker = FakeBroker(positions=[], open_orders=[], fills=fills)
+
+    result = reconciliation_service(broker).reconcile(db)
+    db.refresh(trade)
+
+    assert result["trades_closed_from_fills"] == 1
+    assert trade.status == TradeStatus.CLOSED
+    assert trade.metadata_json["exit_reason"] == "target_hit"
+    assert trade.metadata_json["exit_fill_id_hash"]
+
+
 def test_reconciliation_trade_without_order_id_skips_order_matching() -> None:
     db = session_factory()
     add_open_trade(db, symbol="AAPL", broker_order_id=None)
@@ -1072,7 +1319,7 @@ def _fake_ib_trade(order_id: int, perm_id: int | None, status: str = "PendingSub
     )
 
 
-def test_paper_bracket_accepts_child_order_ids_without_child_perm_ids() -> None:
+def test_paper_bracket_accepts_order_ids_while_live_requires_perm_ids() -> None:
     trades = [
         _fake_ib_trade(4, 2002693128, "PreSubmitted"),
         _fake_ib_trade(5, None, "PendingSubmit"),
@@ -1081,6 +1328,11 @@ def test_paper_bracket_accepts_child_order_ids_without_child_perm_ids() -> None:
 
     assert _bracket_acknowledged(trades, paper_mode=True) is True
     assert _bracket_acknowledged(trades, paper_mode=False) is False
+
+    trades[1].orderStatus.permId = 2002693129
+    trades[2].orderStatus.permId = 2002693130
+    assert _bracket_acknowledged(trades, paper_mode=True) is True
+    assert _bracket_acknowledged(trades, paper_mode=False) is True
 
 
 def test_paper_bracket_rejects_terminal_child_status() -> None:
@@ -1091,6 +1343,98 @@ def test_paper_bracket_rejects_terminal_child_status() -> None:
     ]
 
     assert _bracket_acknowledged(trades, paper_mode=True) is False
+
+
+def test_ibkr_submit_accepts_paper_bracket_missing_perm_ids_without_parent_only_degrade() -> None:
+    db = session_factory()
+    signal = add_signal(db, status=SignalStatus.PAPER_APPROVED)
+
+    class FakeIB:
+        def __init__(self) -> None:
+            self.placed_orders = []
+            self.cancelled_orders = []
+
+        def qualifyContracts(self, contract):
+            return [contract]
+
+        def bracketOrder(self, *, action, quantity, limitPrice, takeProfitPrice, stopLossPrice):
+            return [
+                SimpleNamespace(
+                    orderId=4,
+                    parentId=0,
+                    action=action,
+                    orderType="LMT",
+                    totalQuantity=quantity,
+                    lmtPrice=limitPrice,
+                ),
+                SimpleNamespace(
+                    orderId=5,
+                    parentId=4,
+                    action="SELL",
+                    orderType="LMT",
+                    totalQuantity=quantity,
+                    lmtPrice=takeProfitPrice,
+                ),
+                SimpleNamespace(
+                    orderId=6,
+                    parentId=4,
+                    action="SELL",
+                    orderType="STP",
+                    totalQuantity=quantity,
+                    auxPrice=stopLossPrice,
+                ),
+            ]
+
+        def placeOrder(self, contract, order):
+            self.placed_orders.append(order)
+            return SimpleNamespace(
+                order=order,
+                orderStatus=SimpleNamespace(permId=0, status="PendingSubmit"),
+                log=[],
+            )
+
+        def cancelOrder(self, order) -> None:
+            self.cancelled_orders.append(order)
+
+        def sleep(self, seconds: float) -> None:
+            return None
+
+        def isConnected(self) -> bool:
+            return True
+
+        def disconnect(self) -> None:
+            return None
+
+    fake_ib = FakeIB()
+
+    class BrokerUnderTest(IBKRBroker):
+        @property
+        def order_timeout(self) -> float:
+            return 0.0
+
+        def _connect(self):
+            return fake_ib
+
+        def _stock_contract(self, symbol: str):
+            return SimpleNamespace(
+                conId=123,
+                symbol=symbol.upper(),
+                secType="STK",
+                exchange="SMART",
+                currency="USD",
+            )
+
+    broker = BrokerUnderTest(settings=Settings(ibkr_readonly=False, trading_mode="paper"))
+
+    trade = broker.submit_signal_bracket(db, signal)
+
+    db.refresh(signal)
+    assert len(fake_ib.placed_orders) == 3
+    assert len(fake_ib.cancelled_orders) == 0
+    assert db.query(Trade).count() == 1
+    assert signal.status == SignalStatus.EXECUTED
+    assert trade.metadata_json["paper_bracket_ack_mode"] == "order_id_status_no_terminal"
+    assert trade.metadata_json["paper_bracket_degraded_to_parent_only"] is False
 
 
 def test_paper_short_bracket_caps_distant_target_for_ibkr_price_bands() -> None:

@@ -136,10 +136,20 @@ type DiscoveryRun = {
 }
 
 type ScanResult = {
-  scanned: number
-  candidates: number
-  stored_signals: number
-  rejected: number
+  module: string
+  symbols_checked: number
+  matches_found: number
+  signals_created: number
+  orders_submitted: number
+  rejected_by_entry_gate: number
+  skipped_duplicates: number
+  paper_observations_opened: number
+  near_miss_shadow_observations_opened: number
+  shadow_no_order_observations_opened: number
+  order_skip_reason_counts: Record<string, number>
+  execution_mode?: string | null
+  execution_degraded_to_shadow?: boolean
+  execution_degrade_reason?: string | null
 }
 
 type ModuleSignal = Summary['recent_signals'][number]
@@ -742,7 +752,7 @@ export default function Page() {
     setIsScanning(true)
     setScanError(null)
     try {
-      const result = await postJson('/scan', { limit: 50 }) as ScanResult
+      const result = await postJson('/laboratory/scan', { limit: 50 }) as ScanResult
       setScanResult(result)
       await mutate()
     } catch (err) {
@@ -843,15 +853,17 @@ export default function Page() {
             Tres módulos independientes: Research descubre patrones, Laboratorio los valida con IB Paper y Fox Hunter opera solo patrones en Producción.
           </p>
           <div className="actions">
-            <button onClick={runScan} disabled={isScanning}>{isScanning ? 'Escaneando...' : 'Escanear universo'}</button>
+            <button onClick={runScan} disabled={isScanning}>{isScanning ? 'Escaneando...' : 'Escanear Lab'}</button>
             <button onClick={runBacktest}>Backtest rápido</button>
             <button onClick={generateReport}>Generar revisión</button>
             <button onClick={runDiscovery} disabled={busyDiscovery}>{busyDiscovery ? 'Descubriendo…' : 'Research Lab'}</button>
           </div>
           {scanResult && (
             <p className="scan-notice">
-              Ultimo escaneo: {scanResult.scanned} simbolos revisados, {scanResult.candidates} candidatos,
-              {' '}{scanResult.stored_signals} senales guardadas, {scanResult.rejected} rechazadas.
+              Último Lab: {scanResult.symbols_checked} símbolos, {scanResult.matches_found} matches,
+              {' '}{scanResult.signals_created} señales, {scanResult.orders_submitted} órdenes,
+              {' '}{scanResult.paper_observations_opened} shadows.
+              {scanResult.execution_degraded_to_shadow && ` Degradado: ${scanResult.execution_degrade_reason}.`}
             </p>
           )}
           {scanError && <p className="error">Escaneo fallido: {scanError}</p>}

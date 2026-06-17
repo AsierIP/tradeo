@@ -172,15 +172,64 @@ def _exit_action(trade: Trade) -> str:
     return "BUY" if _entry_action(trade) == "SELL" else "SELL"
 
 
+def _open_order_remaining(order: dict[str, Any]) -> float:
+    remaining = _float_or_none(order.get("remaining"))
+    if remaining is not None:
+        return abs(remaining)
+    quantity = _float_or_none(order.get("quantity"))
+    filled = _float_or_none(order.get("filled")) or 0.0
+    if quantity is None:
+        return 0.0
+    return max(0.0, abs(quantity) - abs(filled))
+
+
+def _has_complete_exit_protection(trade: Trade, orders: list[dict[str, Any]]) -> bool:
+    exit_action = _exit_action(trade)
+    required_qty = abs(float(trade.qty or 0.0))
+    if required_qty <= 0:
+        return False
+    target_qty = 0.0
+    stop_qty = 0.0
+    for order in orders:
+        if str(order.get("action") or "").upper() != exit_action:
+            continue
+        if not _open_order_references_trade(order, trade):
+            continue
+        order_type = str(order.get("order_type") or "").upper()
+        remaining = _open_order_remaining(order)
+        if remaining <= 0:
+            continue
+        if order_type == "LMT":
+            target_qty += remaining
+        elif order_type in {"STP", "STOP"}:
+            stop_qty += remaining
+    return target_qty >= required_qty and stop_qty >= required_qty
+
+
+def _metadata_leg_payload(metadata: dict[str, Any], container_key: str, leg: str) -> dict[str, Any]:
+    container = metadata.get(container_key)
+    if isinstance(container, dict):
+        payload = container.get(leg)
+        if isinstance(payload, dict):
+            return payload
+    return {}
+
+
 def _metadata_order_ids(metadata: dict[str, Any], leg: str | None = None) -> set[str]:
     if leg is None:
-        return _str_set(metadata.get("broker_order_id"), metadata.get("parent_order_id"), metadata.get("order_ids"))
+        ids = _str_set(
+            metadata.get("broker_order_id"),
+            metadata.get("parent_order_id"),
+            metadata.get("order_ids"),
+        )
+        for leg_name in ("entry", "target", "stop", "exit"):
+            ids.update(_metadata_order_ids(metadata, leg_name))
+        return ids
     ids: set[str] = set()
     if leg is not None:
         ids.update(_str_set(metadata.get(f"{leg}_order_id")))
-        legs = metadata.get("bracket_legs")
-        if isinstance(legs, dict) and isinstance(legs.get(leg), dict):
-            ids.update(_str_set(legs[leg].get("order_id")))
+        ids.update(_str_set(_metadata_leg_payload(metadata, "bracket_legs", leg).get("order_id")))
+        ids.update(_str_set(_metadata_leg_payload(metadata, "protective_orders", leg).get("order_id")))
         order_ids = metadata.get("order_ids")
         if isinstance(order_ids, list):
             if leg == "entry" and len(order_ids) >= 1:
@@ -191,18 +240,23 @@ def _metadata_order_ids(metadata: dict[str, Any], leg: str | None = None) -> set
                 ids.update(_str_set(order_ids[2]))
         if leg == "entry":
             ids.update(_str_set(metadata.get("broker_order_id"), metadata.get("parent_order_id")))
+        if leg == "exit":
+            ids.update(_metadata_order_ids(metadata, "target"))
+            ids.update(_metadata_order_ids(metadata, "stop"))
     return ids
 
 
 def _metadata_perm_ids(metadata: dict[str, Any], leg: str | None = None) -> set[str]:
     if leg is None:
-        return _str_set(metadata.get("perm_ids"))
+        ids = _str_set(metadata.get("perm_ids"))
+        for leg_name in ("entry", "target", "stop", "exit"):
+            ids.update(_metadata_perm_ids(metadata, leg_name))
+        return ids
     ids: set[str] = set()
     if leg is not None:
         ids.update(_str_set(metadata.get(f"{leg}_perm_id")))
-        legs = metadata.get("bracket_legs")
-        if isinstance(legs, dict) and isinstance(legs.get(leg), dict):
-            ids.update(_str_set(legs[leg].get("perm_id")))
+        ids.update(_str_set(_metadata_leg_payload(metadata, "bracket_legs", leg).get("perm_id")))
+        ids.update(_str_set(_metadata_leg_payload(metadata, "protective_orders", leg).get("perm_id")))
         perm_ids = metadata.get("perm_ids")
         if isinstance(perm_ids, list):
             if leg == "entry" and len(perm_ids) >= 1:
@@ -211,10 +265,20 @@ def _metadata_perm_ids(metadata: dict[str, Any], leg: str | None = None) -> set[
                 ids.update(_str_set(perm_ids[1]))
             elif leg == "stop" and len(perm_ids) >= 3:
                 ids.update(_str_set(perm_ids[2]))
+        if leg == "exit":
+            ids.update(_metadata_perm_ids(metadata, "target"))
+            ids.update(_metadata_perm_ids(metadata, "stop"))
     return ids
 
 
+def _fill_symbol_matches_trade(fill: dict[str, Any], trade: Trade) -> bool:
+    symbol = str(fill.get("symbol") or "").upper().strip()
+    return not symbol or symbol == trade.symbol.upper()
+
+
 def _fill_matches_trade(fill: dict[str, Any], trade: Trade) -> bool:
+    if not _fill_symbol_matches_trade(fill, trade):
+        return False
     metadata = trade.metadata_json or {}
     fill_order_ids = _str_set(fill.get("order_id"))
     fill_perm_ids = _str_set(fill.get("perm_id"))
@@ -223,6 +287,22 @@ def _fill_matches_trade(fill: dict[str, Any], trade: Trade) -> bool:
     if fill_perm_ids & _metadata_perm_ids(metadata):
         return True
     if trade.broker_order_id and str(trade.broker_order_id) in fill_order_ids:
+        return True
+    return False
+
+
+def _open_order_references_trade(order: dict[str, Any], trade: Trade) -> bool:
+    symbol = str(order.get("symbol") or "").upper().strip()
+    if symbol and symbol != trade.symbol.upper():
+        return False
+    metadata = trade.metadata_json or {}
+    order_ids = _str_set(order.get("order_id"), order.get("parent_order_id"))
+    perm_ids = _str_set(order.get("perm_id"))
+    if order_ids & _metadata_order_ids(metadata):
+        return True
+    if perm_ids & _metadata_perm_ids(metadata):
+        return True
+    if trade.broker_order_id and str(trade.broker_order_id) in order_ids:
         return True
     return False
 
@@ -291,8 +371,8 @@ def _leg_for_fill(fill: dict[str, Any], trade: Trade, metadata: dict[str, Any]) 
     if order_ids & _metadata_order_ids(metadata, "entry") or perm_ids & _metadata_perm_ids(metadata, "entry"):
         return "entry"
     if order_ids & (
-        _metadata_order_ids(metadata, "target") | _metadata_order_ids(metadata, "stop")
-    ) or perm_ids & (_metadata_perm_ids(metadata, "target") | _metadata_perm_ids(metadata, "stop")):
+        _metadata_order_ids(metadata, "target") | _metadata_order_ids(metadata, "stop") | _metadata_order_ids(metadata, "exit")
+    ) or perm_ids & (_metadata_perm_ids(metadata, "target") | _metadata_perm_ids(metadata, "stop") | _metadata_perm_ids(metadata, "exit")):
         return "exit"
     action = _normal_action(fill.get("side") or fill.get("action"))
     if action == _entry_action(trade):
@@ -827,6 +907,57 @@ class ReconciliationService:
         result["divergences"] = divergences
         result["warnings"] = warnings
 
+        exit_protection_repairs: list[dict[str, Any]] = []
+        exit_protection_errors: list[dict[str, Any]] = []
+        symbol_trade_counts: dict[str, int] = {}
+        for trade in db_ibkr_trades:
+            symbol_trade_counts[trade.symbol.upper()] = symbol_trade_counts.get(trade.symbol.upper(), 0) + 1
+        repair_enabled = (
+            not divergences
+            and bool(getattr(settings, "reconciliation_auto_repair_paper_exits", False))
+            and settings.trading_mode == "paper"
+            and not settings.ibkr_readonly
+        )
+        repair_method = getattr(self.broker, "repair_trade_exit_protection", None)
+        if repair_enabled and callable(repair_method):
+            for trade in db_ibkr_trades:
+                symbol = trade.symbol.upper()
+                if symbol_trade_counts.get(symbol, 0) != 1:
+                    continue
+                broker_qty = position_qty.get(symbol, 0.0)
+                if broker_qty != _signed_qty(trade):
+                    continue
+                if _has_complete_exit_protection(trade, orders_by_symbol.get(symbol, [])):
+                    continue
+                try:
+                    repair = repair_method(
+                        db,
+                        trade,
+                        reason="reconciliation_missing_exit_protection",
+                    )
+                    exit_protection_repairs.append(repair)
+                    warnings.append(
+                        {
+                            "kind": "exit_protection_repaired",
+                            "symbol": symbol,
+                            "trade_id": trade.id,
+                            "target_order_id": repair.get("target_order_id"),
+                            "stop_order_id": repair.get("stop_order_id"),
+                        }
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    error = {
+                        "kind": "exit_protection_repair_failed",
+                        "symbol": symbol,
+                        "trade_id": trade.id,
+                        "error": f"{type(exc).__name__}: {exc}",
+                    }
+                    exit_protection_errors.append(error)
+                    warnings.append(error)
+        result["exit_protection_repairs"] = exit_protection_repairs
+        result["exit_protection_errors"] = exit_protection_errors
+        result["warnings"] = warnings
+
         db.add(
             AuditLog(
                 actor="reconciliation",
@@ -841,6 +972,10 @@ class ReconciliationService:
                     "divergences": divergences,
                     "warning_count": len(warnings),
                     "warnings": warnings,
+                    "exit_protection_repair_count": len(exit_protection_repairs),
+                    "exit_protection_repairs": exit_protection_repairs,
+                    "exit_protection_error_count": len(exit_protection_errors),
+                    "exit_protection_errors": exit_protection_errors,
                 },
             )
         )

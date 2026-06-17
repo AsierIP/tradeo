@@ -306,12 +306,78 @@ def near_miss_volume_payload(**overrides):
     return payload
 
 
+def test_signal_idempotency_key_canonicalizes_daily_midnight_bar() -> None:
+    date_match = match_payload(window_end="2026-06-16")
+    timestamp_match = match_payload(window_end="2026-06-16 00:00:00")
+
+    assert (
+        PatternEntryScanner._signal_idempotency_key("laboratory", date_match)
+        == PatternEntryScanner._signal_idempotency_key("laboratory", timestamp_match)
+    )
+    assert PatternEntryScanner._canonical_bar_window_end(timestamp_match) == "2026-06-16"
+
+
+def test_duplicate_signal_matches_legacy_midnight_bar_format() -> None:
+    db = session_factory()
+    provider = FixtureProvider()
+    pattern = add_pattern(db, provider, status=DiscoveredPatternStatus.LAB_CANDIDATE)
+    match = match_payload(
+        pattern_id=pattern.id,
+        pattern_name=pattern.name,
+        pattern_key=pattern.pattern_key,
+        window_end="2026-06-16",
+    )
+    legacy_key = "|".join(
+        (
+            "laboratory",
+            str(pattern.id),
+            match["symbol"],
+            match["timeframe"],
+            match["entry_variant_id"],
+            "2026-06-16 00:00:00",
+        )
+    )
+    signal = Signal(
+        symbol=match["symbol"],
+        pattern=match["pattern_name"],
+        side="long",
+        entry=10.0,
+        stop=9.0,
+        target=14.0,
+        reward_risk=4.0,
+        confidence=0.8,
+        composite_score=0.8,
+        risk_usd=10.0,
+        suggested_qty=1,
+        strategy_version=f"laboratory_pattern_{pattern.id}",
+        status=SignalStatus.PAPER_APPROVED,
+        metadata_json={
+            "entry_module": "laboratory",
+            "pattern_id": pattern.id,
+            "entry_variant_id": match["entry_variant_id"],
+            "signal_idempotency_key": legacy_key,
+        },
+    )
+    db.add(signal)
+    db.commit()
+
+    duplicate = PatternEntryScanner(
+        settings=scanner(provider).settings,
+        matcher=StaticMatcher(provider, [match]),
+    )._duplicate_signal(db, match, module="laboratory")
+
+    assert duplicate is not None
+    assert duplicate.id == signal.id
+
+
 def scanner(provider: FixtureProvider, **settings_overrides) -> PatternEntryScanner:
     defaults = {
         "min_avg_dollar_volume": 0,
         "max_atr_pct": 1.0,
         "laboratory_auto_submit_paper_orders": False,
         "laboratory_market_hours_only": False,
+        "ibkr_readonly": False,
+        "ibkr_port": 7497,
         "fox_hunter_enabled": False,
         "fox_hunter_market_hours_only": False,
         "entry_gate_enabled": False,
@@ -1402,6 +1468,41 @@ def test_laboratory_runtime_kill_switch_downgrades_to_shadow_observation(monkeyp
     assert observation.metadata_json["order_decision"]["no_order_reason"] == "runtime_kill_switch_enabled"
 
 
+def test_laboratory_readonly_downgrades_to_shadow_observation(monkeypatch) -> None:
+    db = session_factory()
+    provider = FixtureProvider()
+    pattern = add_pattern(db, provider, status=DiscoveredPatternStatus.LAB_CANDIDATE)
+
+    class FailBroker:
+        def __init__(self, settings) -> None:
+            self.settings = settings
+
+        def submit_signal_bracket(self, db, signal, *, reason: str = "manual"):
+            raise AssertionError("readonly should degrade before broker submission")
+
+    monkeypatch.setattr("tradeo.modules.shared.entry_scanner.IBKRBroker", FailBroker)
+    match = match_payload(pattern_id=pattern.id, pattern_name=pattern.name, pattern_key=pattern.pattern_key)
+
+    result = PatternEntryScanner(
+        settings=scanner(
+            provider,
+            laboratory_auto_submit_paper_orders=True,
+            ibkr_readonly=True,
+        ).settings,
+        matcher=StaticMatcher(provider, [match]),
+    ).scan(db, module="laboratory", symbols=[provider.symbol], store_signals=True)
+
+    assert result["requested_execute_orders"] is True
+    assert result["execute_orders"] is False
+    assert result["execution_degraded_to_shadow"] is True
+    assert result["execution_degrade_reason"] == "ibkr_readonly"
+    assert result["orders_submitted"] == 0
+    assert result["order_skip_reason_counts"] == {"ibkr_readonly": 1}
+    signal = db.get(Signal, result["signal_ids"][0])
+    assert signal.metadata_json["no_order_reason"] == "ibkr_readonly"
+    assert signal.metadata_json["order_decision"]["submitted_to_broker"] is False
+
+
 def test_laboratory_resubmits_duplicate_signal_without_broker_trade(monkeypatch) -> None:
     db = session_factory()
     provider = FixtureProvider()
@@ -1489,6 +1590,219 @@ def test_laboratory_resubmits_duplicate_signal_without_broker_trade(monkeypatch)
     assert signal.metadata_json["paper_order_requested"] is True
     assert "no_ibkr_order" not in signal.metadata_json
     assert db.query(Trade).filter(Trade.signal_id == signal.id).count() == 1
+
+
+def test_laboratory_upgrades_duplicate_shadow_observation_to_paper_order(monkeypatch) -> None:
+    db = session_factory()
+    provider = FixtureProvider()
+    pattern = add_pattern(db, provider, status=DiscoveredPatternStatus.LAB_CANDIDATE)
+    match = match_payload(pattern_id=pattern.id, pattern_name=pattern.name, pattern_key=pattern.pattern_key)
+    cfg = scanner(provider, ibkr_readonly=False).settings
+    idempotency_key = PatternEntryScanner._signal_idempotency_key("laboratory", match)
+    signal = Signal(
+        symbol=match["symbol"],
+        pattern=match["pattern_name"],
+        side="long",
+        entry=10.0,
+        stop=9.0,
+        target=14.0,
+        reward_risk=4.0,
+        confidence=0.8,
+        composite_score=0.8,
+        risk_usd=10.0,
+        suggested_qty=1,
+        strategy_version=f"laboratory_pattern_{pattern.id}",
+        status=SignalStatus.PAPER_APPROVED,
+        metadata_json={
+            "entry_module": "laboratory",
+            "pattern_id": pattern.id,
+            "signal_idempotency_key": idempotency_key,
+            "entry_variant_id": match["entry_variant_id"],
+            "execution_mode": LAB_SHADOW_EXECUTION_MODE,
+            "no_ibkr_order": True,
+        },
+    )
+    db.add(signal)
+    db.flush()
+    shadow = Trade(
+        signal_id=signal.id,
+        symbol=signal.symbol,
+        pattern=signal.pattern,
+        side=signal.side,
+        qty=signal.suggested_qty,
+        entry=signal.entry,
+        stop=signal.stop,
+        target=signal.target,
+        status=TradeStatus.OPEN,
+        opened_at=datetime.now(timezone.utc),
+        evidence_type=EvidenceType.SHADOW_NO_ORDER.value,
+        evidence_quality=EvidenceQuality.NORMAL.value,
+        metadata_json={
+            "execution_mode": LAB_SHADOW_EXECUTION_MODE,
+            "no_ibkr_order": True,
+        },
+    )
+    db.add(shadow)
+    db.commit()
+
+    class PaperBroker:
+        def __init__(self, settings) -> None:
+            self.settings = settings
+
+        def submit_signal_bracket(self, db, signal, *, reason: str = "manual"):
+            trade = Trade(
+                signal_id=signal.id,
+                symbol=signal.symbol,
+                pattern=signal.pattern,
+                side=signal.side,
+                qty=signal.suggested_qty,
+                entry=signal.entry,
+                stop=signal.stop,
+                target=signal.target,
+                status=TradeStatus.OPEN,
+                opened_at=datetime.now(timezone.utc),
+                broker_order_id="paper-upgrade",
+                evidence_type=EvidenceType.IBKR_PAPER_ORDER.value,
+                evidence_quality=EvidenceQuality.NORMAL.value,
+                metadata_json={
+                    "execution_mode": "ibkr",
+                    "ibkr_mode": "paper",
+                    "reason": reason,
+                },
+            )
+            db.add(trade)
+            db.commit()
+            db.refresh(trade)
+            return trade
+
+    monkeypatch.setattr("tradeo.modules.shared.entry_scanner.IBKRBroker", PaperBroker)
+
+    result = PatternEntryScanner(settings=cfg, matcher=StaticMatcher(provider, [match])).scan(
+        db,
+        module="laboratory",
+        symbols=[provider.symbol],
+        store_signals=True,
+        execute_orders=True,
+    )
+
+    assert result["orders_submitted"] == 1
+    assert result["skipped_duplicates"] == 0
+    db.refresh(shadow)
+    assert shadow.status == TradeStatus.CANCELLED
+    assert shadow.metadata_json["close_reason"] == "upgraded_to_ibkr_paper_order"
+    paper_trade = db.query(Trade).filter(Trade.broker_order_id == "paper-upgrade").one()
+    assert paper_trade.status == TradeStatus.OPEN
+
+
+def test_laboratory_shadow_observation_does_not_block_new_paper_order(monkeypatch) -> None:
+    db = session_factory()
+    provider = FixtureProvider()
+    pattern = add_pattern(db, provider, status=DiscoveredPatternStatus.LAB_CANDIDATE)
+    old_match = match_payload(
+        pattern_id=pattern.id,
+        pattern_name=pattern.name,
+        pattern_key=pattern.pattern_key,
+        window_end="2026-06-08T00:00:00+00:00",
+    )
+    new_match = match_payload(
+        pattern_id=pattern.id,
+        pattern_name=pattern.name,
+        pattern_key=pattern.pattern_key,
+        window_end="2026-06-09T00:00:00+00:00",
+    )
+    old_signal = Signal(
+        symbol=old_match["symbol"],
+        pattern=old_match["pattern_name"],
+        side="long",
+        entry=10.0,
+        stop=9.0,
+        target=14.0,
+        reward_risk=4.0,
+        confidence=0.8,
+        composite_score=0.8,
+        risk_usd=10.0,
+        suggested_qty=1,
+        strategy_version=f"laboratory_pattern_{pattern.id}",
+        status=SignalStatus.PAPER_APPROVED,
+        metadata_json={
+            "entry_module": "laboratory",
+            "pattern_id": pattern.id,
+            "signal_idempotency_key": PatternEntryScanner._signal_idempotency_key(
+                "laboratory", old_match
+            ),
+            "entry_variant_id": old_match["entry_variant_id"],
+            "execution_mode": LAB_SHADOW_EXECUTION_MODE,
+            "no_ibkr_order": True,
+        },
+    )
+    db.add(old_signal)
+    db.flush()
+    db.add(
+        Trade(
+            signal_id=old_signal.id,
+            symbol=old_signal.symbol,
+            pattern=old_signal.pattern,
+            side=old_signal.side,
+            qty=old_signal.suggested_qty,
+            entry=old_signal.entry,
+            stop=old_signal.stop,
+            target=old_signal.target,
+            status=TradeStatus.OPEN,
+            opened_at=datetime.now(timezone.utc),
+            evidence_type=EvidenceType.SHADOW_NO_ORDER.value,
+            evidence_quality=EvidenceQuality.NORMAL.value,
+            metadata_json={
+                "execution_mode": LAB_SHADOW_EXECUTION_MODE,
+                "no_ibkr_order": True,
+            },
+        )
+    )
+    db.commit()
+
+    class PaperBroker:
+        def __init__(self, settings) -> None:
+            self.settings = settings
+
+        def submit_signal_bracket(self, db, signal, *, reason: str = "manual"):
+            trade = Trade(
+                signal_id=signal.id,
+                symbol=signal.symbol,
+                pattern=signal.pattern,
+                side=signal.side,
+                qty=signal.suggested_qty,
+                entry=signal.entry,
+                stop=signal.stop,
+                target=signal.target,
+                status=TradeStatus.OPEN,
+                opened_at=datetime.now(timezone.utc),
+                broker_order_id="paper-new-bar",
+                evidence_type=EvidenceType.IBKR_PAPER_ORDER.value,
+                evidence_quality=EvidenceQuality.NORMAL.value,
+                metadata_json={"execution_mode": "ibkr", "ibkr_mode": "paper"},
+            )
+            db.add(trade)
+            db.commit()
+            db.refresh(trade)
+            return trade
+
+    monkeypatch.setattr("tradeo.modules.shared.entry_scanner.IBKRBroker", PaperBroker)
+
+    result = PatternEntryScanner(
+        settings=scanner(provider, ibkr_readonly=False).settings,
+        matcher=StaticMatcher(provider, [new_match]),
+    ).scan(
+        db,
+        module="laboratory",
+        symbols=[provider.symbol],
+        store_signals=True,
+        execute_orders=True,
+    )
+
+    assert result["signals_created"] == 1
+    assert result["orders_submitted"] == 1
+    assert result["skipped_duplicates"] == 0
+    assert result["order_skip_reason_counts"] == {}
+    assert db.query(Trade).filter(Trade.broker_order_id == "paper-new-bar").count() == 1
 
 
 def test_laboratory_does_not_resubmit_duplicate_signal_after_final_order_failure() -> None:
@@ -1583,6 +1897,97 @@ def test_laboratory_defers_recent_retryable_duplicate_signal_order_failure() -> 
     assert result["orders_submitted"] == 0
     assert result["skipped_duplicates"] == 1
     assert db.query(Trade).filter(Trade.signal_id == signal.id).count() == 0
+
+
+def test_laboratory_stale_retryable_failure_does_not_block_new_bar(monkeypatch) -> None:
+    db = session_factory()
+    provider = FixtureProvider()
+    pattern = add_pattern(db, provider, status=DiscoveredPatternStatus.LAB_CANDIDATE)
+    old_match = match_payload(
+        pattern_id=pattern.id,
+        pattern_name=pattern.name,
+        pattern_key=pattern.pattern_key,
+        window_end="2026-06-08T00:00:00+00:00",
+    )
+    new_match = match_payload(
+        pattern_id=pattern.id,
+        pattern_name=pattern.name,
+        pattern_key=pattern.pattern_key,
+        window_end="2026-06-09T00:00:00+00:00",
+    )
+    old_signal = Signal(
+        symbol=old_match["symbol"],
+        pattern=old_match["pattern_name"],
+        side="long",
+        entry=10.0,
+        stop=9.0,
+        target=14.0,
+        reward_risk=4.0,
+        confidence=0.8,
+        composite_score=0.8,
+        risk_usd=10.0,
+        suggested_qty=1,
+        strategy_version=f"laboratory_pattern_{pattern.id}",
+        status=SignalStatus.PAPER_APPROVED,
+        metadata_json={
+            "entry_module": "laboratory",
+            "pattern_id": pattern.id,
+            "signal_idempotency_key": PatternEntryScanner._signal_idempotency_key(
+                "laboratory", old_match
+            ),
+            "entry_variant_id": old_match["entry_variant_id"],
+            "execution_outcome": {
+                "reason_code": "ibkr_bracket_not_accepted",
+                "retryable": True,
+                "updated_at": "2026-06-09T10:00:00+00:00",
+            },
+        },
+    )
+    db.add(old_signal)
+    db.commit()
+
+    class PaperBroker:
+        def __init__(self, settings) -> None:
+            self.settings = settings
+
+        def submit_signal_bracket(self, db, signal, *, reason: str = "manual"):
+            trade = Trade(
+                signal_id=signal.id,
+                symbol=signal.symbol,
+                pattern=signal.pattern,
+                side=signal.side,
+                qty=signal.suggested_qty,
+                entry=signal.entry,
+                stop=signal.stop,
+                target=signal.target,
+                status=TradeStatus.OPEN,
+                opened_at=datetime.now(timezone.utc),
+                broker_order_id="paper-after-stale-retry",
+                evidence_type=EvidenceType.IBKR_PAPER_ORDER.value,
+                evidence_quality=EvidenceQuality.NORMAL.value,
+                metadata_json={"execution_mode": "ibkr", "ibkr_mode": "paper"},
+            )
+            db.add(trade)
+            db.commit()
+            db.refresh(trade)
+            return trade
+
+    monkeypatch.setattr("tradeo.modules.shared.entry_scanner.IBKRBroker", PaperBroker)
+
+    result = PatternEntryScanner(
+        settings=scanner(
+            provider,
+            ibkr_readonly=False,
+            entry_cooldown_minutes=60,
+            laboratory_auto_submit_paper_orders=True,
+        ).settings,
+        matcher=StaticMatcher(provider, [new_match]),
+    ).scan(db, module="laboratory", symbols=[provider.symbol], store_signals=True)
+
+    assert result["signals_created"] == 1
+    assert result["orders_submitted"] == 1
+    assert result["skipped_duplicates"] == 0
+    assert db.query(Trade).filter(Trade.broker_order_id == "paper-after-stale-retry").count() == 1
 
 
 def test_laboratory_scanner_rejects_match_without_entry_trigger() -> None:
@@ -2211,6 +2616,48 @@ def test_laboratory_opens_near_miss_shadow_observation_for_soft_volume_failure()
     assert observation.metadata_json["evidence_type"] == EvidenceType.NEAR_MISS_SHADOW.value
     assert observation.metadata_json["near_miss_shadow"] is True
     assert observation.metadata_json["no_ibkr_order"] is True
+
+
+def test_laboratory_opens_near_miss_shadow_observation_for_weak_entry_score() -> None:
+    db = session_factory()
+    provider = FixtureProvider("WEAK")
+    weak_score_match = near_miss_match(
+        provider,
+        entry_score=0.48,
+        metrics={
+            **near_miss_match(provider)["metrics"],
+            "entry_gate": {
+                **near_miss_match(provider)["metrics"]["entry_gate"],
+                "reason": "weak_entry_score",
+                "rejection_reasons": ["weak_entry_score"],
+                "entry_score": 0.48,
+                "volume_ratio": 1.4,
+            },
+        },
+    )
+
+    class WeakScoreMatcher:
+        def match_current(self, *args, **kwargs):
+            return {
+                "patterns_checked": 1,
+                "symbols_checked": 1,
+                "matches": [weak_score_match],
+                "stored_matches": 1,
+                "similarity_threshold": 0.45,
+            }
+
+    result = PatternEntryScanner(
+        settings=scanner(provider, entry_gate_enabled=True).settings,
+        matcher=WeakScoreMatcher(),
+    ).scan(db, module="laboratory", symbols=[provider.symbol], store_signals=True, execute_orders=True)
+
+    assert result["signals_created"] == 1
+    assert result["orders_submitted"] == 0
+    assert result["near_miss_shadow_observations_opened"] == 1
+    signal = db.get(Signal, result["signal_ids"][0])
+    assert signal.metadata_json["no_order_reason"] == "entry_gate_score_near_miss_shadow"
+    assert signal.metadata_json["near_miss_reasons"] == ["weak_entry_score"]
+    assert signal.metadata_json["no_ibkr_order"] is True
 
 
 def test_laboratory_does_not_open_near_miss_shadow_for_hard_entry_blocker() -> None:

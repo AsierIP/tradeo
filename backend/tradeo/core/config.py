@@ -286,6 +286,7 @@ class Settings(BaseSettings):
     reconciliation_enabled: bool = True
     reconciliation_interval_minutes: int = 30
     reconciliation_auto_kill_switch: bool = True
+    reconciliation_auto_repair_paper_exits: bool = False
 
     # Pattern health monitor (informe §4.8): CUSUM over realized R per trade
     # vs the Research expectancy for PRODUCTION/DIRECTOR_REVIEW patterns. A

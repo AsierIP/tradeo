@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-from tradeo.db.models import Signal
+from tradeo.db.models import Signal, SignalStatus
 
 
 SAFETY_BLOCK_PHRASES = (
@@ -71,4 +71,10 @@ def mark_signal_order_failure(signal: Signal, error: str) -> dict[str, Any]:
     metadata["execution_outcome"] = outcome
     metadata["last_order_error"] = error
     signal.metadata_json = metadata
+    if outcome["retryable"] is False and signal.status in {
+        SignalStatus.PAPER_APPROVED,
+        SignalStatus.LIVE_APPROVED,
+        SignalStatus.PENDING_HUMAN_APPROVAL,
+    }:
+        signal.status = SignalStatus.REJECTED
     return outcome

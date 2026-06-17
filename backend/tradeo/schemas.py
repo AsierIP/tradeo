@@ -402,20 +402,34 @@ class PatternEntryScanResponse(BaseModel):
     skipped_cooldown: int = 0
     rejected_by_entry_gate: int = 0
     rejected_by_entry_quality: int = 0
+    rejected_by_ambiguity: int = 0
     rejected_by_risk: int
     rejected_by_production_manifest: int = 0
     production_manifest_rejection_reason_counts: dict[str, int] = Field(default_factory=dict)
     order_errors: list[dict[str, Any]] = Field(default_factory=list)
+    order_skip_reason_counts: dict[str, int] = Field(default_factory=dict)
     signal_ids: list[int] = Field(default_factory=list)
+    near_miss_signal_ids: list[int] = Field(default_factory=list)
     trade_ids: list[int] = Field(default_factory=list)
     paper_observations_opened: int = 0
     paper_observations_closed: int = 0
     paper_observation_trade_ids: list[int] = Field(default_factory=list)
+    near_miss_shadow_observations_opened: int = 0
+    near_miss_trade_ids: list[int] = Field(default_factory=list)
+    shadow_no_order_observations_opened: int = 0
+    shadow_no_order_trade_ids: list[int] = Field(default_factory=list)
     paper_observation_lifecycle: dict[str, Any] = Field(default_factory=dict)
     top_opportunities: list[dict[str, Any]] = Field(default_factory=list)
+    requested_execute_orders: bool | None = None
+    execution_mode: str | None = None
+    execution_degraded_to_shadow: bool = False
+    execution_degrade_reason: str | None = None
     store_signals: bool
     execute_orders: bool
     similarity_threshold: float
+    scan_duration_ms: float | None = None
+    skipped_reason: str | None = None
+    market_session: dict[str, Any] | None = None
     generated_at: str
 
 

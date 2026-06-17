@@ -5,6 +5,7 @@ import hashlib
 import json
 import random
 import time
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
@@ -228,6 +229,15 @@ class IBKRBroker:
 
         return Stock(symbol.upper(), "SMART", "USD")
 
+    def _selected_account(self, ib) -> str | None:  # noqa: ANN001
+        if self.settings.ibkr_account:
+            return self.settings.ibkr_account
+        managed_accounts = getattr(ib, "managedAccounts", None)
+        if not callable(managed_accounts):
+            return None
+        accounts = managed_accounts()
+        return accounts[0] if len(accounts) == 1 else None
+
     def _build_parent_limit_order(self, signal: Signal):
         from ib_insync import Order
 
@@ -373,8 +383,9 @@ class IBKRBroker:
             )
             for order in bracket:
                 order.tif = "DAY"
-                if self.settings.ibkr_account:
-                    order.account = self.settings.ibkr_account
+                account = self._selected_account(ib)
+                if account:
+                    order.account = account
             if action == "SELL":
                 bracket[0].shortSaleSlot = 1
             trades = []
@@ -393,33 +404,20 @@ class IBKRBroker:
                 for trade_status in trades:
                     ib.cancelOrder(trade_status.order)
                 ib.sleep(1.0)
-                if self.settings.trading_mode != "paper":
-                    raise IBKRSafetyError(
-                        "IBKR did not acknowledge the bracket safely: "
-                        f"{json.dumps(status_snapshot, sort_keys=True)}"
-                    )
-                parent_order = self._build_parent_limit_order(signal)
-                parent_trade = ib.placeOrder(contract, parent_order)
-                fallback_deadline = time.monotonic() + self.order_timeout
-                while time.monotonic() < fallback_deadline:
-                    ib.sleep(0.5)
-                    if _parent_order_acknowledged(parent_trade):
-                        break
-                if not _parent_order_acknowledged(parent_trade):
-                    ib.cancelOrder(parent_order)
-                    ib.sleep(1.0)
-                    raise IBKRSafetyError(
-                        "IBKR did not acknowledge the bracket safely: "
-                        f"{json.dumps(status_snapshot, sort_keys=True)}"
-                    )
-                trades = [parent_trade]
-                bracket_degraded_to_parent_only = True
-                bracket_failure_snapshot = status_snapshot
+                raise IBKRSafetyError(
+                    "IBKR did not acknowledge the bracket safely: "
+                    f"{json.dumps(status_snapshot, sort_keys=True)}"
+                )
 
             parent_trade = trades[0]
             parent_order = parent_trade.order
             order_ids = [t.order.orderId for t in trades]
             perm_ids = [t.orderStatus.permId or None for t in trades]
+            paper_bracket_ack_mode = (
+                "order_id_status_no_terminal"
+                if self.settings.trading_mode == "paper" and not all(perm_ids)
+                else "perm_id_all_legs"
+            )
             now = datetime.now(timezone.utc)
             signal_metadata = signal.metadata_json or {}
             evidence_type = (
@@ -437,6 +435,7 @@ class IBKRBroker:
                 "regime_key": (signal_metadata.get("regime") or {}).get("regime_key"),
                 "order_ids": order_ids,
                 "perm_ids": perm_ids,
+                "paper_bracket_ack_mode": paper_bracket_ack_mode,
             }
             bracket_legs = {
                 "entry": {"order_id": order_ids[0], "perm_id": perm_ids[0]},
@@ -486,6 +485,7 @@ class IBKRBroker:
                     "requested_bracket": bracket_prices["requested"],
                     "submitted_bracket": bracket_prices["submitted"],
                     "paper_bracket_adjusted": bracket_prices["adjusted"],
+                    "paper_bracket_ack_mode": paper_bracket_ack_mode,
                     "paper_bracket_degraded_to_parent_only": bracket_degraded_to_parent_only,
                     "bracket_failure_snapshot": bracket_failure_snapshot,
                     "order_ids": order_ids,
@@ -532,6 +532,202 @@ class IBKRBroker:
             db.commit()
             db.refresh(trade)
             return trade
+        finally:
+            if ib.isConnected():
+                ib.disconnect()
+
+    def repair_trade_exit_protection(
+        self,
+        db: Session,
+        trade: Trade,
+        *,
+        reason: str = "reconciliation_exit_repair",
+    ) -> dict[str, Any]:
+        """Place paper OCA stop/target exits for an already-open IBKR trade."""
+        if self.settings.trading_mode != "paper":
+            raise IBKRSafetyError("exit protection auto-repair is paper-only")
+        if self.settings.ibkr_readonly:
+            raise IBKRSafetyError("TRADEO_IBKR_READONLY=true blocks exit protection repair")
+        if self.settings.kill_switch_enabled:
+            raise IBKRSafetyError("kill switch is enabled")
+        if trade.status != TradeStatus.OPEN:
+            raise IBKRSafetyError("trade is not open")
+        if not trade.broker_order_id:
+            raise IBKRSafetyError("trade has no broker_order_id")
+
+        ib = self._connect()
+        try:
+            contract = self._stock_contract(trade.symbol)
+            qualified = ib.qualifyContracts(contract)
+            if not qualified:
+                raise IBKRSafetyError(f"IBKR could not qualify contract for {trade.symbol}")
+            contract = qualified[0]
+            exit_action = "BUY" if str(trade.side or "").lower().strip() == "short" else "SELL"
+            prices = _operational_bracket_prices(
+                trade,
+                paper_mode=True,
+                max_distance_pct=float(
+                    getattr(self.settings, "ibkr_paper_bracket_max_distance_pct", 0.20)
+                ),
+            )
+            qty = abs(int(trade.qty or 0))
+            if qty <= 0:
+                raise IBKRSafetyError("trade qty must be positive")
+
+            from ib_insync import Order
+
+            oca_group = f"TRADEO_EXIT_{trade.id}_{uuid.uuid4().hex[:10]}"
+            target_order = Order()
+            target_order.action = exit_action
+            target_order.orderType = "LMT"
+            target_order.totalQuantity = qty
+            target_order.lmtPrice = prices["target"]
+            target_order.tif = "DAY"
+            target_order.ocaGroup = oca_group
+            target_order.ocaType = 1
+            target_order.transmit = True
+
+            stop_order = Order()
+            stop_order.action = exit_action
+            stop_order.orderType = "STP"
+            stop_order.totalQuantity = qty
+            stop_order.auxPrice = prices["stop"]
+            stop_order.tif = "DAY"
+            stop_order.ocaGroup = oca_group
+            stop_order.ocaType = 1
+            stop_order.transmit = True
+
+            account = self._selected_account(ib)
+            for order in (target_order, stop_order):
+                if account:
+                    order.account = account
+
+            ib.reqAllOpenOrders()
+            ib.sleep(1.0)
+            existing_exit_orders = [
+                open_trade
+                for open_trade in ib.openTrades()
+                if str(getattr(open_trade.contract, "symbol", "") or "").upper() == trade.symbol.upper()
+                and str(getattr(open_trade.order, "action", "") or "").upper() == exit_action
+                and str(getattr(open_trade.orderStatus, "status", "") or "").lower()
+                not in {"filled", "cancelled", "apicancelled", "inactive"}
+            ]
+
+            placed = [
+                ib.placeOrder(contract, target_order),
+                ib.placeOrder(contract, stop_order),
+            ]
+            deadline = time.monotonic() + self.order_timeout
+            while time.monotonic() < deadline:
+                ib.sleep(0.5)
+                if all(_parent_order_acknowledged(row) for row in placed):
+                    break
+            if not all(_parent_order_acknowledged(row) for row in placed):
+                snapshot = _bracket_status_snapshot(placed)
+                for row in placed:
+                    ib.cancelOrder(row.order)
+                ib.sleep(1.0)
+                raise IBKRSafetyError(
+                    "IBKR did not acknowledge repaired exit protection safely: "
+                    f"{json.dumps(snapshot, sort_keys=True)}"
+                )
+
+            placed_ids = {int(row.order.orderId) for row in placed if getattr(row.order, "orderId", None)}
+            for row in existing_exit_orders:
+                order_id = getattr(row.order, "orderId", None)
+                if order_id is not None and int(order_id) in placed_ids:
+                    continue
+                ib.cancelOrder(row.order)
+            ib.sleep(1.0)
+
+            now = datetime.now(timezone.utc)
+            target_trade, stop_trade = placed
+            target_perm_id = target_trade.orderStatus.permId or None
+            stop_perm_id = stop_trade.orderStatus.permId or None
+            metadata = dict(trade.metadata_json or {})
+            bracket_legs = dict(metadata.get("bracket_legs") or {})
+            bracket_legs["target"] = {
+                "order_id": target_trade.order.orderId,
+                "perm_id": target_perm_id,
+                "repaired": True,
+            }
+            bracket_legs["stop"] = {
+                "order_id": stop_trade.order.orderId,
+                "perm_id": stop_perm_id,
+                "repaired": True,
+            }
+            metadata.update(
+                {
+                    "exit_protection_mode": "oca_stop_target",
+                    "exit_protection_repaired_at": now.isoformat(),
+                    "exit_protection_repair_reason": reason,
+                    "protective_orders": {
+                        "oca_group": oca_group,
+                        "action": exit_action,
+                        "quantity": qty,
+                        "target": {
+                            "order_id": target_trade.order.orderId,
+                            "perm_id": target_perm_id,
+                            "limit_price": prices["target"],
+                        },
+                        "stop": {
+                            "order_id": stop_trade.order.orderId,
+                            "perm_id": stop_perm_id,
+                            "aux_price": prices["stop"],
+                        },
+                        "requested_bracket": prices["requested"],
+                        "submitted_bracket": prices["submitted"],
+                        "paper_bracket_adjusted": prices["adjusted"],
+                    },
+                    "bracket_legs": bracket_legs,
+                    "target_order_id": target_trade.order.orderId,
+                    "target_perm_id": target_perm_id,
+                    "stop_order_id": stop_trade.order.orderId,
+                    "stop_perm_id": stop_perm_id,
+                }
+            )
+            trade.metadata_json = metadata
+            db.add(trade)
+            db.add(
+                AuditLog(
+                    actor="ibkr_broker",
+                    action="ibkr_exit_protection_repaired",
+                    entity_type="trade",
+                    entity_id=str(trade.id),
+                    details_json={
+                        "trade_id": trade.id,
+                        "symbol": trade.symbol,
+                        "side": trade.side,
+                        "qty": qty,
+                        "action": exit_action,
+                        "reason": reason,
+                        "oca_group": oca_group,
+                        "target_order_id": target_trade.order.orderId,
+                        "target_perm_id": target_perm_id,
+                        "stop_order_id": stop_trade.order.orderId,
+                        "stop_perm_id": stop_perm_id,
+                        "cancelled_existing_exit_order_ids": [
+                            getattr(row.order, "orderId", None)
+                            for row in existing_exit_orders
+                            if getattr(row.order, "orderId", None) not in placed_ids
+                        ],
+                        "requested_bracket": prices["requested"],
+                        "submitted_bracket": prices["submitted"],
+                    },
+                )
+            )
+            db.commit()
+            db.refresh(trade)
+            return {
+                "trade_id": trade.id,
+                "symbol": trade.symbol,
+                "target_order_id": target_trade.order.orderId,
+                "stop_order_id": stop_trade.order.orderId,
+                "target_perm_id": target_perm_id,
+                "stop_perm_id": stop_perm_id,
+                "oca_group": oca_group,
+                "submitted_bracket": prices["submitted"],
+            }
         finally:
             if ib.isConnected():
                 ib.disconnect()
@@ -586,8 +782,6 @@ def _bracket_acknowledged(trades: list[Any], *, paper_mode: bool) -> bool:
     if len(trades) != 3:
         return False
     if _bracket_has_terminal_rejection(trades):
-        return False
-    if not getattr(trades[0].orderStatus, "permId", 0):
         return False
     if not all(getattr(trade.order, "orderId", 0) for trade in trades):
         return False

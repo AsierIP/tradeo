@@ -32,7 +32,6 @@ EntryModule = Literal["laboratory", "fox_hunter"]
 LAB_NEAR_MISS_VOLUME_REASONS = {"insufficient_volume", "weak_volume_confirmation"}
 LAB_NEAR_MISS_HARD_REASONS = {
     "weak_trigger",
-    "weak_entry_score",
     "no_operational_trigger",
     "insufficient_history",
     "regime_not_aligned",
@@ -46,10 +45,11 @@ LAB_NEAR_MISS_HARD_REASONS = {
     "thin_liquidity",
     "trigger_not_confirmed",
 }
-LAB_NEAR_MISS_TOP_RANK_LIMIT = 3
-LAB_NEAR_MISS_MIN_ENTRY_SCORE = 0.50
-LAB_NEAR_MISS_MIN_RANK_SCORE = 0.45
-LAB_NEAR_MISS_HIGH_RANK_SCORE = 0.60
+LAB_NEAR_MISS_SOFT_REASONS = LAB_NEAR_MISS_VOLUME_REASONS | {"weak_entry_score"}
+LAB_NEAR_MISS_TOP_RANK_LIMIT = 5
+LAB_NEAR_MISS_MIN_ENTRY_SCORE = 0.45
+LAB_NEAR_MISS_MIN_RANK_SCORE = 0.50
+LAB_NEAR_MISS_HIGH_RANK_SCORE = 0.55
 
 
 class PatternEntryScannerSafetyError(RuntimeError):
@@ -107,6 +107,9 @@ class PatternEntryScanner:
             if runtime_kill_switch_active(db):
                 resolved["execute_orders"] = False
                 execution_degrade_reason = "runtime_kill_switch_enabled"
+            elif settings.ibkr_readonly:
+                resolved["execute_orders"] = False
+                execution_degrade_reason = "ibkr_readonly"
         observation_lifecycle = self._close_lab_observations(db, module)
         session = market_session_status()
         if self._requires_market_hours(module) and not bool(session["regular_session_open"]):
@@ -255,6 +258,7 @@ class PatternEntryScanner:
                 ):
                     try:
                         self._prepare_lab_signal_for_order_submission(duplicate_signal, match)
+                        self._cancel_shadow_observations_for_order_submission(db, duplicate_signal)
                         trade = IBKRBroker(settings).submit_signal_bracket(
                             db,
                             duplicate_signal,
@@ -317,7 +321,14 @@ class PatternEntryScanner:
                     )
                     db.commit()
                 continue
-            if self._has_active_exposure(db, match, module=module):
+            if self._has_active_exposure(
+                db,
+                match,
+                module=module,
+                ignore_lab_shadow_observations=module == "laboratory"
+                and bool(resolved["execute_orders"]),
+                retryable_failure_cooldown_minutes=max(60, int(settings.entry_cooldown_minutes)),
+            ):
                 skipped_duplicates += 1
                 self._count_reason(order_skip_reason_counts, "active_exposure")
                 db.add(
@@ -636,6 +647,7 @@ class PatternEntryScanner:
             and not runtime_kill_switch_enabled
             and settings.trading_mode == "paper"
             and not settings.live_armed
+            and not settings.ibkr_readonly
             and int(settings.ibkr_port) not in {7496, 4001}
         )
         # Lab paper order permission is intentionally independent from the
@@ -663,6 +675,16 @@ class PatternEntryScanner:
                 "auto_submit_paper_orders": settings.laboratory_auto_submit_paper_orders,
                 "paper_orders_allowed": paper_orders_allowed,
                 "paper_order_safety_ok": paper_order_safety_ok,
+                "paper_order_submission_ready": paper_orders_allowed,
+                "paper_submission_block_reason": None
+                if paper_orders_allowed
+                else self._paper_order_block_reason(
+                    settings,
+                    paper_order_safety_ok,
+                    runtime_kill_switch_enabled=runtime_kill_switch_enabled,
+                ),
+                "ibkr_readonly": settings.ibkr_readonly,
+                "ibkr_port": settings.ibkr_port,
                 "default_execute_orders": default_lab_execute_orders,
                 "default_execution_mode": (
                     "ibkr_paper" if default_lab_execute_orders else LAB_SHADOW_EXECUTION_MODE
@@ -789,6 +811,8 @@ class PatternEntryScanner:
             return "trading_mode_not_paper"
         if settings.live_armed:
             return "live_armed_blocks_laboratory"
+        if settings.ibkr_readonly:
+            return "ibkr_readonly"
         if not paper_order_safety_ok:
             return "ibkr_live_port_blocked"
         return "unknown"
@@ -919,7 +943,12 @@ class PatternEntryScanner:
             near_miss_type = str(match.get("near_miss_type") or "")
             if near_miss_type == "ambiguous_match_shadow":
                 return "ambiguous_match_shadow_observation"
-            return "entry_gate_volume_near_miss_shadow"
+            near_miss_reasons = set(match.get("near_miss_reasons") or match.get("entry_gate_rejection_reasons") or [])
+            if "weak_entry_score" in near_miss_reasons:
+                return "entry_gate_score_near_miss_shadow"
+            if near_miss_reasons & LAB_NEAR_MISS_VOLUME_REASONS:
+                return "entry_gate_volume_near_miss_shadow"
+            return "entry_gate_near_miss_shadow"
         return (
             "paper_order_requested_but_safety_degraded"
             if requested_execute_orders
@@ -1067,7 +1096,15 @@ class PatternEntryScanner:
         )
 
     @classmethod
-    def _has_active_exposure(cls, db: Session, match: dict[str, Any], *, module: EntryModule) -> bool:
+    def _has_active_exposure(
+        cls,
+        db: Session,
+        match: dict[str, Any],
+        *,
+        module: EntryModule,
+        ignore_lab_shadow_observations: bool = False,
+        retryable_failure_cooldown_minutes: int = 60,
+    ) -> bool:
         active_signals = (
             db.query(Signal)
             .filter(Signal.symbol == str(match["symbol"]))
@@ -1084,7 +1121,15 @@ class PatternEntryScanner:
             )
             .all()
         )
-        if any(cls._signal_belongs_to_module(signal, module) for signal in active_signals):
+        if any(
+            cls._signal_counts_as_active_exposure(
+                signal,
+                module,
+                ignore_lab_shadow_observations=ignore_lab_shadow_observations,
+                retryable_failure_cooldown_minutes=retryable_failure_cooldown_minutes,
+            )
+            for signal in active_signals
+        ):
             return True
         active_trades = (
             db.query(Trade)
@@ -1094,7 +1139,49 @@ class PatternEntryScanner:
             .filter(Trade.status == TradeStatus.OPEN)
             .all()
         )
-        return any(cls._trade_belongs_to_module(trade, module) for trade in active_trades)
+        return any(
+            cls._trade_belongs_to_module(trade, module)
+            and not (
+                ignore_lab_shadow_observations
+                and cls._is_lab_shadow_no_order_trade(trade)
+            )
+            for trade in active_trades
+        )
+
+    @staticmethod
+    def _canonical_bar_value(raw: Any) -> str:
+        if not raw:
+            return ""
+        parsed = PatternEntryScanner._parse_datetime(raw)
+        if parsed is None:
+            return str(raw)
+        if (
+            parsed.hour == 0
+            and parsed.minute == 0
+            and parsed.second == 0
+            and parsed.microsecond == 0
+        ):
+            return parsed.date().isoformat()
+        return parsed.isoformat(timespec="seconds")
+
+    @staticmethod
+    def _canonical_bar_window_end(match: dict[str, Any]) -> str:
+        entry_audit = match.get("entry_audit") or {}
+        raw = entry_audit.get("available_data_cutoff_ts") or match.get("window_end")
+        return PatternEntryScanner._canonical_bar_value(raw)
+
+    @staticmethod
+    def _legacy_signal_idempotency_key(module: EntryModule, match: dict[str, Any]) -> str:
+        return "|".join(
+            (
+                str(module),
+                str(match.get("pattern_id") or ""),
+                str(match.get("symbol") or "").upper(),
+                str(match.get("timeframe") or ""),
+                str(match.get("entry_variant_id") or ""),
+                str(match.get("window_end") or ""),
+            )
+        )
 
     @staticmethod
     def _signal_idempotency_key(module: EntryModule, match: dict[str, Any]) -> str:
@@ -1112,7 +1199,7 @@ class PatternEntryScanner:
                 str(match.get("symbol") or "").upper(),
                 str(match.get("timeframe") or ""),
                 str(match.get("entry_variant_id") or ""),
-                str(match.get("window_end") or ""),
+                PatternEntryScanner._canonical_bar_window_end(match),
             )
         )
 
@@ -1122,7 +1209,10 @@ class PatternEntryScanner:
     def _duplicate_signal(self, db: Session, match: dict[str, Any], *, module: EntryModule) -> Signal | None:
         if not str(match.get("window_end") or ""):
             return None
-        key = self._signal_idempotency_key(module, match)
+        keys = {
+            self._signal_idempotency_key(module, match),
+            self._legacy_signal_idempotency_key(module, match),
+        }
         existing = (
             db.query(Signal)
             .filter(Signal.symbol == str(match["symbol"]))
@@ -1131,9 +1221,31 @@ class PatternEntryScanner:
         )
         for signal in existing:
             metadata = signal.metadata_json or {}
-            if str(metadata.get("signal_idempotency_key") or "") == key:
+            if str(metadata.get("signal_idempotency_key") or "") in keys:
+                return signal
+            if self._signal_matches_canonical_bar(metadata, match, module=module):
                 return signal
         return None
+
+    @classmethod
+    def _signal_matches_canonical_bar(
+        cls,
+        metadata: dict[str, Any],
+        match: dict[str, Any],
+        *,
+        module: EntryModule,
+    ) -> bool:
+        if str(metadata.get("entry_module") or module) != module:
+            return False
+        if str(metadata.get("pattern_id") or "") != str(match.get("pattern_id") or ""):
+            return False
+        if str(metadata.get("entry_variant_id") or "") != str(match.get("entry_variant_id") or ""):
+            return False
+        stored_window = metadata.get("bar_window_end")
+        if not stored_window:
+            stored_key = str(metadata.get("signal_idempotency_key") or "")
+            stored_window = stored_key.rsplit("|", 1)[-1] if "|" in stored_key else ""
+        return bool(stored_window) and cls._canonical_bar_value(stored_window) == cls._canonical_bar_window_end(match)
 
     def _can_submit_duplicate_lab_signal(self, db: Session, signal: Signal) -> bool:
         metadata = signal.metadata_json or {}
@@ -1147,19 +1259,83 @@ class PatternEntryScanner:
                 return False
             updated_at = self._parse_datetime(outcome.get("updated_at"))
             if updated_at is not None:
-                settings = self.settings
-                assert settings is not None
-                retry_after = timedelta(minutes=max(5, int(settings.entry_cooldown_minutes)))
+                reason_code = str(outcome.get("reason_code") or "")
+                retry_after_minutes = 10 if reason_code == "ibkr_bracket_not_accepted" else 5
+                retry_after = timedelta(minutes=retry_after_minutes)
                 if datetime.now(timezone.utc) - updated_at < retry_after:
                     return False
-        existing_trade = db.query(Trade).filter(Trade.signal_id == signal.id).first()
-        return existing_trade is None
+        existing_trades = db.query(Trade).filter(Trade.signal_id == signal.id).all()
+        if not existing_trades:
+            return True
+        return all(self._is_lab_shadow_no_order_trade(trade) for trade in existing_trades)
+
+    @classmethod
+    def _signal_counts_as_active_exposure(
+        cls,
+        signal: Signal,
+        module: EntryModule,
+        *,
+        ignore_lab_shadow_observations: bool,
+        retryable_failure_cooldown_minutes: int,
+    ) -> bool:
+        if not cls._signal_belongs_to_module(signal, module):
+            return False
+        if ignore_lab_shadow_observations and cls._is_lab_shadow_no_order_signal(signal):
+            return False
+        if module != "laboratory":
+            return True
+        metadata = signal.metadata_json or {}
+        outcome = metadata.get("execution_outcome") or {}
+        if not isinstance(outcome, dict) or "retryable" not in outcome:
+            return True
+        open_real_trades = [
+            trade
+            for trade in signal.trades
+            if trade.status == TradeStatus.OPEN and not cls._is_lab_shadow_no_order_trade(trade)
+        ]
+        if open_real_trades:
+            return True
+        if outcome.get("retryable") is False:
+            return False
+        updated_at = cls._parse_datetime(outcome.get("updated_at"))
+        if updated_at is None:
+            return True
+        retry_after = timedelta(minutes=max(5, retryable_failure_cooldown_minutes))
+        return datetime.now(timezone.utc) - updated_at < retry_after
+
+    @staticmethod
+    def _is_lab_shadow_no_order_signal(signal: Signal) -> bool:
+        metadata = signal.metadata_json or {}
+        evidence_type = str(metadata.get("evidence_type") or "")
+        execution_mode = str(metadata.get("execution_mode") or "")
+        return (
+            evidence_type
+            in {
+                EvidenceType.SHADOW_NO_ORDER.value,
+                EvidenceType.NEAR_MISS_SHADOW.value,
+            }
+            or execution_mode == LAB_SHADOW_EXECUTION_MODE
+            or bool(metadata.get("no_ibkr_order"))
+        )
+
+    @staticmethod
+    def _is_lab_shadow_no_order_trade(trade: Trade) -> bool:
+        metadata = trade.metadata_json or {}
+        evidence_type = str(trade.evidence_type or metadata.get("evidence_type") or "")
+        execution_mode = str(metadata.get("execution_mode") or "")
+        return (
+            evidence_type
+            in {
+                EvidenceType.SHADOW_NO_ORDER.value,
+                EvidenceType.NEAR_MISS_SHADOW.value,
+            }
+            or execution_mode == LAB_SHADOW_EXECUTION_MODE
+            or bool(metadata.get("no_ibkr_order"))
+        )
 
     def _has_recent_lab_symbol_order_failure(self, db: Session, symbol: str) -> bool:
         settings = self.settings
         assert settings is not None
-        retry_after = timedelta(minutes=max(60, int(settings.entry_cooldown_minutes)))
-        cutoff = datetime.now(timezone.utc) - retry_after
         signals = (
             db.query(Signal)
             .filter(Signal.symbol == symbol.upper())
@@ -1172,9 +1348,12 @@ class PatternEntryScanner:
             outcome = (signal.metadata_json or {}).get("execution_outcome") or {}
             if not isinstance(outcome, dict):
                 continue
-            if outcome.get("reason_code") not in {"ibkr_bracket_not_accepted", "broker_submission_failed"}:
+            reason_code = str(outcome.get("reason_code") or "")
+            if reason_code not in {"ibkr_bracket_not_accepted", "broker_submission_failed"}:
                 continue
             updated_at = self._parse_datetime(outcome.get("updated_at"))
+            cooldown_minutes = 10 if reason_code == "ibkr_bracket_not_accepted" else max(60, int(settings.entry_cooldown_minutes))
+            cutoff = datetime.now(timezone.utc) - timedelta(minutes=cooldown_minutes)
             if updated_at is not None and updated_at >= cutoff:
                 return True
         return False
@@ -1231,6 +1410,45 @@ class PatternEntryScanner:
         )
         signal.metadata_json = metadata
         signal.human_approved = True
+
+    @classmethod
+    def _cancel_shadow_observations_for_order_submission(cls, db: Session, signal: Signal) -> None:
+        now = datetime.now(timezone.utc)
+        shadow_trades = (
+            db.query(Trade)
+            .filter(Trade.signal_id == signal.id)
+            .filter(Trade.status == TradeStatus.OPEN)
+            .all()
+        )
+        for trade in shadow_trades:
+            if not cls._is_lab_shadow_no_order_trade(trade):
+                continue
+            metadata = dict(trade.metadata_json or {})
+            metadata.update(
+                {
+                    "close_reason": "upgraded_to_ibkr_paper_order",
+                    "closed_by": "laboratory_auto_submit_backfill",
+                    "closed_at": now.isoformat(),
+                }
+            )
+            trade.status = TradeStatus.CANCELLED
+            trade.closed_at = now
+            trade.metadata_json = metadata
+            db.add(trade)
+            db.add(
+                AuditLog(
+                    actor="laboratory",
+                    action="lab_shadow_observation_cancelled_for_paper_order",
+                    entity_type="trade",
+                    entity_id=str(trade.id),
+                    details_json={
+                        "signal_id": signal.id,
+                        "symbol": signal.symbol,
+                        "pattern": signal.pattern,
+                        "reason": "upgraded_to_ibkr_paper_order",
+                    },
+                )
+            )
 
     def _has_recent_signal(self, db: Session, match: dict[str, Any], *, module: EntryModule) -> bool:
         settings = self.settings
@@ -1559,11 +1777,11 @@ class PatternEntryScanner:
         if trigger_score <= 0:
             return False
         reasons = set(self._entry_gate_reasons(entry_gate))
-        if not reasons or not reasons & LAB_NEAR_MISS_VOLUME_REASONS:
+        if not reasons or not reasons & LAB_NEAR_MISS_SOFT_REASONS:
             return False
         if reasons & LAB_NEAR_MISS_HARD_REASONS:
             return False
-        if any(reason not in LAB_NEAR_MISS_VOLUME_REASONS for reason in reasons):
+        if any(reason not in LAB_NEAR_MISS_SOFT_REASONS for reason in reasons):
             return False
         if entry_gate.get("regime_ok") is False:
             return False
@@ -1582,7 +1800,7 @@ class PatternEntryScanner:
         rank = self._safe_int(match.get("opportunity_rank"))
         rank_score = self._safe_float(match.get("opportunity_rank_score"), 0.0)
         entry_score = self._safe_float(entry_gate.get("entry_score", match.get("entry_score")), 0.0)
-        if entry_score < max(LAB_NEAR_MISS_MIN_ENTRY_SCORE, settings.entry_min_score):
+        if entry_score < LAB_NEAR_MISS_MIN_ENTRY_SCORE:
             return False
         if rank_score < LAB_NEAR_MISS_MIN_RANK_SCORE:
             return False
@@ -1821,10 +2039,10 @@ class PatternEntryScanner:
         execution_outcome = (
             {
                 "status": "near_miss_shadow_observation",
-                "reason_code": "entry_gate_volume_near_miss_shadow",
+                "reason_code": no_order_reason or "entry_gate_near_miss_shadow",
                 "reason": (
-                    "Entry gate failed only volume confirmation; Lab opened a "
-                    "shadow observation with no IBKR order."
+                    "Entry gate failed on soft Lab criteria; Lab opened a shadow "
+                    "observation with no IBKR order."
                 ),
                 "retryable": False,
                 "next_action": "collect_shadow_outcome",
@@ -1865,7 +2083,7 @@ class PatternEntryScanner:
                 "evidence_quality": EvidenceQuality.NORMAL.value,
                 "entry_module": module,
                 "signal_idempotency_key": self._signal_idempotency_key(module, match),
-                "bar_window_end": str(match.get("window_end") or ""),
+                "bar_window_end": self._canonical_bar_window_end(match),
                 "pattern_id": match["pattern_id"],
                 "pattern_key": match["pattern_key"],
                 "pattern_family_key": match.get("pattern_family_key"),
