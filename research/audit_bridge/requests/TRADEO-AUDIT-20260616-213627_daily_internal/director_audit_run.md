@@ -1,0 +1,48 @@
+# Director Audit Run
+
+- Audit ID: `TRADEO-AUDIT-20260616-213627_daily_internal`
+- Cadence: `daily`
+- Created at: `2026-06-16T21:36:27+00:00`
+- Package: `research/audit_bridge/requests/TRADEO-AUDIT-20260616-213627_daily_internal`
+- Director gate status: `blocked`
+- Runtime status: `docker compose ps --format json`
+
+## Commands
+
+| name | exit_code | blocking |
+|---|---:|---|
+| docker_compose_ps | 0 | False |
+| export | 0 | True |
+| director_gate | 0 | True |
+| validate | 0 | True |
+
+## Agent review
+
+```json
+{
+  "audit_id": "TRADEO-AUDIT-20260616-213627_daily_internal",
+  "cadence": "daily",
+  "agent": "tradeo-internal-daily-auditor",
+  "model_profile": "gpt-5.5-xhigh-specified-in-skill; deterministic fallback used by runner",
+  "status": "blocked",
+  "priority": "P0",
+  "failed_commands": [],
+  "blocker_count": 8,
+  "top_blockers": [
+    "paper_trades.csv has zero rows; no pattern can be approved beyond research/watchlist.",
+    "ib_fills.csv has zero rows; execution, commission, spread and slippage validation are unavailable.",
+    "promoted statuses require linked paper trades; offenders: PATTERN_000282, PATTERN_000364, PATTERN_000366",
+    "promoted statuses require at least 30 IB Paper fills; package has 0.",
+    "271 event rows have blank anti-lookahead contract values.",
+    "duplicate_group_id repeats exceed gate: 125/5619 rows (2.22%).",
+    "2995 experiment rows have nested_discovery_replay not implemented/passed.",
+    "experiment rows report active blockers: EXP_PATTERN_000490_RR_1_5, EXP_PATTERN_000490_RR_2, EXP_PATTERN_000490_RR_2_5, EXP_PATTERN_000490_RR_3, EXP_PATTERN_000490_RR_4, EXP_PATTERN_000490_RR_5, EXP_PATTERN_000560_RR_1_5, EXP_PATTERN_000560_RR_2, EXP_PATTERN_000560_RR_2_5, EXP_PATTERN_000560_RR_3 (+182 more)"
+  ],
+  "director_handoff": "ChatGPT Director must review weekly packs or any P0 blocker before promotion.",
+  "promotion_decision": "stay_in_research",
+  "required_next_actions": [
+    "Keep all patterns in research/watchlist until paper trades are exported.",
+    "Ingest IB Paper fills with commissions, spread and slippage before promotion."
+  ]
+}
+```

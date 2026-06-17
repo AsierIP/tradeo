@@ -40,6 +40,11 @@ class PaperBroker:
                 "execution_mode": "paper",
                 "source_signal": signal.id,
                 "no_ibkr_order": True,
+                "no_order_reason": "legacy_paper_broker_simulated_fill",
+                "order_decision": {
+                    "submitted_to_broker": False,
+                    "no_order_reason": "legacy_paper_broker_simulated_fill",
+                },
             },
         )
         signal.status = SignalStatus.EXECUTED

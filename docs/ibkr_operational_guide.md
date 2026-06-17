@@ -15,6 +15,8 @@ TRADEO_IBKR_READONLY=true
 TRADEO_LIVE_TRADING_ENABLED=false
 TRADEO_LIVE_TRADING_CONFIRMATION_VALUE=
 TRADEO_KILL_SWITCH_ENABLED=false
+TRADEO_BACKEND_BIND=127.0.0.1
+TRADEO_FRONTEND_BIND=127.0.0.1
 ```
 
 ## Endpoints
@@ -47,10 +49,11 @@ The submit endpoint is blocked unless all hard gates pass:
 4. Run:
 
 ```bash
+python ops/scripts/director_audit_ci.py
 curl http://localhost:8000/api/ibkr/health
 ```
 
-5. Keep orders blocked until health/account/positions are stable.
+5. Keep orders blocked until the Director check, health/account/positions are stable.
 6. For IBKR paper order testing only, set:
 
 ```bash

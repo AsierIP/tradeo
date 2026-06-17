@@ -74,6 +74,36 @@ class StaticMatcher:
         }
 
 
+def test_laboratory_no_order_decision_records_degraded_reason() -> None:
+    metadata = PatternEntryScanner._order_decision_metadata(
+        "laboratory",
+        match={"symbol": "AAA"},
+        requested_execute_orders=True,
+        execute_orders=False,
+        execution_degrade_reason="ibkr_readonly",
+    )
+
+    assert metadata == {
+        "requested_execute_orders": True,
+        "execute_orders": False,
+        "execution_request_mode": "lab_shadow_observation",
+        "submitted_to_broker": False,
+        "no_order_reason": "ibkr_readonly",
+    }
+
+
+def test_laboratory_no_order_decision_records_disabled_orders() -> None:
+    reason = PatternEntryScanner._no_order_reason(
+        "laboratory",
+        match={"symbol": "AAA"},
+        requested_execute_orders=False,
+        execute_orders=False,
+        execution_degrade_reason=None,
+    )
+
+    assert reason == "paper_order_submission_disabled"
+
+
 def session_factory():
     engine = create_engine("sqlite:///:memory:", future=True)
     Base.metadata.create_all(bind=engine)
@@ -326,6 +356,7 @@ def test_laboratory_scanner_creates_paper_signal_for_validated_lab_pattern() -> 
     assert signal.metadata_json["entry_variant_id"]
     assert signal.metadata_json["entry_audit"]["available_data_cutoff_ts"]
     assert signal.metadata_json["entry_audit"]["entry_eligible_ts"]
+    assert signal.metadata_json["entry_audit"]["label_generated_ts"] == "pending_forward_label"
     assert signal.metadata_json["entry_audit"]["source_bar_hash"]
     assert signal.metadata_json["regime"]["regime_key"]
     assert signal.metadata_json["entry_quality_score"] > 0
@@ -1360,9 +1391,15 @@ def test_laboratory_runtime_kill_switch_downgrades_to_shadow_observation(monkeyp
     assert result["signals_created"] == 1
     assert result["orders_submitted"] == 0
     assert result["order_errors"] == []
+    assert result["order_skip_reason_counts"] == {"runtime_kill_switch_enabled": 1}
     assert result["paper_observations_opened"] == 1
     signal = db.get(Signal, result["signal_ids"][0])
     assert signal.metadata_json["no_ibkr_order"] is True
+    assert signal.metadata_json["no_order_reason"] == "runtime_kill_switch_enabled"
+    assert signal.metadata_json["order_decision"]["submitted_to_broker"] is False
+    observation = db.get(Trade, result["shadow_no_order_trade_ids"][0])
+    assert observation.metadata_json["no_order_reason"] == "runtime_kill_switch_enabled"
+    assert observation.metadata_json["order_decision"]["no_order_reason"] == "runtime_kill_switch_enabled"
 
 
 def test_laboratory_resubmits_duplicate_signal_without_broker_trade(monkeypatch) -> None:

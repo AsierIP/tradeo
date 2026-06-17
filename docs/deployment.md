@@ -26,12 +26,32 @@ nano .env
 make up
 ```
 
+Por defecto Docker solo publica la API y la UI en localhost:
+
+```bash
+TRADEO_BACKEND_BIND=127.0.0.1
+TRADEO_FRONTEND_BIND=127.0.0.1
+```
+
+No uses `0.0.0.0` salvo que el host este detras de VPN/firewall y sea una
+exposicion deliberada.
+
 ## Comprobación
 
 ```bash
 docker compose ps
 curl http://localhost:8000/api/health
 ```
+
+Antes de una ventana Paper, ejecuta el gate operativo local:
+
+```bash
+python ops/scripts/director_audit_ci.py
+```
+
+El comando valida el paquete Director mas reciente trackeado, verifica hashes
+del paquete y falla si hay evidencia nueva sin trackear en
+`research/audit_bridge/requests/`.
 
 ## Backup local
 

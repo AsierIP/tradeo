@@ -66,6 +66,25 @@ def test_entry_scan_status_alerts_after_repeated_zero_order_scans(tmp_path) -> N
     assert status["skipped_duplicates"] == 8
 
 
+def test_entry_scan_status_prefers_explicit_order_skip_reason(tmp_path) -> None:
+    settings = Settings(artifacts_dir=str(tmp_path))
+    result = {
+        "symbols_checked": 40,
+        "matches_found": 8,
+        "orders_submitted": 0,
+        "skipped_duplicates": 8,
+        "order_skip_reason_counts": {"runtime_kill_switch_enabled": 8},
+        "order_errors": [],
+    }
+
+    write_entry_scan_status("laboratory", result, settings)
+
+    status = entry_scan_status("laboratory", settings)
+
+    assert status["order_skip_reason_counts"] == {"runtime_kill_switch_enabled": 8}
+    assert status["zero_order_block_reason"] == "runtime_kill_switch_enabled"
+
+
 def test_entry_scan_status_resets_zero_order_streak_when_order_submits(tmp_path) -> None:
     settings = Settings(artifacts_dir=str(tmp_path))
 

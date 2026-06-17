@@ -84,6 +84,19 @@ EVIDENCE_NESTED_METADATA_KEYS = (
     "broker_statement",
     "statement_row",
 )
+PENDING_FORWARD_LABEL = "pending_forward_label"
+NOT_RECORDED_LEGACY_LABEL = "not_recorded_legacy_label"
+EXECUTION_PROMOTION_STATUSES = {
+    "paper_candidate",
+    "premium_candidate",
+    "paper_limited_candidate",
+    "paper_extended_candidate",
+    "ready_for_paper_extended",
+    "approved",
+    "live_candidate",
+    "production_candidate",
+    "production",
+}
 
 PATTERN_CATALOG_COLUMNS = [
     "pattern_id",
@@ -412,8 +425,6 @@ def main() -> int:
         "universe_symbols": universe_symbols,
     }
 
-    pattern_catalog_rows = build_pattern_catalog(patterns, examples_by_pattern, context)
-    event_rows = build_pattern_events(patterns, examples_by_pattern, matches, context)
     paper_trade_rows = build_paper_trades(patterns, laboratory_overview)
     exported_trade_ids = {
         str(row.get("trade_id") or "")
@@ -421,6 +432,14 @@ def main() -> int:
         if str(row.get("trade_id") or "").strip()
     }
     fill_rows = build_ib_fills(laboratory_overview, exported_trade_ids=exported_trade_ids)
+    pattern_catalog_rows = build_pattern_catalog(
+        patterns,
+        examples_by_pattern,
+        context,
+        paper_trade_rows=paper_trade_rows,
+        fill_rows=fill_rows,
+    )
+    event_rows = build_pattern_events(patterns, examples_by_pattern, matches, context)
     experiment_rows = build_experiment_registry(
         patterns,
         examples_by_pattern,
@@ -773,18 +792,82 @@ def reason_for(pattern: dict[str, Any]) -> str:
     return str(pattern.get("promotion_reason") or "")
 
 
+def raw_pattern_status(pattern: dict[str, Any]) -> str:
+    return str(pattern.get("status") or pattern.get("promotion_status") or "").strip().lower()
+
+
+def execution_status_without_linked_fill(
+    pattern: dict[str, Any],
+    linked_fill_pattern_ids: set[str],
+) -> str:
+    raw_status = raw_pattern_status(pattern)
+    promotion_status = str(pattern.get("promotion_status") or "").strip().lower()
+    if (
+        raw_status in EXECUTION_PROMOTION_STATUSES
+        or promotion_status in EXECUTION_PROMOTION_STATUSES
+    ) and pattern_id(pattern) not in linked_fill_pattern_ids:
+        return raw_status or promotion_status
+    return ""
+
+
+def linked_fill_pattern_ids(
+    paper_trade_rows: list[dict[str, Any]] | None,
+    fill_rows: list[dict[str, Any]] | None,
+) -> set[str]:
+    if not paper_trade_rows or not fill_rows:
+        return set()
+    fill_trade_ids = {
+        str(row.get("trade_id") or "").strip()
+        for row in fill_rows
+        if str(row.get("trade_id") or "").strip()
+    }
+    return {
+        str(row.get("pattern_id") or "").strip()
+        for row in paper_trade_rows
+        if str(row.get("pattern_id") or "").strip()
+        and str(row.get("trade_id") or "").strip() in fill_trade_ids
+    }
+
+
+def export_status_for_pattern(
+    pattern: dict[str, Any],
+    linked_fill_pattern_ids: set[str],
+) -> str:
+    if execution_status_without_linked_fill(pattern, linked_fill_pattern_ids):
+        return "freeze"
+    return str(pattern.get("status", "")).strip()
+
+
+def freeze_note_for_pattern(
+    pattern: dict[str, Any],
+    linked_fill_pattern_ids: set[str],
+) -> str:
+    legacy_status = execution_status_without_linked_fill(pattern, linked_fill_pattern_ids)
+    if not legacy_status:
+        return ""
+    return (
+        f"legacy_status={legacy_status} frozen_in_export=no_linked_ibkr_paper_fill; "
+        "paper/live promotion requires closed normal IBKR paper fills"
+    )
+
+
 def build_pattern_catalog(
     patterns: list[dict[str, Any]],
     examples_by_pattern: dict[int, list[dict[str, Any]]],
     context: dict[str, Any],
+    *,
+    paper_trade_rows: list[dict[str, Any]] | None = None,
+    fill_rows: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     env = context["env"]
     universe_count = len(context["universe_symbols"])
+    linked_fill_patterns = linked_fill_pattern_ids(paper_trade_rows, fill_rows)
     rows = []
     for pattern in patterns:
         examples = examples_by_pattern.get(int(pattern["id"]), [])
         first_seen, last_seen = min_max_times(examples)
         rr = pattern.get("best_rr") or pattern.get("best_tested_rr") or env.get("TRADEO_DISCOVERY_MIN_REWARD_RISK", "2.5")
+        freeze_note = freeze_note_for_pattern(pattern, linked_fill_patterns)
         rows.append({
             "pattern_id": pattern_id(pattern),
             "pattern_name": pattern.get("name", ""),
@@ -826,10 +909,11 @@ def build_pattern_catalog(
             "uses_future_data": "false",
             "known_risks": "; ".join([
                 reason_for(pattern),
+                freeze_note,
                 "stored examples are representative, not a full raw event ledger",
                 "daily timestamps normalized to UTC when original bars lacked explicit timezone",
             ]).strip("; "),
-            "status": pattern.get("status", ""),
+            "status": export_status_for_pattern(pattern, linked_fill_patterns),
             "created_at": normalize_ts(pattern.get("created_at")),
             "first_seen": first_seen,
             "last_seen": last_seen,
@@ -849,10 +933,22 @@ def build_pattern_events(
         pattern = pattern_by_id.get(pid)
         if not pattern:
             continue
+        seen_example_groups: set[str] = set()
         for example in examples:
             event_id = f"EVT_{pattern_id(pattern)}_EX_{int(example['id']):06d}"
             window_end = normalize_ts(example.get("window_end"))
+            timeframe = example.get("timeframe", pattern.get("timeframe", "1d"))
+            duplicate_group_id = event_duplicate_group_id(
+                pattern_id(pattern),
+                example.get("symbol", ""),
+                timeframe,
+                window_end,
+            )
+            if duplicate_group_id in seen_example_groups:
+                continue
+            seen_example_groups.add(duplicate_group_id)
             features = example.get("features_json") or {}
+            label_generated_ts = normalize_ts(example.get("forward_end")) or NOT_RECORDED_LEGACY_LABEL
             rows.append({
                 "event_id": event_id,
                 "pattern_id": pattern_id(pattern),
@@ -861,7 +957,7 @@ def build_pattern_events(
                 "timezone": "UTC",
                 "ticker": example.get("symbol", ""),
                 "exchange": "SMART/IBKR",
-                "timeframe": example.get("timeframe", pattern.get("timeframe", "1d")),
+                "timeframe": timeframe,
                 "bar_open_time": normalize_ts(example.get("window_start")),
                 "bar_close_time": window_end,
                 "signal_price": example.get("entry_price", ""),
@@ -876,17 +972,20 @@ def build_pattern_events(
                 "was_trade_triggered": "false",
                 "trade_id": "",
                 "reason_not_traded": "Historical representative research sample; not routed to paper execution.",
-                "duplicate_group_id": f"DUP_{pattern_id(pattern)}_{example.get('symbol', '')}_{window_end}",
+                "duplicate_group_id": duplicate_group_id,
                 "is_independent_sample": "true",
                 "data_available_at_signal": "true",
                 "available_data_cutoff_ts": window_end,
                 "decision_ts": window_end,
-                "entry_eligible_ts": next_eligible_ts(window_end, example.get("timeframe", pattern.get("timeframe", "1d"))),
-                "label_generated_ts": normalize_ts(example.get("forward_end")),
+                "entry_eligible_ts": next_eligible_ts(window_end, timeframe),
+                "label_generated_ts": label_generated_ts,
                 "source_bar_hash": stable_hash({"example": example.get("id"), "window_end": window_end, "features": features}),
                 "split_id": "research_example",
                 "features_used_json": features,
-                "notes": f"stored_example_kind={example.get('kind', '')}; outcome_r={example.get('outcome_r', '')}; similarity={example.get('similarity', '')}",
+                "notes": (
+                    f"stored_example_kind={example.get('kind', '')}; outcome_r={example.get('outcome_r', '')}; "
+                    f"similarity={example.get('similarity', '')}; label_contract={label_generated_ts}"
+                ),
             })
     seen_match_events: set[tuple[str, str, str, str, str]] = set()
     for match in matches:
@@ -942,23 +1041,32 @@ def build_pattern_events(
             "was_trade_triggered": "false",
             "trade_id": "",
             "reason_not_traded": "Current lab watchlist match; execution disabled/read-only and requires paper validation.",
-            "duplicate_group_id": f"DUP_{pattern_id(pattern)}_{match.get('symbol', '')}_{window_end}",
+            "duplicate_group_id": event_duplicate_group_id(
+                pattern_id(pattern),
+                match.get("symbol", ""),
+                match.get("timeframe", pattern.get("timeframe", "1d")),
+                window_end,
+            ),
             "is_independent_sample": "true",
             "data_available_at_signal": "true",
             "available_data_cutoff_ts": audit.get("available_data_cutoff_ts") or window_end,
             "decision_ts": audit.get("decision_ts") or matched_at,
             "entry_eligible_ts": audit.get("entry_eligible_ts")
             or next_eligible_ts(window_end, match.get("timeframe", pattern.get("timeframe", "1d"))),
-            "label_generated_ts": audit.get("label_generated_ts") or "",
+            "label_generated_ts": audit.get("label_generated_ts") or PENDING_FORWARD_LABEL,
             "source_bar_hash": source_bar_hash,
             "split_id": audit.get("split_id") or "live_forward_scan_unlabeled",
             "features_used_json": features,
             "notes": (
                 f"similarity={match.get('similarity')}; score={match.get('score')}; "
-                f"status={match.get('status')}; outcome_pending=true"
+                f"status={match.get('status')}; outcome_pending=true; label_contract={PENDING_FORWARD_LABEL}"
             ),
         })
     return rows
+
+
+def event_duplicate_group_id(pattern_ref: str, symbol: Any, timeframe: Any, window_end: str) -> str:
+    return f"DUP_{pattern_ref}_{str(symbol or '').upper()}_{str(timeframe or '')}_{window_end}"
 
 
 def group_event_rows_by_pattern(event_rows: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:

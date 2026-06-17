@@ -228,7 +228,16 @@ def _fill_matches_trade(fill: dict[str, Any], trade: Trade) -> bool:
 
 
 def _fill_has_broker_identity(fill: dict[str, Any]) -> bool:
-    return bool(_str_set(fill.get("order_id"), fill.get("perm_id")))
+    return bool(
+        _str_set(
+            fill.get("order_id"),
+            fill.get("perm_id"),
+            fill.get("exec_id"),
+            fill.get("fill_id"),
+            fill.get("fill_id_hash"),
+            fill.get("broker_execution_hash"),
+        )
+    )
 
 
 def _fill_not_before_trade(fill: dict[str, Any], trade: Trade) -> bool:
@@ -240,8 +249,22 @@ def _fill_not_before_trade(fill: dict[str, Any], trade: Trade) -> bool:
     return trade_time is not None and fill_time >= trade_time
 
 
+def _fill_timestamp_not_before_trade_if_present(fill: dict[str, Any], trade: Trade) -> bool:
+    fill_time = _parse_ts(fill.get("execution_time") or fill.get("time"))
+    if fill_time is None:
+        return True
+    metadata = trade.metadata_json or {}
+    trade_time = _parse_ts(metadata.get("submitted_at")) or _parse_ts(trade.opened_at)
+    return trade_time is None or fill_time >= trade_time
+
+
 def _match_fill_to_trade(fill: dict[str, Any], trades: list[Trade]) -> Trade | None:
-    exact = [trade for trade in trades if _fill_matches_trade(fill, trade)]
+    exact = [
+        trade
+        for trade in trades
+        if _fill_matches_trade(fill, trade)
+        and _fill_timestamp_not_before_trade_if_present(fill, trade)
+    ]
     if len(exact) == 1:
         return exact[0]
     if len(exact) > 1:
@@ -350,6 +373,7 @@ def _leg_summary(records: list[dict[str, Any]], leg: str) -> dict[str, Any] | No
         "commission": sum(float(value) for value in commissions) if commissions else None,
         "hashes": [row["fill_id_hash"] for row in rows if row.get("fill_id_hash")],
         "missing_commission_count": len(rows) - len(commissions),
+        "missing_timestamp_count": len(rows) - len(timestamps),
     }
 
 
@@ -373,6 +397,26 @@ def _exit_reason_for_fill(trade: Trade, records: list[dict[str, Any]], exit_pric
     return "target_hit" if target_delta <= stop_delta else "stop_hit"
 
 
+def _metadata_entry_variant_id(metadata: dict[str, Any]) -> str:
+    direct = str(metadata.get("entry_variant_id") or "").strip()
+    if direct:
+        return direct
+    variant = metadata.get("entry_variant")
+    if isinstance(variant, dict):
+        return str(variant.get("id") or "").strip()
+    return ""
+
+
+def _metadata_regime_key(metadata: dict[str, Any]) -> str:
+    direct = str(metadata.get("regime_key") or "").strip()
+    if direct:
+        return direct
+    regime = metadata.get("regime")
+    if isinstance(regime, dict):
+        return str(regime.get("regime_key") or "").strip()
+    return ""
+
+
 def _apply_fill_records(trade: Trade, records: list[dict[str, Any]], now: datetime) -> bool:
     metadata = dict(trade.metadata_json or {})
     existing = metadata.get("ibkr_fills") if isinstance(metadata.get("ibkr_fills"), list) else []
@@ -390,14 +434,26 @@ def _apply_fill_records(trade: Trade, records: list[dict[str, Any]], now: dateti
     metadata["last_fill_reconciled_at"] = now.isoformat()
     metadata["broker_execution_hash"] = merged_records[0]["broker_execution_hash"]
     metadata["fill_id_hash"] = merged_records[0]["fill_id_hash"]
+    entry_variant_id = _metadata_entry_variant_id(metadata)
+    regime_key = _metadata_regime_key(metadata)
+    if entry_variant_id:
+        metadata["entry_variant_id"] = entry_variant_id
+    else:
+        metadata["entry_variant_missing"] = True
+    if regime_key:
+        metadata["regime_key"] = regime_key
+    else:
+        metadata["regime_key_missing"] = True
 
     total_commission = 0.0
     commission_seen = False
     missing_commission_count = 0
+    missing_timestamp_count = 0
     for summary in (entry, exit_leg):
         if summary is None:
             continue
         missing_commission_count += int(summary["missing_commission_count"])
+        missing_timestamp_count += int(summary["missing_timestamp_count"])
         if summary["commission"] is not None:
             total_commission += float(summary["commission"])
             commission_seen = True
@@ -409,12 +465,27 @@ def _apply_fill_records(trade: Trade, records: list[dict[str, Any]], now: dateti
         if missing_commission_count:
             metadata["commission_missing"] = True
             metadata["commission_missing_fill_count"] = missing_commission_count
+        else:
+            metadata.pop("commission_missing", None)
+            metadata["commission_missing_fill_count"] = 0
     else:
         metadata["commission_missing"] = True
         metadata["commission_missing_fill_count"] = missing_commission_count
+    if missing_timestamp_count:
+        metadata["broker_timestamp_missing"] = True
+        metadata["broker_timestamp_missing_fill_count"] = missing_timestamp_count
+        metadata["timestamp_provenance_reconciled"] = False
+    else:
+        metadata.pop("broker_timestamp_missing", None)
+        metadata["broker_timestamp_missing_fill_count"] = 0
+        metadata["timestamp_provenance_reconciled"] = True
 
     if entry is not None:
-        all_commissions_present = commission_seen and missing_commission_count == 0
+        all_provenance_present = (
+            commission_seen
+            and missing_commission_count == 0
+            and missing_timestamp_count == 0
+        )
         metadata["entry_fill_price"] = round(float(entry["avg_price"]), 6)
         metadata["entry_fill_qty"] = round(float(entry["qty"]), 6)
         metadata["entry_fill_time"] = _iso_ts(entry["first_time"])
@@ -426,7 +497,7 @@ def _apply_fill_records(trade: Trade, records: list[dict[str, Any]], now: dateti
             if metadata.get("ibkr_mode") == "live"
             else EvidenceType.IBKR_PAPER_FILL.value
         )
-        metadata["evidence_quality"] = EvidenceQuality.NORMAL.value if all_commissions_present else EvidenceQuality.DEGRADED.value
+        metadata["evidence_quality"] = EvidenceQuality.NORMAL.value if all_provenance_present else EvidenceQuality.DEGRADED.value
         trade.evidence_type = metadata["evidence_type"]
         trade.evidence_quality = metadata["evidence_quality"]
         if trade.opened_at is None and entry["first_time"] is not None:
@@ -469,6 +540,9 @@ def _apply_fill_records(trade: Trade, records: list[dict[str, Any]], now: dateti
             metadata["realized_entry_slippage_bps"] = round(entry_shortfall / theoretical_entry * 10_000.0, 6)
             metadata["slippage_source"] = "ibkr_fill_vs_signal_entry"
             metadata["slippage_provenance_reconciled"] = True
+        else:
+            metadata["slippage_missing"] = True
+            metadata["slippage_provenance_reconciled"] = False
     if "estimated_spread_cost" not in metadata:
         metadata["estimated_spread_cost"] = 0.0
     if "estimated_slippage" not in metadata:
@@ -564,9 +638,27 @@ class ReconciliationService:
             .all()
         )
         pre_fill_open_ibkr_count = len([trade for trade in pre_fill_open_trades if _is_ibkr_trade(trade)])
+        assert self.broker is not None
+        fill_fetch_error: str | None = None
         try:
-            assert self.broker is not None
             fills = _broker_fills(self.broker)
+        except Exception as exc:  # noqa: BLE001
+            fills = []
+            fill_fetch_error = f"{type(exc).__name__}: {exc}"
+            logger.warning("reconciliation fill import skipped: {}", exc)
+            db.add(
+                AuditLog(
+                    actor="reconciliation",
+                    action="ibkr_fills_unavailable",
+                    entity_type="system",
+                    entity_id="ibkr",
+                    details_json={
+                        "error": fill_fetch_error,
+                        "db_open_ibkr_trades": pre_fill_open_ibkr_count,
+                    },
+                )
+            )
+        try:
             positions = self.broker.positions()
             open_orders = self.broker.open_orders()
         except Exception as exc:  # noqa: BLE001
@@ -598,7 +690,11 @@ class ReconciliationService:
                 "trades_closed_from_fills": 0,
                 "unmatched_fills": 0,
                 "divergences": [],
-                "warnings": [],
+                "warnings": [
+                    {"kind": "broker_fills_unavailable", "error": fill_fetch_error}
+                ]
+                if fill_fetch_error
+                else [],
                 "kill_switch_activated": False,
                 "kill_switch_already_active": runtime_kill_switch_active(db),
                 "error": f"broker_unreachable: {exc}",
@@ -618,6 +714,7 @@ class ReconciliationService:
             "broker_positions": 0,
             "broker_open_orders": 0,
             **fill_ingestion,
+            "fill_fetch_error": fill_fetch_error,
             "divergences": [],
             "warnings": [],
             "kill_switch_activated": False,
@@ -642,6 +739,8 @@ class ReconciliationService:
 
         divergences: list[dict[str, Any]] = []
         warnings: list[dict[str, Any]] = []
+        if fill_fetch_error:
+            warnings.append({"kind": "broker_fills_unavailable", "error": fill_fetch_error})
         for trade in db_ibkr_trades:
             symbol = trade.symbol.upper()
             if symbol not in position_symbols and symbol not in order_symbols:

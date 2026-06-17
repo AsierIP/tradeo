@@ -126,6 +126,34 @@ def test_director_gate_blocks_zero_trade_promotions_and_unproven_oos_fit() -> No
     )
 
 
+def test_director_gate_accounts_nested_not_finalist_without_relaxing_blocking_replay() -> None:
+    director_gate = _load_director_gate()
+    experiment = {
+        "experiment_id": "EXP_1",
+        "event_ledger_hash": "event-ledger-hash",
+        "nested_discovery_replay_status": "not_finalist",
+        "nested_discovery_replay_implemented": "false",
+        "nested_discovery_replay_passed": "false",
+        "edge_claim": "NO_DEMOSTRADO",
+        "drift_status": "stable",
+        "active_blockers": "",
+        "registry_hash": "registry-hash",
+        "registry_run_manifest_hash": "run-manifest-hash",
+        "registry_hash_chain_valid": "true",
+    }
+
+    status = director_gate.scientific_contract_status(experiments=[experiment], trades=[], fills=[])
+
+    assert status["blockers"] == []
+    assert status["nested_replay_nonblocking_rows"] == 1
+    assert status["nested_replay_passed_rows"] == 0
+
+    blocked = {**experiment, "nested_discovery_replay_status": "blocked_contract"}
+    blocked_status = director_gate.scientific_contract_status(experiments=[blocked], trades=[], fills=[])
+
+    assert any("nested_discovery_replay not implemented/passed" in blocker for blocker in blocked_status["blockers"])
+
+
 def test_export_filters_fills_to_exported_paper_trade_ids() -> None:
     exporter = _load_audit_exporter()
     overview = {
@@ -260,6 +288,62 @@ def test_export_marks_real_paper_fills_with_evidence_contract() -> None:
     assert rows[0]["evidence_quality"] == "standard"
 
 
+def test_export_freezes_execution_status_without_linked_fill() -> None:
+    exporter = _load_audit_exporter()
+    context = {"env": {}, "universe_symbols": ["AAA", "BBB"]}
+    patterns = [
+        {
+            "id": 282,
+            "name": "LEGACY_PROMOTED",
+            "status": "paper_candidate",
+            "promotion_status": "paper_candidate",
+            "validation_passed": True,
+            "window_size": 20,
+            "cluster_id": 5,
+            "side": "long",
+            "timeframe": "1d",
+        }
+    ]
+
+    rows = exporter.build_pattern_catalog(patterns, {}, context)
+
+    assert rows[0]["pattern_id"] == "PATTERN_000282"
+    assert rows[0]["status"] == "freeze"
+    assert "legacy_status=paper_candidate" in rows[0]["known_risks"]
+    assert "no_linked_ibkr_paper_fill" in rows[0]["known_risks"]
+
+
+def test_export_keeps_execution_status_with_linked_fill() -> None:
+    exporter = _load_audit_exporter()
+    context = {"env": {}, "universe_symbols": ["AAA", "BBB"]}
+    patterns = [
+        {
+            "id": 282,
+            "name": "DIRECTOR_READY",
+            "status": "paper_candidate",
+            "promotion_status": "paper_candidate",
+            "validation_passed": True,
+            "window_size": 20,
+            "cluster_id": 5,
+            "side": "long",
+            "timeframe": "1d",
+        }
+    ]
+    paper_trades = [{"trade_id": "T1", "pattern_id": "PATTERN_000282"}]
+    fills = [{"trade_id": "T1", "fill_id_hash": "hash"}]
+
+    rows = exporter.build_pattern_catalog(
+        patterns,
+        {},
+        context,
+        paper_trade_rows=paper_trades,
+        fill_rows=fills,
+    )
+
+    assert rows[0]["status"] == "paper_candidate"
+    assert "no_linked_ibkr_paper_fill" not in rows[0]["known_risks"]
+
+
 def test_export_rejects_closed_paper_trade_without_broker_provenance() -> None:
     exporter = _load_audit_exporter()
     patterns = [{"id": 1, "name": "PAPER_PATTERN"}]
@@ -386,7 +470,39 @@ def test_export_dedupes_current_match_events_by_source_bar_and_marks_independent
     assert rows[0]["market_timestamp"] == "2026-06-12T00:00:00+00:00"
     assert rows[0]["is_independent_sample"] == "true"
     assert rows[0]["split_id"] == "live_forward_scan_unlabeled"
-    assert rows[0]["label_generated_ts"] == ""
+    assert rows[0]["label_generated_ts"] == exporter.PENDING_FORWARD_LABEL
+    assert exporter.duplicate_event_groups(rows) == {"groups": 0, "repeated_rows": 0}
+
+
+def test_export_dedupes_research_examples_by_duplicate_group_id() -> None:
+    exporter = _load_audit_exporter()
+    patterns = [{"id": 1, "timeframe": "1d"}]
+    examples = {
+        1: [
+            {
+                "id": 1,
+                "symbol": "AAA",
+                "timeframe": "1d",
+                "window_start": "2026-06-01",
+                "window_end": "2026-06-10",
+                "forward_end": "2026-06-20",
+            },
+            {
+                "id": 2,
+                "symbol": "AAA",
+                "timeframe": "1d",
+                "window_start": "2026-06-01",
+                "window_end": "2026-06-10",
+                "forward_end": "2026-06-20",
+            },
+        ]
+    }
+
+    rows = exporter.build_pattern_events(patterns, examples, [], {})
+
+    assert len(rows) == 1
+    assert rows[0]["duplicate_group_id"] == "DUP_PATTERN_000001_AAA_1d_2026-06-10T00:00:00+00:00"
+    assert rows[0]["label_generated_ts"] == "2026-06-20T00:00:00+00:00"
     assert exporter.duplicate_event_groups(rows) == {"groups": 0, "repeated_rows": 0}
 
 
@@ -534,6 +650,18 @@ def test_audit_validator_accepts_manifest_gate_buckets_and_reported_duplicates(t
     assert report["package_valid"] is True
     assert report["director_gate_status"] == "blocked"
     assert report["promotion_allowed"] is False
+
+
+def test_audit_validator_accepts_explicit_pending_label_contract(tmp_path: Path) -> None:
+    validator = _load_audit_validator()
+    package = _write_minimal_audit_package(tmp_path, validator, duplicate_repeated_rows=2)
+    rows = list(csv.DictReader((package / "pattern_events.csv").open(newline="", encoding="utf-8")))
+    rows[0]["label_generated_ts"] = "pending_forward_label"
+    _write_csv(package / "pattern_events.csv", validator.CSV_COLUMNS["pattern_events.csv"], rows)
+
+    errors, _ = validator.validate_package(package)
+
+    assert not any("timestamp lacks timezone in label_generated_ts" in error for error in errors)
 
 
 def test_audit_validator_rejects_orphan_fills_and_empty_bucket_without_reason(tmp_path: Path) -> None:

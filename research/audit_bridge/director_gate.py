@@ -44,6 +44,17 @@ REQUIRED_LOOKAHEAD_COLUMNS = {
     "source_bar_hash",
     "split_id",
 }
+PENDING_LABEL_VALUES = {
+    "pending_forward_label",
+    "not_recorded_legacy_label",
+}
+NESTED_REPLAY_NONBLOCKING_STATUSES = {
+    "not_finalist",
+    "not_applicable",
+    "not_applicable_non_finalist",
+    "not_required",
+    "not_required_for_research_only",
+}
 
 SCIENTIFIC_EXPERIMENT_COLUMNS = {
     "event_ledger_hash",
@@ -252,6 +263,12 @@ def evaluate(
             f"duplicate_group_id repeats exceed gate: {duplicate_repeated_rows}/{len(events)} rows ({duplicate_share:.2%})."
         )
 
+    pending_label_rows = count_pending_label_rows(events)
+    if pending_label_rows and promoted:
+        blockers.append(
+            f"{pending_label_rows} event rows have pending/non-recorded labels; promoted statuses require closed label evidence."
+        )
+
     independent_events_by_pattern: Counter[str] = Counter()
     non_independent_rows = 0
     pending_independence_rows = 0
@@ -361,6 +378,7 @@ def evaluate(
         "unknown_statuses": unknown_statuses,
         "duplicate_repeated_rows": duplicate_repeated_rows,
         "duplicate_repeated_row_share": round(duplicate_share, 6),
+        "pending_or_legacy_label_rows": pending_label_rows,
         "non_independent_event_rows": non_independent_rows,
         "pending_independence_rows": pending_independence_rows,
         "sample_count_mismatch_patterns": len(sample_mismatch_patterns),
@@ -401,12 +419,13 @@ def scientific_contract_status(
         blockers.append(f"{event_ledger_missing} experiment rows lack event_ledger_hash.")
 
     nested_missing = 0
+    nested_passed = 0
     nested_not_passed = 0
+    nested_nonblocking = 0
     for row in experiments:
+        status = str(row.get("nested_discovery_replay_status") or "").strip().lower()
         implemented = truthy(row.get("nested_discovery_replay_implemented"))
-        passed = truthy(row.get("nested_discovery_replay_passed")) or (
-            str(row.get("nested_discovery_replay_status") or "").strip().lower() == "passed"
-        )
+        passed = truthy(row.get("nested_discovery_replay_passed")) or status == "passed"
         if not any(
             str(row.get(column) or "").strip()
             for column in (
@@ -416,8 +435,12 @@ def scientific_contract_status(
             )
         ):
             nested_missing += 1
+        elif status in NESTED_REPLAY_NONBLOCKING_STATUSES:
+            nested_nonblocking += 1
         elif not implemented or not passed:
             nested_not_passed += 1
+        else:
+            nested_passed += 1
     if nested_missing:
         blockers.append(f"{nested_missing} experiment rows lack nested_discovery_replay evidence.")
     if nested_not_passed:
@@ -488,7 +511,9 @@ def scientific_contract_status(
     return {
         "blockers": blockers,
         "event_ledger_hash_rows": len(experiments) - event_ledger_missing if experiments else 0,
-        "nested_replay_passed_rows": len(experiments) - nested_missing - nested_not_passed if experiments else 0,
+        "nested_replay_passed_rows": nested_passed,
+        "nested_replay_nonblocking_rows": nested_nonblocking,
+        "nested_replay_blocked_rows": nested_not_passed,
         "registry_hash_rows": len(experiments) - registry_hash_missing if experiments else 0,
         "registry_run_manifest_hash_rows": (
             len(experiments) - registry_run_manifest_missing if experiments else 0
@@ -508,6 +533,14 @@ def count_rows_missing_any(rows: list[dict[str, str]], columns: set[str]) -> int
         1
         for row in rows
         if any(not str(row.get(column) or "").strip() for column in columns)
+    )
+
+
+def count_pending_label_rows(rows: list[dict[str, str]]) -> int:
+    return sum(
+        1
+        for row in rows
+        if str(row.get("label_generated_ts") or "").strip().lower() in PENDING_LABEL_VALUES
     )
 
 

@@ -75,6 +75,33 @@ make test              # ejecutar tests
 make down              # parar
 ```
 
+## PrePaper release readiness
+
+El informe `reports/Auditoria_Tradeo_V_0_9_preLive.md` mantiene el dictamen
+actual: **Live bloqueado; Lab/IBKR Paper ampliado y medido**.
+
+Runbook operativo de 7 dias:
+
+```text
+docs/remediation/prepaper_operational_runbook_2026_06_17.md
+```
+
+Paquete de auditoria base:
+
+```text
+research/audit_bridge/requests/TRADEO-AUDIT-20260616-213627_daily_internal
+```
+
+Verificacion local sin armar Live ni crear fills:
+
+```bash
+make prepaper-verify \
+  AUDIT_PACKAGE=research/audit_bridge/requests/TRADEO-AUDIT-20260616-213627_daily_internal
+```
+
+El resultado esperado hoy es paquete valido con Director gate `blocked`,
+`promotion_allowed=false`, `paper_trades=0` e `ib_fills=0`.
+
 ## Flujo de decisión
 
 1. `DataCollectorAgent` obtiene OHLCV.

@@ -98,6 +98,7 @@ def write_entry_scan_status(
         "rejected_by_entry_quality": int(result.get("rejected_by_entry_quality") or 0),
         "rejected_by_risk": int(result.get("rejected_by_risk") or 0),
         "order_errors": list(result.get("order_errors") or []),
+        "order_skip_reason_counts": dict(result.get("order_skip_reason_counts") or {}),
         "zero_order_scan_streak": zero_order_scan_streak,
         "zero_order_alert": zero_order_scan_streak >= ZERO_ORDER_ALERT_STREAK,
         "zero_order_block_reason": _entry_scan_zero_order_reason(result)
@@ -150,6 +151,7 @@ def entry_scan_status(module: str, settings: Settings | None = None) -> dict[str
         "rejected_by_entry_quality": int(data.get("rejected_by_entry_quality") or 0),
         "rejected_by_risk": int(data.get("rejected_by_risk") or 0),
         "order_errors": list(data.get("order_errors") or []),
+        "order_skip_reason_counts": dict(data.get("order_skip_reason_counts") or {}),
         "zero_order_scan_streak": int(data.get("zero_order_scan_streak") or 0),
         "zero_order_alert": bool(data.get("zero_order_alert")),
         "zero_order_block_reason": data.get("zero_order_block_reason"),
@@ -164,6 +166,10 @@ def _entry_scan_zero_order_reason(result: dict[str, Any]) -> str:
     if order_errors:
         reason = order_errors[0].get("reason_code") if isinstance(order_errors[0], dict) else None
         return str(reason or "order_errors")
+    explicit_reasons = result.get("order_skip_reason_counts") or {}
+    if isinstance(explicit_reasons, dict) and explicit_reasons:
+        dominant_reason = max(explicit_reasons.items(), key=lambda item: int(item[1] or 0))[0]
+        return str(dominant_reason or "order_skip")
     counters = [
         ("rejected_by_entry_gate", "entry_gate"),
         ("rejected_by_risk", "risk"),

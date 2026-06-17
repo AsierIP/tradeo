@@ -116,25 +116,28 @@ class FakeBroker:
         open_orders: list[dict] | None = None,
         fills: list[dict] | None = None,
         error: Exception | None = None,
+        fill_error: Exception | None = None,
+        state_error: Exception | None = None,
     ) -> None:
         self._positions = positions or []
         self._open_orders = open_orders or []
         self._fills = fills or []
-        self._error = error
+        self._fill_error = fill_error or error
+        self._state_error = state_error or error
 
     def fills(self) -> list[dict]:
-        if self._error is not None:
-            raise self._error
+        if self._fill_error is not None:
+            raise self._fill_error
         return self._fills
 
     def positions(self) -> list[dict]:
-        if self._error is not None:
-            raise self._error
+        if self._state_error is not None:
+            raise self._state_error
         return self._positions
 
     def open_orders(self) -> list[dict]:
-        if self._error is not None:
-            raise self._error
+        if self._state_error is not None:
+            raise self._state_error
         return self._open_orders
 
 
@@ -156,6 +159,7 @@ def test_paper_broker_opens_trade_and_marks_signal_executed() -> None:
     assert trade.status == TradeStatus.OPEN
     assert signal.status == SignalStatus.EXECUTED
     assert trade.metadata_json["no_ibkr_order"] is True
+    assert trade.metadata_json["no_order_reason"] == "legacy_paper_broker_simulated_fill"
     assert trade.evidence_type == EvidenceType.SHADOW_NO_ORDER.value
     assert "paper_trade_opened" in audit_actions(db)
 
@@ -503,6 +507,30 @@ def test_reconciliation_broker_unreachable_never_trips_kill_switch() -> None:
     assert "runtime_kill_switch_activated" not in actions
 
 
+def test_reconciliation_fill_import_failure_warns_without_blocking_state_check() -> None:
+    db = session_factory()
+    add_open_trade(db, symbol="AAPL")
+    broker = FakeBroker(
+        positions=[{"symbol": "AAPL", "position": 5.0}],
+        fill_error=RuntimeError("execution feed down"),
+    )
+
+    result = reconciliation_service(broker).reconcile(db)
+
+    assert result["ok"] is True
+    assert result["fill_fetch_error"] == "RuntimeError: execution feed down"
+    assert result["broker_fills"] == 0
+    assert result["divergences"] == []
+    assert result["warnings"] == [
+        {"kind": "broker_fills_unavailable", "error": "RuntimeError: execution feed down"}
+    ]
+    assert result["kill_switch_activated"] is False
+    assert runtime_kill_switch_active(db) is False
+    actions = audit_actions(db)
+    assert "ibkr_fills_unavailable" in actions
+    assert "reconciliation_completed" in actions
+
+
 def test_reconciliation_divergence_respects_disabled_auto_kill_switch() -> None:
     db = session_factory()
     add_open_trade(db, symbol="AAPL")
@@ -709,6 +737,8 @@ def test_reconciliation_ingests_entry_fill_as_paper_fill_evidence() -> None:
             "perm_ids": [1001, 1002, 1003],
             "parent_order_id": 101,
             "submitted_at": "2026-06-01T15:00:00+00:00",
+            "entry_variant": {"id": "next_bar_limit_retest"},
+            "regime": {"regime_key": "market_up|uptrend|normal_vol|liquid|rs_leader"},
         },
     )
     fill = {
@@ -742,8 +772,45 @@ def test_reconciliation_ingests_entry_fill_as_paper_fill_evidence() -> None:
     assert trade.metadata_json["commission_usd"] == 0.35
     assert trade.metadata_json["cost_provenance_reconciled"] is True
     assert trade.metadata_json["slippage_provenance_reconciled"] is True
+    assert trade.metadata_json["timestamp_provenance_reconciled"] is True
+    assert trade.metadata_json["entry_variant_id"] == "next_bar_limit_retest"
+    assert trade.metadata_json["regime_key"] == "market_up|uptrend|normal_vol|liquid|rs_leader"
     assert trade.metadata_json["execution_quality"]["commission_usd"] == 0.35
     assert "ibkr_fills_ingested" in audit_actions(db)
+
+
+def test_reconciliation_does_not_match_exec_identified_fill_by_symbol_only() -> None:
+    db = session_factory()
+    trade = add_open_trade(
+        db,
+        symbol="AAPL",
+        broker_order_id="101",
+        metadata={
+            "ibkr_mode": "paper",
+            "order_ids": [101, 102, 103],
+            "perm_ids": [1001, 1002, 1003],
+            "parent_order_id": 101,
+        },
+    )
+    fill = {
+        "symbol": "AAPL",
+        "side": "BUY",
+        "quantity": 5.0,
+        "price": 10.05,
+        "exec_id": "unmatched-exec-id",
+        "execution_time": "2026-06-01T15:00:12+00:00",
+        "commission": 0.35,
+        "commission_currency": "USD",
+    }
+    broker = FakeBroker(positions=[{"symbol": "AAPL", "position": 5.0}], fills=[fill])
+
+    result = reconciliation_service(broker).reconcile(db)
+    db.refresh(trade)
+
+    assert result["fills_ingested"] == 0
+    assert result["unmatched_fills"] == 1
+    assert result["divergences"] == []
+    assert "entry_fill_price" not in trade.metadata_json
 
 
 def test_reconciliation_does_not_match_identified_fill_by_symbol_only() -> None:
@@ -869,6 +936,45 @@ def test_reconciliation_fill_without_commission_is_degraded_until_report_arrives
     assert trade.evidence_quality == EvidenceQuality.DEGRADED.value
     assert trade.metadata_json["commission_missing"] is True
     assert trade.metadata_json.get("cost_provenance_reconciled") is not True
+
+
+def test_reconciliation_fill_without_timestamp_is_degraded_until_broker_time_arrives() -> None:
+    db = session_factory()
+    trade = add_open_trade(
+        db,
+        symbol="AAPL",
+        broker_order_id="101",
+        metadata={
+            "ibkr_mode": "paper",
+            "order_ids": [101, 102, 103],
+            "perm_ids": [1001, 1002, 1003],
+            "parent_order_id": 101,
+        },
+    )
+    fill = {
+        "symbol": "AAPL",
+        "side": "BUY",
+        "quantity": 5.0,
+        "price": 10.05,
+        "order_id": 101,
+        "perm_id": 1001,
+        "exec_id": "entry-fill-1",
+        "commission": 0.35,
+        "commission_currency": "USD",
+    }
+    broker = FakeBroker(positions=[{"symbol": "AAPL", "position": 5.0}], fills=[fill])
+
+    result = reconciliation_service(broker).reconcile(db)
+    db.refresh(trade)
+
+    assert result["divergences"] == []
+    assert trade.evidence_type == EvidenceType.IBKR_PAPER_FILL.value
+    assert trade.evidence_quality == EvidenceQuality.DEGRADED.value
+    assert trade.metadata_json["entry_fill_price"] == 10.05
+    assert trade.metadata_json["entry_fill_time"] is None
+    assert trade.metadata_json["broker_timestamp_missing"] is True
+    assert trade.metadata_json["broker_timestamp_missing_fill_count"] == 1
+    assert trade.metadata_json["timestamp_provenance_reconciled"] is False
 
 
 def test_reconciliation_ingests_exit_fill_and_closes_without_missing_broker_false_positive() -> None:

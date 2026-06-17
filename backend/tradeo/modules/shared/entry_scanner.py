@@ -152,6 +152,7 @@ class PatternEntryScanner:
         production_manifest_checked_at = datetime.now(timezone.utc)
         near_miss_shadow_observations_opened = 0
         order_errors: list[dict[str, Any]] = []
+        order_skip_reason_counts: dict[str, int] = {}
         signal_ids: list[int] = []
         near_miss_signal_ids: list[int] = []
         trade_ids: list[int] = []
@@ -173,6 +174,7 @@ class PatternEntryScanner:
             symbol = str(match["symbol"]).upper()
             if module == "laboratory" and resolved["execute_orders"] and symbol in broker_blocked_symbols:
                 skipped_duplicates += 1
+                self._count_reason(order_skip_reason_counts, "same_scan_broker_failure")
                 self._audit_lab_symbol_broker_cooldown(db, match=match, reason="same_scan_broker_failure")
                 continue
             if (
@@ -181,6 +183,7 @@ class PatternEntryScanner:
                 and self._has_recent_lab_symbol_order_failure(db, symbol)
             ):
                 skipped_duplicates += 1
+                self._count_reason(order_skip_reason_counts, "recent_symbol_broker_failure")
                 self._audit_lab_symbol_broker_cooldown(db, match=match, reason="recent_symbol_broker_failure")
                 continue
             production_manifest_check: dict[str, Any] | None = None
@@ -194,6 +197,7 @@ class PatternEntryScanner:
             if production_manifest_check is not None and not bool(production_manifest_check["valid"]):
                 rejected_by_production_manifest += 1
                 reason_code = str(production_manifest_check.get("reason_code") or "unknown")
+                self._count_reason(order_skip_reason_counts, f"production_manifest:{reason_code}")
                 production_manifest_rejection_reason_counts[reason_code] = (
                     production_manifest_rejection_reason_counts.get(reason_code, 0) + 1
                 )
@@ -215,6 +219,11 @@ class PatternEntryScanner:
             entry_gate = ((match.get("metrics") or {}).get("entry_gate") or {})
             if settings.entry_gate_enabled and not bool(entry_gate.get("passed", False)):
                 rejected_by_entry_gate += 1
+                gate_reasons = self._entry_gate_reasons(entry_gate)
+                self._count_reason(
+                    order_skip_reason_counts,
+                    f"entry_gate:{gate_reasons[0]}" if gate_reasons else "entry_gate",
+                )
                 self._audit_entry_gate_rejection(db, module=module, match=match, entry_gate=entry_gate)
                 if module == "laboratory" and self._is_lab_near_miss_shadow_candidate(match, entry_gate):
                     opened = self._open_near_miss_shadow_observation(
@@ -262,6 +271,7 @@ class PatternEntryScanner:
                         db.commit()
                     except Exception as exc:  # noqa: BLE001
                         outcome = mark_signal_order_failure(duplicate_signal, str(exc))
+                        self._count_reason(order_skip_reason_counts, str(outcome["reason_code"]))
                         order_errors.append(
                             {
                                 "signal_id": duplicate_signal.id,
@@ -289,6 +299,7 @@ class PatternEntryScanner:
                         db.commit()
                 else:
                     skipped_duplicates += 1
+                    self._count_reason(order_skip_reason_counts, "duplicate_signal")
                     db.add(
                         AuditLog(
                             actor=module,
@@ -305,6 +316,7 @@ class PatternEntryScanner:
                 continue
             if self._has_active_exposure(db, match, module=module):
                 skipped_duplicates += 1
+                self._count_reason(order_skip_reason_counts, "active_exposure")
                 db.add(
                     AuditLog(
                         actor=module,
@@ -321,6 +333,7 @@ class PatternEntryScanner:
                 continue
             if module != "laboratory" and self._has_recent_signal(db, match, module=module):
                 skipped_cooldown += 1
+                self._count_reason(order_skip_reason_counts, "cooldown")
                 db.add(
                     AuditLog(
                         actor=module,
@@ -343,6 +356,7 @@ class PatternEntryScanner:
             )
             if not risk.approved:
                 rejected_by_risk += 1
+                self._count_reason(order_skip_reason_counts, "risk")
                 db.add(
                     AuditLog(
                         actor=module,
@@ -367,6 +381,7 @@ class PatternEntryScanner:
             )
             if module != "laboratory" and quality_rejected:
                 rejected_by_entry_quality += 1
+                self._count_reason(order_skip_reason_counts, "entry_quality")
                 db.add(
                     AuditLog(
                         actor=module,
@@ -388,6 +403,7 @@ class PatternEntryScanner:
                 # quality below the escalated bar -> abstain, keep the outcome
                 # observable as a near-miss shadow (reason: ambiguous_match).
                 rejected_by_ambiguity += 1
+                self._count_reason(order_skip_reason_counts, "ambiguous_match")
                 db.add(
                     AuditLog(
                         actor=module,
@@ -421,6 +437,7 @@ class PatternEntryScanner:
                         near_miss_trade_ids.append(observation.id)
                 continue
             if not resolved["store_signals"]:
+                self._count_reason(order_skip_reason_counts, "store_signals_disabled")
                 continue
 
             signal = self._store_signal(
@@ -430,6 +447,8 @@ class PatternEntryScanner:
                 candidate=candidate,
                 risk=risk,
                 execute_orders=bool(resolved["execute_orders"]),
+                requested_execute_orders=requested_execute_orders,
+                execution_degrade_reason=execution_degrade_reason,
                 market_session=session,
                 entry_quality=entry_quality,
             )
@@ -437,6 +456,17 @@ class PatternEntryScanner:
             signal_ids.append(signal.id)
 
             if not resolved["execute_orders"]:
+                self._count_reason(
+                    order_skip_reason_counts,
+                    self._no_order_reason(
+                        module,
+                        match=match,
+                        requested_execute_orders=requested_execute_orders,
+                        execute_orders=bool(resolved["execute_orders"]),
+                        execution_degrade_reason=execution_degrade_reason,
+                    )
+                    or "orders_disabled",
+                )
                 if module == "laboratory":
                     observation = self._open_lab_observation(
                         db,
@@ -461,6 +491,7 @@ class PatternEntryScanner:
                 trade_ids.append(trade.id)
             except Exception as exc:  # noqa: BLE001
                 outcome = mark_signal_order_failure(signal, str(exc))
+                self._count_reason(order_skip_reason_counts, str(outcome["reason_code"]))
                 order_errors.append(
                     {
                         "signal_id": signal.id,
@@ -502,6 +533,7 @@ class PatternEntryScanner:
             "production_manifest_rejection_reason_counts": production_manifest_rejection_reason_counts,
             "near_miss_shadow_observations_opened": near_miss_shadow_observations_opened,
             "order_errors": order_errors,
+            "order_skip_reason_counts": order_skip_reason_counts,
             "signal_ids": signal_ids,
             "near_miss_signal_ids": near_miss_signal_ids,
             "trade_ids": trade_ids,
@@ -718,6 +750,7 @@ class PatternEntryScanner:
                 "production_manifest_rejection_reason_counts", {}
             ),
             "order_errors": entry_status.get("order_errors", []),
+            "order_skip_reason_counts": entry_status.get("order_skip_reason_counts", {}),
             "zero_order_scan_streak": entry_status.get("zero_order_scan_streak", 0),
             "zero_order_alert": entry_status.get("zero_order_alert", False),
             "zero_order_block_reason": entry_status.get("zero_order_block_reason"),
@@ -792,6 +825,7 @@ class PatternEntryScanner:
             "production_manifest_rejection_reason_counts": {},
             "near_miss_shadow_observations_opened": 0,
             "order_errors": [],
+            "order_skip_reason_counts": {},
             "signal_ids": [],
             "near_miss_signal_ids": [],
             "trade_ids": [],
@@ -845,6 +879,61 @@ class PatternEntryScanner:
         if module == "fox_hunter" and execute_orders:
             return "ibkr_live"
         return None
+
+    @staticmethod
+    def _count_reason(reason_counts: dict[str, int], reason: str | None) -> None:
+        reason_key = str(reason or "unknown").strip() or "unknown"
+        reason_counts[reason_key] = reason_counts.get(reason_key, 0) + 1
+
+    @staticmethod
+    def _no_order_reason(
+        module: EntryModule,
+        *,
+        match: dict[str, Any],
+        requested_execute_orders: bool,
+        execute_orders: bool,
+        execution_degrade_reason: str | None,
+    ) -> str | None:
+        if module != "laboratory" or execute_orders:
+            return None
+        if execution_degrade_reason:
+            return execution_degrade_reason
+        if match.get("near_miss"):
+            near_miss_type = str(match.get("near_miss_type") or "")
+            if near_miss_type == "ambiguous_match_shadow":
+                return "ambiguous_match_shadow_observation"
+            return "entry_gate_volume_near_miss_shadow"
+        return (
+            "paper_order_requested_but_safety_degraded"
+            if requested_execute_orders
+            else "paper_order_submission_disabled"
+        )
+
+    @classmethod
+    def _order_decision_metadata(
+        cls,
+        module: EntryModule,
+        *,
+        match: dict[str, Any],
+        requested_execute_orders: bool,
+        execute_orders: bool,
+        execution_degrade_reason: str | None,
+    ) -> dict[str, Any]:
+        no_order_reason = cls._no_order_reason(
+            module,
+            match=match,
+            requested_execute_orders=requested_execute_orders,
+            execute_orders=execute_orders,
+            execution_degrade_reason=execution_degrade_reason,
+        )
+        decision = {
+            "requested_execute_orders": requested_execute_orders,
+            "execute_orders": execute_orders,
+            "execution_request_mode": cls._scan_execution_mode(module, execute_orders=execute_orders),
+            "submitted_to_broker": execute_orders,
+            "no_order_reason": no_order_reason,
+        }
+        return {key: value for key, value in decision.items() if value is not None}
 
     def _resolved_options(self, module: EntryModule, **overrides: Any) -> dict[str, Any]:
         settings = self.settings
@@ -1403,6 +1492,8 @@ class PatternEntryScanner:
             candidate=candidate,
             risk=risk,
             execute_orders=False,
+            requested_execute_orders=False,
+            execution_degrade_reason=None,
             market_session=session,
             entry_quality=entry_quality,
         )
@@ -1652,6 +1743,8 @@ class PatternEntryScanner:
         candidate: PatternCandidate,
         risk,
         execute_orders: bool,
+        requested_execute_orders: bool,
+        execution_degrade_reason: str | None,
         market_session: dict[str, Any] | None = None,
         entry_quality: dict[str, Any] | None = None,
     ):
@@ -1694,6 +1787,45 @@ class PatternEntryScanner:
             match=match,
             execute_orders=execute_orders,
         )
+        no_order_reason = self._no_order_reason(
+            module,
+            match=match,
+            requested_execute_orders=requested_execute_orders,
+            execute_orders=execute_orders,
+            execution_degrade_reason=execution_degrade_reason,
+        )
+        order_decision = self._order_decision_metadata(
+            module,
+            match=match,
+            requested_execute_orders=requested_execute_orders,
+            execute_orders=execute_orders,
+            execution_degrade_reason=execution_degrade_reason,
+        )
+        execution_outcome = (
+            {
+                "status": "near_miss_shadow_observation",
+                "reason_code": "entry_gate_volume_near_miss_shadow",
+                "reason": (
+                    "Entry gate failed only volume confirmation; Lab opened a "
+                    "shadow observation with no IBKR order."
+                ),
+                "retryable": False,
+                "next_action": "collect_shadow_outcome",
+            }
+            if match.get("near_miss")
+            else None
+        )
+        if no_order_reason and execution_outcome is None:
+            execution_outcome = {
+                "status": "no_order_shadow_observation",
+                "reason_code": no_order_reason,
+                "reason": "Lab did not submit an IBKR Paper order for this signal.",
+                "retryable": False,
+                "next_action": "collect_shadow_outcome",
+            }
+        elif no_order_reason and execution_outcome is not None:
+            execution_outcome["reason_code"] = no_order_reason
+            execution_outcome["no_order_reason"] = no_order_reason
         signal = Signal(
             symbol=candidate.symbol,
             pattern=candidate.pattern,
@@ -1739,10 +1871,13 @@ class PatternEntryScanner:
                 "spread_snapshot": spread_snapshot,
                 "spread_observed_pct": spread_snapshot.get("spread_observed_pct"),
                 "execution_requested": execute_orders,
+                "requested_execute_orders": requested_execute_orders,
                 "execution_request_mode": self._scan_execution_mode(
                     module,
                     execute_orders=execute_orders,
                 ),
+                "execution_degrade_reason": execution_degrade_reason,
+                "order_decision": order_decision,
                 "paper_order_requested": module == "laboratory" and execute_orders,
                 "match": match,
                 "entry_gate": match.get("metrics", {}).get("entry_gate"),
@@ -1757,20 +1892,8 @@ class PatternEntryScanner:
                 "execution_mode": self._signal_execution_mode(module, execute_orders=execute_orders),
                 "paper_only": module == "laboratory" and not execute_orders,
                 "no_ibkr_order": module == "laboratory" and not execute_orders,
-                "execution_outcome": (
-                    {
-                        "status": "near_miss_shadow_observation",
-                        "reason_code": "entry_gate_volume_near_miss_shadow",
-                        "reason": (
-                            "Entry gate failed only volume confirmation; Lab opened a "
-                            "shadow observation with no IBKR order."
-                        ),
-                        "retryable": False,
-                        "next_action": "collect_shadow_outcome",
-                    }
-                    if match.get("near_miss")
-                    else None
-                ),
+                "no_order_reason": no_order_reason,
+                "execution_outcome": execution_outcome,
                 "risk": risk.model_dump(mode="json"),
                 "director_audit_required": True,
             },

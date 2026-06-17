@@ -155,6 +155,10 @@ SENSITIVE_KEY_RE = re.compile(
     r"(^|_)(token|secret|password|apikey|api_key|credential|session_id|cookie)(_|$)",
     re.I,
 )
+LABEL_CONTRACT_SENTINELS = {
+    "pending_forward_label",
+    "not_recorded_legacy_label",
+}
 
 
 def main() -> int:
@@ -383,6 +387,8 @@ def check_timestamps(rel: str, rows: list[dict[str, str]], errors: list[str]) ->
         for idx, row in enumerate(rows, start=2):
             value = (row.get(column) or "").strip()
             if not value:
+                continue
+            if rel == "pattern_events.csv" and column == "label_generated_ts" and value in LABEL_CONTRACT_SENTINELS:
                 continue
             if not TZ_RE.search(value):
                 errors.append(f"{rel}:{idx}: timestamp lacks timezone in {column}: {value}")

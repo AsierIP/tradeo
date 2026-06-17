@@ -1,7 +1,10 @@
 -include .env
 export
 
-.PHONY: setup up down logs ps test scan report self-improve discover-patterns match-discovered-patterns current-matches research-runs research-director research-director-latest
+PYTHON ?= python3
+AUDIT_PACKAGE ?= $(shell ls -dt research/audit_bridge/requests/TRADEO-AUDIT-* 2>/dev/null | head -1)
+
+.PHONY: setup up down logs ps test scan report self-improve discover-patterns match-discovered-patterns current-matches research-runs research-director research-director-latest audit-package-validate audit-package-gate prepaper-verify
 
 setup:
 	cp -n .env.example .env || true
@@ -43,6 +46,23 @@ research-director:
 
 research-director-latest:
 	bash -lc 'set -a; source .env; set +a; curl -u "$${TRADEO_ADMIN_USERNAME:-admin}:$${TRADEO_ADMIN_PASSWORD:-change-me}" http://localhost:8000/api/research/director/latest'
+
+audit-package-validate:
+	@test -n "$(AUDIT_PACKAGE)" || (echo "No TRADEO-AUDIT-* package found under research/audit_bridge/requests" && exit 1)
+	$(PYTHON) research/audit_bridge/validate_audit_package.py "$(AUDIT_PACKAGE)"
+
+audit-package-gate:
+	@test -n "$(AUDIT_PACKAGE)" || (echo "No TRADEO-AUDIT-* package found under research/audit_bridge/requests" && exit 1)
+	$(PYTHON) research/audit_bridge/director_gate.py "$(AUDIT_PACKAGE)" \
+		--json-output "$(AUDIT_PACKAGE)/director_gate_result.local.json" \
+		--markdown-output "$(AUDIT_PACKAGE)/director_gate_result.local.md" \
+		--allow-blocked-exit-zero
+
+prepaper-verify:
+	@test -n "$(AUDIT_PACKAGE)" || (echo "No TRADEO-AUDIT-* package found under research/audit_bridge/requests" && exit 1)
+	$(PYTHON) research/audit_bridge/validate_audit_package.py "$(AUDIT_PACKAGE)"
+	$(PYTHON) research/audit_bridge/director_gate.py "$(AUDIT_PACKAGE)" --allow-blocked-exit-zero
+	cd "$(AUDIT_PACKAGE)" && sha256sum -c file_hashes.sha256
 
 
 match-discovered-patterns:

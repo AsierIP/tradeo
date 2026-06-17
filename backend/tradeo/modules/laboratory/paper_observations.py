@@ -86,6 +86,12 @@ class LabPaperObservationService:
         entry_gate = signal_metadata.get("entry_gate") or (match.get("metrics") or {}).get("entry_gate")
         entry_quality = signal_metadata.get("entry_quality") or {}
         near_miss = bool(signal_metadata.get("near_miss") or match.get("near_miss"))
+        no_order_reason = (
+            signal_metadata.get("no_order_reason")
+            or signal_metadata.get("execution_degrade_reason")
+            or ("near_miss_shadow" if near_miss else "paper_order_submission_disabled")
+        )
+        order_decision = signal_metadata.get("order_decision") if isinstance(signal_metadata.get("order_decision"), dict) else {}
         evidence_type = (
             EvidenceType.NEAR_MISS_SHADOW.value
             if near_miss
@@ -100,6 +106,12 @@ class LabPaperObservationService:
             "source_module": "laboratory",
             "observation_only": True,
             "no_ibkr_order": True,
+            "no_order_reason": no_order_reason,
+            "order_decision": {
+                **order_decision,
+                "submitted_to_broker": False,
+                "no_order_reason": no_order_reason,
+            },
             "entry_variant_id": signal_metadata.get("entry_variant_id") or match.get("entry_variant_id"),
             "entry_variant": signal_metadata.get("entry_variant") or match.get("entry_variant"),
             "pattern_id": signal_metadata.get("pattern_id") or match.get("pattern_id"),
@@ -178,6 +190,7 @@ class LabPaperObservationService:
                     "evidence_type": evidence_type,
                     "evidence_quality": EvidenceQuality.NORMAL.value,
                     "no_ibkr_order": True,
+                    "no_order_reason": no_order_reason,
                 },
             )
         )

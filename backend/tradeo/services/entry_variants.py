@@ -10,6 +10,8 @@ import pandas as pd
 from tradeo.core.config import Settings
 from tradeo.services.technical_indicators import atr
 
+PENDING_FORWARD_LABEL = "pending_forward_label"
+
 
 def build_entry_audit_context(df: pd.DataFrame, timeframe: str) -> dict[str, Any]:
     """Record the data cutoff proving an entry decision uses only known bars."""
@@ -20,7 +22,7 @@ def build_entry_audit_context(df: pd.DataFrame, timeframe: str) -> dict[str, Any
         "available_data_cutoff_ts": window_end.isoformat(),
         "decision_ts": now.isoformat(),
         "entry_eligible_ts": eligible.isoformat(),
-        "label_generated_ts": None,
+        "label_generated_ts": PENDING_FORWARD_LABEL,
         "source_bar_hash": _source_bar_hash(df),
         "split_id": "live_forward_scan",
         "lookahead_policy": "entry eligible only after available_data_cutoff_ts",

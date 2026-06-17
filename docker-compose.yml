@@ -30,7 +30,7 @@ services:
     restart: unless-stopped
     env_file: .env
     ports:
-      - "8000:8000"
+      - "${TRADEO_BACKEND_BIND:-127.0.0.1}:8000:8000"
     depends_on:
       db:
         condition: service_healthy
@@ -85,7 +85,7 @@ services:
     environment:
       TRADEO_API_INTERNAL_URL: http://backend:8000/api
     ports:
-      - "3000:3000"
+      - "${TRADEO_FRONTEND_BIND:-127.0.0.1}:3000:3000"
     depends_on:
       - backend
 

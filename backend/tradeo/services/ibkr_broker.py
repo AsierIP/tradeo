@@ -217,7 +217,8 @@ class IBKRBroker:
                 raw_fills = ib.reqExecutions()
             except Exception:  # noqa: BLE001 - fall back to session fills if request fails.
                 raw_fills = ib.fills()
-            return [_normalize_fill(fill) for fill in raw_fills]
+            ib.sleep(1.0)
+            return [_normalize_fill(fill) for fill in (raw_fills or [])]
         finally:
             if ib.isConnected():
                 ib.disconnect()
@@ -545,12 +546,16 @@ def _normalize_fill(fill: Any) -> dict[str, Any]:
     order_id = _str_or_none(getattr(execution, "orderId", None))
     perm_id = _str_or_none(getattr(execution, "permId", None))
     symbol = _str_or_none(getattr(contract, "symbol", None) or getattr(execution, "symbol", None))
+    quantity = _float_or_none(getattr(execution, "shares", None))
+    price = _float_or_none(getattr(execution, "price", None) or getattr(execution, "avgPrice", None))
     raw = {
         "exec_id": exec_id,
         "order_id": order_id,
         "perm_id": perm_id,
         "symbol": symbol,
         "time": executed_at,
+        "price": price if not exec_id else None,
+        "quantity": quantity if not exec_id else None,
     }
     fill_id_hash = hashlib.sha256(json.dumps(raw, sort_keys=True).encode("utf-8")).hexdigest()
     return {
@@ -561,8 +566,8 @@ def _normalize_fill(fill: Any) -> dict[str, Any]:
             getattr(commission_report, "currency", None) or getattr(contract, "currency", None)
         ),
         "side": _normalize_side(getattr(execution, "side", None)),
-        "quantity": _float_or_none(getattr(execution, "shares", None)),
-        "price": _float_or_none(getattr(execution, "price", None) or getattr(execution, "avgPrice", None)),
+        "quantity": quantity,
+        "price": price,
         "avg_price": _float_or_none(getattr(execution, "avgPrice", None)),
         "order_id": order_id,
         "perm_id": perm_id,

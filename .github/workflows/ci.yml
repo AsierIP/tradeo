@@ -7,6 +7,21 @@ on:
   workflow_dispatch:
 
 jobs:
+  ops-readiness:
+    name: ops readiness
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Validate Docker Compose config
+        run: |
+          cp .env.example .env
+          docker compose -f docker-compose.yml -f docker-compose.audit.yml config --quiet
+      - name: Validate latest tracked Director package
+        run: python ops/scripts/director_audit_ci.py
+
   backend:
     name: backend lint + tests
     runs-on: ubuntu-latest
