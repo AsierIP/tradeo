@@ -8,6 +8,7 @@ from datetime import date, timedelta
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 
 from tradeo.agents.pattern_discovery_lab_agent import PatternDiscoveryLabAgent
 from tradeo.core.config import Settings
@@ -110,6 +111,39 @@ def test_window_sampler_generates_forward_labeled_samples() -> None:
     assert "execution_fill_probability" in first.features
     assert "weekly_return" in first.features
     assert "relative_strength_spy" in first.features
+
+
+def test_forward_outcome_uses_array_path_and_keeps_conservative_intrabar_order(
+    monkeypatch,
+) -> None:
+    sampler = WindowSampler()
+    future = pd.DataFrame(
+        [
+            {"open": 100.0, "high": 145.0, "low": 89.0, "close": 130.0, "volume": 1_000_000},
+            {"open": 130.0, "high": 150.0, "low": 120.0, "close": 140.0, "volume": 1_000_000},
+        ],
+        index=pd.date_range("2024-01-02", periods=2, freq="D"),
+    )
+
+    def fail_dataframe_path(*_args, **_kwargs) -> None:
+        raise AssertionError("_forward_outcome should use the vectorized array path")
+
+    monkeypatch.setattr(WindowSampler, "_path_outcome", fail_dataframe_path)
+
+    outcome = sampler._forward_outcome(
+        entry=100.0,
+        risk_proxy=10.0,
+        future=future,
+        forward_bars=[1, 2],
+    )
+
+    assert outcome.long_label == "stop"
+    assert outcome.long_outcome_r == -1.0
+    assert outcome.long_time_to_stop == 1
+    assert outcome.long_time_to_target is None
+    assert outcome.short_label == "stop"
+    assert outcome.short_outcome_r == -1.0
+    assert np.isclose(outcome.forward_returns[1], 0.3)
 
 
 def test_window_sampler_stratifies_budget_by_window_size() -> None:

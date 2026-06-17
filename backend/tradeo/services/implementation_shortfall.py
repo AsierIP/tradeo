@@ -21,12 +21,19 @@ from typing import Any
 import numpy as np
 
 from tradeo.db.models import Trade
-from tradeo.services.evidence import REAL_FILL_PROVENANCE
+from tradeo.services.evidence import COMMISSION_KEYS, REAL_FILL_PROVENANCE
 
 STOP_EXIT_REASONS = {"stop_hit", "stop", "stop_gap", "stopped_out"}
 TARGET_EXIT_REASONS = {"target_hit", "target", "target_gap"}
 
-__all__ = ["trade_slippage_r", "pattern_slippage_summary"]
+EXECUTION_ADJUSTED_R_METHOD = "realized_gross_r_minus_commission_v2"
+
+__all__ = [
+    "EXECUTION_ADJUSTED_R_METHOD",
+    "trade_slippage_r",
+    "pattern_slippage_summary",
+    "execution_adjusted_r_summary",
+]
 
 
 def _side_sign(side: str) -> int:
@@ -112,3 +119,136 @@ def pattern_slippage_summary(trades: list[Trade]) -> dict[str, Any]:
         "worst_slippage_r": round(float(values.max()), 6),
         "per_trade": rows,
     }
+
+
+def _first_float(metadata: dict[str, Any], keys: tuple[str, ...]) -> float | None:
+    for key in keys:
+        value = metadata.get(key)
+        if value is None or value == "":
+            continue
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            continue
+        if np.isfinite(number):
+            return number
+    return None
+
+
+def _commission_r(trade: Trade) -> float | None:
+    metadata = trade.metadata_json or {}
+    commission = _first_float(metadata, COMMISSION_KEYS)
+    if commission is None:
+        return None
+    theoretical_entry = float(trade.entry or 0.0)
+    risk = abs(theoretical_entry - float(trade.stop or 0.0))
+    qty = abs(int(trade.qty or 0))
+    if risk <= 0 or qty <= 0:
+        return None
+    return abs(commission) / (risk * qty)
+
+
+def execution_adjusted_r_summary(trades: list[Trade]) -> dict[str, Any]:
+    """Net executable R with expected-vs-actual shortfall and commissions.
+
+    ``trade.r_multiple`` is already the realized gross outcome for broker
+    fills (reconciliation computes it from achieved entry/exit fills). The
+    implementation shortfall explains the gap between theoretical expected R
+    and actual gross R; it must not be subtracted a second time. Net executable
+    R is therefore realized gross R minus explicit broker commission. Rows
+    missing either component are reported as uncovered instead of silently
+    treated as free execution.
+    """
+    rows: list[dict[str, Any]] = []
+    missing_shortfall = 0
+    missing_commission = 0
+    for trade in trades:
+        shortfall = trade_slippage_r(trade)
+        commission_r = _commission_r(trade)
+        if shortfall is None:
+            missing_shortfall += 1
+        if commission_r is None:
+            missing_commission += 1
+        if shortfall is None or commission_r is None:
+            continue
+        gross_r = float(trade.r_multiple or 0.0)
+        slippage_r = float(shortfall["slippage_r"])
+        commission_r_value = float(commission_r)
+        expected_gross_r = gross_r + slippage_r
+        net_r = gross_r - commission_r_value
+        rows.append(
+            {
+                "trade_id": trade.id,
+                "symbol": trade.symbol,
+                "expected_gross_r": round(float(expected_gross_r), 6),
+                "gross_r": round(gross_r, 6),
+                "slippage_r": round(slippage_r, 6),
+                "commission_r": round(commission_r_value, 6),
+                "net_r": round(float(net_r), 6),
+                "gross_delta_vs_expected_r": round(float(gross_r - expected_gross_r), 6),
+                "net_delta_vs_expected_r": round(float(net_r - expected_gross_r), 6),
+            }
+        )
+
+    values = np.asarray([row["net_r"] for row in rows], dtype=float)
+    if values.size == 0:
+        return {
+            "method": EXECUTION_ADJUSTED_R_METHOD,
+            "count": 0,
+            "coverage": 0.0,
+            "missing_shortfall_rows": missing_shortfall,
+            "missing_commission_rows": missing_commission,
+            "expected_expectancy_r": None,
+            "net_expectancy_r": None,
+            "net_profit_factor": None,
+            "net_max_drawdown_r": None,
+            "gross_expectancy_r": None,
+            "gross_delta_vs_expected_r": None,
+            "net_delta_vs_expected_r": None,
+            "mean_slippage_r": None,
+            "mean_commission_r": None,
+            "per_trade": [],
+        }
+
+    wins = [value for value in values if value > 0]
+    losses = [abs(value) for value in values if value < 0]
+    loss = float(sum(losses))
+    expected_values = np.asarray([row["expected_gross_r"] for row in rows], dtype=float)
+    gross_values = np.asarray([row["gross_r"] for row in rows], dtype=float)
+    slippage_values = np.asarray([row["slippage_r"] for row in rows], dtype=float)
+    commission_values = np.asarray([row["commission_r"] for row in rows], dtype=float)
+    gross_delta_values = np.asarray([row["gross_delta_vs_expected_r"] for row in rows], dtype=float)
+    net_delta_values = np.asarray([row["net_delta_vs_expected_r"] for row in rows], dtype=float)
+    total = len(trades)
+    return {
+        "method": EXECUTION_ADJUSTED_R_METHOD,
+        "count": int(values.size),
+        "coverage": round(float(values.size / total), 4) if total else 0.0,
+        "missing_shortfall_rows": missing_shortfall,
+        "missing_commission_rows": missing_commission,
+        "expected_expectancy_r": round(float(expected_values.mean()), 6),
+        "net_expectancy_r": round(float(values.mean()), 6),
+        "net_profit_factor": round(float(sum(wins) / loss), 6)
+        if loss > 0
+        else round(float(sum(wins)), 6)
+        if wins
+        else 0.0,
+        "net_max_drawdown_r": round(_max_drawdown_r(values.tolist()), 6),
+        "gross_expectancy_r": round(float(gross_values.mean()), 6),
+        "gross_delta_vs_expected_r": round(float(gross_delta_values.mean()), 6),
+        "net_delta_vs_expected_r": round(float(net_delta_values.mean()), 6),
+        "mean_slippage_r": round(float(slippage_values.mean()), 6),
+        "mean_commission_r": round(float(commission_values.mean()), 6),
+        "per_trade": rows,
+    }
+
+
+def _max_drawdown_r(values: list[float]) -> float:
+    equity = 0.0
+    peak = 0.0
+    max_drawdown = 0.0
+    for value in values:
+        equity += value
+        peak = max(peak, equity)
+        max_drawdown = max(max_drawdown, peak - equity)
+    return max_drawdown

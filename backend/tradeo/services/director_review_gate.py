@@ -23,7 +23,10 @@ from tradeo.services.execution_quality import (
     pattern_execution_quality_summary,
     persist_execution_quality,
 )
-from tradeo.services.implementation_shortfall import pattern_slippage_summary
+from tradeo.services.implementation_shortfall import (
+    execution_adjusted_r_summary,
+    pattern_slippage_summary,
+)
 from tradeo.services.evidence import (
     PAPER_FILL_EVIDENCE_TYPES,
     evidence_metadata_with_stored_columns,
@@ -255,6 +258,7 @@ class DirectorReviewGate:
         persist_effective_sample_weights(trades, effective_sample)
         effective_trades = float(effective_sample["n_eff"])
         slippage = pattern_slippage_summary(trades)
+        execution_adjusted = execution_adjusted_r_summary(trades)
         execution_quality = pattern_execution_quality_summary(trades)
         persist_execution_quality(trades)
         sequential = self._sequential_evaluation(
@@ -278,6 +282,7 @@ class DirectorReviewGate:
             baseline_expectancy=baseline_expectancy,
             research_expectancy=research_expectancy,
             slippage=slippage,
+            execution_adjusted=execution_adjusted,
             sequential=sequential,
         )
         metrics = {
@@ -329,6 +334,18 @@ class DirectorReviewGate:
             "implementation_shortfall": {
                 key: value for key, value in slippage.items() if key != "per_trade"
             },
+            "execution_adjusted_ev": {
+                key: value
+                for key, value in execution_adjusted.items()
+                if key != "per_trade"
+            },
+            "execution_adjusted_ev_note": (
+                "Realized gross trade.r_multiple from broker fills minus explicit "
+                "broker commission. Implementation shortfall is retained as the "
+                "expected-vs-actual delta and is not subtracted twice. Missing rows "
+                "are never assumed free; enough covered fills are required before "
+                "this can support Director review."
+            ),
             "max_median_slippage_r": self.max_median_slippage_r,
             "execution_quality": {
                 key: value
@@ -619,6 +636,7 @@ class DirectorReviewGate:
         baseline_expectancy: float,
         research_expectancy: float,
         slippage: dict[str, Any] | None = None,
+        execution_adjusted: dict[str, Any] | None = None,
         sequential: dict[str, Any] | None = None,
     ) -> list[str]:
         blockers: list[str] = []
@@ -645,6 +663,16 @@ class DirectorReviewGate:
             median = slippage.get("median_slippage_r")
             if median is not None and float(median) > self.max_median_slippage_r:
                 blockers.append(f"median_slippage_above_{self.max_median_slippage_r}r")
+        if closed_trades >= self.min_closed_lab_trades and execution_adjusted:
+            covered = int(execution_adjusted.get("count") or 0)
+            if covered < self.min_slippage_samples:
+                blockers.append(
+                    f"execution_adjusted_ev_samples_below_{self.min_slippage_samples}"
+                )
+            else:
+                net_expectancy = execution_adjusted.get("net_expectancy_r")
+                if net_expectancy is None or float(net_expectancy) < self.min_lab_expectancy_r:
+                    blockers.append(f"execution_adjusted_ev_below_{self.min_lab_expectancy_r}r")
         if sequential and self.sequential_evaluation_enabled:
             sprt = sequential.get("sprt") or {}
             if sprt.get("decision") == "no_edge":
@@ -831,6 +859,7 @@ class DirectorProductionGate:
     """
 
     min_paper_fills: int = 30
+    min_effective_paper_fills: int = 25
     min_fill_symbols: int = 3
     min_fill_trading_days: int = 10
     max_drawdown_r: float = 4.0
@@ -849,6 +878,11 @@ class DirectorProductionGate:
             if DirectorReviewGate._lab_pattern_id_for_trade(trade) == pattern.id
             and DirectorReviewGate._counts_as_paper_fill(trade)
         ]
+        pattern_status = DirectorReviewGate._status_value(pattern.status)
+        allowed_statuses = {
+            DiscoveredPatternStatus.DIRECTOR_REVIEW.value,
+            DiscoveredPatternStatus.PRODUCTION.value,
+        }
         r_values = [float(trade.r_multiple or 0.0) for trade in fills]
         wins = [r for r in r_values if r > 0]
         losses = [abs(r) for r in r_values if r < 0]
@@ -863,10 +897,19 @@ class DirectorProductionGate:
                 if trade.closed_at or trade.opened_at
             }
         )
+        effective_sample = effective_sample_summary(fills)
+        effective_fills = float(effective_sample["n_eff"])
         max_drawdown = _max_drawdown_r(r_values)
+        execution_adjusted = execution_adjusted_r_summary(fills)
         blockers: list[str] = []
+        if pattern.validation_passed is not True:
+            blockers.append("pattern_validation_not_passed")
+        if pattern_status not in allowed_statuses:
+            blockers.append("pattern_status_not_director_review")
         if len(fills) < self.min_paper_fills:
             blockers.append(f"ibkr_paper_fills_below_{self.min_paper_fills}")
+        if effective_fills < self.min_effective_paper_fills:
+            blockers.append(f"effective_paper_fills_below_{self.min_effective_paper_fills}")
         if unique_symbols < self.min_fill_symbols:
             blockers.append(f"fill_symbols_below_{self.min_fill_symbols}")
         if unique_days < self.min_fill_trading_days:
@@ -877,15 +920,26 @@ class DirectorProductionGate:
             blockers.append(f"paper_fill_expectancy_below_{self.min_expectancy_r}r")
         if profit_factor < self.min_profit_factor:
             blockers.append(f"paper_fill_profit_factor_below_{self.min_profit_factor}")
+        if len(fills) >= self.min_paper_fills:
+            if int(execution_adjusted.get("count") or 0) < len(fills):
+                blockers.append("execution_adjusted_ev_incomplete")
+            elif float(execution_adjusted.get("net_expectancy_r") or 0.0) < self.min_expectancy_r:
+                blockers.append(f"execution_adjusted_ev_below_{self.min_expectancy_r}r")
         scientific_contracts = self._scientific_contracts(pattern, fills)
         blockers.extend(scientific_contracts["blockers"])
         return {
             "gate_scope": "director_production_gate",
             "approved_for_production": not blockers,
             "blockers": blockers,
+            "pattern_status": pattern_status,
+            "required_pattern_statuses": sorted(allowed_statuses),
+            "validation_passed": pattern.validation_passed is True,
             "scientific_contracts": scientific_contracts,
             "ibkr_paper_fills": len(fills),
             "min_paper_fills": self.min_paper_fills,
+            "effective_paper_fills": round(effective_fills, 4),
+            "min_effective_paper_fills": self.min_effective_paper_fills,
+            "effective_sample": effective_sample,
             "unique_fill_symbols": unique_symbols,
             "min_fill_symbols": self.min_fill_symbols,
             "unique_fill_days": unique_days,
@@ -893,6 +947,11 @@ class DirectorProductionGate:
             "paper_fill_expectancy_r": round(expectancy, 4),
             "paper_fill_profit_factor": round(profit_factor, 4),
             "paper_fill_max_drawdown_r": round(max_drawdown, 4),
+            "execution_adjusted_ev": {
+                key: value
+                for key, value in execution_adjusted.items()
+                if key != "per_trade"
+            },
             "evidence_types_accepted": sorted(PAPER_FILL_EVIDENCE_TYPES),
             # Evidence only (Wave4-A): research/backtest skip accounting is
             # surfaced for the Director packet, never used as a blocker here.

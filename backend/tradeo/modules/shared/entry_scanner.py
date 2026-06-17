@@ -23,7 +23,7 @@ from tradeo.services.market_quotes import QuoteSnapshotProvider, capture_signal_
 from tradeo.modules.laboratory.paper_observations import LAB_SHADOW_EXECUTION_MODE, LabPaperObservationService
 from tradeo.services.market_session import market_session_status
 from tradeo.services.order_outcomes import mark_signal_order_failure
-from tradeo.services.opportunity_ranking import rank_entry_matches
+from tradeo.services.opportunity_ranking import entry_match_rank_key, rank_entry_matches
 from tradeo.modules.fox_hunter.production_manifest import production_manifest_status
 from tradeo.services.risk_manager import RiskManager
 from tradeo.services.signal_quality import build_entry_quality, build_signal_snapshot
@@ -1534,19 +1534,9 @@ class PatternEntryScanner:
         for match in matches:
             key = (str(match.get("symbol") or ""), str(match.get("pattern_name") or ""))
             current = selected.get(key)
-            if current is None or float(match.get("opportunity_rank_score") or 0.0) > float(
-                current.get("opportunity_rank_score") or 0.0
-            ):
+            if current is None or entry_match_rank_key(match) < entry_match_rank_key(current):
                 selected[key] = match
-        ordered = sorted(
-            selected.values(),
-            key=lambda item: (
-                float(item.get("opportunity_rank_score") or 0.0),
-                float(item.get("entry_score") or 0.0),
-                float(item.get("score") or 0.0),
-            ),
-            reverse=True,
-        )
+        ordered = sorted(selected.values(), key=entry_match_rank_key)
         for index, match in enumerate(ordered, start=1):
             match["opportunity_rank"] = index
         return ordered

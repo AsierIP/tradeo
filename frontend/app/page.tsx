@@ -154,6 +154,9 @@ type ScanResult = {
 
 type ModuleSignal = Summary['recent_signals'][number]
   & {
+    expected_value_r?: number | null
+    expected_value_source?: string | null
+    expected_value_history_count?: number | null
     execution_reason_code?: string | null
     execution_reason?: string | null
     retryable?: boolean
@@ -171,6 +174,36 @@ type ModuleTrade = Summary['open_trades'][number] & {
   execution_class?: string | null
   evidence_quality?: string
   counts_as_execution_fill?: boolean
+  expected_value_r?: number | null
+  expected_value_source?: string | null
+  expected_value_history_count?: number | null
+  exit_reason?: string | null
+  entry_fill_price?: number | null
+  entry_slippage_bps?: number | null
+  entry_slippage_r?: number | null
+  total_slippage_r?: number | null
+  commission_usd?: number | null
+  commission_r?: number | null
+  estimated_cost_per_share_usd?: number | null
+  gross_r?: number | null
+  net_r?: number | null
+  cost_coverage?: string | null
+}
+type ExecutionDiagnostics = {
+  method?: string
+  count: number
+  coverage: number
+  missing_shortfall_rows: number
+  missing_commission_rows: number
+  expected_expectancy_r?: number | null
+  net_expectancy_r?: number | null
+  net_profit_factor?: number | null
+  net_max_drawdown_r?: number | null
+  gross_expectancy_r?: number | null
+  gross_delta_vs_expected_r?: number | null
+  net_delta_vs_expected_r?: number | null
+  mean_slippage_r?: number | null
+  mean_commission_r?: number | null
 }
 type ModuleOverview = {
   module: 'laboratory' | 'fox_hunter'
@@ -211,6 +244,7 @@ type ModuleOverview = {
     live_filled: number
     degraded_closed: number
   }
+  execution_diagnostics?: ExecutionDiagnostics
   stats: {
     signals: number
     trades: number
@@ -230,6 +264,7 @@ type ModuleOverview = {
     total_r: number
     shadow_total_r?: number
     win_rate: number
+    execution_diagnostics?: ExecutionDiagnostics
     funnel?: {
       detected: number
       actionable: number
@@ -361,6 +396,20 @@ function formatMoney(value: number) {
   return `${sign}$${value.toFixed(2)}`
 }
 
+function formatOptionalMoney(value?: number | null) {
+  return typeof value === 'number' && Number.isFinite(value) ? formatMoney(value) : '-'
+}
+
+function formatRValue(value?: number | null, digits = 2) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return '-'
+  return `${value.toFixed(digits)}R`
+}
+
+function formatBps(value?: number | null) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return '-'
+  return `${value.toFixed(1)}bps`
+}
+
 function shortDateTime(value?: string | null) {
   if (!value) return '-'
   return new Date(value).toLocaleString('es-ES', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
@@ -420,6 +469,24 @@ function evidenceLabel(trade: ModuleTrade) {
   if (type === 'live_fill') return `live fill${quality}`
   if (type === 'live_order') return `live order${quality}`
   return `${type}${quality}`
+}
+
+function expectedValueLabel(item: { expected_value_r?: number | null; expected_value_source?: string | null; expected_value_history_count?: number | null }) {
+  const value = formatRValue(item.expected_value_r)
+  const source = item.expected_value_source === 'paper_history'
+    ? `paper n=${formatCompactValue(item.expected_value_history_count)}`
+    : item.expected_value_source === 'research_pattern'
+      ? 'research'
+      : 'sin EV'
+  return `${value} · ${source}`
+}
+
+function costCoverageLabel(value?: string | null) {
+  if (value === 'complete') return 'coste OK'
+  if (value === 'entry_fill_only_open_trade') return 'entrada'
+  if (value === 'not_execution_fill') return 'no fill'
+  if (value?.startsWith('missing_')) return value.replace('missing_', 'falta ')
+  return value || '-'
 }
 
 function explainAcceptedPattern(pattern: DiscoveredPattern) {
@@ -560,6 +627,7 @@ function OperationsModule({
   const patternOutcomes = overview?.pattern_outcomes || []
   const pnl = overview?.pnl_points?.length ? overview.pnl_points : [{ timestamp: '', total_pnl_usd: 0, trade_pnl_usd: 0 }]
   const stats = overview?.stats || { signals: 0, trades: 0, open_trades: 0, closed_trades: 0, total_pnl_usd: 0, total_r: 0, win_rate: 0 }
+  const executionDiagnostics = overview?.execution_diagnostics || stats.execution_diagnostics
   const funnel = stats.funnel || { detected: stats.signals, actionable: 0, submitted: 0, executed: 0, blocked_or_expired: 0 }
   const paperFills = stats.ibkr_paper_filled_trades ?? overview?.evidence_summary?.ibkr_paper_filled ?? 0
   const liveFills = stats.live_trades ?? stats.live_filled_trades ?? overview?.evidence_summary?.live_filled ?? 0
@@ -606,6 +674,13 @@ function OperationsModule({
         <div><strong>{nearMissClosed}</strong><span>near-miss cerradas</span></div>
         <div><strong>{formatMoney(stats.total_pnl_usd)}</strong><span>PnL fills</span></div>
         <div><strong>{(stats.win_rate * 100).toFixed(1)}%</strong><span>win rate fills</span></div>
+        <div title={`expected ${formatRValue(executionDiagnostics?.expected_expectancy_r)} · gross ${formatRValue(executionDiagnostics?.gross_expectancy_r)} · delta net ${formatRValue(executionDiagnostics?.net_delta_vs_expected_r)}`}>
+          <strong>{formatRValue(executionDiagnostics?.net_expectancy_r)}</strong><span>EV neta cerradas</span>
+        </div>
+        <div><strong>{formatRValue(executionDiagnostics?.mean_slippage_r, 3)}</strong><span>slippage medio</span></div>
+        <div title={`faltan shortfall ${executionDiagnostics?.missing_shortfall_rows ?? 0} · faltan comision ${executionDiagnostics?.missing_commission_rows ?? 0}`}>
+          <strong>{((executionDiagnostics?.coverage ?? 0) * 100).toFixed(0)}%</strong><span>cobertura coste</span>
+        </div>
       </div>
 
       <div className="module-split">
@@ -614,7 +689,7 @@ function OperationsModule({
           <div className="table-scroll compact-scroll">
             <table>
               <thead>
-                <tr><th>Símbolo</th><th>Lado</th><th>Qty</th><th>Entrada</th><th>Salida</th><th>PnL</th><th>R</th><th>Evidencia</th><th>Estado</th><th>Apertura</th></tr>
+                <tr><th>Símbolo</th><th>Lado</th><th>Qty</th><th>Entrada</th><th>Salida</th><th>PnL</th><th>R</th><th>EV</th><th>Net R</th><th>Slip</th><th>Coste</th><th>Exit</th><th>Evidencia</th><th>Estado</th><th>Apertura</th></tr>
               </thead>
               <tbody>
                 {trades.map((t) => (
@@ -626,12 +701,17 @@ function OperationsModule({
                     <td>{t.exit_price ?? '-'}</td>
                     <td className={t.pnl_usd > 0 ? 'positive' : t.pnl_usd < 0 ? 'negative' : ''}>{formatMoney(t.pnl_usd)}</td>
                     <td>{t.r_multiple.toFixed(2)}R</td>
+                    <td title={t.expected_value_source || undefined}>{expectedValueLabel(t)}</td>
+                    <td className={(t.net_r ?? 0) > 0 ? 'positive' : (t.net_r ?? 0) < 0 ? 'negative' : ''}>{formatRValue(t.net_r)}</td>
+                    <td title={`entry ${formatBps(t.entry_slippage_bps)} · total ${formatRValue(t.total_slippage_r, 3)}`}>{formatRValue(t.total_slippage_r, 3)}</td>
+                    <td title={`${costCoverageLabel(t.cost_coverage)} · est/acción ${formatOptionalMoney(t.estimated_cost_per_share_usd)}`}>{formatOptionalMoney(t.commission_usd)}</td>
+                    <td>{t.exit_reason || '-'}</td>
                     <td>{evidenceLabel(t)}</td>
                     <td><StatusBadge status={t.status} /></td>
                     <td>{shortDateTime(t.opened_at)}</td>
                   </tr>
                 ))}
-                {!trades.length && <tr><td colSpan={10}>Sin operaciones todavía.</td></tr>}
+                {!trades.length && <tr><td colSpan={15}>Sin operaciones todavía.</td></tr>}
               </tbody>
             </table>
           </div>
@@ -698,19 +778,19 @@ function OperationsModule({
           <table>
             <thead>
               <tr>
-                <th>Rank</th><th>Símbolo</th><th>Lado</th><th>Entrada</th><th>Stop</th><th>Target</th><th>R:R</th><th>Conf.</th><th>Calidad</th><th>Qty</th><th>Estado</th><th>Motivo</th><th>Acción</th>
+                <th>Rank</th><th>Símbolo</th><th>Lado</th><th>Entrada</th><th>Stop</th><th>Target</th><th>R:R</th><th>EV</th><th>Conf.</th><th>Calidad</th><th>Qty</th><th>Estado</th><th>Motivo</th><th>Acción</th>
               </tr>
             </thead>
             <tbody>
               {signals.map((s) => (
                 <tr key={s.id}>
                   <td title={typeof s.opportunity_rank_score === 'number' ? s.opportunity_rank_score.toFixed(3) : undefined}>{s.opportunity_rank ?? '-'}</td><td>{s.symbol}</td><td>{s.side}</td><td>{s.entry}</td><td>{s.stop}</td><td>{s.target}</td>
-                  <td>{s.reward_risk}</td><td>{(s.confidence * 100).toFixed(1)}%</td><td title={(s.entry_quality_flags || []).join(', ') || undefined}>{formatQuality(s)}</td><td>{s.suggested_qty}</td><td><StatusBadge status={s.status} /></td>
+                  <td>{s.reward_risk}</td><td title={s.expected_value_source || undefined}>{expectedValueLabel(s)}</td><td>{(s.confidence * 100).toFixed(1)}%</td><td title={(s.entry_quality_flags || []).join(', ') || undefined}>{formatQuality(s)}</td><td>{s.suggested_qty}</td><td><StatusBadge status={s.status} /></td>
                   <td title={s.execution_reason || undefined}>{s.execution_reason_code || '-'}</td>
                   <td>{s.retryable ? 'retry' : (s.next_action || '-')}</td>
                 </tr>
               ))}
-              {!signals.length && <tr><td colSpan={13}>Sin señales todavía.</td></tr>}
+              {!signals.length && <tr><td colSpan={14}>Sin señales todavía.</td></tr>}
             </tbody>
           </table>
         </div>

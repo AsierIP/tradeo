@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from tradeo.db.models import Signal, Trade
 from tradeo.services.evidence import (
+    COMMISSION_KEYS,
     EvidenceQuality,
     SHADOW_EVIDENCE_TYPES,
     evidence_metadata_with_stored_columns,
@@ -14,6 +15,7 @@ from tradeo.services.evidence import (
     evidence_type_from_metadata,
     is_strong_fill_evidence,
 )
+from tradeo.services.implementation_shortfall import execution_adjusted_r_summary, trade_slippage_r
 
 EntryModule = Literal["laboratory", "fox_hunter"]
 
@@ -50,8 +52,17 @@ def module_overview(db: Session, module: EntryModule, *, limit: int = 80) -> dic
     execution_closed_trades = [
         trade for trade in all_closed_trades if _is_normal_fill_evidence(trade)
     ]
+    execution_diagnostics = execution_adjusted_r_summary(execution_closed_trades)
+    execution_diagnostics_summary = _execution_diagnostics_summary(execution_diagnostics)
+    execution_diagnostics_by_trade = {
+        int(row["trade_id"]): row
+        for row in execution_diagnostics.get("per_trade", [])
+        if row.get("trade_id") is not None
+    }
     signal_payloads = [_signal_to_dict(signal, signal_trade_statuses.get(signal.id)) for signal in signals]
-    trade_payloads = [_trade_to_dict(trade) for trade in trades]
+    trade_payloads = [
+        _trade_to_dict(trade, execution_diagnostics_by_trade.get(trade.id)) for trade in trades
+    ]
     evidence_summary = _evidence_summary(trades)
     return {
         "module": module,
@@ -71,6 +82,7 @@ def module_overview(db: Session, module: EntryModule, *, limit: int = 80) -> dic
             list(reversed([trade for trade in trades if _is_shadow_evidence(trade)]))
         ),
         "evidence_summary": evidence_summary,
+        "execution_diagnostics": execution_diagnostics_summary,
         "stats": {
             "signals": len(signals),
             "trades": len(trades),
@@ -91,6 +103,7 @@ def module_overview(db: Session, module: EntryModule, *, limit: int = 80) -> dic
                 4,
             ),
             "pnl_basis": PNL_BASIS,
+            "execution_diagnostics": execution_diagnostics_summary,
             "shadow_only": len(execution_closed_trades) == 0
             and (evidence_summary["shadow_closed"] > 0 or evidence_summary["near_miss_closed"] > 0),
             "win_rate": (
@@ -294,6 +307,7 @@ def _signal_to_dict(signal: Signal, trade_status: dict[str, Any] | None = None) 
         metadata.get("signal_snapshot") if isinstance(metadata.get("signal_snapshot"), dict) else {}
     )
     quality_score = _entry_quality_score(signal, entry_quality)
+    expected_value = _signal_expected_value(signal)
     return {
         "id": signal.id,
         "symbol": signal.symbol,
@@ -310,6 +324,9 @@ def _signal_to_dict(signal: Signal, trade_status: dict[str, Any] | None = None) 
         "entry_quality_label": entry_quality.get("label") or _entry_quality_label(quality_score),
         "entry_quality_actionable": bool(entry_quality.get("actionable", quality_score >= 0.60)),
         "entry_quality_flags": list(entry_quality.get("flags") or []),
+        "expected_value_r": expected_value["expected_value_r"],
+        "expected_value_source": expected_value["expected_value_source"],
+        "expected_value_history_count": expected_value["expected_value_history_count"],
         "opportunity_rank": metadata.get("opportunity_rank"),
         "opportunity_rank_score": metadata.get("opportunity_rank_score"),
         "risk_usd": signal.risk_usd,
@@ -328,10 +345,15 @@ def _signal_to_dict(signal: Signal, trade_status: dict[str, Any] | None = None) 
     }
 
 
-def _trade_to_dict(trade: Trade) -> dict[str, Any]:
+def _trade_to_dict(
+    trade: Trade,
+    execution_diagnostics: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     metadata = _trade_evidence_metadata(trade)
     evidence_type = _trade_evidence_type(trade)
     evidence_quality = evidence_quality_from_metadata(metadata)
+    expected_value = _trade_expected_value(trade)
+    cost = _trade_cost_diagnostics(trade, metadata, execution_diagnostics)
     return {
         "id": trade.id,
         "signal_id": trade.signal_id,
@@ -353,7 +375,153 @@ def _trade_to_dict(trade: Trade) -> dict[str, Any]:
         "execution_class": _execution_class_from_evidence(evidence_type, _status_value(trade.status)),
         "evidence_quality": evidence_quality,
         "counts_as_execution_fill": _is_normal_fill_evidence(trade),
+        "expected_value_r": expected_value["expected_value_r"],
+        "expected_value_source": expected_value["expected_value_source"],
+        "expected_value_history_count": expected_value["expected_value_history_count"],
+        **cost,
         "metadata_json": trade.metadata_json or {},
+    }
+
+
+def _execution_diagnostics_summary(summary: dict[str, Any]) -> dict[str, Any]:
+    keys = (
+        "method",
+        "count",
+        "coverage",
+        "missing_shortfall_rows",
+        "missing_commission_rows",
+        "expected_expectancy_r",
+        "net_expectancy_r",
+        "net_profit_factor",
+        "net_max_drawdown_r",
+        "gross_expectancy_r",
+        "gross_delta_vs_expected_r",
+        "net_delta_vs_expected_r",
+        "mean_slippage_r",
+        "mean_commission_r",
+    )
+    return {key: summary.get(key) for key in keys}
+
+
+def _trade_cost_diagnostics(
+    trade: Trade,
+    metadata: dict[str, Any],
+    execution_diagnostics: dict[str, Any] | None,
+) -> dict[str, Any]:
+    quality = _as_dict(metadata.get("execution_quality"))
+    estimated = _as_dict(quality.get("estimated_vs_realized"))
+    shortfall = trade_slippage_r(trade)
+    row = execution_diagnostics or {}
+    estimated_slippage_usd = _first_float(
+        estimated.get("estimated_slippage_usd"),
+        metadata.get("estimated_slippage"),
+    )
+    estimated_spread_cost_usd = _first_float(
+        estimated.get("estimated_spread_cost_usd"),
+        metadata.get("estimated_spread_cost"),
+    )
+    estimated_cost_per_share_usd = (
+        round(float(estimated_slippage_usd or 0.0) + float(estimated_spread_cost_usd or 0.0), 6)
+        if estimated_slippage_usd is not None or estimated_spread_cost_usd is not None
+        else None
+    )
+    commission_usd = _first_float(
+        quality.get("commission_usd"),
+        *(metadata.get(key) for key in COMMISSION_KEYS),
+    )
+    total_slippage_r = _first_float(row.get("slippage_r"), (shortfall or {}).get("slippage_r"))
+    commission_r = _first_float(row.get("commission_r"))
+    net_r = _first_float(row.get("net_r"))
+    return {
+        "exit_reason": str(metadata.get("exit_reason") or ""),
+        "entry_fill_price": _first_float(quality.get("entry_fill_price"), metadata.get("entry_fill_price")),
+        "entry_slippage_bps": _first_float(
+            quality.get("entry_slippage_bps"),
+            metadata.get("realized_entry_slippage_bps"),
+        ),
+        "entry_slippage_r": _first_float(quality.get("entry_slippage_r")),
+        "total_slippage_r": total_slippage_r,
+        "commission_usd": commission_usd,
+        "commission_r": commission_r,
+        "estimated_slippage_usd": estimated_slippage_usd,
+        "estimated_spread_cost_usd": estimated_spread_cost_usd,
+        "estimated_cost_per_share_usd": estimated_cost_per_share_usd,
+        "gross_r": round(float(trade.r_multiple or 0.0), 6),
+        "net_r": net_r,
+        "cost_coverage": _trade_cost_coverage(
+            trade,
+            shortfall=shortfall,
+            commission_usd=commission_usd,
+            execution_diagnostics=row,
+            quality=quality,
+        ),
+    }
+
+
+def _trade_cost_coverage(
+    trade: Trade,
+    *,
+    shortfall: dict[str, Any] | None,
+    commission_usd: float | None,
+    execution_diagnostics: dict[str, Any],
+    quality: dict[str, Any],
+) -> str:
+    if not _is_normal_fill_evidence(trade):
+        return "not_execution_fill"
+    status = _status_value(trade.status)
+    if status != "closed":
+        if quality.get("entry_slippage_bps") is not None or (trade.metadata_json or {}).get("entry_fill_price"):
+            return "entry_fill_only_open_trade"
+        return "missing_entry_fill"
+    if execution_diagnostics:
+        return "complete"
+    missing = []
+    if shortfall is None:
+        missing.append("shortfall")
+    if commission_usd is None:
+        missing.append("commission")
+    return f"missing_{'_'.join(missing)}" if missing else "incomplete"
+
+
+def _trade_expected_value(trade: Trade) -> dict[str, Any]:
+    if trade.signal is not None:
+        return _signal_expected_value(trade.signal)
+    return _expected_value_from_metadata(trade.metadata_json or {})
+
+
+def _signal_expected_value(signal: Signal) -> dict[str, Any]:
+    return _expected_value_from_metadata(signal.metadata_json or {})
+
+
+def _expected_value_from_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
+    components = _as_dict(metadata.get("opportunity_rank_components"))
+    history_count = _first_float(components.get("history_count")) or 0.0
+    history_expectancy = _first_float(components.get("history_expectancy_r"))
+    if history_count > 0 and history_expectancy is not None:
+        return {
+            "expected_value_r": round(history_expectancy, 4),
+            "expected_value_source": "paper_history",
+            "expected_value_history_count": round(history_count, 4),
+        }
+
+    snapshot = _as_dict(metadata.get("signal_snapshot"))
+    pattern = _as_dict(snapshot.get("pattern"))
+    match = _as_dict(metadata.get("match"))
+    metrics = _as_dict(match.get("metrics"))
+    research_expectancy = _first_float(
+        pattern.get("expectancy_r"),
+        metrics.get("pattern_expectancy_r"),
+    )
+    if research_expectancy is not None:
+        return {
+            "expected_value_r": round(research_expectancy, 4),
+            "expected_value_source": "research_pattern",
+            "expected_value_history_count": round(history_count, 4),
+        }
+    return {
+        "expected_value_r": None,
+        "expected_value_source": "unknown",
+        "expected_value_history_count": round(history_count, 4),
     }
 
 
@@ -445,6 +613,20 @@ def _entry_quality_label(score: float) -> str:
     if score >= 0.45:
         return "watch"
     return "weak"
+
+
+def _as_dict(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _first_float(*values: Any) -> float | None:
+    for value in values:
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            continue
+        return round(number, 6)
+    return None
 
 
 def _signal_funnel(signals: list[dict[str, Any]]) -> dict[str, int]:

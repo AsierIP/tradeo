@@ -268,20 +268,37 @@ def _evidence_packet_errors(manifest: dict[str, Any]) -> list[str]:
 def _paper_fill_thresholds_pass(packet: dict[str, Any]) -> bool:
     fills = _positive_int(packet.get("ibkr_paper_fills"))
     min_fills = _positive_int(packet.get("min_paper_fills"))
+    effective_fills = _positive_float(packet.get("effective_paper_fills"))
+    min_effective_fills = _positive_float(packet.get("min_effective_paper_fills"))
     symbols = _positive_int(packet.get("unique_fill_symbols"))
     min_symbols = _positive_int(packet.get("min_fill_symbols"))
     days = _positive_int(packet.get("unique_fill_days"))
     min_days = _positive_int(packet.get("min_fill_trading_days"))
-    if None in {fills, min_fills, symbols, min_symbols, days, min_days}:
+    if any(
+        value is None
+        for value in (
+            fills,
+            min_fills,
+            effective_fills,
+            min_effective_fills,
+            symbols,
+            min_symbols,
+            days,
+            min_days,
+        )
+    ):
         return False
     return bool(
         fills is not None
         and min_fills is not None
+        and effective_fills is not None
+        and min_effective_fills is not None
         and symbols is not None
         and min_symbols is not None
         and days is not None
         and min_days is not None
         and fills >= min_fills
+        and effective_fills >= min_effective_fills
         and symbols >= min_symbols
         and days >= min_days
     )
@@ -292,6 +309,16 @@ def _positive_int(value: Any) -> int | None:
         return None
     try:
         number = int(value)
+    except (TypeError, ValueError):
+        return None
+    return number if number > 0 else None
+
+
+def _positive_float(value: Any) -> float | None:
+    if isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
     except (TypeError, ValueError):
         return None
     return number if number > 0 else None
@@ -309,6 +336,8 @@ def _evidence_packet_summary(manifest: dict[str, Any]) -> dict[str, Any]:
         "approved_for_production": packet.get("approved_for_production"),
         "ibkr_paper_fills": packet.get("ibkr_paper_fills"),
         "min_paper_fills": packet.get("min_paper_fills"),
+        "effective_paper_fills": packet.get("effective_paper_fills"),
+        "min_effective_paper_fills": packet.get("min_effective_paper_fills"),
         "unique_fill_symbols": packet.get("unique_fill_symbols"),
         "min_fill_symbols": packet.get("min_fill_symbols"),
         "unique_fill_days": packet.get("unique_fill_days"),

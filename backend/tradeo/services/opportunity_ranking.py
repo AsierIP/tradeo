@@ -25,17 +25,26 @@ def rank_entry_matches(
         enriched["opportunity_rank_components"] = components
         enriched["opportunity_rank_reason"] = reason
         ranked.append(enriched)
-    ranked.sort(
-        key=lambda item: (
-            float(item.get("opportunity_rank_score") or 0.0),
-            float(item.get("entry_score") or 0.0),
-            float(item.get("score") or 0.0),
-        ),
-        reverse=True,
-    )
+    ranked.sort(key=entry_match_rank_key)
     for index, match in enumerate(ranked, start=1):
         match["opportunity_rank"] = index
     return ranked
+
+
+def entry_match_rank_key(match: dict[str, Any]) -> tuple[Any, ...]:
+    """Deterministic order for operational opportunities; lower keys rank first."""
+    return (
+        -_safe_float(match.get("opportunity_rank_score"), 0.0),
+        -_safe_float(match.get("entry_score"), 0.0),
+        -_safe_float(match.get("score"), 0.0),
+        -_safe_float(match.get("similarity"), 0.0),
+        _rank_ambiguity_ratio(match),
+        _rank_text(match.get("symbol")),
+        _rank_text(match.get("pattern_key") or match.get("pattern_name")),
+        _rank_text(match.get("entry_variant_id")),
+        _rank_text(match.get("window_end")),
+        _safe_int(match.get("pattern_id")),
+    )
 
 
 def _opportunity_score(
@@ -164,3 +173,21 @@ def _safe_float(value: Any, default: float) -> float:
     except (TypeError, ValueError):
         return default
     return number if math.isfinite(number) else default
+
+
+def _safe_int(value: Any) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _rank_text(value: Any) -> str:
+    return str(value or "").upper()
+
+
+def _rank_ambiguity_ratio(match: dict[str, Any]) -> float:
+    ambiguity = match.get("match_ambiguity")
+    if not isinstance(ambiguity, dict):
+        return 0.0
+    return _safe_float(ambiguity.get("ambiguity_ratio"), 0.0)

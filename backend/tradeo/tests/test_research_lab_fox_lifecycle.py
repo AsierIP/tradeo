@@ -164,6 +164,9 @@ def close_lab_trade(db, signal: Signal, index: int, r_multiple: float = 1.0) -> 
                 "fill_provenance": FillProvenance.BROKER_EXECUTION.value,
                 "broker_execution_hash": f"lifecycle-fill-{index}",
                 "broker_execution_time": f"2026-01-{index + 1:02d}T16:00:00+00:00",
+                "entry_fill_price": signal.entry,
+                "exit_fill_price": signal.target if r_multiple >= 0 else signal.stop,
+                "exit_reason": "target_hit" if r_multiple >= 0 else "stop_hit",
                 "commission": 0.0,
                 "case": index,
             },
@@ -302,6 +305,7 @@ def test_research_to_lab_to_director_to_fox_lifecycle() -> None:
 
     production_result = DirectorProductionGate(
         min_paper_fills=10,
+        min_effective_paper_fills=10,
         min_fill_symbols=1,
         min_fill_trading_days=1,
         min_expectancy_r=0.0,
@@ -315,6 +319,7 @@ def test_research_to_lab_to_director_to_fox_lifecycle() -> None:
     assert manifest_status["evidence_packet_complete"] is True
     assert manifest_status["evidence_packet"]["gate_scope"] == "director_production_gate"
     assert manifest_status["evidence_packet"]["ibkr_paper_fills"] == 10
+    assert manifest_status["evidence_packet"]["effective_paper_fills"] == 10.0
 
     fox_result = scanner.scan(
         db,

@@ -162,8 +162,8 @@ class WindowSampler:
         long_mae_r = float(max(0.0, np.max(entry - lows) / risk_proxy))
         short_mfe_r = float(np.max(entry - lows) / risk_proxy)
         short_mae_r = float(max(0.0, np.max(highs - entry) / risk_proxy))
-        long_path = self._path_outcome(entry, risk_proxy, future, side="long")
-        short_path = self._path_outcome(entry, risk_proxy, future, side="short")
+        long_path = self._path_outcome_from_arrays(entry, risk_proxy, highs, lows, closes, side="long")
+        short_path = self._path_outcome_from_arrays(entry, risk_proxy, highs, lows, closes, side="short")
         long_outcome_r, long_hit_4r, long_target_bar, long_stop_bar, long_label = long_path
         short_outcome_r, short_hit_4r, short_target_bar, short_stop_bar, short_label = short_path
         first_open = float(opens[0]) if len(opens) else float(entry)
@@ -274,26 +274,40 @@ class WindowSampler:
         future: pd.DataFrame,
         side: str,
     ) -> tuple[float, bool, int | None, int | None, str]:
+        closes = future["close"].astype(float).to_numpy()
+        highs = future["high"].astype(float).to_numpy()
+        lows = future["low"].astype(float).to_numpy()
+        return self._path_outcome_from_arrays(entry, risk, highs, lows, closes, side=side)
+
+    def _path_outcome_from_arrays(
+        self,
+        entry: float,
+        risk: float,
+        highs: np.ndarray,
+        lows: np.ndarray,
+        closes: np.ndarray,
+        side: str,
+    ) -> tuple[float, bool, int | None, int | None, str]:
         if side == "long":
             target = entry + self.target_r * risk
             stop = entry - self.stop_r * risk
-            for bar, (_, row) in enumerate(future.iterrows(), start=1):
+            for bar, (high, low) in enumerate(zip(highs, lows), start=1):
                 # Conservative path assumption: if both are touched intrabar,
                 # stop is considered first. That prevents discovery from being
                 # overly optimistic on daily bars.
-                if float(row["low"]) <= stop:
+                if float(low) <= stop:
                     return -self.stop_r, False, None, bar, "stop"
-                if float(row["high"]) >= target:
+                if float(high) >= target:
                     return self.target_r, True, bar, None, "target"
-            return float((future["close"].iloc[-1] - entry) / risk), False, None, None, "timeout"
+            return float((closes[-1] - entry) / risk), False, None, None, "timeout"
         target = entry - self.target_r * risk
         stop = entry + self.stop_r * risk
-        for bar, (_, row) in enumerate(future.iterrows(), start=1):
-            if float(row["high"]) >= stop:
+        for bar, (high, low) in enumerate(zip(highs, lows), start=1):
+            if float(high) >= stop:
                 return -self.stop_r, False, None, bar, "stop"
-            if float(row["low"]) <= target:
+            if float(low) <= target:
                 return self.target_r, True, bar, None, "target"
-        return float((entry - future["close"].iloc[-1]) / risk), False, None, None, "timeout"
+        return float((entry - closes[-1]) / risk), False, None, None, "timeout"
 
     @staticmethod
     def _speed_label(target_bar: int | None, stop_bar: int | None, horizon: int) -> str:

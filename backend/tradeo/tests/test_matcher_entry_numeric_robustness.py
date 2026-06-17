@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 
 from tradeo.core.config import Settings
+from tradeo.modules.shared.entry_scanner import PatternEntryScanner
 from tradeo.research.novel_pattern_matcher import NovelPatternMatcher
 from tradeo.services.entry_variants import _timeframe_delta, build_entry_variants
 from tradeo.services.opportunity_ranking import rank_entry_matches
@@ -75,6 +76,77 @@ def test_non_finite_rank_and_quality_inputs_do_not_score_as_perfect() -> None:
     assert quality["components"]["similarity"] == 0.0
     assert quality["components"]["entry"] == 0.2
     assert quality["score"] < 0.60
+
+
+def test_rank_entry_matches_uses_deterministic_tiebreakers() -> None:
+    settings = _settings()
+
+    def match(symbol: str, pattern_key: str) -> dict:
+        return {
+            "symbol": symbol,
+            "pattern_name": pattern_key.lower(),
+            "pattern_key": pattern_key,
+            "side": "long",
+            "timeframe": "1d",
+            "similarity": 0.7,
+            "score": 0.7,
+            "entry_score": 0.7,
+            "reward_risk": 4.0,
+            "window_end": "2026-06-10T00:00:00+00:00",
+            "metrics": {
+                "pattern_expectancy_r": 0.25,
+                "pattern_profit_factor": 1.8,
+                "pattern_stability_score": 0.7,
+                "features": {"avg_dollar_volume": 10_000_000},
+                "entry_gate": {"passed": True, "entry_score": 0.7},
+            },
+        }
+
+    expected = [("AAA", "ALPHA"), ("ZZZ", "OMEGA")]
+    first = rank_entry_matches(
+        [match("ZZZ", "OMEGA"), match("AAA", "ALPHA")],
+        settings=settings,
+    )
+    second = rank_entry_matches(
+        [match("AAA", "ALPHA"), match("ZZZ", "OMEGA")],
+        settings=settings,
+    )
+
+    assert [(item["symbol"], item["pattern_key"]) for item in first] == expected
+    assert [(item["symbol"], item["pattern_key"]) for item in second] == expected
+    assert [item["opportunity_rank"] for item in first] == [1, 2]
+
+
+def test_best_variant_selection_breaks_rank_score_ties_by_entry_quality() -> None:
+    def match(variant: str, entry_score: float) -> dict:
+        return {
+            "symbol": "LABX",
+            "pattern_name": "tie_pattern",
+            "pattern_key": "tie_key",
+            "entry_variant_id": variant,
+            "opportunity_rank_score": 0.7,
+            "entry_score": entry_score,
+            "score": 0.65,
+            "similarity": 0.8,
+            "window_end": "2026-06-10T00:00:00+00:00",
+        }
+
+    selected = PatternEntryScanner._select_best_variant_per_exposure(
+        [match("lower_entry_quality", 0.55), match("clean_retest", 0.80)]
+    )
+    selected_reversed = PatternEntryScanner._select_best_variant_per_exposure(
+        [match("clean_retest", 0.80), match("lower_entry_quality", 0.55)]
+    )
+
+    assert [item["entry_variant_id"] for item in selected] == ["clean_retest"]
+    assert [item["entry_variant_id"] for item in selected_reversed] == ["clean_retest"]
+    assert selected[0]["opportunity_rank"] == 1
+
+
+def test_matcher_threshold_resolver_preserves_explicit_zero() -> None:
+    assert NovelPatternMatcher._resolved_similarity_threshold(0.0, 0.45) == 0.0
+    assert NovelPatternMatcher._resolved_similarity_threshold(None, 0.45) == 0.45
+    assert NovelPatternMatcher._resolved_similarity_threshold(float("nan"), 0.45) == 0.45
 
 
 def test_entry_variants_reject_non_finite_ohlc_and_parse_intraday_aliases() -> None:

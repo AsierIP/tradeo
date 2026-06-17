@@ -93,7 +93,10 @@ class NovelPatternMatcher:
             symbols = _pick_symbols(settings, symbol_limit)
         else:
             symbols = [s.upper().strip() for s in symbols if s.strip()]
-        threshold = similarity_threshold or settings.discovery_match_similarity_threshold
+        threshold = self._resolved_similarity_threshold(
+            similarity_threshold,
+            settings.discovery_match_similarity_threshold,
+        )
         matches: list[dict[str, Any]] = []
         regime_gate_blocked = 0
         engine = PatternEmbeddingEngine()
@@ -344,7 +347,7 @@ class NovelPatternMatcher:
                         )
                         continue
         result_limit = self._result_limit(module, max_results)
-        matches = sorted(matches, key=lambda m: m["score"], reverse=True)
+        matches = sorted(matches, key=self._match_rank_key)
         if result_limit is not None:
             matches = matches[:result_limit]
         if store:
@@ -382,6 +385,55 @@ class NovelPatternMatcher:
         if int(raw_limit) <= 0:
             return None
         return int(raw_limit)
+
+    @staticmethod
+    def _resolved_similarity_threshold(
+        override: float | None,
+        default: float,
+    ) -> float:
+        raw = default if override is None else override
+        try:
+            threshold = float(raw)
+        except (TypeError, ValueError):
+            return float(default)
+        return threshold if math.isfinite(threshold) else float(default)
+
+    @staticmethod
+    def _match_rank_key(match: dict[str, Any]) -> tuple[Any, ...]:
+        """Deterministic matcher order; lower keys rank first."""
+        return (
+            -NovelPatternMatcher._safe_float(match.get("score"), 0.0),
+            -NovelPatternMatcher._safe_float(match.get("entry_score"), 0.0),
+            -NovelPatternMatcher._safe_float(match.get("similarity"), 0.0),
+            NovelPatternMatcher._rank_ambiguity_ratio(match),
+            str(match.get("symbol") or "").upper(),
+            str(match.get("pattern_key") or match.get("pattern_name") or "").upper(),
+            str(match.get("entry_variant_id") or "").upper(),
+            str(match.get("window_end") or ""),
+            NovelPatternMatcher._safe_int(match.get("pattern_id")),
+        )
+
+    @staticmethod
+    def _safe_float(value: Any, default: float) -> float:
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return default
+        return number if math.isfinite(number) else default
+
+    @staticmethod
+    def _safe_int(value: Any) -> int:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return 0
+
+    @staticmethod
+    def _rank_ambiguity_ratio(match: dict[str, Any]) -> float:
+        ambiguity = match.get("match_ambiguity")
+        if not isinstance(ambiguity, dict):
+            return 0.0
+        return NovelPatternMatcher._safe_float(ambiguity.get("ambiguity_ratio"), 0.0)
 
     def _benchmark_frames(
         self,

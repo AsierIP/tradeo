@@ -24,6 +24,10 @@ from tradeo.services.execution_quality import (
     real_fill_cost_recalibration_report,
     trade_execution_quality,
 )
+from tradeo.services.implementation_shortfall import (
+    EXECUTION_ADJUSTED_R_METHOD,
+    execution_adjusted_r_summary,
+)
 
 
 def make_trade(
@@ -348,6 +352,39 @@ def test_pattern_summary_empty_when_no_real_fills() -> None:
     assert summary["count"] == 0
     assert summary["median_entry_slippage_bps"] is None
     assert summary["per_trade"] == []
+
+
+# ---------------------------------------------------------------------------
+# Closed-trade realized EV
+# ---------------------------------------------------------------------------
+
+
+def test_execution_adjusted_ev_does_not_double_count_slippage() -> None:
+    trade = make_trade(
+        qty=1,
+        metadata={
+            "entry_fill_price": 10.05,
+            "exit_fill_price": 14.0,
+            "exit_reason": "target_hit",
+            "commission": 0.10,
+        },
+    )
+    trade.r_multiple = 3.95
+
+    summary = execution_adjusted_r_summary([trade])
+    row = summary["per_trade"][0]
+
+    assert summary["method"] == EXECUTION_ADJUSTED_R_METHOD
+    assert row["expected_gross_r"] == 4.0
+    assert row["gross_r"] == 3.95
+    assert row["slippage_r"] == 0.05
+    assert row["commission_r"] == 0.1
+    assert row["net_r"] == 3.85
+    assert summary["expected_expectancy_r"] == 4.0
+    assert summary["gross_expectancy_r"] == 3.95
+    assert summary["net_expectancy_r"] == 3.85
+    assert summary["gross_delta_vs_expected_r"] == -0.05
+    assert summary["net_delta_vs_expected_r"] == -0.15
 
 
 # ---------------------------------------------------------------------------

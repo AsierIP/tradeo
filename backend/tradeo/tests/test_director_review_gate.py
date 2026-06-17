@@ -54,8 +54,11 @@ def add_closed_lab_trade(
     regime_key: str | None = None,
     signal_metadata: dict | None = None,
     trade_metadata: dict | None = None,
+    trade_time: datetime | None = None,
 ) -> None:
-    trade_time = datetime(2026, 1, 5, 16, 0, tzinfo=timezone.utc) + timedelta(days=index)
+    trade_time = trade_time or (
+        datetime(2026, 1, 5, 16, 0, tzinfo=timezone.utc) + timedelta(days=index)
+    )
     metadata = {
         "entry_module": "laboratory",
         "pattern_id": pattern.id,
@@ -90,6 +93,9 @@ def add_closed_lab_trade(
         "fill_provenance": FillProvenance.BROKER_EXECUTION.value,
         "broker_execution_hash": f"broker-execution-hash-{index}",
         "broker_execution_time": trade_time.isoformat(),
+        "entry_fill_price": 10.0,
+        "exit_fill_price": 14.0 if r_multiple >= 0 else 9.0,
+        "exit_reason": "target_hit" if r_multiple >= 0 else "stop_hit",
         "commission": 0.0,
     }
     trade_meta.update(trade_metadata or {})
@@ -187,6 +193,75 @@ def test_director_production_gate_blocks_missing_nested_replay_contract() -> Non
     assert result["approved_for_production"] is False
     assert "nested_discovery_replay_missing" in result["blockers"]
     assert result["scientific_contracts"]["director_gate_passed"] is True
+
+
+def test_director_production_gate_requires_director_review_lifecycle_state() -> None:
+    db = session_factory()
+    pattern = add_pattern(db)
+    pattern.metrics_json = production_contract_metrics()
+    db.add(pattern)
+    db.commit()
+    for index in range(3):
+        add_closed_lab_trade(db, pattern, index)
+
+    closed_trades = db.query(Trade).filter(Trade.status == TradeStatus.CLOSED).all()
+    gate = DirectorProductionGate(
+        min_paper_fills=3,
+        min_effective_paper_fills=3,
+        min_fill_symbols=1,
+        min_fill_trading_days=1,
+        min_expectancy_r=0.0,
+        min_profit_factor=0.1,
+    )
+
+    result = gate.evaluate_pattern(pattern, closed_trades)
+
+    assert result["approved_for_production"] is False
+    assert result["pattern_status"] == DiscoveredPatternStatus.LAB_CANDIDATE.value
+    assert "pattern_status_not_director_review" in result["blockers"]
+
+    pattern.status = DiscoveredPatternStatus.DIRECTOR_REVIEW
+    db.add(pattern)
+    db.commit()
+
+    result = gate.evaluate_pattern(pattern, closed_trades)
+
+    assert result["approved_for_production"] is True
+    assert "pattern_status_not_director_review" not in result["blockers"]
+
+
+def test_director_production_gate_blocks_low_effective_paper_fill_sample() -> None:
+    db = session_factory()
+    pattern = add_pattern(db)
+    pattern.status = DiscoveredPatternStatus.DIRECTOR_REVIEW
+    pattern.metrics_json = production_contract_metrics()
+    db.add(pattern)
+    db.commit()
+    same_cluster_time = datetime(2026, 1, 5, 16, 0, tzinfo=timezone.utc)
+    for index in range(30):
+        add_closed_lab_trade(
+            db,
+            pattern,
+            index,
+            symbol="CLUSTERED",
+            trade_time=same_cluster_time,
+        )
+
+    closed_trades = db.query(Trade).filter(Trade.status == TradeStatus.CLOSED).all()
+    result = DirectorProductionGate(
+        min_paper_fills=30,
+        min_effective_paper_fills=25,
+        min_fill_symbols=1,
+        min_fill_trading_days=1,
+        min_expectancy_r=0.0,
+        min_profit_factor=0.1,
+    ).evaluate_pattern(pattern, closed_trades)
+
+    assert result["approved_for_production"] is False
+    assert result["ibkr_paper_fills"] == 30
+    assert result["effective_paper_fills"] == 1.0
+    assert result["effective_sample"]["cluster_count"] == 1
+    assert "effective_paper_fills_below_25" in result["blockers"]
 
 
 def test_director_review_gate_marks_candidate_after_ten_closed_lab_trades() -> None:
@@ -565,6 +640,42 @@ def test_director_review_gate_surfaces_high_research_skip_rate_evidence() -> Non
     assert warning["skip_reason_counts"] == {"gap_entry_policy": 20}
 
 
+def test_director_review_gate_blocks_positive_gross_when_execution_adjusted_ev_is_negative() -> None:
+    db = session_factory()
+    pattern = add_pattern(db)
+    pattern.best_expectancy_r = 0.1
+    pattern.expectancy_r = 0.1
+    db.add(pattern)
+    db.commit()
+    for index in range(10):
+        add_closed_lab_trade(
+            db,
+            pattern,
+            index,
+            r_multiple=0.2,
+            trade_metadata={
+                "entry_fill_price": 10.0,
+                "exit_fill_price": 10.2,
+                "exit_reason": "time_stop",
+                "commission": 0.35,
+            },
+        )
+
+    result = DirectorReviewGate(
+        min_closed_lab_trades=10,
+        min_effective_lab_trades=10,
+        min_lab_profit_factor=0.1,
+        min_baseline_edge_r=0.0,
+    ).refresh(db)
+    db.refresh(pattern)
+    lab_execution = pattern.metrics_json["lab_execution"]
+
+    assert result["marked_for_director_review"] == 0
+    assert lab_execution["lab_expectancy_r"] == 0.2
+    assert lab_execution["execution_adjusted_ev"]["net_expectancy_r"] == -0.15
+    assert "execution_adjusted_ev_below_0.0r" in lab_execution["promotion_blockers"]
+
+
 def test_director_review_gate_reports_missing_skip_accounting_without_inventing_data() -> None:
     db = session_factory()
     pattern = add_pattern(db)
@@ -633,6 +744,44 @@ def test_director_production_gate_report_includes_research_skip_accounting() -> 
     assert skip_accounting["skip_reason_counts"] == {"gap_entry_policy": 20}
     # Skip accounting is evidence only: it must never appear as a blocker.
     assert all("skip" not in blocker for blocker in result["blockers"])
+
+
+def test_director_production_gate_blocks_when_execution_adjusted_ev_is_negative() -> None:
+    db = session_factory()
+    pattern = add_pattern(db)
+    pattern.metrics_json = production_contract_metrics()
+    db.add(pattern)
+    db.commit()
+    for index in range(3):
+        add_closed_lab_trade(
+            db,
+            pattern,
+            index,
+            r_multiple=0.2,
+            trade_metadata={
+                "entry_fill_price": 10.0,
+                "exit_fill_price": 10.2,
+                "exit_reason": "time_stop",
+                "commission": 0.35,
+                "cost_provenance_reconciled": True,
+                "slippage_provenance_reconciled": True,
+                "fill_provenance_reconciled": True,
+            },
+        )
+
+    closed_trades = db.query(Trade).filter(Trade.status == TradeStatus.CLOSED).all()
+    result = DirectorProductionGate(
+        min_paper_fills=3,
+        min_fill_symbols=1,
+        min_fill_trading_days=1,
+        min_expectancy_r=0.05,
+        min_profit_factor=0.1,
+    ).evaluate_pattern(pattern, closed_trades)
+
+    assert result["paper_fill_expectancy_r"] == 0.2
+    assert result["execution_adjusted_ev"]["net_expectancy_r"] == -0.15
+    assert result["approved_for_production"] is False
+    assert "execution_adjusted_ev_below_0.05r" in result["blockers"]
 
 
 def test_pattern_health_monitor_marks_decaying_on_shortfall_cusum() -> None:

@@ -37,6 +37,75 @@ and shadow/confirmation evidence without contaminating Director paper evidence.
 
 ## Changes Implemented In This Pass
 
+### Matcher And Entry Determinism
+
+Research matching and Lab/Fox opportunity ranking now use stable tie-break keys
+instead of depending on input iteration order when scores are equal or nearly
+equal.
+
+The ranking key keeps the existing score hierarchy, then breaks ties by
+similarity, lower ambiguity, symbol, pattern key, entry variant, window end and
+pattern id. This matters before live because a repeated scan must choose the
+same candidate when the evidence is the same.
+
+`NovelPatternMatcher` also now honors an explicit `similarity_threshold=0.0`;
+the previous truthy fallback treated zero as "use default".
+
+### Research Outcome Hot Path
+
+`WindowSampler._forward_outcome()` now reuses already materialized NumPy arrays
+for path outcome evaluation instead of iterating a pandas DataFrame twice.
+
+The behavior is unchanged: stop-first remains conservative when target and stop
+are touched in the same bar, and labels/returns stay compatible through
+`_path_outcome()`. The microbench on the isolated subpath improved from roughly
+52.3s to 0.34s, and `iterrows()` disappeared from the sampled hot-path profile.
+
+The next likely throughput bottlenecks are `PatternEmbeddingEngine.embed()` and
+`technical_indicators.atr()`.
+
+### Closed-Trade EV And Execution Costs
+
+Closed broker-fill EV is now treated as:
+
+`net_r = realized_gross_trade_r_multiple - explicit_commission_r`
+
+Implementation shortfall/slippage is retained as the expected-vs-actual delta
+instead of being subtracted twice. Missing fill/commission rows are reported as
+uncovered and can block Director review; they are never treated as free
+execution.
+
+Director review and production gates now surface and can block on
+`execution_adjusted_ev`, so positive gross R cannot mask negative net
+execution-adjusted R.
+
+### Director Production Lifecycle Gate
+
+Production approval now requires the pattern to be in `director_review` or
+already `production` for manifest renewal, `validation_passed=true`, enough raw
+paper fills, and enough effective paper fills.
+
+The production manifest packet now carries `effective_paper_fills`,
+`min_effective_paper_fills` and the effective sample breakdown. Fox manifest
+validation rejects packets that omit or fail that effective-fill threshold.
+
+This closes a practical bypass where a validated Lab candidate with clustered
+paper fills and stored scientific-contract metadata could be approved by a
+direct production-gate call before the intended lifecycle state.
+
+### Dashboard EV, Slippage And Cost Observability
+
+The module dashboard now exposes expected value per signal/trade, preferring
+paper-history expectancy when available and falling back to Research pattern
+expectancy.
+
+Closed execution fills now show net R, total slippage R, commission USD/R,
+estimated per-share cost, exit reason and cost coverage. Module stats also show
+net closed-trade EV, mean slippage and cost coverage.
+
+This is read-only observability. It does not override Director gates or promote
+patterns.
+
 ### Research Trial Accounting
 
 `GlobalExperimentRegistry` now uses a run-independent canonical experiment id

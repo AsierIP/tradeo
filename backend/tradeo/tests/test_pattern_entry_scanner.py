@@ -151,15 +151,19 @@ def add_pattern(
 def production_gate_evidence_packet(
     *,
     paper_fills: int = 30,
+    effective_fills: float | None = None,
     symbols: int = 3,
     days: int = 10,
 ) -> dict:
+    effective_fills = float(paper_fills if effective_fills is None else effective_fills)
     return {
         "gate_scope": "director_production_gate",
         "approved_for_production": True,
         "blockers": [],
         "ibkr_paper_fills": paper_fills,
         "min_paper_fills": paper_fills,
+        "effective_paper_fills": effective_fills,
+        "min_effective_paper_fills": effective_fills,
         "unique_fill_symbols": symbols,
         "min_fill_symbols": symbols,
         "unique_fill_days": days,
@@ -565,6 +569,9 @@ def test_laboratory_open_market_default_auto_submits_paper_order_for_director(
         "fill_provenance": FillProvenance.BROKER_EXECUTION.value,
         "broker_execution_hash": "director-ready-fill-1",
         "broker_execution_time": "2026-06-09T15:45:00+00:00",
+        "entry_fill_price": trade.entry,
+        "exit_fill_price": trade.target,
+        "exit_reason": "target_hit",
         "commission": 0.0,
     }
     db.add(trade)
@@ -578,7 +585,7 @@ def test_laboratory_open_market_default_auto_submits_paper_order_for_director(
         min_baseline_edge_r=0.0,
         min_lab_profit_factor=0.0,
         sequential_evaluation_enabled=False,
-        min_slippage_samples=99,
+        min_slippage_samples=1,
     ).refresh(db)
     db.refresh(pattern)
 
@@ -788,6 +795,30 @@ def test_production_manifest_requires_director_production_gate_evidence() -> Non
     assert status["reason_code"] == "missing_director_production_gate_evidence"
     assert "paper_fill_evidence_thresholds_missing" in status["errors"]
     assert status["evidence_packet_complete"] is False
+
+
+def test_production_manifest_requires_effective_paper_fill_thresholds() -> None:
+    db = session_factory()
+    provider = FixtureProvider("EFFX")
+    pattern = add_pattern(db, provider, status=DiscoveredPatternStatus.PRODUCTION)
+    evidence_packet = production_gate_evidence_packet()
+    evidence_packet["effective_paper_fills"] = 1.0
+    evidence_packet["min_effective_paper_fills"] = 25.0
+    manifest = build_production_manifest(
+        pattern,
+        reviewer="test_director",
+        evidence_packet=evidence_packet,
+    )
+    pattern.metrics_json = {**(pattern.metrics_json or {}), "production_manifest": manifest}
+    db.add(pattern)
+    db.commit()
+
+    status = production_manifest_status(pattern)
+
+    assert status["valid"] is False
+    assert status["reason_code"] == "paper_fill_evidence_thresholds_missing"
+    assert status["evidence_packet"]["effective_paper_fills"] == 1.0
+    assert status["evidence_packet"]["min_effective_paper_fills"] == 25.0
 
 
 def test_laboratory_scanner_keeps_paper_observation_when_collection_filters_fail() -> None:

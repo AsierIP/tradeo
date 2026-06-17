@@ -281,7 +281,14 @@ def test_closed_trade_keeps_signal_executed_and_operation_closed() -> None:
         strategy_version="ibkr_paper_research_v1",
         status=SignalStatus.EXECUTED,
         human_approved=True,
-        metadata_json={"source": "research_current_match"},
+        metadata_json={
+            "source": "research_current_match",
+            "opportunity_rank_components": {
+                "history_count": 6,
+                "history_expectancy_r": 0.42,
+            },
+            "signal_snapshot": {"pattern": {"expectancy_r": 0.31}},
+        },
     )
     db.add(signal)
     db.flush()
@@ -305,6 +312,12 @@ def test_closed_trade_keeps_signal_executed_and_operation_closed() -> None:
                 "fill_provenance": FillProvenance.BROKER_EXECUTION.value,
                 "broker_fill_id": "test-fill-1",
                 "broker_execution_time": "2026-06-10T00:00:00+00:00",
+                "entry_fill_price": 71.8,
+                "exit_fill_price": 75.43,
+                "exit_reason": "stop_hit",
+                "estimated_slippage": 0.02,
+                "estimated_spread_cost": 0.01,
+                "realized_entry_slippage_bps": -18.1387,
                 "commission_usd": 1.0,
             },
         )
@@ -317,6 +330,24 @@ def test_closed_trade_keeps_signal_executed_and_operation_closed() -> None:
     assert lab["trades"][0]["status"] == "closed"
     assert lab["stats"]["open_trades"] == 0
     assert lab["stats"]["closed_trades"] == 1
+    assert lab["signals"][0]["expected_value_r"] == 0.42
+    assert lab["signals"][0]["expected_value_source"] == "paper_history"
+    trade = lab["trades"][0]
+    assert trade["expected_value_r"] == 0.42
+    assert trade["expected_value_source"] == "paper_history"
+    assert trade["exit_reason"] == "stop_hit"
+    assert trade["total_slippage_r"] == -0.034574
+    assert trade["commission_usd"] == 1.0
+    assert trade["commission_r"] == 0.053191
+    assert trade["estimated_cost_per_share_usd"] == 0.03
+    assert trade["net_r"] == -1.053191
+    assert trade["cost_coverage"] == "complete"
+    diagnostics = lab["execution_diagnostics"]
+    assert diagnostics["count"] == 1
+    assert diagnostics["coverage"] == 1.0
+    assert diagnostics["net_expectancy_r"] == -1.053191
+    assert diagnostics["mean_slippage_r"] == -0.034574
+    assert lab["stats"]["execution_diagnostics"]["missing_commission_rows"] == 0
 
 
 def test_unsubmitted_signal_keeps_approval_status_for_module_dashboard() -> None:
