@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from tradeo.core.config import get_settings
 from tradeo.db.session import SessionLocal, get_db
+from tradeo.services.ibkr_broker import IBKRBroker
 from tradeo.services.ibkr_data_provider import inspect_ibkr_connection
 from tradeo.services.live_readiness_gate import LiveReadinessGate
 from tradeo.services.watchdog import SystemWatchdog
@@ -72,3 +73,8 @@ def live_readiness(db: Session = Depends(get_db)) -> dict[str, object]:
 @router.get("/health/ibkr")
 def ibkr_health() -> dict[str, object]:
     return inspect_ibkr_connection()
+
+
+@router.get("/health/ibkr/live-preflight")
+def ibkr_live_preflight() -> dict[str, object]:
+    return IBKRBroker().account_readiness_preflight()

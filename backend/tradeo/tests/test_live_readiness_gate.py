@@ -159,6 +159,20 @@ def test_live_readiness_gate_fails_closed_without_recent_clean_reconciliation(tm
     assert "stale_reconciliation" in stale["block_reasons"]
 
 
+def test_live_readiness_gate_blocks_reconciliation_before_worker_heartbeat(tmp_path) -> None:
+    db = _session()
+    settings = _live_settings(tmp_path)
+    _add_production_pattern(db)
+    _add_clean_reconciliation(db, at=datetime.now(timezone.utc) - timedelta(seconds=5))
+    write_worker_heartbeat(settings)
+
+    status = LiveReadinessGate(settings).evaluate(db)
+
+    assert status["orders_allowed"] is False
+    assert "reconciliation_before_worker_heartbeat" in status["block_reasons"]
+    assert status["reconciliation"]["not_before"] == status["worker"]["timestamp"]
+
+
 def test_live_readiness_gate_blocks_runtime_kill_and_latest_unreachable(tmp_path) -> None:
     db = _session()
     settings = _live_settings(tmp_path)

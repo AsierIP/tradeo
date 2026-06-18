@@ -83,6 +83,7 @@ class LiveReadinessGate:
         worker = worker_runtime_status(
             settings,
             max_age_seconds=int(settings.live_readiness_worker_max_age_seconds),
+            now=evaluated_at,
         )
         add(
             "worker_fresh",
@@ -91,7 +92,14 @@ class LiveReadinessGate:
             status=worker,
         )
 
-        reconciliation = self._reconciliation_status(db, now=evaluated_at)
+        worker_timestamp = _optional_datetime(worker.get("timestamp"))
+        # live_armed is computed from Settings; no SystemControl/AuditLog live-arming
+        # timestamp exists today, so the worker heartbeat is the available runtime anchor.
+        reconciliation = self._reconciliation_status(
+            db,
+            now=evaluated_at,
+            not_before=worker_timestamp if bool(worker.get("ok")) else None,
+        )
         add(
             "reconciliation_fresh_clean",
             bool(reconciliation.get("ok")),
@@ -149,7 +157,13 @@ class LiveReadinessGate:
             raise LiveReadinessError(status)
         return status
 
-    def _reconciliation_status(self, db: Session, *, now: datetime | None = None) -> dict[str, Any]:
+    def _reconciliation_status(
+        self,
+        db: Session,
+        *,
+        now: datetime | None = None,
+        not_before: datetime | None = None,
+    ) -> dict[str, Any]:
         settings = self.settings
         if not settings.reconciliation_enabled:
             return {"ok": False, "reason": "reconciliation_disabled", "last_completed_at": None}
@@ -172,15 +186,18 @@ class LiveReadinessGate:
             timestamp = timestamp.replace(tzinfo=timezone.utc)
         else:
             timestamp = timestamp.astimezone(timezone.utc)
+        not_before_utc = _as_utc(not_before) if not_before is not None else None
         age_seconds = (now - timestamp).total_seconds()
         max_age_seconds = int(settings.live_readiness_reconciliation_max_age_seconds)
         latest_unreachable = row.action == "reconciliation_broker_unreachable"
+        older_than_required_anchor = not_before_utc is not None and timestamp < not_before_utc
         ok = (
             not latest_unreachable
             and divergence_count == 0
             and error_count == 0
             and warning_count == 0
             and age_seconds <= max_age_seconds
+            and not older_than_required_anchor
         )
         reason = "ok"
         if latest_unreachable:
@@ -193,11 +210,14 @@ class LiveReadinessGate:
             reason = "reconciliation_warnings"
         elif age_seconds > max_age_seconds:
             reason = "stale_reconciliation"
+        elif older_than_required_anchor:
+            reason = "reconciliation_before_worker_heartbeat"
         return {
             "ok": ok,
             "reason": reason,
             "last_action": row.action,
             "last_completed_at": timestamp.isoformat(),
+            "not_before": not_before_utc.isoformat() if not_before_utc is not None else None,
             "age_seconds": round(age_seconds, 1),
             "max_age_seconds": max_age_seconds,
             "divergence_count": divergence_count,
@@ -210,6 +230,17 @@ def _as_utc(value: datetime) -> datetime:
     if value.tzinfo is None:
         return value.replace(tzinfo=timezone.utc)
     return value.astimezone(timezone.utc)
+
+
+def _optional_datetime(value: Any) -> datetime | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return _as_utc(value)
+    try:
+        return _as_utc(datetime.fromisoformat(str(value)))
+    except (TypeError, ValueError):
+        return None
 
 
 def _max_count(value: Any, rows: Any) -> int:

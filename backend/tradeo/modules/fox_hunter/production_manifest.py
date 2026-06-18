@@ -12,6 +12,7 @@ PRODUCTION_MANIFEST_SCHEMA = "tradeo.production_manifest.v1"
 PRODUCTION_MANIFEST_HASH_ALGORITHM = "sha256_canonical_v1"
 PRODUCTION_GATE_SCOPE = "director_production_gate"
 _HASH_KEYS = {"hash", "manifest_hash", "sha256"}
+BLOCKED_DRIFT_STATUSES = {"decaying", "degrading", "regressing", "deteriorating"}
 
 
 def build_production_manifest(
@@ -26,6 +27,9 @@ def build_production_manifest(
 ) -> dict[str, Any]:
     """Build the canonical manifest Fox Hunter requires for production patterns."""
 
+    drift_status = _blocked_drift_status(pattern)
+    if drift_status:
+        raise ValueError(f"pattern_drift_{drift_status}")
     approved_time = _parse_datetime(approved_at or datetime.now(timezone.utc)) or datetime.now(timezone.utc)
     expires = _parse_datetime(expires_at) if expires_at is not None else approved_time + timedelta(days=90)
     normalized_packet = _normalized_evidence_packet(pattern, evidence_packet)
@@ -62,6 +66,15 @@ def production_manifest_status(
     pattern_status = _status_value(pattern.status)
     if pattern_status != DiscoveredPatternStatus.PRODUCTION.value:
         return _status(False, "pattern_not_production", checked_at, pattern_status=pattern_status)
+    drift_status = _blocked_drift_status(pattern)
+    if drift_status:
+        return _status(
+            False,
+            f"pattern_drift_{drift_status}",
+            checked_at,
+            pattern_status=pattern_status,
+            drift_status=drift_status,
+        )
     manifest = _manifest_from_pattern(pattern)
     if not isinstance(manifest, dict) or not manifest:
         return _status(False, "missing_production_manifest", checked_at, pattern_status=pattern_status)
@@ -159,6 +172,13 @@ def _manifest_from_pattern(pattern: DiscoveredPattern) -> dict[str, Any] | None:
     params = getattr(pattern, "params_json", None) or {}
     manifest = params.get(PRODUCTION_MANIFEST_KEY) if isinstance(params, dict) else None
     return manifest if isinstance(manifest, dict) else None
+
+
+def _blocked_drift_status(pattern: DiscoveredPattern | None) -> str:
+    if pattern is None:
+        return ""
+    drift_status = str(getattr(pattern, "drift_status", "") or "").strip().lower()
+    return drift_status if drift_status in BLOCKED_DRIFT_STATUSES else ""
 
 
 def _normalized_evidence_packet(

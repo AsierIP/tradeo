@@ -788,8 +788,6 @@ def test_fox_status_allows_live_orders_when_central_gate_allows(tmp_path) -> Non
     }
     db.add(production)
     db.commit()
-    add_clean_reconciliation_audit(db)
-
     ready_scanner = scanner(
         provider,
         artifacts_dir=str(tmp_path),
@@ -804,6 +802,7 @@ def test_fox_status_allows_live_orders_when_central_gate_allows(tmp_path) -> Non
         ibkr_port=4001,
     )
     write_worker_heartbeat(ready_scanner.settings)
+    add_clean_reconciliation_audit(db)
 
     fox = ready_scanner.status(db)["fox_hunter"]
 
@@ -815,6 +814,47 @@ def test_fox_status_allows_live_orders_when_central_gate_allows(tmp_path) -> Non
     assert readiness["primary_block_reason"] is None
     assert readiness["block_reason"] is None
     assert readiness["block_reasons"] == []
+
+
+def test_production_manifest_blocks_drifted_patterns() -> None:
+    for index, drift_status in enumerate(("decaying", "degrading", "regressing", "deteriorating")):
+        db = session_factory()
+        provider = FixtureProvider(f"DR{index}")
+        pattern = add_pattern(db, provider, status=DiscoveredPatternStatus.PRODUCTION)
+        pattern.metrics_json = {
+            **(pattern.metrics_json or {}),
+            "production_manifest": build_production_manifest(
+                pattern,
+                reviewer="test_director",
+                evidence_packet=production_gate_evidence_packet(),
+            ),
+        }
+        pattern.drift_status = drift_status
+        db.add(pattern)
+        db.commit()
+
+        status = production_manifest_status(pattern)
+
+        assert status["valid"] is False
+        assert status["reason_code"] == f"pattern_drift_{drift_status}"
+
+
+def test_production_manifest_builder_refuses_drifted_patterns() -> None:
+    db = session_factory()
+    provider = FixtureProvider("BDFT")
+    pattern = add_pattern(db, provider, status=DiscoveredPatternStatus.PRODUCTION)
+    pattern.drift_status = "deteriorating"
+
+    try:
+        build_production_manifest(
+            pattern,
+            reviewer="test_director",
+            evidence_packet=production_gate_evidence_packet(),
+        )
+    except ValueError as exc:
+        assert str(exc) == "pattern_drift_deteriorating"
+    else:
+        raise AssertionError("drifted pattern should not generate a production manifest")
 
 
 def test_production_manifest_requires_canonical_hash_algorithm() -> None:
@@ -2610,6 +2650,40 @@ def test_fox_hunter_ignores_lab_patterns_and_uses_production_only() -> None:
     assert signal.pattern == production.name
     assert signal.status == SignalStatus.PENDING_HUMAN_APPROVAL
     assert signal.metadata_json["entry_module"] == "fox_hunter"
+
+
+def test_fox_hunter_scan_skips_drifted_production_pattern() -> None:
+    db = session_factory()
+    provider = FixtureProvider("FDRF")
+    production = add_pattern(db, provider, status=DiscoveredPatternStatus.PRODUCTION)
+    production.metrics_json = {
+        **(production.metrics_json or {}),
+        "production_manifest": build_production_manifest(
+            production,
+            reviewer="test_director",
+            evidence_packet=production_gate_evidence_packet(),
+        ),
+    }
+    production.drift_status = "regressing"
+    db.add(production)
+    db.commit()
+
+    result = scanner(provider).scan(
+        db,
+        module="fox_hunter",
+        symbols=[provider.symbol],
+        store_signals=True,
+        execute_orders=False,
+    )
+
+    assert result["patterns_checked"] == 0
+    assert result["signals_created"] == 0
+    assert db.query(DiscoveredPatternMatch).count() == 0
+    status = scanner(provider).status(db)["fox_hunter"]
+    assert status["eligible_patterns"] == 0
+    assert status["production_manifest_blocked_reason_counts"] == {
+        "pattern_drift_regressing": 1
+    }
 
 
 def test_fox_hunter_execute_orders_requires_second_phase_human_approval() -> None:

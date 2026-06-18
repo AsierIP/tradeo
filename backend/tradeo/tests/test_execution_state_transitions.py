@@ -30,6 +30,7 @@ from tradeo.db.models import (
 )
 from tradeo.db.session import Base
 from tradeo.modules.laboratory.paper_observations import LabPaperObservationService
+from tradeo.services import ibkr_broker as ibkr_broker_module
 from tradeo.services.evidence import (
     EvidenceQuality,
     EvidenceType,
@@ -1573,6 +1574,263 @@ def test_live_ibkr_submission_reaches_connect_after_clean_readiness(tmp_path) ->
 
     assert db.query(Trade).count() == 0
     assert signal.status == SignalStatus.LIVE_APPROVED
+
+
+def _open_market_session() -> dict[str, object]:
+    return {
+        "market": "us_equities",
+        "timezone": "America/New_York",
+        "regular_session_open": True,
+        "state": "regular_open",
+        "checked_at": datetime.now(timezone.utc).isoformat(),
+        "regular_hours": "09:30-16:00",
+        "holiday": None,
+    }
+
+
+def _closed_market_session() -> dict[str, object]:
+    return {
+        **_open_market_session(),
+        "regular_session_open": False,
+        "state": "market_closed",
+    }
+
+
+class PreflightFakeIB:
+    def __init__(self, ticker: SimpleNamespace) -> None:
+        self.ticker = ticker
+        self.req_mkt_data_calls = 0
+        self.bracket_calls = 0
+        self.placed_orders: list[object] = []
+        self.cancelled_orders: list[object] = []
+
+    def qualifyContracts(self, contract):
+        return [contract]
+
+    def reqMktData(self, contract, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003
+        self.req_mkt_data_calls += 1
+        return self.ticker
+
+    def bracketOrder(
+        self,
+        *,
+        action,
+        quantity,
+        limitPrice,
+        takeProfitPrice,
+        stopLossPrice,
+    ):
+        self.bracket_calls += 1
+        return [
+            SimpleNamespace(
+                orderId=10,
+                parentId=0,
+                action=action,
+                orderType="LMT",
+                totalQuantity=quantity,
+                lmtPrice=limitPrice,
+            ),
+            SimpleNamespace(
+                orderId=11,
+                parentId=10,
+                action="SELL",
+                orderType="LMT",
+                totalQuantity=quantity,
+                lmtPrice=takeProfitPrice,
+            ),
+            SimpleNamespace(
+                orderId=12,
+                parentId=10,
+                action="SELL",
+                orderType="STP",
+                totalQuantity=quantity,
+                auxPrice=stopLossPrice,
+            ),
+        ]
+
+    def placeOrder(self, contract, order):  # noqa: ANN001
+        self.placed_orders.append(order)
+        return SimpleNamespace(
+            order=order,
+            orderStatus=SimpleNamespace(
+                permId=20_000 + len(self.placed_orders),
+                status="Submitted",
+            ),
+            log=[],
+        )
+
+    def cancelOrder(self, order) -> None:  # noqa: ANN001
+        self.cancelled_orders.append(order)
+
+    def sleep(self, seconds: float) -> None:
+        return None
+
+    def isConnected(self) -> bool:
+        return True
+
+    def disconnect(self) -> None:
+        return None
+
+
+class LivePreflightBrokerUnderTest(IBKRBroker):
+    def __init__(self, *, fake_ib: PreflightFakeIB, settings: Settings) -> None:
+        super().__init__(settings=settings)
+        self.fake_ib = fake_ib
+
+    def _connect(self):
+        return self.fake_ib
+
+    def _stock_contract(self, symbol: str):
+        return SimpleNamespace(
+            conId=123,
+            symbol=symbol.upper(),
+            secType="STK",
+            exchange="SMART",
+            currency="USD",
+        )
+
+
+def _live_submit_fixture(tmp_path):
+    db = session_factory()
+    signal = add_live_production_signal(db)
+    settings = live_order_settings(
+        ibkr_port=7496,
+        artifacts_dir=str(tmp_path),
+        signal_spread_snapshot_timeout_seconds=0.0,
+    )
+    write_worker_heartbeat(settings)
+    add_clean_reconciliation_audit(db)
+    return db, signal, settings
+
+
+def test_live_execution_preflight_rejects_closed_market_before_order_placement(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db, signal, settings = _live_submit_fixture(tmp_path)
+    fake_ib = PreflightFakeIB(
+        SimpleNamespace(
+            bid=9.99,
+            ask=10.01,
+            last=10.0,
+            bidSize=100,
+            askSize=100,
+            time=datetime.now(timezone.utc),
+        )
+    )
+    monkeypatch.setattr(
+        ibkr_broker_module,
+        "market_session_status",
+        lambda: _closed_market_session(),
+    )
+
+    with pytest.raises(IBKRSafetyError, match="regular US equity session open"):
+        LivePreflightBrokerUnderTest(fake_ib=fake_ib, settings=settings).submit_signal_bracket(
+            db,
+            signal,
+        )
+
+    assert fake_ib.req_mkt_data_calls == 0
+    assert fake_ib.bracket_calls == 0
+    assert fake_ib.placed_orders == []
+    assert db.query(Trade).count() == 0
+    assert signal.status == SignalStatus.LIVE_APPROVED
+
+
+def test_live_execution_preflight_rejects_missing_bid_ask_before_order_placement(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db, signal, settings = _live_submit_fixture(tmp_path)
+    fake_ib = PreflightFakeIB(
+        SimpleNamespace(
+            bid=None,
+            ask=None,
+            last=10.0,
+            bidSize=None,
+            askSize=None,
+            time=datetime.now(timezone.utc),
+        )
+    )
+    monkeypatch.setattr(ibkr_broker_module, "market_session_status", _open_market_session)
+
+    with pytest.raises(IBKRSafetyError, match="fresh usable bid/ask quote snapshot"):
+        LivePreflightBrokerUnderTest(fake_ib=fake_ib, settings=settings).submit_signal_bracket(
+            db,
+            signal,
+        )
+
+    assert fake_ib.req_mkt_data_calls == 1
+    assert fake_ib.bracket_calls == 0
+    assert fake_ib.placed_orders == []
+    assert db.query(Trade).count() == 0
+    assert signal.status == SignalStatus.LIVE_APPROVED
+
+
+def test_live_execution_preflight_rejects_stale_quote_before_order_placement(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db, signal, settings = _live_submit_fixture(tmp_path)
+    fake_ib = PreflightFakeIB(
+        SimpleNamespace(
+            bid=9.99,
+            ask=10.01,
+            last=10.0,
+            bidSize=100,
+            askSize=100,
+            time=datetime.now(timezone.utc) - timedelta(seconds=30),
+        )
+    )
+    monkeypatch.setattr(ibkr_broker_module, "market_session_status", _open_market_session)
+
+    with pytest.raises(IBKRSafetyError, match="stale quote"):
+        LivePreflightBrokerUnderTest(fake_ib=fake_ib, settings=settings).submit_signal_bracket(
+            db,
+            signal,
+        )
+
+    assert fake_ib.req_mkt_data_calls == 1
+    assert fake_ib.bracket_calls == 0
+    assert fake_ib.placed_orders == []
+    assert db.query(Trade).count() == 0
+    assert signal.status == SignalStatus.LIVE_APPROVED
+
+
+def test_live_execution_preflight_persists_fresh_quote_snapshot(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db, signal, settings = _live_submit_fixture(tmp_path)
+    fake_ib = PreflightFakeIB(
+        SimpleNamespace(
+            bid=9.99,
+            ask=10.01,
+            last=10.0,
+            bidSize=100,
+            askSize=200,
+            time=datetime.now(timezone.utc),
+        )
+    )
+    monkeypatch.setattr(ibkr_broker_module, "market_session_status", _open_market_session)
+
+    trade = LivePreflightBrokerUnderTest(fake_ib=fake_ib, settings=settings).submit_signal_bracket(
+        db,
+        signal,
+    )
+
+    assert fake_ib.req_mkt_data_calls == 1
+    assert fake_ib.bracket_calls == 1
+    assert len(fake_ib.placed_orders) == 3
+    preflight = trade.metadata_json["execution_preflight"]
+    assert preflight["market_session"]["regular_session_open"] is True
+    quote = preflight["quote_snapshot"]
+    assert quote["data_basis"] == "ibkr_execution_preflight_quote_snapshot"
+    assert quote["bid"] == 9.99
+    assert quote["ask"] == 10.01
+    assert quote["spread_abs"] == pytest.approx(0.02)
+    assert quote["quote_age_seconds"] <= quote["max_age_seconds"]
+    assert signal.status == SignalStatus.EXECUTED
 
 
 def _fake_ib_trade(order_id: int, perm_id: int | None, status: str = "PendingSubmit"):

@@ -3,9 +3,11 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import math
 import random
 import time
 import uuid
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
@@ -25,6 +27,9 @@ from tradeo.db.models import (
 from tradeo.modules.fox_hunter.production_manifest import production_manifest_is_active
 from tradeo.services.evidence import EvidenceQuality, EvidenceType
 from tradeo.services.live_readiness_gate import LiveReadinessGate, LiveReadinessError
+from tradeo.services.market_session import market_session_status
+
+EXECUTION_PREFLIGHT_QUOTE_BASIS = "ibkr_execution_preflight_quote_snapshot"
 
 
 class IBKRSafetyError(RuntimeError):
@@ -33,6 +38,9 @@ class IBKRSafetyError(RuntimeError):
 
 class IBKROperationalError(RuntimeError):
     """Raised for broker connectivity/API failures outside Tradeo safety gates."""
+
+
+IBKR_LIVE_PORTS = {7496, 4001}
 
 
 def _ensure_event_loop() -> None:
@@ -49,6 +57,18 @@ def _finite_price(value: float | None, field: str) -> float:
     if value <= 0:
         raise IBKRSafetyError(f"{field} must be positive")
     return round(value, 4)
+
+
+def _format_status_time(value: Any) -> str:
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    return str(value)
+
+
+def _normalize_symbols(symbols: Iterable[str] | None) -> list[str]:
+    if symbols is None:
+        return []
+    return sorted({str(symbol).strip().upper() for symbol in symbols if str(symbol).strip()})
 
 
 @dataclass
@@ -161,6 +181,115 @@ class IBKRBroker:
         finally:
             if ib.isConnected():
                 ib.disconnect()
+
+    def account_readiness_preflight(
+        self,
+        *,
+        symbols: Iterable[str] | None = None,
+        require_live_port: bool = True,
+        include_account_ids: bool = False,
+    ) -> dict[str, Any]:
+        """Non-order broker/account preflight for live-readiness surfaces.
+
+        This deliberately avoids WhatIf, order construction and order placement. It only checks
+        the configured endpoint, server time, managed accounts and local execution guardrails.
+        """
+        checks: list[dict[str, Any]] = []
+        selected_account = str(self.settings.ibkr_account or "").strip() or None
+        allowed_symbols = sorted(self.settings.ibkr_allowed_symbol_set)
+        requested_symbols = _normalize_symbols(symbols)
+
+        def add(name: str, ok: bool, reason: str, **details: Any) -> None:
+            checks.append({"name": name, "ok": bool(ok), "reason": None if ok else reason, **details})
+
+        ib = None
+        server_time = None
+        managed_accounts: list[str] = []
+        try:
+            ib = self._connect()
+            server_time = ib.reqCurrentTime()
+            managed_accounts = list(ib.managedAccounts() or [])
+            add("connected", True, "ibkr_connection_failed")
+        except Exception as exc:  # noqa: BLE001 - expose as readiness status, not an exception.
+            add("connected", False, "ibkr_connection_failed", error=str(exc))
+        finally:
+            if ib and ib.isConnected():
+                ib.disconnect()
+
+        if not selected_account and len(managed_accounts) == 1:
+            selected_account = managed_accounts[0]
+        selected_account_configured = bool(str(self.settings.ibkr_account or "").strip())
+        selected_account_managed = bool(
+            selected_account and selected_account in set(managed_accounts)
+        )
+        symbol_misses = [symbol for symbol in requested_symbols if symbol not in set(allowed_symbols)]
+
+        add("ibkr_readonly", not self.settings.ibkr_readonly, "ibkr_readonly")
+        add(
+            "ibkr_live_port",
+            not require_live_port or int(self.settings.ibkr_port) in IBKR_LIVE_PORTS,
+            "ibkr_live_port_required",
+            live_ports=sorted(IBKR_LIVE_PORTS),
+        )
+        add(
+            "ibkr_account_configured",
+            selected_account_configured,
+            "missing_ibkr_account",
+        )
+        add(
+            "ibkr_account_managed",
+            selected_account_managed,
+            "configured_ibkr_account_not_managed"
+            if selected_account_configured
+            else "missing_ibkr_account",
+            managed_accounts_count=len(managed_accounts),
+        )
+        add(
+            "ibkr_allowed_symbols",
+            bool(allowed_symbols),
+            "missing_ibkr_allowed_symbols",
+            symbol_count=len(allowed_symbols),
+        )
+        if requested_symbols:
+            add(
+                "requested_symbols_allowed",
+                not symbol_misses,
+                "symbols_not_allowed",
+                checked_symbol_count=len(requested_symbols),
+                missing_symbols=symbol_misses,
+            )
+
+        blocked = [check for check in checks if not check["ok"]]
+        status: dict[str, Any] = {
+            "ok": not blocked,
+            "state": "ready" if not blocked else "blocked",
+            "primary_block_reason": blocked[0]["reason"] if blocked else None,
+            "block_reasons": [str(check["reason"]) for check in blocked],
+            "checks": checks,
+            "host": self.settings.ibkr_host,
+            "port": self.settings.ibkr_port,
+            "client_id": self.settings.ibkr_client_id,
+            "readonly": self.settings.ibkr_readonly,
+            "trading_mode": self.settings.trading_mode,
+            "live_armed": self.settings.live_armed,
+            "kill_switch_enabled": self.settings.kill_switch_enabled,
+            "connected": bool(managed_accounts or server_time),
+            "server_time": _format_status_time(server_time) if server_time is not None else None,
+            "managed_accounts_count": len(managed_accounts),
+            "selected_account_configured": selected_account_configured,
+            "selected_account_present": selected_account is not None,
+            "selected_account_managed": selected_account_managed,
+            "allowed_symbol_count": len(allowed_symbols),
+            "checked_symbol_count": len(requested_symbols),
+            "require_live_port": require_live_port,
+            "live_ports": sorted(IBKR_LIVE_PORTS),
+            "account_summary_included": False,
+            "order_checks_included": False,
+        }
+        if include_account_ids:
+            status["selected_account"] = selected_account
+            status["managed_accounts"] = managed_accounts
+        return status
 
     def positions(self) -> list[dict[str, Any]]:
         ib = self._connect()
@@ -320,7 +449,7 @@ class IBKRBroker:
                     raise IBKRSafetyError("live IBKR execution requires non-empty TRADEO_IBKR_ALLOWED_SYMBOLS")
 
     def _targets_live_execution(self) -> bool:
-        live_port = int(self.settings.ibkr_port) in {7496, 4001}
+        live_port = int(self.settings.ibkr_port) in IBKR_LIVE_PORTS
         return bool(self.settings.trading_mode == "live" or live_port)
 
     def _validate_live_production_signal(self, db: Session, signal: Signal) -> None:
@@ -345,6 +474,125 @@ class IBKRBroker:
         except LiveReadinessError as exc:
             reason = str(exc.status.get("primary_block_reason") or "live_readiness_blocked")
             raise IBKRSafetyError(f"live IBKR execution blocked by LiveReadinessGate: {reason}") from exc
+
+    def _live_execution_preflight(
+        self,
+        *,
+        ib,  # noqa: ANN001 - ib_insync client or test double
+        contract: Any,
+        signal: Signal,
+        bracket_prices: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        """Fail closed on execution-time market facts before live order placement."""
+        if not self._targets_live_execution():
+            return None
+
+        session = market_session_status()
+        if not bool(session.get("regular_session_open")):
+            raise IBKRSafetyError(
+                "live IBKR execution requires regular US equity session open "
+                f"(state={session.get('state')})"
+            )
+
+        _validate_submitted_bracket_geometry(signal.side, bracket_prices["submitted"])
+        quote_snapshot = self._capture_live_preflight_quote(ib, contract, signal)
+        return {
+            "schema_version": 1,
+            "checked_at": datetime.now(timezone.utc).isoformat(),
+            "market_session": session,
+            "quote_snapshot": quote_snapshot,
+            "submitted_bracket": bracket_prices["submitted"],
+        }
+
+    def _capture_live_preflight_quote(
+        self,
+        ib,  # noqa: ANN001 - ib_insync client or test double
+        contract: Any,
+        signal: Signal,
+    ) -> dict[str, Any]:
+        timeout = max(
+            0.0,
+            float(
+                getattr(
+                    self.settings,
+                    "ibkr_execution_preflight_quote_timeout_seconds",
+                    getattr(self.settings, "signal_spread_snapshot_timeout_seconds", 4.0),
+                )
+            ),
+        )
+        max_age_seconds = max(
+            0.0,
+            float(
+                getattr(
+                    self.settings,
+                    "ibkr_execution_preflight_quote_max_age_seconds",
+                    5.0,
+                )
+            ),
+        )
+        try:
+            ticker = ib.reqMktData(contract, "", snapshot=True, regulatorySnapshot=False)
+        except Exception as exc:  # noqa: BLE001 - fail closed before order placement.
+            raise IBKRSafetyError(
+                f"live execution preflight quote snapshot failed: {type(exc).__name__}: {exc}"
+            ) from exc
+
+        deadline = time.monotonic() + timeout
+        while not (
+            _usable_market_price(getattr(ticker, "bid", None))
+            and _usable_market_price(getattr(ticker, "ask", None))
+        ):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            ib.sleep(min(0.25, remaining))
+
+        captured_at = datetime.now(timezone.utc)
+        bid = _clean_market_price(getattr(ticker, "bid", None))
+        ask = _clean_market_price(getattr(ticker, "ask", None))
+        last = _clean_market_price(getattr(ticker, "last", None)) or _clean_market_price(
+            getattr(ticker, "close", None)
+        )
+        if bid is None or ask is None:
+            raise IBKRSafetyError(
+                "live IBKR execution requires a fresh usable bid/ask quote snapshot"
+            )
+        if ask < bid:
+            raise IBKRSafetyError("live IBKR execution preflight rejected crossed bid/ask quote")
+
+        quote_time = _quote_timestamp(ticker) or captured_at
+        age_seconds = max(0.0, (captured_at - quote_time).total_seconds())
+        if age_seconds > max_age_seconds:
+            raise IBKRSafetyError(
+                "live IBKR execution preflight rejected stale quote "
+                f"({age_seconds:.1f}s old > {max_age_seconds:.1f}s max)"
+            )
+
+        mid = (bid + ask) / 2.0
+        spread_abs = ask - bid
+        spread_observed_pct = spread_abs / mid if mid > 0 else None
+        risk_per_share = abs(float(signal.entry or 0.0) - float(signal.stop or 0.0))
+        spread_cost_r = spread_abs / risk_per_share if risk_per_share > 0 else None
+        return {
+            "schema_version": 1,
+            "data_basis": EXECUTION_PREFLIGHT_QUOTE_BASIS,
+            "captured_at": captured_at.isoformat(),
+            "quote_time": quote_time.isoformat(),
+            "quote_age_seconds": round(age_seconds, 3),
+            "max_age_seconds": max_age_seconds,
+            "symbol": str(signal.symbol or "").upper(),
+            "bid": bid,
+            "ask": ask,
+            "last": last,
+            "bid_size": _clean_market_size(getattr(ticker, "bidSize", None)),
+            "ask_size": _clean_market_size(getattr(ticker, "askSize", None)),
+            "mid": round(mid, 6),
+            "spread_abs": round(spread_abs, 6),
+            "spread_observed_pct": (
+                round(spread_observed_pct, 6) if spread_observed_pct is not None else None
+            ),
+            "spread_cost_r": round(spread_cost_r, 6) if spread_cost_r is not None else None,
+        }
 
     def preview_signal_order(self, signal: Signal) -> dict[str, Any]:
         """Run an IBKR WhatIf preview for the parent limit order without submitting it."""
@@ -417,6 +665,12 @@ class IBKRBroker:
                     getattr(self.settings, "ibkr_paper_bracket_max_distance_pct", 0.20)
                 ),
             )
+            execution_preflight = self._live_execution_preflight(
+                ib=ib,
+                contract=contract,
+                signal=signal,
+                bracket_prices=bracket_prices,
+            )
             bracket = ib.bracketOrder(
                 action=action,
                 quantity=int(signal.suggested_qty),
@@ -480,6 +734,8 @@ class IBKRBroker:
                 "perm_ids": perm_ids,
                 "paper_bracket_ack_mode": paper_bracket_ack_mode,
             }
+            if execution_preflight is not None:
+                execution_observation["execution_preflight"] = execution_preflight
             bracket_legs = {
                 "entry": {"order_id": order_ids[0], "perm_id": perm_ids[0]},
                 "target": {
@@ -518,6 +774,7 @@ class IBKRBroker:
                     "regime": signal_metadata.get("regime"),
                     "regime_fit": signal_metadata.get("regime_fit"),
                     "execution_observation": execution_observation,
+                    "execution_preflight": execution_preflight,
                     "contract": {
                         "con_id": contract.conId,
                         "symbol": contract.symbol,
@@ -569,6 +826,7 @@ class IBKRBroker:
                         "trading_mode": self.settings.trading_mode,
                         "port": self.settings.ibkr_port,
                         "reason": reason,
+                        "execution_preflight": execution_preflight,
                     },
                 )
             )
@@ -903,6 +1161,79 @@ def _operational_bracket_prices(
         "submitted": submitted,
         "adjusted": submitted != requested,
     }
+
+
+def _validate_submitted_bracket_geometry(side: str, submitted: dict[str, Any]) -> None:
+    entry = _finite_price(submitted.get("entry"), "submitted entry")
+    stop = _finite_price(submitted.get("stop"), "submitted stop")
+    target = _finite_price(submitted.get("target"), "submitted target")
+    normalized_side = side.lower().strip()
+    if normalized_side == "long" and not (stop < entry < target):
+        raise IBKRSafetyError(
+            "live execution preflight requires valid long bracket geometry"
+        )
+    if normalized_side == "short" and not (target < entry < stop):
+        raise IBKRSafetyError(
+            "live execution preflight requires valid short bracket geometry"
+        )
+    if normalized_side not in {"long", "short"}:
+        raise IBKRSafetyError(f"unsupported signal side: {side}")
+
+
+def _usable_market_price(value: Any) -> bool:
+    number = _float_or_none(value)
+    return number is not None and math.isfinite(number) and number > 0
+
+
+def _clean_market_price(value: Any) -> float | None:
+    number = _float_or_none(value)
+    if number is None or not math.isfinite(number) or number <= 0:
+        return None
+    return round(number, 6)
+
+
+def _clean_market_size(value: Any) -> float | None:
+    number = _float_or_none(value)
+    if number is None or not math.isfinite(number) or number < 0:
+        return None
+    return number
+
+
+def _quote_timestamp(ticker: Any) -> datetime | None:
+    for attr in ("time", "rtTime"):
+        value = getattr(ticker, attr, None)
+        parsed = _parse_quote_timestamp(value)
+        if parsed is not None:
+            return parsed
+    return None
+
+
+def _parse_quote_timestamp(value: Any) -> datetime | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return (
+            value.replace(tzinfo=timezone.utc)
+            if value.tzinfo is None
+            else value.astimezone(timezone.utc)
+        )
+    if isinstance(value, (int, float)):
+        if not math.isfinite(float(value)) or value <= 0:
+            return None
+        seconds = float(value) / 1000.0 if value > 1_000_000_000_000 else float(value)
+        return datetime.fromtimestamp(seconds, tz=timezone.utc)
+    try:
+        text = str(value).strip()
+        if not text:
+            return None
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return (
+        parsed.replace(tzinfo=timezone.utc)
+        if parsed.tzinfo is None
+        else parsed.astimezone(timezone.utc)
+    )
 
 
 def _normalize_side(value: Any) -> str | None:

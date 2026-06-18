@@ -28,7 +28,7 @@ def write_worker_heartbeat(settings: Settings | None = None) -> None:
 
 
 def worker_runtime_status(
-    settings: Settings | None = None, *, max_age_seconds: int = 90
+    settings: Settings | None = None, *, max_age_seconds: int = 90, now: datetime | None = None
 ) -> dict[str, Any]:
     settings = settings or get_settings()
     path = settings.artifacts_path / WORKER_HEARTBEAT
@@ -37,26 +37,35 @@ def worker_runtime_status(
             "ok": False,
             "state": "stopped",
             "age_seconds": None,
+            "timestamp": None,
             "reason": "missing_worker_heartbeat",
         }
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
-        timestamp = datetime.fromisoformat(str(payload["timestamp"]))
+        timestamp = _as_utc(datetime.fromisoformat(str(payload["timestamp"])))
     except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
         return {
             "ok": False,
             "state": "stopped",
             "age_seconds": None,
+            "timestamp": None,
             "reason": "invalid_worker_heartbeat",
         }
-    age_seconds = (datetime.now(timezone.utc) - timestamp).total_seconds()
+    age_seconds = (_as_utc(now or datetime.now(timezone.utc)) - timestamp).total_seconds()
     ok = age_seconds <= max_age_seconds and bool(payload.get("scheduler_enabled"))
     return {
         "ok": ok,
         "state": "ok" if ok else "stopped",
         "age_seconds": round(age_seconds, 1),
+        "timestamp": timestamp.isoformat(),
         "reason": "ok" if ok else "stale_or_scheduler_disabled",
     }
+
+
+def _as_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
 
 
 def write_entry_scan_status(

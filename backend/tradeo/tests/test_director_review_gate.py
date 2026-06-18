@@ -861,3 +861,91 @@ def test_pattern_health_monitor_marks_decaying_on_shortfall_cusum() -> None:
     assert health["shortfall_fills"] == 8
     assert health["shortfall_cusum"]["available"] is True
     assert health["shortfall_cusum"]["triggered"] is True
+
+
+def test_pattern_health_monitor_counts_live_fills_for_production_decay() -> None:
+    db = session_factory()
+    pattern = add_pattern(db)
+    pattern.status = DiscoveredPatternStatus.PRODUCTION
+    db.add(pattern)
+    db.commit()
+    for index in range(8):
+        add_closed_lab_trade(
+            db,
+            pattern,
+            index,
+            r_multiple=-2.0,
+            trade_metadata={
+                "ibkr_mode": "live",
+                "evidence_type": EvidenceType.LIVE_FILL.value,
+            },
+        )
+
+    result = PatternHealthMonitor().run(db)
+    db.refresh(pattern)
+
+    assert result["decay_detected"] == 1
+    assert pattern.drift_status == "decaying"
+    assert pattern.metrics_json["pattern_health"]["closed_fills"] == 8
+
+
+def test_pattern_health_monitor_counts_fox_live_fills_for_production_decay() -> None:
+    db = session_factory()
+    pattern = add_pattern(db)
+    pattern.status = DiscoveredPatternStatus.PRODUCTION
+    db.add(pattern)
+    db.commit()
+    for index in range(8):
+        add_closed_lab_trade(
+            db,
+            pattern,
+            index,
+            r_multiple=-2.0,
+            signal_metadata={"entry_module": "fox_hunter"},
+            trade_metadata={
+                "ibkr_mode": "live",
+                "evidence_type": EvidenceType.LIVE_FILL.value,
+            },
+        )
+
+    result = PatternHealthMonitor().run(db)
+    db.refresh(pattern)
+
+    assert result["decay_detected"] == 1
+    assert pattern.drift_status == "decaying"
+    assert pattern.metrics_json["pattern_health"]["closed_fills"] == 8
+
+
+def test_pattern_health_monitor_ignores_weak_live_fill_labels() -> None:
+    db = session_factory()
+    pattern = add_pattern(db)
+    pattern.status = DiscoveredPatternStatus.PRODUCTION
+    db.add(pattern)
+    db.commit()
+    for index in range(8):
+        add_closed_lab_trade(
+            db,
+            pattern,
+            index,
+            r_multiple=-0.5,
+            signal_metadata={"entry_module": "fox_hunter"},
+            trade_metadata={
+                "ibkr_mode": "live",
+                "evidence_type": EvidenceType.LIVE_FILL.value,
+                "evidence_quality": EvidenceQuality.DEGRADED.value,
+            },
+        )
+
+    result = PatternHealthMonitor().run(db)
+    db.refresh(pattern)
+
+    assert result["decay_detected"] == 0
+    assert pattern.drift_status == "stable"
+    assert result["skipped"] == [
+        {
+            "pattern_id": pattern.id,
+            "reason": "insufficient_closed_fills",
+            "closed_fills": 0,
+            "min_required": 8,
+        }
+    ]

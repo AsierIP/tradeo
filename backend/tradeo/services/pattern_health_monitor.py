@@ -32,12 +32,18 @@ from tradeo.db.models import (
 )
 from tradeo.research.quant_validation import cusum_drift
 from tradeo.services.director_review_gate import DirectorReviewGate
+from tradeo.services.evidence import (
+    EVIDENCE_LIVE_FILL,
+    evidence_metadata_with_stored_columns,
+    is_strong_fill_evidence,
+)
 from tradeo.services.implementation_shortfall import trade_slippage_r
 
 MONITORED_STATUSES = (
     DiscoveredPatternStatus.PRODUCTION,
     DiscoveredPatternStatus.DIRECTOR_REVIEW,
 )
+PRODUCTION_HEALTH_ENTRY_MODULES = {"laboratory", "fox_hunter"}
 
 __all__ = ["PatternHealthMonitor", "MONITORED_STATUSES"]
 
@@ -71,8 +77,8 @@ class PatternHealthMonitor:
             trades = [
                 trade
                 for trade in closed_trades
-                if DirectorReviewGate._lab_pattern_id_for_trade(trade) == pattern.id
-                and DirectorReviewGate._counts_as_paper_fill(trade)
+                if self._pattern_id_for_health_trade(trade) == pattern.id
+                and self._counts_as_production_health_fill(trade)
             ]
             r_values = [float(trade.r_multiple or 0.0) for trade in trades]
             if len(r_values) < settings.health_monitor_min_trades:
@@ -188,6 +194,38 @@ class PatternHealthMonitor:
             "min_s_neg": round(float(np.min(verdict["s_neg"])), 4),
             "max_s_pos": round(float(np.max(verdict["s_pos"])), 4),
         }
+
+    @staticmethod
+    def _counts_as_production_health_fill(trade: Trade) -> bool:
+        if DirectorReviewGate._counts_as_paper_fill(trade):
+            return True
+        metadata = evidence_metadata_with_stored_columns(
+            trade.metadata_json or {},
+            evidence_type=trade.evidence_type,
+            evidence_quality=trade.evidence_quality,
+        )
+        signal_metadata = trade.signal.metadata_json if trade.signal is not None else {}
+        return is_strong_fill_evidence(
+            metadata,
+            signal_metadata=signal_metadata,
+            trade_status=DirectorReviewGate._status_value(trade.status),
+            broker_order_id=trade.broker_order_id,
+            allowed_evidence_types={EVIDENCE_LIVE_FILL},
+        )
+
+    @staticmethod
+    def _pattern_id_for_health_trade(trade: Trade) -> int | None:
+        signal = trade.signal
+        if signal is None:
+            return None
+        metadata = signal.metadata_json or {}
+        entry_module = str(metadata.get("entry_module") or "").strip()
+        if entry_module not in PRODUCTION_HEALTH_ENTRY_MODULES:
+            return None
+        try:
+            return int(metadata.get("pattern_id") or 0)
+        except (TypeError, ValueError):
+            return None
 
     @staticmethod
     def _research_r_scale(pattern: DiscoveredPattern, *, fallback: list[float]) -> float:
