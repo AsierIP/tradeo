@@ -1705,6 +1705,24 @@ class PreflightFakeIB:
         return None
 
 
+class PaperAccountFakeIB(PreflightFakeIB):
+    def __init__(self, *, account: str) -> None:
+        super().__init__(
+            SimpleNamespace(
+                bid=9.99,
+                ask=10.01,
+                last=10.0,
+                bidSize=100,
+                askSize=100,
+                time=datetime.now(timezone.utc),
+            )
+        )
+        self.account = account
+
+    def managedAccounts(self):
+        return [self.account]
+
+
 class LivePreflightBrokerUnderTest(IBKRBroker):
     def __init__(self, *, fake_ib: PreflightFakeIB, settings: Settings) -> None:
         super().__init__(settings=settings)
@@ -2317,6 +2335,29 @@ def test_paper_submit_skips_live_execution_quote_thresholds(tmp_path) -> None:
     assert len(fake_ib.placed_orders) == 3
     assert trade.metadata_json["execution_preflight"] is None
     assert signal.status == SignalStatus.EXECUTED
+
+
+def test_paper_submit_requires_du_account_on_custom_port(tmp_path) -> None:
+    db = session_factory()
+    signal = add_signal(db, status=SignalStatus.PAPER_APPROVED)
+    settings = Settings(
+        trading_mode="paper",
+        ibkr_readonly=False,
+        ibkr_port=14002,
+        ibkr_account="U123456",
+        artifacts_dir=str(tmp_path),
+    )
+    fake_ib = PaperAccountFakeIB(account="U123456")
+
+    with pytest.raises(IBKRSafetyError, match="DU paper account"):
+        LivePreflightBrokerUnderTest(fake_ib=fake_ib, settings=settings).submit_signal_bracket(
+            db,
+            signal,
+        )
+
+    assert fake_ib.bracket_calls == 0
+    assert fake_ib.placed_orders == []
+    assert db.query(Trade).count() == 0
 
 
 def _fake_ib_trade(order_id: int, perm_id: int | None, status: str = "PendingSubmit"):
