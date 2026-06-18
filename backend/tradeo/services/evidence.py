@@ -77,6 +77,10 @@ FILL_ID_KEYS = (
     "broker_execution_hash",
     "ib_execution_hash",
     "fill_id_hash",
+    "entry_fill_id_hash",
+    "exit_fill_id_hash",
+    "entry_broker_execution_hash",
+    "exit_broker_execution_hash",
 )
 BROKER_TIMESTAMP_KEYS = (
     "broker_execution_time",
@@ -87,6 +91,8 @@ BROKER_TIMESTAMP_KEYS = (
     "fill_time",
     "broker_fill_time",
     "statement_execution_time",
+    "entry_broker_execution_time",
+    "exit_broker_execution_time",
 )
 COMMISSION_KEYS = (
     "commission",
@@ -376,4 +382,7 @@ def _metadata_sources(metadata: Mapping[str, Any]) -> list[Mapping[str, Any]]:
         value = metadata.get(key)
         if isinstance(value, Mapping):
             sources.append(value)
+    ibkr_fills = metadata.get("ibkr_fills")
+    if isinstance(ibkr_fills, list):
+        sources.extend(value for value in ibkr_fills if isinstance(value, Mapping))
     return sources

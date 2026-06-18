@@ -436,6 +436,34 @@ def test_director_review_gate_counts_broker_execution_fill_with_hash() -> None:
     assert DirectorReviewGate._counts_as_paper_fill(trade) is True
 
 
+def test_director_review_gate_counts_reconciled_entry_exit_fill_metadata() -> None:
+    db = session_factory()
+    pattern = add_pattern(db)
+    add_closed_lab_trade(
+        db,
+        pattern,
+        0,
+        trade_metadata={
+            "broker_execution_hash": None,
+            "broker_execution_time": None,
+            "entry_broker_execution_hash": "entry-exec-hash",
+            "entry_broker_execution_time": "2026-01-05T15:30:00+00:00",
+            "exit_broker_execution_hash": "exit-exec-hash",
+            "exit_broker_execution_time": "2026-01-05T16:30:00+00:00",
+            "ibkr_fills": [
+                {
+                    "exec_id_hash": "entry-fill-hash",
+                    "broker_execution_time": "2026-01-05T15:30:00+00:00",
+                    "commission": 0.35,
+                }
+            ],
+        },
+    )
+    trade = db.query(Trade).one()
+
+    assert DirectorReviewGate._counts_as_paper_fill(trade) is True
+
+
 def test_director_review_gate_rejects_sub_4r_paper_fill_evidence() -> None:
     db = session_factory()
     pattern = add_pattern(db)
