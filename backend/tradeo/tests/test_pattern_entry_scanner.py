@@ -2699,6 +2699,50 @@ def test_laboratory_scanner_ignores_stale_paper_signal_without_trade() -> None:
     assert result["paper_observations_opened"] == 1
 
 
+def test_laboratory_scanner_ignores_expired_duplicate_signal() -> None:
+    db = session_factory()
+    provider = FixtureProvider()
+    pattern = add_pattern(db, provider, status=DiscoveredPatternStatus.LAB_CANDIDATE)
+    match = match_payload(
+        pattern_id=pattern.id,
+        pattern_name=pattern.name,
+        pattern_key=pattern.pattern_key,
+        window_end="2026-06-10T00:00:00+00:00",
+    )
+    db.add(
+        Signal(
+            symbol=provider.symbol,
+            pattern=pattern.name,
+            side="long",
+            entry=10.0,
+            stop=9.0,
+            target=14.0,
+            reward_risk=4.0,
+            confidence=0.7,
+            composite_score=0.7,
+            risk_usd=10.0,
+            suggested_qty=1,
+            strategy_version=f"laboratory_pattern_{pattern.id}",
+            status=SignalStatus.EXPIRED,
+            metadata_json={
+                "entry_module": "laboratory",
+                "pattern_id": pattern.id,
+                "entry_variant_id": match["entry_variant_id"],
+                "bar_window_end": match["window_end"],
+            },
+        )
+    )
+    db.commit()
+
+    result = PatternEntryScanner(
+        settings=scanner(provider).settings,
+        matcher=StaticMatcher(provider, [match]),
+    ).scan(db, module="laboratory", symbols=[provider.symbol], store_signals=True)
+
+    assert result["skipped_duplicates"] == 0
+    assert result["signals_created"] == 1
+
+
 def test_laboratory_scanner_skips_signal_creation_when_market_closed(monkeypatch) -> None:
     db = session_factory()
     provider = FixtureProvider()

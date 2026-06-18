@@ -1221,6 +1221,8 @@ class PatternEntryScanner:
             .all()
         )
         for signal in existing:
+            if signal.status in {SignalStatus.EXPIRED, SignalStatus.REJECTED}:
+                continue
             metadata = signal.metadata_json or {}
             if str(metadata.get("signal_idempotency_key") or "") in keys:
                 return signal
