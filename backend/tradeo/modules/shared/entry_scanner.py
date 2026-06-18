@@ -458,30 +458,40 @@ class PatternEntryScanner:
                 self._count_reason(order_skip_reason_counts, "store_signals_disabled")
                 continue
 
+            match_execute_orders = bool(resolved["execute_orders"])
+            match_execution_degrade_reason = execution_degrade_reason
+            if module == "laboratory" and match_execute_orders:
+                pattern_status = str(
+                    match.get("pattern_status") or match.get("pattern_promotion_status") or ""
+                ).lower()
+                if pattern_status != "lab_candidate":
+                    match_execute_orders = False
+                    match_execution_degrade_reason = "lab_status_shadow_only"
+
             signal = self._store_signal(
                 db,
                 module=module,
                 match=match,
                 candidate=candidate,
                 risk=risk,
-                execute_orders=bool(resolved["execute_orders"]),
+                execute_orders=match_execute_orders,
                 requested_execute_orders=requested_execute_orders,
-                execution_degrade_reason=execution_degrade_reason,
+                execution_degrade_reason=match_execution_degrade_reason,
                 market_session=session,
                 entry_quality=entry_quality,
             )
             signals_created += 1
             signal_ids.append(signal.id)
 
-            if not resolved["execute_orders"]:
+            if not match_execute_orders:
                 self._count_reason(
                     order_skip_reason_counts,
                     self._no_order_reason(
                         module,
                         match=match,
                         requested_execute_orders=requested_execute_orders,
-                        execute_orders=bool(resolved["execute_orders"]),
-                        execution_degrade_reason=execution_degrade_reason,
+                        execute_orders=match_execute_orders,
+                        execution_degrade_reason=match_execution_degrade_reason,
                     )
                     or "orders_disabled",
                 )

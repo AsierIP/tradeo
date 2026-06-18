@@ -26,6 +26,7 @@ from tradeo.research.shape_verifier import (
     shape_matrix_from_chart,
 )
 from tradeo.services.data_provider import MarketDataProvider, load_universe, pick_symbols
+from tradeo.services.data_quality import assess_ohlcv_quality_from_settings
 from tradeo.services.entry_variants import (
     build_entry_audit_context,
     build_entry_variants,
@@ -1188,6 +1189,17 @@ class NovelPatternMatcher:
             return None
         if self.settings and self.settings.discovery_match_complete_bars_only:
             df = self._drop_incomplete_daily_bar(df, timeframe)
+        if self.settings and self.settings.data_quality_filter_enabled:
+            quality = assess_ohlcv_quality_from_settings(df, symbol, timeframe, self.settings)
+            if not quality.research_grade:
+                logger.warning(
+                    "current data quality reject for {} / {}: {}",
+                    symbol,
+                    timeframe,
+                    ",".join(quality.issues),
+                )
+                cache[key] = None
+                return None
         cache[key] = df
         return df.copy()
 

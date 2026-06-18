@@ -25,9 +25,11 @@ from tradeo.db.models import (
     TradeStatus,
 )
 from tradeo.modules.fox_hunter.production_manifest import production_manifest_is_active
+from tradeo.schemas import PatternCandidate
 from tradeo.services.evidence import EvidenceQuality, EvidenceType
 from tradeo.services.live_readiness_gate import LiveReadinessGate, LiveReadinessError
 from tradeo.services.market_session import market_session_status
+from tradeo.services.risk_manager import RiskManager
 
 EXECUTION_PREFLIGHT_QUOTE_BASIS = "ibkr_execution_preflight_quote_snapshot"
 EXECUTION_PREFLIGHT_WHATIF_BASIS = "ibkr_live_parent_order_what_if"
@@ -479,6 +481,50 @@ class IBKRBroker:
         except LiveReadinessError as exc:
             reason = str(exc.status.get("primary_block_reason") or "live_readiness_blocked")
             raise IBKRSafetyError(f"live IBKR execution blocked by LiveReadinessGate: {reason}") from exc
+
+    def _validate_final_live_risk(self, db: Session, signal: Signal) -> None:
+        if not self._targets_live_execution():
+            return
+        candidate = self._risk_candidate_from_signal(signal, self.settings)
+        risk = RiskManager(self.settings).validate_candidate(candidate, db, execution_context="live")
+        if not risk.approved:
+            raise IBKRSafetyError(f"live IBKR execution blocked by RiskManager: {risk.reason}")
+
+    @staticmethod
+    def _risk_candidate_from_signal(signal: Signal, settings: Settings) -> PatternCandidate:
+        metadata = signal.metadata_json or {}
+        match = metadata.get("match") if isinstance(metadata.get("match"), dict) else {}
+        features: dict[str, Any] = {}
+        for source in (match.get("features"), metadata.get("features")):
+            if isinstance(source, dict):
+                features.update(source)
+        # The final broker-side risk pass is meant to catch dynamic account
+        # state drift after approval. Older production signals may not carry
+        # full scanner features, so do not turn missing feature metadata into
+        # an unrelated liquidity/ATR rejection here.
+        features.setdefault("avg_dollar_volume", settings.min_avg_dollar_volume)
+        features.setdefault("atr_pct", 0.0)
+        for key in ("pattern_family_key", "canonical_pattern_key", "pattern_key", "pattern_id"):
+            value = metadata.get(key) or match.get(key)
+            if value is not None:
+                features[key] = value
+        return PatternCandidate(
+            symbol=signal.symbol,
+            pattern=signal.pattern,
+            side=signal.side,
+            timeframe=signal.timeframe,
+            entry=float(signal.entry),
+            stop=float(signal.stop),
+            target=float(signal.target),
+            reward_risk=float(signal.reward_risk),
+            confidence=float(signal.confidence),
+            rule_score=float(metadata.get("rule_score") or 0.0),
+            ml_score=float(metadata.get("ml_score") or 0.0),
+            vision_score=float(metadata.get("vision_score") or 0.0),
+            composite_score=float(signal.composite_score),
+            features=features,
+            notes=["final_live_risk_revalidation"],
+        )
 
     def _live_execution_preflight(
         self,
@@ -965,6 +1011,7 @@ class IBKRBroker:
             raise IBKRSafetyError("runtime kill switch is active (see system_controls)")
         self._validate_signal_for_order(signal, require_execution_enabled=True)
         self._validate_live_production_signal(db, signal)
+        self._validate_final_live_risk(db, signal)
         ib = self._connect()
         try:
             contract = self._stock_contract(signal.symbol)

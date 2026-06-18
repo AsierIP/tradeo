@@ -30,6 +30,7 @@ from tradeo.research.validation_gate import ValidationGate
 from tradeo.research.window_sampler import WindowSampler
 from tradeo.schemas import DiscoveryRunRequest, DiscoveryRunResponse
 from tradeo.services.data_provider import MarketDataProvider, pick_symbols
+from tradeo.services.data_quality import assess_ohlcv_quality_from_settings
 from tradeo.services.market_regime import MarketRegimeService
 from tradeo.services.provider_factory import get_market_data_provider
 from tradeo.services.universe_snapshot import UniverseSnapshotService
@@ -75,6 +76,28 @@ class PatternDiscoveryLabAgent:
                     break
                 try:
                     df = self.provider.fetch_ohlcv(symbol, period=params["period"], interval=params["interval"])
+                    if settings.data_quality_filter_enabled:
+                        quality = assess_ohlcv_quality_from_settings(
+                            df,
+                            symbol,
+                            params["interval"],
+                            settings,
+                        )
+                        if not quality.research_grade:
+                            msg = f"{symbol}: OHLCV not research grade ({','.join(quality.issues)})"
+                            logger.warning("discovery data quality reject: {}", msg)
+                            warnings.append(msg)
+                            db.add(
+                                AuditLog(
+                                    actor="PatternDiscoveryLabAgent",
+                                    action="market_data_quality_reject",
+                                    entity_type="symbol",
+                                    entity_id=symbol,
+                                    details_json=quality.to_dict(),
+                                )
+                            )
+                            db.commit()
+                            continue
                     symbol_samples = sampler.sample(
                         symbol=symbol,
                         df=df,
