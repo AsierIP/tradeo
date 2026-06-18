@@ -2451,6 +2451,9 @@ def test_ibkr_submit_accepts_paper_bracket_missing_perm_ids_without_parent_only_
         def isConnected(self) -> bool:
             return True
 
+        def managedAccounts(self):
+            return ["DU123456"]
+
         def disconnect(self) -> None:
             return None
 
