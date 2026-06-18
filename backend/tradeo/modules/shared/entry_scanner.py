@@ -101,6 +101,9 @@ class PatternEntryScanner:
         )
         requested_execute_orders = bool(resolved["execute_orders"])
         execution_degrade_reason: str | None = None
+        if module == "fox_hunter" and resolved["execute_orders"]:
+            resolved["execute_orders"] = False
+            execution_degrade_reason = "needs_human_signal_approval"
         if module == "laboratory" and resolved["execute_orders"]:
             from tradeo.services.system_controls import runtime_kill_switch_active
 
@@ -662,6 +665,11 @@ class PatternEntryScanner:
             and settings.live_armed
             and not settings.kill_switch_enabled
             and not runtime_kill_switch_enabled
+            and not settings.ibkr_readonly
+            and bool(str(settings.ibkr_account or "").strip())
+            and bool(settings.ibkr_allowed_symbol_set)
+            and int(settings.ibkr_port) in {7496, 4001}
+            and len(production_manifest_patterns) > 0
         )
         return {
             "research": {"purpose": "discover_new_patterns"},
@@ -749,6 +757,7 @@ class PatternEntryScanner:
                     else self._live_order_block_reason(
                         settings,
                         runtime_kill_switch_enabled=runtime_kill_switch_enabled,
+                        eligible_production_manifests=len(production_manifest_patterns),
                     ),
                 },
                 "symbols_checked": fox_entry_status["symbols_checked"],
@@ -822,6 +831,7 @@ class PatternEntryScanner:
         settings: Settings,
         *,
         runtime_kill_switch_enabled: bool = False,
+        eligible_production_manifests: int = 0,
     ) -> str:
         if not settings.fox_hunter_auto_submit_live_orders:
             return "live_auto_submit_disabled"
@@ -831,6 +841,16 @@ class PatternEntryScanner:
             return "kill_switch_enabled"
         if runtime_kill_switch_enabled:
             return "runtime_kill_switch_enabled"
+        if settings.ibkr_readonly:
+            return "ibkr_readonly"
+        if not str(settings.ibkr_account or "").strip():
+            return "missing_ibkr_account"
+        if not settings.ibkr_allowed_symbol_set:
+            return "missing_ibkr_allowed_symbols"
+        if int(settings.ibkr_port) not in {7496, 4001}:
+            return "ibkr_live_port_required"
+        if eligible_production_manifests <= 0:
+            return "no_active_production_manifest"
         return "unknown"
 
     def _requires_market_hours(self, module: EntryModule) -> bool:
@@ -910,6 +930,11 @@ class PatternEntryScanner:
                 and requested_execute_orders
                 and not execute_orders
             ),
+            "execution_degraded_to_approval_queue": (
+                module == "fox_hunter"
+                and requested_execute_orders
+                and not execute_orders
+            ),
             "execution_degrade_reason": execution_degrade_reason,
         }
 
@@ -935,6 +960,8 @@ class PatternEntryScanner:
         execute_orders: bool,
         execution_degrade_reason: str | None,
     ) -> str | None:
+        if module == "fox_hunter" and requested_execute_orders and not execute_orders:
+            return execution_degrade_reason or "needs_human_signal_approval"
         if module != "laboratory" or execute_orders:
             return None
         if execution_degrade_reason:
@@ -1976,12 +2003,8 @@ class PatternEntryScanner:
         settings = self.settings
         assert settings is not None
         if module == "fox_hunter":
-            status = (
-                SignalStatus.LIVE_APPROVED
-                if settings.live_armed and execute_orders
-                else SignalStatus.PENDING_HUMAN_APPROVAL
-            )
-            human_approved = status == SignalStatus.LIVE_APPROVED
+            status = SignalStatus.PENDING_HUMAN_APPROVAL
+            human_approved = False
         else:
             status = SignalStatus.WATCHLIST if match.get("near_miss") else SignalStatus.PAPER_APPROVED
             human_approved = False if match.get("near_miss") else execute_orders
@@ -2042,11 +2065,23 @@ class PatternEntryScanner:
         )
         if no_order_reason and execution_outcome is None:
             execution_outcome = {
-                "status": "no_order_shadow_observation",
+                "status": (
+                    "pending_human_signal_approval"
+                    if module == "fox_hunter"
+                    else "no_order_shadow_observation"
+                ),
                 "reason_code": no_order_reason,
-                "reason": "Lab did not submit an IBKR Paper order for this signal.",
+                "reason": (
+                    "Fox Hunter requires explicit human approval before live submission."
+                    if module == "fox_hunter"
+                    else "Lab did not submit an IBKR Paper order for this signal."
+                ),
                 "retryable": False,
-                "next_action": "collect_shadow_outcome",
+                "next_action": (
+                    "review_and_approve_signal"
+                    if module == "fox_hunter"
+                    else "collect_shadow_outcome"
+                ),
             }
         elif no_order_reason and execution_outcome is not None:
             execution_outcome["reason_code"] = no_order_reason

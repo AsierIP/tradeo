@@ -2506,6 +2506,55 @@ def test_fox_hunter_ignores_lab_patterns_and_uses_production_only() -> None:
     assert signal.metadata_json["entry_module"] == "fox_hunter"
 
 
+def test_fox_hunter_execute_orders_requires_second_phase_human_approval() -> None:
+    db = session_factory()
+    provider = FixtureProvider("FOXL")
+    production = add_pattern(db, provider, status=DiscoveredPatternStatus.PRODUCTION)
+    production.metrics_json = {
+        **(production.metrics_json or {}),
+        "production_manifest": build_production_manifest(
+            production,
+            reviewer="test_director",
+            evidence_packet=production_gate_evidence_packet(),
+        ),
+    }
+    db.add(production)
+    db.commit()
+
+    result = scanner(
+        provider,
+        trading_mode="live",
+        live_trading_enabled=True,
+        live_trading_confirmation_value="I_ACCEPT_LIVE_MARKET_RISK",
+        live_execution_disclaimer_confirmed=True,
+        live_armed_at="2026-06-18T10:00:00+00:00",
+        fox_hunter_auto_submit_live_orders=True,
+        ibkr_readonly=False,
+        ibkr_account="DU12345",
+        ibkr_allowed_symbols="FOXL",
+        ibkr_port=4001,
+    ).scan(
+        db,
+        module="fox_hunter",
+        symbols=[provider.symbol],
+        store_signals=True,
+        execute_orders=True,
+    )
+
+    assert result["requested_execute_orders"] is True
+    assert result["execute_orders"] is False
+    assert result["execution_degraded_to_approval_queue"] is True
+    assert result["execution_degrade_reason"] == "needs_human_signal_approval"
+    assert result["orders_submitted"] == 0
+    signal = db.get(Signal, result["signal_ids"][0])
+    assert signal.status == SignalStatus.PENDING_HUMAN_APPROVAL
+    assert signal.human_approved is False
+    assert signal.metadata_json["order_decision"]["submitted_to_broker"] is False
+    assert signal.metadata_json["order_decision"]["no_order_reason"] == "needs_human_signal_approval"
+    assert signal.metadata_json["execution_outcome"]["status"] == "pending_human_signal_approval"
+    assert db.query(Trade).count() == 0
+
+
 def test_laboratory_refuses_live_port_execution() -> None:
     db = session_factory()
     provider = FixtureProvider()

@@ -599,10 +599,25 @@ def _apply_fill_records(trade: Trade, records: list[dict[str, Any]], now: dateti
             trade.exit_price = exit_price
             sign = -1.0 if str(trade.side or "").lower().strip() == "short" else 1.0
             entry_price = float(entry["avg_price"])
-            gross_pnl = (exit_price - entry_price) * sign * abs(float(trade.qty or 0))
+            executed_qty = min(
+                abs(float(trade.qty or 0.0)),
+                abs(float(entry["qty"])),
+                abs(float(exit_leg["qty"])),
+            )
+            metadata["executed_qty_for_pnl"] = round(executed_qty, 6)
+            if executed_qty < abs(float(trade.qty or 0.0)):
+                metadata["partial_fill_close"] = True
+                metadata["requested_qty"] = round(abs(float(trade.qty or 0.0)), 6)
+            else:
+                metadata.pop("partial_fill_close", None)
+            gross_pnl = (exit_price - entry_price) * sign * executed_qty
             risk_per_share = abs(float(trade.entry or 0.0) - float(trade.stop or 0.0))
             trade.pnl_usd = round(gross_pnl, 6)
-            trade.r_multiple = round(gross_pnl / (risk_per_share * abs(float(trade.qty or 0))), 6) if risk_per_share > 0 and trade.qty else 0.0
+            trade.r_multiple = (
+                round(gross_pnl / (risk_per_share * executed_qty), 6)
+                if risk_per_share > 0 and executed_qty > 0
+                else 0.0
+            )
             opened_at = _parse_ts(trade.opened_at)
             closed_at = _parse_ts(trade.closed_at)
             metadata["holding_period_seconds"] = (

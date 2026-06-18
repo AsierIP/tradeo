@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 
+from tradeo.research.cluster_research_engine import ClusterResearchEngine
 from tradeo.research.reward_risk_analyzer import RewardRiskAnalyzer
 from tradeo.research.types import ForwardOutcome, WindowSample
 
@@ -140,3 +141,43 @@ def test_all_skipped_signals_yield_zero_sample_count() -> None:
     assert metrics["expectancy_r"] == 0.0
     assert metrics["win_rate"] == 0.0
     assert metrics["profit_factor"] == 0.0
+
+
+def test_cluster_split_metrics_do_not_count_skips_as_zero_r() -> None:
+    winner = _sample([130.0], [99.0], [130.0])
+    loser = _sample([104.0], [90.0], [90.0])
+    skipped = _sample([151.0], [149.0], [150.0], opens=[140.0])
+
+    metrics = ClusterResearchEngine._split_metrics([winner, loser, skipped], "long", 3.0)
+
+    assert metrics["sample_count"] == 2
+    assert metrics["signal_count"] == 3
+    assert metrics["skipped_count"] == 1
+    assert metrics["skip_rate"] == 0.33333
+    assert metrics["skip_reason_counts"] == {"gapped_past_target": 1}
+    assert metrics["expectancy_r"] == 1.0
+    assert metrics["win_rate"] == 0.5
+
+
+def test_quant_validation_metrics_do_not_count_skips_as_unique_events() -> None:
+    winner = _sample([130.0], [99.0], [130.0])
+    loser = _sample([104.0], [90.0], [90.0])
+    skipped = _sample([151.0], [149.0], [150.0], opens=[140.0])
+    for index, sample in enumerate((winner, loser, skipped), start=1):
+        sample.symbol = f"TST{index}"
+        sample.end = f"2024-01-{20 + index:02d}"
+        sample.outcome.forward_end = f"2024-01-{25 + index:02d}"
+
+    metrics = ClusterResearchEngine(quant_bootstrap_draws=100)._quant_validation_metrics(
+        [winner, loser, skipped],
+        side="long",
+        rr=3.0,
+    )
+
+    assert metrics["n_raw"] == 3
+    assert metrics["signal_count"] == 3
+    assert metrics["skipped_count"] == 1
+    assert metrics["skip_rate"] == 0.33333
+    assert metrics["skip_reason_counts"] == {"gapped_past_target": 1}
+    assert metrics["n_unique"] == 2
+    assert metrics["expectancy_r_weighted"] == 1.0

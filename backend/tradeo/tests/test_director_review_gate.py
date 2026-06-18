@@ -519,6 +519,55 @@ def test_director_review_gate_ranks_entry_variant_and_regime_buckets() -> None:
     )
 
 
+def test_director_review_gate_bucket_breakdowns_rank_execution_adjusted_net_r() -> None:
+    db = session_factory()
+    pattern = add_pattern(db)
+    for index in range(2):
+        add_closed_lab_trade(
+            db,
+            pattern,
+            index,
+            r_multiple=0.5,
+            entry_variant_id="gross_winner_costly",
+            regime_key="market_up",
+            trade_metadata={"commission": 0.8},
+        )
+    for index in range(2, 4):
+        add_closed_lab_trade(
+            db,
+            pattern,
+            index,
+            r_multiple=0.2,
+            entry_variant_id="modest_net_winner",
+            regime_key="market_sideways",
+            trade_metadata={"commission": 0.0},
+        )
+
+    DirectorReviewGate(
+        min_closed_lab_trades=4,
+        min_effective_lab_trades=4,
+        min_lab_symbols=1,
+        min_lab_trading_days=1,
+        min_baseline_edge_r=-1.0,
+        min_lab_profit_factor=0.1,
+        min_lab_expectancy_r=-1.0,
+        posterior_min_probability=0.0,
+        sequential_evaluation_enabled=False,
+    ).refresh(db)
+    db.refresh(pattern)
+    lab_execution = pattern.metrics_json["lab_execution"]
+
+    costly = lab_execution["by_entry_variant"]["gross_winner_costly"]
+    modest = lab_execution["by_entry_variant"]["modest_net_winner"]
+    assert costly["r_basis"] == "execution_adjusted_net_r_when_available"
+    assert costly["gross_expectancy_r"] == 0.5
+    assert costly["expectancy_r"] == -0.3
+    assert modest["gross_expectancy_r"] == 0.2
+    assert modest["expectancy_r"] == 0.2
+    assert lab_execution["best_entry_variant"]["key"] == "modest_net_winner"
+    assert lab_execution["worst_entry_variant"]["key"] == "gross_winner_costly"
+
+
 def test_director_review_gate_excludes_shadow_near_miss_and_degraded_fallback() -> None:
     db = session_factory()
     pattern = add_pattern(db)

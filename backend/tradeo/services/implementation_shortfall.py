@@ -31,6 +31,7 @@ EXECUTION_ADJUSTED_R_METHOD = "realized_gross_r_minus_commission_v2"
 __all__ = [
     "EXECUTION_ADJUSTED_R_METHOD",
     "trade_slippage_r",
+    "trade_execution_adjusted_r",
     "pattern_slippage_summary",
     "execution_adjusted_r_summary",
 ]
@@ -142,10 +143,49 @@ def _commission_r(trade: Trade) -> float | None:
         return None
     theoretical_entry = float(trade.entry or 0.0)
     risk = abs(theoretical_entry - float(trade.stop or 0.0))
-    qty = abs(int(trade.qty or 0))
+    qty = _executed_qty_for_costs(trade)
     if risk <= 0 or qty <= 0:
         return None
     return abs(commission) / (risk * qty)
+
+
+def _executed_qty_for_costs(trade: Trade) -> float:
+    metadata = trade.metadata_json or {}
+    explicit = _first_float(metadata, ("executed_qty_for_pnl",))
+    if explicit is not None and explicit > 0:
+        return abs(explicit)
+    entry_qty = _first_float(metadata, ("entry_fill_qty",))
+    exit_qty = _first_float(metadata, ("exit_fill_qty",))
+    requested = abs(float(trade.qty or 0.0))
+    filled = [abs(qty) for qty in (entry_qty, exit_qty) if qty is not None and qty > 0]
+    if requested > 0:
+        filled.append(requested)
+    return min(filled) if filled else 0.0
+
+
+def trade_execution_adjusted_r(trade: Trade) -> dict[str, Any] | None:
+    """Net executable R for one real-fill trade, or None when cost coverage is incomplete."""
+
+    shortfall = trade_slippage_r(trade)
+    commission_r = _commission_r(trade)
+    if shortfall is None or commission_r is None:
+        return None
+    gross_r = float(trade.r_multiple or 0.0)
+    slippage_r = float(shortfall["slippage_r"])
+    commission_r_value = float(commission_r)
+    expected_gross_r = gross_r + slippage_r
+    net_r = gross_r - commission_r_value
+    return {
+        "trade_id": trade.id,
+        "symbol": trade.symbol,
+        "expected_gross_r": round(float(expected_gross_r), 6),
+        "gross_r": round(gross_r, 6),
+        "slippage_r": round(slippage_r, 6),
+        "commission_r": round(commission_r_value, 6),
+        "net_r": round(float(net_r), 6),
+        "gross_delta_vs_expected_r": round(float(gross_r - expected_gross_r), 6),
+        "net_delta_vs_expected_r": round(float(net_r - expected_gross_r), 6),
+    }
 
 
 def execution_adjusted_r_summary(trades: list[Trade]) -> dict[str, Any]:
@@ -171,24 +211,9 @@ def execution_adjusted_r_summary(trades: list[Trade]) -> dict[str, Any]:
             missing_commission += 1
         if shortfall is None or commission_r is None:
             continue
-        gross_r = float(trade.r_multiple or 0.0)
-        slippage_r = float(shortfall["slippage_r"])
-        commission_r_value = float(commission_r)
-        expected_gross_r = gross_r + slippage_r
-        net_r = gross_r - commission_r_value
-        rows.append(
-            {
-                "trade_id": trade.id,
-                "symbol": trade.symbol,
-                "expected_gross_r": round(float(expected_gross_r), 6),
-                "gross_r": round(gross_r, 6),
-                "slippage_r": round(slippage_r, 6),
-                "commission_r": round(commission_r_value, 6),
-                "net_r": round(float(net_r), 6),
-                "gross_delta_vs_expected_r": round(float(gross_r - expected_gross_r), 6),
-                "net_delta_vs_expected_r": round(float(net_r - expected_gross_r), 6),
-            }
-        )
+        adjusted = trade_execution_adjusted_r(trade)
+        if adjusted is not None:
+            rows.append(adjusted)
 
     values = np.asarray([row["net_r"] for row in rows], dtype=float)
     if values.size == 0:

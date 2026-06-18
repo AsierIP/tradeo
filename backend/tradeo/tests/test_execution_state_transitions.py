@@ -21,6 +21,8 @@ from sqlalchemy.orm import sessionmaker
 from tradeo.core.config import Settings
 from tradeo.db.models import (
     AuditLog,
+    DiscoveredPattern,
+    DiscoveredPatternStatus,
     Signal,
     SignalStatus,
     Trade,
@@ -41,7 +43,11 @@ from tradeo.services.ibkr_broker import (
     _operational_bracket_prices,
     _parent_order_acknowledged,
 )
+from tradeo.services.implementation_shortfall import trade_execution_adjusted_r
+from tradeo.modules.fox_hunter.production_manifest import build_production_manifest
 from tradeo.services.paper_broker import PaperBroker
+from tradeo.routers.risk import set_kill_switch
+from tradeo.schemas import KillSwitchRequest
 from tradeo.services.reconciliation import ReconciliationService
 from tradeo.services.system_controls import (
     activate_runtime_kill_switch,
@@ -77,6 +83,32 @@ def add_signal(db, *, status: SignalStatus, qty: int = 5, symbol: str = "AAPL") 
     db.commit()
     db.refresh(signal)
     return signal
+
+
+def add_production_pattern(db, *, active_manifest: bool = True) -> DiscoveredPattern:
+    pattern = DiscoveredPattern(
+        pattern_key="FOX_PATTERN_1",
+        name="FOX_PATTERN_1",
+        status=DiscoveredPatternStatus.PRODUCTION,
+        promotion_status=DiscoveredPatternStatus.PRODUCTION.value,
+        validation_passed=True,
+        expectancy_r=0.25,
+        profit_factor=1.8,
+        best_expectancy_r=0.4,
+        best_profit_factor=2.0,
+    )
+    db.add(pattern)
+    db.flush()
+    if active_manifest:
+        manifest = build_production_manifest(
+            pattern,
+            reviewer="test-director",
+            evidence_packet={"id": "packet-1", "hash": "abc123"},
+        )
+        pattern.metrics_json = {"production_manifest": manifest}
+    db.commit()
+    db.refresh(pattern)
+    return pattern
 
 
 def add_open_trade(
@@ -1229,6 +1261,67 @@ def test_reconciliation_ingests_exit_fill_and_closes_without_missing_broker_fals
     assert trade.metadata_json["commission_usd"] == 0.7
 
 
+def test_reconciliation_closed_partial_entry_uses_executed_quantity_for_pnl_and_r() -> None:
+    db = session_factory()
+    trade = add_open_trade(
+        db,
+        symbol="AAPL",
+        qty=10,
+        broker_order_id="101",
+        metadata={
+            "ibkr_mode": "paper",
+            "order_ids": [101, 102, 103],
+            "perm_ids": [1001, 1002, 1003],
+            "parent_order_id": 101,
+        },
+    )
+    fills = [
+        {
+            "symbol": "AAPL",
+            "side": "BUY",
+            "quantity": 5.0,
+            "price": 10.0,
+            "order_id": 101,
+            "perm_id": 1001,
+            "exec_id": "partial-entry-fill-1",
+            "execution_time": "2026-06-01T15:00:12+00:00",
+            "commission": 0.25,
+            "commission_currency": "USD",
+        },
+        {
+            "symbol": "AAPL",
+            "side": "SELL",
+            "quantity": 5.0,
+            "price": 14.0,
+            "order_id": 102,
+            "perm_id": 1002,
+            "exec_id": "partial-exit-fill-1",
+            "execution_time": "2026-06-01T16:30:00+00:00",
+            "commission": 0.25,
+            "commission_currency": "USD",
+        },
+    ]
+    broker = FakeBroker(positions=[], open_orders=[], fills=fills)
+
+    result = reconciliation_service(broker).reconcile(db)
+    db.refresh(trade)
+
+    assert result["trades_closed_from_fills"] == 1
+    assert trade.status == TradeStatus.CLOSED
+    assert trade.pnl_usd == 20.0
+    assert trade.r_multiple == 4.0
+    assert trade.metadata_json["entry_fill_qty"] == 5.0
+    assert trade.metadata_json["exit_fill_qty"] == 5.0
+    assert trade.metadata_json["executed_qty_for_pnl"] == 5.0
+    assert trade.metadata_json["requested_qty"] == 10.0
+    assert trade.metadata_json["partial_fill_close"] is True
+    assert trade.metadata_json["commission_usd"] == 0.5
+    adjusted = trade_execution_adjusted_r(trade)
+    assert adjusted is not None
+    assert adjusted["commission_r"] == 0.1
+    assert adjusted["net_r"] == 3.9
+
+
 def test_reconciliation_matches_repaired_exit_fill_metadata() -> None:
     db = session_factory()
     trade = add_open_trade(
@@ -1309,6 +1402,73 @@ def test_active_kill_switch_blocks_ibkr_order_submission() -> None:
 
     assert db.query(Trade).count() == 0
     assert signal.status == SignalStatus.PAPER_APPROVED
+
+
+def live_order_settings(**overrides) -> Settings:
+    values = {
+        "trading_mode": "live",
+        "live_trading_enabled": True,
+        "live_trading_confirmation_value": "I_ACCEPT_LIVE_MARKET_RISK",
+        "ibkr_readonly": False,
+        "ibkr_account": "DU12345",
+        "ibkr_allowed_symbols": "AAPL",
+    }
+    values.update(overrides)
+    return Settings(**values)
+
+
+def test_live_ibkr_submission_rejects_paper_approved_signal_before_connect() -> None:
+    db = session_factory()
+    signal = add_signal(db, status=SignalStatus.PAPER_APPROVED)
+
+    with pytest.raises(IBKRSafetyError, match="live_approved"):
+        IBKRBroker(settings=live_order_settings()).submit_signal_bracket(db, signal)
+
+    assert db.query(Trade).count() == 0
+
+
+def test_live_ibkr_submission_rejects_non_fox_hunter_signal_before_connect() -> None:
+    db = session_factory()
+    signal = add_signal(db, status=SignalStatus.LIVE_APPROVED)
+
+    with pytest.raises(IBKRSafetyError, match="Fox Hunter production signal"):
+        IBKRBroker(settings=live_order_settings()).submit_signal_bracket(db, signal)
+
+    assert db.query(Trade).count() == 0
+
+
+def test_live_ibkr_submission_rejects_fox_signal_without_active_production_manifest() -> None:
+    db = session_factory()
+    pattern = add_production_pattern(db, active_manifest=False)
+    signal = add_signal(db, status=SignalStatus.LIVE_APPROVED)
+    signal.metadata_json = {"entry_module": "fox_hunter", "pattern_id": pattern.id}
+    db.add(signal)
+    db.commit()
+
+    with pytest.raises(IBKRSafetyError, match="active production manifest"):
+        IBKRBroker(settings=live_order_settings()).submit_signal_bracket(db, signal)
+
+    assert db.query(Trade).count() == 0
+
+
+@pytest.mark.parametrize(
+    ("settings_override", "error"),
+    [
+        ({"ibkr_account": ""}, "explicit TRADEO_IBKR_ACCOUNT"),
+        ({"ibkr_allowed_symbols": ""}, "non-empty TRADEO_IBKR_ALLOWED_SYMBOLS"),
+    ],
+)
+def test_live_ibkr_submission_requires_explicit_account_and_allowlist(
+    settings_override: dict,
+    error: str,
+) -> None:
+    db = session_factory()
+    signal = add_signal(db, status=SignalStatus.LIVE_APPROVED)
+
+    with pytest.raises(IBKRSafetyError, match=error):
+        IBKRBroker(settings=live_order_settings(**settings_override)).submit_signal_bracket(db, signal)
+
+    assert db.query(Trade).count() == 0
 
 
 def _fake_ib_trade(order_id: int, perm_id: int | None, status: str = "PendingSubmit"):
@@ -1483,6 +1643,26 @@ def test_kill_switch_activation_is_idempotent_and_audited() -> None:
     ]
     assert len(activations) == 2
     assert activations[1].details_json["already_active"] is True
+
+
+def test_risk_kill_switch_endpoint_updates_runtime_switch_immediately() -> None:
+    db = session_factory()
+
+    enabled = set_kill_switch(
+        KillSwitchRequest(enabled=True, reason="manual emergency"),
+        "admin",
+        db,
+    )
+    assert enabled["runtime_value"] is True
+    assert runtime_kill_switch_active(db) is True
+
+    disabled = set_kill_switch(
+        KillSwitchRequest(enabled=False, reason="manual clear"),
+        "admin",
+        db,
+    )
+    assert disabled["runtime_value"] is False
+    assert runtime_kill_switch_active(db) is False
 
 
 def test_kill_switch_deactivation_requires_explicit_actor_and_is_audited() -> None:

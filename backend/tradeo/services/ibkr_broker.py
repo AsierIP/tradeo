@@ -13,7 +13,16 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from tradeo.core.config import Settings, get_settings
-from tradeo.db.models import AuditLog, Signal, SignalStatus, Trade, TradeStatus
+from tradeo.db.models import (
+    AuditLog,
+    DiscoveredPattern,
+    DiscoveredPatternStatus,
+    Signal,
+    SignalStatus,
+    Trade,
+    TradeStatus,
+)
+from tradeo.modules.fox_hunter.production_manifest import production_manifest_is_active
 from tradeo.services.evidence import EvidenceQuality, EvidenceType
 
 
@@ -299,10 +308,37 @@ class IBKRBroker:
                 raise IBKRSafetyError("TRADEO_IBKR_READONLY=true blocks order submission")
             if self.settings.trading_mode == "research":
                 raise IBKRSafetyError("research mode blocks order submission")
-            live_port = int(self.settings.ibkr_port) in {7496, 4001}
-            if self.settings.trading_mode == "live" or live_port:
+            if self._targets_live_execution():
                 if not self.settings.live_armed:
                     raise IBKRSafetyError("live IBKR execution requires live_armed=true")
+                if signal.status != SignalStatus.LIVE_APPROVED:
+                    raise IBKRSafetyError("live IBKR execution requires signal status live_approved")
+                if not str(self.settings.ibkr_account or "").strip():
+                    raise IBKRSafetyError("live IBKR execution requires explicit TRADEO_IBKR_ACCOUNT")
+                if not self.settings.ibkr_allowed_symbol_set:
+                    raise IBKRSafetyError("live IBKR execution requires non-empty TRADEO_IBKR_ALLOWED_SYMBOLS")
+
+    def _targets_live_execution(self) -> bool:
+        live_port = int(self.settings.ibkr_port) in {7496, 4001}
+        return bool(self.settings.trading_mode == "live" or live_port)
+
+    def _validate_live_production_signal(self, db: Session, signal: Signal) -> None:
+        if not self._targets_live_execution():
+            return
+        metadata = signal.metadata_json or {}
+        if str(metadata.get("entry_module") or "") != "fox_hunter":
+            raise IBKRSafetyError("live IBKR execution requires a Fox Hunter production signal")
+        try:
+            pattern_id = int(metadata.get("pattern_id") or 0)
+        except (TypeError, ValueError) as exc:
+            raise IBKRSafetyError("live IBKR execution requires signal.metadata_json.pattern_id") from exc
+        pattern = db.get(DiscoveredPattern, pattern_id)
+        if pattern is None:
+            raise IBKRSafetyError("live IBKR execution requires an existing discovered pattern")
+        if pattern.status != DiscoveredPatternStatus.PRODUCTION:
+            raise IBKRSafetyError("live IBKR execution requires pattern status production")
+        if not production_manifest_is_active(pattern):
+            raise IBKRSafetyError("live IBKR execution requires an active production manifest")
 
     def preview_signal_order(self, signal: Signal) -> dict[str, Any]:
         """Run an IBKR WhatIf preview for the parent limit order without submitting it."""
@@ -359,6 +395,7 @@ class IBKRBroker:
         if runtime_kill_switch_active(db):
             raise IBKRSafetyError("runtime kill switch is active (see system_controls)")
         self._validate_signal_for_order(signal, require_execution_enabled=True)
+        self._validate_live_production_signal(db, signal)
         ib = self._connect()
         try:
             contract = self._stock_contract(signal.symbol)

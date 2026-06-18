@@ -26,6 +26,7 @@ from tradeo.services.execution_quality import (
 from tradeo.services.implementation_shortfall import (
     execution_adjusted_r_summary,
     pattern_slippage_summary,
+    trade_execution_adjusted_r,
 )
 from tradeo.services.evidence import (
     PAPER_FILL_EVIDENCE_TYPES,
@@ -443,18 +444,29 @@ class DirectorReviewGate:
 
     @staticmethod
     def _bucket_metrics(trades: list[Trade], key_fn: Callable[[Trade], str]) -> dict[str, dict[str, Any]]:
-        buckets: dict[str, list[float]] = {}
+        buckets: dict[str, list[dict[str, float]]] = {}
         for trade in trades:
-            buckets.setdefault(key_fn(trade), []).append(float(trade.r_multiple or 0.0))
+            gross_r = float(trade.r_multiple or 0.0)
+            adjusted = trade_execution_adjusted_r(trade)
+            row = {"gross_r": gross_r, "net_r": gross_r}
+            if adjusted is not None:
+                row["net_r"] = float(adjusted["net_r"])
+            buckets.setdefault(key_fn(trade), []).append(row)
         result: dict[str, dict[str, Any]] = {}
-        for key, values in sorted(buckets.items()):
-            wins = [value for value in values if value > 0]
-            losses = [abs(value) for value in values if value < 0]
+        for key, rows in sorted(buckets.items()):
+            gross_values = [row["gross_r"] for row in rows]
+            net_values = [row["net_r"] for row in rows]
+            wins = [value for value in net_values if value > 0]
+            losses = [abs(value) for value in net_values if value < 0]
             loss = sum(losses)
             result[key] = {
-                "closed_trades": len(values),
-                "expectancy_r": round(sum(values) / len(values), 4) if values else 0.0,
-                "win_rate": round(len(wins) / len(values), 4) if values else 0.0,
+                "closed_trades": len(rows),
+                "r_basis": "execution_adjusted_net_r_when_available",
+                "expectancy_r": round(sum(net_values) / len(net_values), 4) if net_values else 0.0,
+                "gross_expectancy_r": round(sum(gross_values) / len(gross_values), 4)
+                if gross_values
+                else 0.0,
+                "win_rate": round(len(wins) / len(net_values), 4) if net_values else 0.0,
                 "profit_factor": round(sum(wins) / loss, 4) if loss > 0 else round(sum(wins), 4),
             }
         return result

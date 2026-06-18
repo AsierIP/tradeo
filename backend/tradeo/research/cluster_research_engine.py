@@ -1702,13 +1702,30 @@ class ClusterResearchEngine:
         *,
         cost_multiplier: float = 1.0,
     ) -> dict[str, float | int]:
-        outcomes = np.asarray(
-            [RewardRiskAnalyzer._simulate_sample(s, side, rr, cost_multiplier=cost_multiplier)[0] for s in samples],
-            dtype=float,
-        )
+        outcomes_list: list[float] = []
+        skipped_count = 0
+        skip_reason_counts: dict[str, int] = {}
+        for sample in samples:
+            detail = RewardRiskAnalyzer._simulate_sample_detail(
+                sample,
+                side,
+                rr,
+                cost_multiplier=cost_multiplier,
+            )
+            if str(detail.get("status", "ok")) not in ("ok", "fallback"):
+                skipped_count += 1
+                reason = str(detail.get("reason") or "unknown")
+                skip_reason_counts[reason] = skip_reason_counts.get(reason, 0) + 1
+                continue
+            outcomes_list.append(RewardRiskAnalyzer._tuple_from_detail(detail)[0])
+        outcomes = np.asarray(outcomes_list, dtype=float)
         if len(outcomes) == 0:
             return {
                 "sample_count": 0,
+                "signal_count": len(samples),
+                "skipped_count": skipped_count,
+                "skip_rate": round(skipped_count / len(samples), 5) if samples else 0.0,
+                "skip_reason_counts": skip_reason_counts,
                 "expectancy_r": 0.0,
                 "profit_factor": 0.0,
                 "win_rate": 0.0,
@@ -1719,6 +1736,10 @@ class ClusterResearchEngine:
         pf = float(wins.sum() / abs(losses.sum())) if len(losses) else float(wins.sum() or 0.0)
         return {
             "sample_count": int(len(outcomes)),
+            "signal_count": int(len(samples)),
+            "skipped_count": skipped_count,
+            "skip_rate": round(skipped_count / len(samples), 5) if samples else 0.0,
+            "skip_reason_counts": skip_reason_counts,
             "expectancy_r": round(float(np.mean(outcomes)), 5),
             "profit_factor": round(pf, 5),
             "win_rate": round(float(np.mean(outcomes > 0)), 5),
@@ -2367,19 +2388,40 @@ class ClusterResearchEngine:
             return empty
         spans: list[tuple[int, int]] = []
         horizons: list[int] = []
+        tradable_samples: list[WindowSample] = []
+        tradable_outcomes: list[float] = []
+        skipped_count = 0
+        skip_reason_counts: dict[str, int] = {}
         for sample in samples:
+            detail = RewardRiskAnalyzer._simulate_sample_detail(sample, side, rr)
+            if str(detail.get("status", "ok")) not in ("ok", "fallback"):
+                skipped_count += 1
+                reason = str(detail.get("reason") or "unknown")
+                skip_reason_counts[reason] = skip_reason_counts.get(reason, 0) + 1
+                continue
+            tradable_samples.append(sample)
+            tradable_outcomes.append(RewardRiskAnalyzer._tuple_from_detail(detail)[0])
             entry_day = pd.Timestamp(sample.end).toordinal() + 1
             exit_day = max(entry_day, pd.Timestamp(sample.outcome.forward_end).toordinal())
             spans.append((entry_day, exit_day))
             if sample.outcome.forward_returns:
                 horizons.append(max(int(h) for h in sample.outcome.forward_returns))
+        if not tradable_samples:
+            return {
+                **empty,
+                "n_raw": len(samples),
+                "signal_count": len(samples),
+                "skipped_count": skipped_count,
+                "skip_rate": 1.0,
+                "skip_reason_counts": skip_reason_counts,
+            }
         horizon_bars = max(horizons) if horizons else 10
         starts = np.asarray([s for s, _ in spans], dtype=int)
         ends = np.asarray([e for _, e in spans], dtype=int)
 
         kept: list[int] = []
         by_symbol: dict[str, list[int]] = {}
-        for idx, sample in enumerate(samples):
+        for idx, sample in enumerate(tradable_samples):
             by_symbol.setdefault(sample.symbol, []).append(idx)
         for indices in by_symbol.values():
             idx_arr = np.asarray(indices, dtype=int)
@@ -2387,16 +2429,19 @@ class ClusterResearchEngine:
             kept.extend(int(idx_arr[i]) for i in local_keep)
         kept_arr = np.asarray(sorted(kept), dtype=int)
         if kept_arr.size == 0:
-            return empty
+            return {
+                **empty,
+                "signal_count": len(samples),
+                "skipped_count": skipped_count,
+                "skip_rate": round(skipped_count / len(samples), 5) if samples else 0.0,
+                "skip_reason_counts": skip_reason_counts,
+            }
 
         weights, n_eff = average_uniqueness_weights(starts[kept_arr], ends[kept_arr])
         order = np.argsort(starts[kept_arr], kind="stable")
         kept_sorted = kept_arr[order]
         weights_sorted = weights[order]
-        outcomes = np.asarray(
-            [RewardRiskAnalyzer._simulate_sample(samples[int(i)], side, rr)[0] for i in kept_sorted],
-            dtype=float,
-        )
+        outcomes = np.asarray([tradable_outcomes[int(i)] for i in kept_sorted], dtype=float)
         weight_sum = float(weights_sorted.sum())
         mean_w = float(np.sum(weights_sorted * outcomes) / weight_sum) if weight_sum > 0 else 0.0
         pf_w = weighted_profit_factor(outcomes, weights_sorted)
@@ -2414,6 +2459,10 @@ class ClusterResearchEngine:
         skew, kurt = sample_skew_kurt(outcomes)
         return {
             "n_raw": len(samples),
+            "signal_count": len(samples),
+            "skipped_count": skipped_count,
+            "skip_rate": round(skipped_count / len(samples), 5) if samples else 0.0,
+            "skip_reason_counts": skip_reason_counts,
             "n_unique": int(kept_sorted.size),
             "n_eff": round(float(n_eff), 4),
             "expectancy_r_weighted": round(mean_w, 5),
