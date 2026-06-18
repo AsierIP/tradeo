@@ -117,6 +117,7 @@ def add_pattern(
     provider: FixtureProvider,
     *,
     status: DiscoveredPatternStatus,
+    best_rr: float = 4.0,
 ) -> DiscoveredPattern:
     window = provider.df.iloc[-20:]
     vector, _, _ = PatternEmbeddingEngine().embed(window)
@@ -131,14 +132,14 @@ def add_pattern(
         symbol_count=12,
         year_count=3,
         score=0.9,
-        reward_risk_estimate=4.0,
+        reward_risk_estimate=best_rr,
         expectancy_r=0.4,
         profit_factor=2.1,
         win_rate=0.55,
         stability_score=0.8,
         out_of_sample_expectancy_r=0.3,
         out_of_sample_profit_factor=1.9,
-        best_rr=4.0,
+        best_rr=best_rr,
         validation_passed=True,
         promotion_status=status.value,
         centroid_json=vector.tolist(),
@@ -148,6 +149,29 @@ def add_pattern(
     db.commit()
     db.refresh(pattern)
     return pattern
+
+
+def test_laboratory_matcher_blocks_patterns_below_4r_runtime_floor() -> None:
+    db = session_factory()
+    provider = FixtureProvider()
+    add_pattern(db, provider, status=DiscoveredPatternStatus.LAB_CANDIDATE, best_rr=3.0)
+
+    settings = Settings(
+        discovery_match_complete_bars_only=False,
+        discovery_match_max_patterns=10,
+        discovery_match_max_results=10,
+        discovery_match_ambiguity_hard_gate_enabled=False,
+        entry_gate_enabled=False,
+    )
+    result = NovelPatternMatcher(provider=provider, settings=settings).match_current(
+        db,
+        symbols=[provider.symbol],
+        store=False,
+    )
+
+    assert result["reward_risk_floor"] == 4.0
+    assert result["reward_risk_gate_blocked"] == 1
+    assert result["matches"] == []
 
 
 def production_gate_evidence_packet(

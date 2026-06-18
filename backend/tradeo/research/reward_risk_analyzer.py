@@ -19,20 +19,22 @@ class RewardRiskAnalyzer:
 
     rr_levels: list[float]
     min_samples: int = 100
+    min_selectable_rr: float = 4.0
 
     def analyze(self, samples: list[WindowSample], side: Side) -> dict[str, object]:
         metrics = {self._key(rr): self.metrics_for_rr(samples, side, rr) for rr in self.rr_levels}
         candidates = [
             m
             for m in metrics.values()
-            if float(m["expectancy_r"]) > 0
+            if float(m["rr"]) >= self.min_selectable_rr
+            and float(m["expectancy_r"]) > 0
             and float(m["profit_factor"]) > 1
             and int(m["sample_count"]) >= self.min_samples
         ]
         best = max(
             candidates,
             key=self._edge_score,
-            default=max(metrics.values(), key=self._edge_score) if metrics else {},
+            default={},
         )
         best_rr = float(best.get("rr", 0.0)) if best else 0.0
         return {

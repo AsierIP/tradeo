@@ -37,8 +37,15 @@ class ValidationGate:
         preferred = self._metrics_at_or_above(rr_metrics, s.discovery_candidate_reward_risk)
         premium = self._metrics_at_or_above(rr_metrics, s.discovery_premium_reward_risk)
         minimum = self._metrics_at_or_above(rr_metrics, s.discovery_min_reward_risk)
+        required_runtime_rr = max(4.0, s.discovery_min_reward_risk, s.discovery_premium_reward_risk)
+        required_runtime = self._metrics_at_or_above(rr_metrics, required_runtime_rr)
         preferred_passed = self._quality_pass(preferred, s.discovery_min_expectancy_r, s.discovery_min_profit_factor)
         premium_passed = self._quality_pass(premium, s.discovery_min_expectancy_r, s.discovery_min_profit_factor)
+        required_runtime_passed = self._quality_pass(
+            required_runtime,
+            s.discovery_min_expectancy_r,
+            s.discovery_min_profit_factor,
+        )
         train_sample_count = int(metrics.get("train_sample_count", candidate.sample_count))
 
         quant = metrics.get("quant_validation", {})
@@ -77,7 +84,17 @@ class ValidationGate:
         if best_drawdown > s.discovery_max_drawdown_r:
             reasons.append(f"drawdown excesivo: {best_drawdown:.2f}R > {s.discovery_max_drawdown_r:.2f}R")
         if not minimum or self._finite_float(minimum.get("expectancy_r", 0.0), 0.0) <= 0:
-            warnings.append(f"no demuestra edge positivo en {s.discovery_min_reward_risk:g}R")
+            reasons.append(f"no demuestra edge positivo en {s.discovery_min_reward_risk:g}R")
+        if not required_runtime:
+            reasons.append(f"no hay evidencia R:R runtime minima {required_runtime_rr:g}R")
+        elif not required_runtime_passed:
+            reasons.append(
+                f"edge insuficiente en {required_runtime_rr:g}R: "
+                f"expectancy={self._finite_float(required_runtime.get('expectancy_r', 0.0), 0.0):.2f}R "
+                f"< {s.discovery_min_expectancy_r:.2f}R o PF="
+                f"{self._finite_float(required_runtime.get('profit_factor', 0.0), 0.0):.2f} "
+                f"< {s.discovery_min_profit_factor:.2f}"
+            )
         if float(metrics.get("profit_factor", best_pf)) < s.discovery_min_profit_factor and not preferred_passed:
             warnings.append(
                 f"profit factor insuficiente: {best_pf:.2f} < {s.discovery_min_profit_factor:.2f}"
@@ -318,6 +335,8 @@ class ValidationGate:
         candidate.metrics["validation_passed"] = candidate.validation_passed
         candidate.metrics["preferred_rr_passed"] = preferred_passed
         candidate.metrics["premium_rr_passed"] = premium_passed
+        candidate.metrics["required_runtime_rr"] = required_runtime_rr
+        candidate.metrics["required_runtime_rr_passed"] = required_runtime_passed
         candidate.metrics["execution_promotion_blocked"] = (
             premium_passed or promotion_status in {"lab_candidate", "lab_watchlist", "lab"}
         )

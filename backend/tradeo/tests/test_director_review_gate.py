@@ -55,6 +55,7 @@ def add_closed_lab_trade(
     signal_metadata: dict | None = None,
     trade_metadata: dict | None = None,
     trade_time: datetime | None = None,
+    reward_risk: float = 4.0,
 ) -> None:
     trade_time = trade_time or (
         datetime(2026, 1, 5, 16, 0, tzinfo=timezone.utc) + timedelta(days=index)
@@ -72,8 +73,8 @@ def add_closed_lab_trade(
         side="long",
         entry=10.0,
         stop=9.0,
-        target=14.0,
-        reward_risk=4.0,
+        target=10.0 + reward_risk,
+        reward_risk=reward_risk,
         confidence=0.7,
         composite_score=0.7,
         risk_usd=10.0,
@@ -108,7 +109,7 @@ def add_closed_lab_trade(
             qty=1,
             entry=10.0,
             stop=9.0,
-            target=14.0,
+            target=10.0 + reward_risk,
             status=TradeStatus.CLOSED,
             opened_at=trade_time,
             closed_at=trade_time + timedelta(minutes=30),
@@ -433,6 +434,15 @@ def test_director_review_gate_counts_broker_execution_fill_with_hash() -> None:
     trade = db.query(Trade).one()
 
     assert DirectorReviewGate._counts_as_paper_fill(trade) is True
+
+
+def test_director_review_gate_rejects_sub_4r_paper_fill_evidence() -> None:
+    db = session_factory()
+    pattern = add_pattern(db)
+    add_closed_lab_trade(db, pattern, 0, reward_risk=3.0)
+    trade = db.query(Trade).one()
+
+    assert DirectorReviewGate._counts_as_paper_fill(trade) is False
 
 
 def test_director_review_gate_rejects_shadow_close_provenance() -> None:

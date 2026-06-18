@@ -41,6 +41,8 @@ from tradeo.services.state_policy import REVIEW_TRIGGER_STATES
 
 @dataclass(slots=True)
 class DirectorReviewGate:
+    MIN_PAPER_FILL_REWARD_RISK = 4.0
+
     min_closed_lab_trades: int = 10
     min_lab_symbols: int = 3
     min_lab_trading_days: int = 3
@@ -193,12 +195,17 @@ class DirectorReviewGate:
 
     @staticmethod
     def _counts_as_paper_fill(trade: Trade) -> bool:
+        if trade.signal is None:
+            return False
+        reward_risk = float(trade.signal.reward_risk or 0.0)
+        if reward_risk < DirectorReviewGate.MIN_PAPER_FILL_REWARD_RISK:
+            return False
         metadata = evidence_metadata_with_stored_columns(
             trade.metadata_json or {},
             evidence_type=trade.evidence_type,
             evidence_quality=trade.evidence_quality,
         )
-        signal_metadata = trade.signal.metadata_json if trade.signal is not None else {}
+        signal_metadata = trade.signal.metadata_json or {}
         return is_director_review_paper_fill_evidence(
             metadata,
             signal_metadata=signal_metadata,

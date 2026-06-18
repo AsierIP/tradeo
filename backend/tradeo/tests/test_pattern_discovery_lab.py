@@ -448,7 +448,7 @@ def test_cluster_research_persists_conformal_match_threshold() -> None:
     assert report["target_recall"] == 0.9
 
 
-def test_cluster_engine_selects_best_rr_from_train_only() -> None:
+def test_cluster_engine_does_not_select_holdout_or_unprofitable_rr() -> None:
     train = [
         _research_sample(i, vector_value=0.0, highs=[121.0], lows=[99.0], closes=[100.0])
         for i in range(20)
@@ -466,7 +466,7 @@ def test_cluster_engine_selects_best_rr_from_train_only() -> None:
     ).discover(train + holdout)
     assert candidates
     candidate = max(candidates, key=lambda c: c.sample_count)
-    assert candidate.metrics["best_rr"] == 2.0
+    assert candidate.metrics["best_rr"] == 0.0
     assert candidate.metrics["train_sample_count"] == 20
     assert candidate.metrics["holdout_sample_count"] == 20
 
@@ -488,7 +488,7 @@ def test_validation_gate_rejects_underpowered_candidate() -> None:
         assert candidate.validation_reasons
 
 
-def test_validation_gate_allows_edge_below_4r_as_watchlist() -> None:
+def test_validation_gate_rejects_edge_below_4r() -> None:
     candidate = ClusterCandidate(
         pattern_key="x",
         name="x",
@@ -523,8 +523,9 @@ def test_validation_gate_allows_edge_below_4r_as_watchlist() -> None:
         examples=[],
     )
     evaluated = ValidationGate().evaluate(candidate)
-    assert evaluated.validation_passed
-    assert evaluated.metrics["promotion_status"] == "lab_watchlist"
+    assert not evaluated.validation_passed
+    assert evaluated.metrics["promotion_status"] == "rejected"
+    assert any("4" in reason for reason in evaluated.validation_reasons)
 
 
 def test_validation_gate_rejects_nonfinite_core_metrics_fail_closed() -> None:

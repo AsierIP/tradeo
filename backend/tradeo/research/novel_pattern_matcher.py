@@ -99,6 +99,7 @@ class NovelPatternMatcher:
         )
         matches: list[dict[str, Any]] = []
         regime_gate_blocked = 0
+        reward_risk_gate_blocked = 0
         engine = PatternEmbeddingEngine()
         contract_gamma = (
             float(settings.discovery_match_temporal_gamma)
@@ -214,9 +215,18 @@ class NovelPatternMatcher:
                         features["avg_dollar_volume"] = float(
                             (df_for_match["close"] * df_for_match["volume"]).tail(20).mean()
                         )
-                        reward_risk = float(
-                            pattern.best_rr or settings.unvalidated_pattern_min_reward_risk
-                        )
+                        reward_risk_floor = self._runtime_reward_risk_floor(settings)
+                        reward_risk = float(pattern.best_rr or settings.unvalidated_pattern_min_reward_risk)
+                        if not math.isfinite(reward_risk) or reward_risk < reward_risk_floor:
+                            reward_risk_gate_blocked += 1
+                            logger.info(
+                                "reward:risk hard gate blocked {} on {}: {:.2f} < {:.2f}",
+                                pattern.name,
+                                symbol,
+                                reward_risk,
+                                reward_risk_floor,
+                            )
+                            continue
                         base_score = round(
                             similarity * 0.55 + pattern.score * 0.30 + pattern.stability_score * 0.15,
                             6,
@@ -364,10 +374,21 @@ class NovelPatternMatcher:
             "benchmark_regime": benchmark_regime,
             "regime_hard_gate_enabled": bool(settings.market_regime_hard_gate_enabled),
             "regime_gate_blocked": regime_gate_blocked,
+            "reward_risk_floor": self._runtime_reward_risk_floor(settings),
+            "reward_risk_gate_blocked": reward_risk_gate_blocked,
             "ambiguity_hard_gate_enabled": bool(settings.discovery_match_ambiguity_hard_gate_enabled),
             "ambiguity_gate_blocked": ambiguity_gate_blocked,
             "generated_at": datetime.now(timezone.utc).isoformat(),
         }
+
+    @staticmethod
+    def _runtime_reward_risk_floor(settings: Settings) -> float:
+        return max(
+            4.0,
+            float(settings.discovery_min_reward_risk),
+            float(settings.discovery_premium_reward_risk),
+            float(settings.unvalidated_pattern_min_reward_risk),
+        )
 
     def _result_limit(
         self,

@@ -69,7 +69,7 @@ def test_expectancy_profit_factor_and_drawdown() -> None:
     assert metrics["max_drawdown_r"] == 1.0
 
 
-def test_best_rr_uses_edge_score_not_highest_rr() -> None:
+def test_best_rr_ignores_sub_4r_and_unprofitable_4r_candidates() -> None:
     samples = [
         _sample([125.0], [99.0], [100.0]),
         _sample([125.0], [99.0], [100.0]),
@@ -77,7 +77,27 @@ def test_best_rr_uses_edge_score_not_highest_rr() -> None:
         _sample([151.0], [90.0], [151.0]),
     ]
     result = RewardRiskAnalyzer([2.0, 5.0], min_samples=1).analyze(samples, "long")
-    assert result["best_rr"] == 2.0
+    assert result["best_rr"] == 0.0
+
+
+def test_best_rr_selects_profitable_4r_or_higher_candidate() -> None:
+    samples = [
+        _sample([151.0], [99.0], [151.0]),
+        _sample([151.0], [99.0], [151.0]),
+        _sample([104.0], [90.0], [90.0]),
+    ]
+    result = RewardRiskAnalyzer([2.0, 5.0], min_samples=1).analyze(samples, "long")
+    assert result["best_rr"] == 5.0
+
+
+def test_best_rr_has_no_selectable_candidate_below_4r() -> None:
+    samples = [
+        _sample([125.0], [99.0], [125.0]),
+        _sample([104.0], [90.0], [90.0]),
+    ]
+    result = RewardRiskAnalyzer([2.0, 3.0], min_samples=1).analyze(samples, "long")
+    assert result["best_rr"] == 0.0
+    assert result["best_expectancy_r"] == 0.0
 
 
 def test_simulation_subtracts_execution_cost_r() -> None:

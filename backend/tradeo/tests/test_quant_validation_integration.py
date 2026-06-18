@@ -203,7 +203,7 @@ def test_validation_gate_caps_lab_candidate_without_dsr(tmp_path) -> None:
     candidate.metrics.update(
         {
             "fdr_passed": True,
-            "best_rr": 3.0,
+            "best_rr": 4.0,
             "best_expectancy_r": 0.5,
             "best_profit_factor": 2.2,
             "best_max_drawdown_r": 4.0,
@@ -212,7 +212,7 @@ def test_validation_gate_caps_lab_candidate_without_dsr(tmp_path) -> None:
             "stability_score": 0.8,
             "out_of_sample_expectancy_r": 0.3,
             "out_of_sample_profit_factor": 1.9,
-            "rr_metrics": {"3": {"expectancy_r": 0.5, "profit_factor": 2.2}},
+            "rr_metrics": {"4": {"expectancy_r": 0.5, "profit_factor": 2.2}},
             "train_sample_count": 150,
             "dsr_family": 0.40,  # por debajo de discovery_min_dsr=0.95
             "dsr_family_n_trials": 5000,
@@ -234,7 +234,7 @@ def test_validation_gate_caps_lab_candidate_with_survivorship_bias(tmp_path) -> 
     candidate.metrics.update(
         {
             "fdr_passed": True,
-            "best_rr": 3.0,
+            "best_rr": 4.0,
             "best_expectancy_r": 0.5,
             "best_profit_factor": 2.2,
             "best_max_drawdown_r": 4.0,
@@ -243,7 +243,7 @@ def test_validation_gate_caps_lab_candidate_with_survivorship_bias(tmp_path) -> 
             "stability_score": 0.8,
             "out_of_sample_expectancy_r": 0.3,
             "out_of_sample_profit_factor": 1.9,
-            "rr_metrics": {"3": {"expectancy_r": 0.5, "profit_factor": 2.2}},
+            "rr_metrics": {"4": {"expectancy_r": 0.5, "profit_factor": 2.2}},
             "train_sample_count": 150,
             "dsr_family": 0.99,
             "dsr_family_n_trials": 5000,
