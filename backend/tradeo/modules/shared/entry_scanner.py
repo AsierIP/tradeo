@@ -464,7 +464,10 @@ class PatternEntryScanner:
                 pattern_status = str(
                     match.get("pattern_status") or match.get("pattern_promotion_status") or ""
                 ).lower()
-                if pattern_status != "lab_candidate":
+                paper_allowed_statuses = {"lab_candidate"}
+                if settings.laboratory_allow_watchlist_paper_orders:
+                    paper_allowed_statuses.add("lab_watchlist")
+                if pattern_status not in paper_allowed_statuses:
                     match_execute_orders = False
                     match_execution_degrade_reason = "lab_status_shadow_only"
 

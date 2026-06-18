@@ -422,6 +422,7 @@ def scanner(provider: FixtureProvider, **settings_overrides) -> PatternEntryScan
         "min_avg_dollar_volume": 0,
         "max_atr_pct": 1.0,
         "laboratory_auto_submit_paper_orders": False,
+        "laboratory_allow_watchlist_paper_orders": False,
         "laboratory_market_hours_only": False,
         "ibkr_readonly": False,
         "ibkr_port": 7497,
@@ -1667,6 +1668,88 @@ def test_laboratory_runtime_kill_switch_downgrades_to_shadow_observation(monkeyp
     observation = db.get(Trade, result["shadow_no_order_trade_ids"][0])
     assert observation.metadata_json["no_order_reason"] == "runtime_kill_switch_enabled"
     assert observation.metadata_json["order_decision"]["no_order_reason"] == "runtime_kill_switch_enabled"
+
+
+def test_laboratory_watchlist_defaults_to_shadow_only(monkeypatch) -> None:
+    db = session_factory()
+    provider = FixtureProvider()
+
+    class FailBroker:
+        def __init__(self, settings) -> None:
+            self.settings = settings
+
+        def submit_signal_bracket(self, db, signal, *, reason: str = "manual"):
+            raise AssertionError("lab_watchlist should default to shadow-only")
+
+    monkeypatch.setattr("tradeo.modules.shared.entry_scanner.IBKRBroker", FailBroker)
+    match = match_payload(
+        pattern_status="lab_watchlist",
+        pattern_promotion_status="lab_watchlist",
+    )
+
+    result = PatternEntryScanner(
+        settings=scanner(provider, laboratory_auto_submit_paper_orders=True).settings,
+        matcher=StaticMatcher(provider, [match]),
+    ).scan(db, module="laboratory", symbols=[provider.symbol], store_signals=True)
+
+    assert result["orders_submitted"] == 0
+    assert result["order_skip_reason_counts"] == {"lab_status_shadow_only": 1}
+    assert result["paper_observations_opened"] == 1
+    signal = db.get(Signal, result["signal_ids"][0])
+    assert signal.metadata_json["no_order_reason"] == "lab_status_shadow_only"
+
+
+def test_laboratory_watchlist_can_submit_paper_with_operator_flag(monkeypatch) -> None:
+    db = session_factory()
+    provider = FixtureProvider()
+    submitted_signals: list[int] = []
+
+    class PaperBroker:
+        def __init__(self, settings) -> None:
+            self.settings = settings
+
+        def submit_signal_bracket(self, db, signal, *, reason: str = "manual"):
+            submitted_signals.append(signal.id)
+            trade = Trade(
+                signal_id=signal.id,
+                symbol=signal.symbol,
+                pattern=signal.pattern,
+                side=signal.side,
+                qty=signal.suggested_qty,
+                entry=signal.entry,
+                stop=signal.stop,
+                target=signal.target,
+                status=TradeStatus.OPEN,
+                opened_at=datetime.now(timezone.utc),
+                broker_order_id="paper-watchlist",
+                evidence_type=EvidenceType.IBKR_PAPER_ORDER.value,
+                evidence_quality=EvidenceQuality.NORMAL.value,
+                metadata_json={"execution_mode": "ibkr", "ibkr_mode": "paper"},
+            )
+            db.add(trade)
+            db.commit()
+            db.refresh(trade)
+            return trade
+
+    monkeypatch.setattr("tradeo.modules.shared.entry_scanner.IBKRBroker", PaperBroker)
+    match = match_payload(
+        pattern_status="lab_watchlist",
+        pattern_promotion_status="lab_watchlist",
+    )
+
+    result = PatternEntryScanner(
+        settings=scanner(
+            provider,
+            laboratory_auto_submit_paper_orders=True,
+            laboratory_allow_watchlist_paper_orders=True,
+        ).settings,
+        matcher=StaticMatcher(provider, [match]),
+    ).scan(db, module="laboratory", symbols=[provider.symbol], store_signals=True)
+
+    assert result["orders_submitted"] == 1
+    assert result["order_skip_reason_counts"] == {}
+    assert submitted_signals == result["signal_ids"]
+    assert db.query(Trade).filter(Trade.broker_order_id == "paper-watchlist").count() == 1
 
 
 def test_laboratory_readonly_downgrades_to_shadow_observation(monkeypatch) -> None:

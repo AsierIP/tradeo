@@ -249,6 +249,7 @@ class Settings(BaseSettings):
     laboratory_similarity_threshold: float = 0.45
     laboratory_store_signals: bool = True
     laboratory_auto_submit_paper_orders: bool = True
+    laboratory_allow_watchlist_paper_orders: bool = False
     laboratory_market_hours_only: bool = True
 
     # Fox Hunter scans production patterns. Live order submission requires both
