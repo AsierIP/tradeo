@@ -381,6 +381,18 @@ class IBKRBroker:
         accounts = managed_accounts()
         return accounts[0] if len(accounts) == 1 else None
 
+    def _validate_paper_account_target(self, ib) -> None:  # noqa: ANN001
+        if self.settings.trading_mode != "paper":
+            return
+        account = self._selected_account(ib)
+        if not account:
+            raise IBKRSafetyError("paper IBKR execution requires a selected paper account")
+        if not str(account).upper().startswith("DU"):
+            raise IBKRSafetyError(
+                "paper IBKR execution requires a DU paper account; "
+                "refusing custom-port submit without paper-account proof"
+            )
+
     def _build_parent_limit_order(self, signal: Signal):
         _ensure_event_loop()
         from ib_insync import Order
@@ -1014,6 +1026,7 @@ class IBKRBroker:
         self._validate_final_live_risk(db, signal)
         ib = self._connect()
         try:
+            self._validate_paper_account_target(ib)
             contract = self._stock_contract(signal.symbol)
             qualified = ib.qualifyContracts(contract)
             if not qualified:
