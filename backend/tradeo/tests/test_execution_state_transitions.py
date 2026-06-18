@@ -1596,10 +1596,37 @@ def _closed_market_session() -> dict[str, object]:
     }
 
 
+def _what_if_state(**overrides) -> SimpleNamespace:
+    values = {
+        "initMarginBefore": 1000.0,
+        "initMarginChange": 100.0,
+        "initMarginAfter": 1100.0,
+        "maintMarginBefore": 500.0,
+        "maintMarginChange": 50.0,
+        "maintMarginAfter": 550.0,
+        "equityWithLoanBefore": 3000.0,
+        "equityWithLoanChange": -100.0,
+        "equityWithLoanAfter": 2900.0,
+        "commission": 0.05,
+        "minCommission": 0.01,
+        "maxCommission": 0.05,
+        "warningText": "",
+        "status": "PreSubmitted",
+    }
+    values.update(overrides)
+    return SimpleNamespace(**values)
+
+
 class PreflightFakeIB:
-    def __init__(self, ticker: SimpleNamespace) -> None:
+    def __init__(
+        self,
+        ticker: SimpleNamespace,
+        what_if_state: SimpleNamespace | Exception | None = None,
+    ) -> None:
         self.ticker = ticker
+        self.what_if_state = what_if_state or _what_if_state()
         self.req_mkt_data_calls = 0
+        self.what_if_calls = 0
         self.bracket_calls = 0
         self.placed_orders: list[object] = []
         self.cancelled_orders: list[object] = []
@@ -1610,6 +1637,12 @@ class PreflightFakeIB:
     def reqMktData(self, contract, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003
         self.req_mkt_data_calls += 1
         return self.ticker
+
+    def whatIfOrder(self, contract, order):  # noqa: ANN001, N802
+        self.what_if_calls += 1
+        if isinstance(self.what_if_state, Exception):
+            raise self.what_if_state
+        return self.what_if_state
 
     def bracketOrder(
         self,
@@ -1689,6 +1722,16 @@ class LivePreflightBrokerUnderTest(IBKRBroker):
             currency="USD",
         )
 
+    def _build_parent_limit_order(self, signal: Signal):
+        return SimpleNamespace(
+            action=self._action_for_signal(signal),
+            orderType="LMT",
+            totalQuantity=int(signal.suggested_qty),
+            lmtPrice=float(signal.entry),
+            tif="DAY",
+            account=self.settings.ibkr_account,
+        )
+
 
 def _live_submit_fixture(tmp_path):
     db = session_factory()
@@ -1696,6 +1739,7 @@ def _live_submit_fixture(tmp_path):
     settings = live_order_settings(
         ibkr_port=7496,
         artifacts_dir=str(tmp_path),
+        ibkr_execution_preflight_quote_timeout_seconds=0.0,
         signal_spread_snapshot_timeout_seconds=0.0,
     )
     write_worker_heartbeat(settings)
@@ -1797,6 +1841,377 @@ def test_live_execution_preflight_rejects_stale_quote_before_order_placement(
     assert signal.status == SignalStatus.LIVE_APPROVED
 
 
+def test_live_execution_preflight_rejects_wide_spread_before_order_placement(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db, signal, settings = _live_submit_fixture(tmp_path)
+    fake_ib = PreflightFakeIB(
+        SimpleNamespace(
+            bid=9.90,
+            ask=10.10,
+            last=10.0,
+            bidSize=100,
+            askSize=100,
+            time=datetime.now(timezone.utc),
+        )
+    )
+    monkeypatch.setattr(ibkr_broker_module, "market_session_status", _open_market_session)
+
+    with pytest.raises(IBKRSafetyError, match="wide spread"):
+        LivePreflightBrokerUnderTest(fake_ib=fake_ib, settings=settings).submit_signal_bracket(
+            db,
+            signal,
+        )
+
+    assert fake_ib.what_if_calls == 0
+    assert fake_ib.bracket_calls == 0
+    assert fake_ib.placed_orders == []
+    assert db.query(Trade).count() == 0
+
+
+def test_live_execution_preflight_rejects_wide_spread_cost_r_before_order_placement(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db, signal, settings = _live_submit_fixture(tmp_path)
+    signal.stop = 9.95
+    signal.risk_usd = 0.25
+    db.add(signal)
+    db.commit()
+    fake_ib = PreflightFakeIB(
+        SimpleNamespace(
+            bid=9.99,
+            ask=10.01,
+            last=10.0,
+            bidSize=100,
+            askSize=100,
+            time=datetime.now(timezone.utc),
+        )
+    )
+    monkeypatch.setattr(ibkr_broker_module, "market_session_status", _open_market_session)
+
+    with pytest.raises(IBKRSafetyError, match="wide spread cost R"):
+        LivePreflightBrokerUnderTest(fake_ib=fake_ib, settings=settings).submit_signal_bracket(
+            db,
+            signal,
+        )
+
+    assert fake_ib.what_if_calls == 0
+    assert fake_ib.bracket_calls == 0
+    assert fake_ib.placed_orders == []
+    assert db.query(Trade).count() == 0
+
+
+def test_live_execution_preflight_rejects_entry_quote_slippage_before_order_placement(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db, signal, settings = _live_submit_fixture(tmp_path)
+    fake_ib = PreflightFakeIB(
+        SimpleNamespace(
+            bid=10.02,
+            ask=10.04,
+            last=10.03,
+            bidSize=200,
+            askSize=200,
+            time=datetime.now(timezone.utc),
+        )
+    )
+    monkeypatch.setattr(ibkr_broker_module, "market_session_status", _open_market_session)
+
+    with pytest.raises(IBKRSafetyError, match="entry quote slippage pct"):
+        LivePreflightBrokerUnderTest(fake_ib=fake_ib, settings=settings).submit_signal_bracket(
+            db,
+            signal,
+        )
+
+    assert fake_ib.what_if_calls == 0
+    assert fake_ib.bracket_calls == 0
+    assert fake_ib.placed_orders == []
+    assert db.query(Trade).count() == 0
+
+
+@pytest.mark.parametrize(
+    ("bid_size", "ask_size", "error"),
+    [
+        (1, 100, "low bid size"),
+        (100, 1, "low ask size"),
+    ],
+)
+def test_live_execution_preflight_rejects_low_bid_ask_size_before_order_placement(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+    bid_size: int,
+    ask_size: int,
+    error: str,
+) -> None:
+    db, signal, settings = _live_submit_fixture(tmp_path)
+    fake_ib = PreflightFakeIB(
+        SimpleNamespace(
+            bid=9.99,
+            ask=10.01,
+            last=10.0,
+            bidSize=bid_size,
+            askSize=ask_size,
+            time=datetime.now(timezone.utc),
+        )
+    )
+    monkeypatch.setattr(ibkr_broker_module, "market_session_status", _open_market_session)
+
+    with pytest.raises(IBKRSafetyError, match=error):
+        LivePreflightBrokerUnderTest(fake_ib=fake_ib, settings=settings).submit_signal_bracket(
+            db,
+            signal,
+        )
+
+    assert fake_ib.what_if_calls == 0
+    assert fake_ib.bracket_calls == 0
+    assert fake_ib.placed_orders == []
+    assert db.query(Trade).count() == 0
+
+
+def test_live_execution_preflight_rejects_low_top_of_book_notional_when_mid_is_low(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db, signal, settings = _live_submit_fixture(tmp_path)
+    fake_ib = PreflightFakeIB(
+        SimpleNamespace(
+            bid=4.99,
+            ask=5.01,
+            last=5.0,
+            bidSize=100,
+            askSize=100,
+            time=datetime.now(timezone.utc),
+        )
+    )
+    monkeypatch.setattr(ibkr_broker_module, "market_session_status", _open_market_session)
+
+    with pytest.raises(IBKRSafetyError, match="low top-of-book notional"):
+        LivePreflightBrokerUnderTest(fake_ib=fake_ib, settings=settings).submit_signal_bracket(
+            db,
+            signal,
+        )
+
+    assert fake_ib.what_if_calls == 0
+    assert fake_ib.bracket_calls == 0
+    assert fake_ib.placed_orders == []
+    assert db.query(Trade).count() == 0
+
+
+def test_live_execution_preflight_rejects_top_of_book_notional_just_below_threshold(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db, signal, settings = _live_submit_fixture(tmp_path)
+    fake_ib = PreflightFakeIB(
+        SimpleNamespace(
+            bid=9.98,
+            ask=10.00,
+            last=10.0,
+            bidSize=100,
+            askSize=100,
+            time=datetime.now(timezone.utc),
+        )
+    )
+    monkeypatch.setattr(ibkr_broker_module, "market_session_status", _open_market_session)
+
+    with pytest.raises(IBKRSafetyError, match="low top-of-book notional"):
+        LivePreflightBrokerUnderTest(fake_ib=fake_ib, settings=settings).submit_signal_bracket(
+            db,
+            signal,
+        )
+
+    assert fake_ib.what_if_calls == 0
+    assert fake_ib.bracket_calls == 0
+    assert fake_ib.placed_orders == []
+    assert db.query(Trade).count() == 0
+
+
+def test_live_execution_preflight_rejects_whatif_warning_before_order_placement(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db, signal, settings = _live_submit_fixture(tmp_path)
+    fake_ib = PreflightFakeIB(
+        SimpleNamespace(
+            bid=9.99,
+            ask=10.01,
+            last=10.0,
+            bidSize=100,
+            askSize=100,
+            time=datetime.now(timezone.utc),
+        ),
+        what_if_state=_what_if_state(
+            warningText="insufficient margin",
+        ),
+    )
+    monkeypatch.setattr(ibkr_broker_module, "market_session_status", _open_market_session)
+
+    with pytest.raises(IBKRSafetyError, match="WhatIf preflight warning"):
+        LivePreflightBrokerUnderTest(fake_ib=fake_ib, settings=settings).submit_signal_bracket(
+            db,
+            signal,
+        )
+
+    assert fake_ib.what_if_calls == 1
+    assert fake_ib.bracket_calls == 0
+    assert fake_ib.placed_orders == []
+    assert db.query(Trade).count() == 0
+
+
+def test_live_execution_preflight_rejects_high_whatif_commission_before_order_placement(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db, signal, settings = _live_submit_fixture(tmp_path)
+    fake_ib = PreflightFakeIB(
+        SimpleNamespace(
+            bid=9.99,
+            ask=10.01,
+            last=10.0,
+            bidSize=100,
+            askSize=100,
+            time=datetime.now(timezone.utc),
+        ),
+        what_if_state=_what_if_state(
+            commission=10.0,
+            minCommission=10.0,
+            maxCommission=10.0,
+        ),
+    )
+    monkeypatch.setattr(ibkr_broker_module, "market_session_status", _open_market_session)
+
+    with pytest.raises(IBKRSafetyError, match="commission USD"):
+        LivePreflightBrokerUnderTest(fake_ib=fake_ib, settings=settings).submit_signal_bracket(
+            db,
+            signal,
+        )
+
+    assert fake_ib.what_if_calls == 1
+    assert fake_ib.bracket_calls == 0
+    assert fake_ib.placed_orders == []
+    assert db.query(Trade).count() == 0
+
+
+@pytest.mark.parametrize(
+    ("what_if_state", "error"),
+    [
+        (
+            _what_if_state(commission=None),
+            "missing/invalid commission",
+        ),
+        (
+            _what_if_state(initMarginAfter=None),
+            "missing/invalid initMarginAfter",
+        ),
+    ],
+)
+def test_live_execution_preflight_rejects_missing_whatif_commission_or_margin_before_order_placement(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+    what_if_state: SimpleNamespace,
+    error: str,
+) -> None:
+    db, signal, settings = _live_submit_fixture(tmp_path)
+    fake_ib = PreflightFakeIB(
+        SimpleNamespace(
+            bid=9.99,
+            ask=10.01,
+            last=10.0,
+            bidSize=100,
+            askSize=100,
+            time=datetime.now(timezone.utc),
+        ),
+        what_if_state=what_if_state,
+    )
+    monkeypatch.setattr(ibkr_broker_module, "market_session_status", _open_market_session)
+
+    with pytest.raises(IBKRSafetyError, match=error):
+        LivePreflightBrokerUnderTest(fake_ib=fake_ib, settings=settings).submit_signal_bracket(
+            db,
+            signal,
+        )
+
+    assert fake_ib.what_if_calls == 1
+    assert fake_ib.bracket_calls == 0
+    assert fake_ib.placed_orders == []
+    assert db.query(Trade).count() == 0
+
+
+def test_live_execution_preflight_rejects_whatif_api_error_before_order_placement(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db, signal, settings = _live_submit_fixture(tmp_path)
+    fake_ib = PreflightFakeIB(
+        SimpleNamespace(
+            bid=9.99,
+            ask=10.01,
+            last=10.0,
+            bidSize=100,
+            askSize=100,
+            time=datetime.now(timezone.utc),
+        ),
+        what_if_state=RuntimeError("whatif unavailable"),
+    )
+    monkeypatch.setattr(ibkr_broker_module, "market_session_status", _open_market_session)
+
+    with pytest.raises(IBKRSafetyError, match="WhatIf preflight failed"):
+        LivePreflightBrokerUnderTest(fake_ib=fake_ib, settings=settings).submit_signal_bracket(
+            db,
+            signal,
+        )
+
+    assert fake_ib.what_if_calls == 1
+    assert fake_ib.bracket_calls == 0
+    assert fake_ib.placed_orders == []
+    assert db.query(Trade).count() == 0
+
+
+@pytest.mark.parametrize(
+    ("what_if_override", "error"),
+    [
+        ({"initMarginAfter": None}, "missing/invalid initMarginAfter"),
+        ({"maintMarginAfter": "not-a-number"}, "missing/invalid maintMarginAfter"),
+        ({"equityWithLoanAfter": 500.0}, "insufficient margin"),
+        ({"commission": None}, "missing/invalid commission"),
+        ({"commission": 1.7976931348623157e308}, "missing/invalid commission"),
+    ],
+)
+def test_live_execution_preflight_rejects_invalid_whatif_fields_before_order_placement(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+    what_if_override: dict[str, object],
+    error: str,
+) -> None:
+    db, signal, settings = _live_submit_fixture(tmp_path)
+    fake_ib = PreflightFakeIB(
+        SimpleNamespace(
+            bid=9.99,
+            ask=10.01,
+            last=10.0,
+            bidSize=100,
+            askSize=100,
+            time=datetime.now(timezone.utc),
+        ),
+        what_if_state=_what_if_state(**what_if_override),
+    )
+    monkeypatch.setattr(ibkr_broker_module, "market_session_status", _open_market_session)
+
+    with pytest.raises(IBKRSafetyError, match=error):
+        LivePreflightBrokerUnderTest(fake_ib=fake_ib, settings=settings).submit_signal_bracket(
+            db,
+            signal,
+        )
+
+    assert fake_ib.what_if_calls == 1
+    assert fake_ib.bracket_calls == 0
+    assert fake_ib.placed_orders == []
+    assert db.query(Trade).count() == 0
+
+
 def test_live_execution_preflight_persists_fresh_quote_snapshot(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1824,12 +2239,83 @@ def test_live_execution_preflight_persists_fresh_quote_snapshot(
     assert len(fake_ib.placed_orders) == 3
     preflight = trade.metadata_json["execution_preflight"]
     assert preflight["market_session"]["regular_session_open"] is True
+    assert fake_ib.what_if_calls == 1
     quote = preflight["quote_snapshot"]
     assert quote["data_basis"] == "ibkr_execution_preflight_quote_snapshot"
     assert quote["bid"] == 9.99
     assert quote["ask"] == 10.01
+    assert quote["bid_size"] == 100
+    assert quote["ask_size"] == 200
     assert quote["spread_abs"] == pytest.approx(0.02)
+    assert quote["spread_cost_r"] == pytest.approx(0.02)
+    assert quote["top_of_book_notional_usd"] == pytest.approx(1000.0)
     assert quote["quote_age_seconds"] <= quote["max_age_seconds"]
+    assert quote["thresholds"]["max_spread_pct"] == settings.ibkr_execution_preflight_max_spread_pct
+    assert quote["entry_quote_price"] == pytest.approx(10.01)
+    assert quote["entry_quote_slippage_abs"] == pytest.approx(0.01)
+    assert quote["entry_quote_slippage_pct"] == pytest.approx(0.001)
+    assert quote["entry_quote_slippage_r"] == pytest.approx(0.01)
+    assert quote["thresholds"]["max_entry_slippage_pct"] == (
+        settings.ibkr_execution_preflight_max_entry_slippage_pct
+    )
+    what_if = preflight["what_if"]
+    assert what_if["data_basis"] == "ibkr_live_parent_order_what_if"
+    assert what_if["init_margin_after"] == pytest.approx(1100.0)
+    assert what_if["equity_with_loan_after"] == pytest.approx(2900.0)
+    assert what_if["commission"] == pytest.approx(0.05)
+    assert what_if["commission_r"] == pytest.approx(0.01)
+    assert what_if["thresholds"]["max_commission_usd"] == settings.ibkr_execution_preflight_max_commission_usd
+    assert trade.metadata_json["execution_observation"]["execution_preflight"] == preflight
+    db.refresh(signal)
+    assert signal.metadata_json["execution_observation"]["execution_preflight"] == preflight
+    audit = (
+        db.query(AuditLog)
+        .filter(AuditLog.action == "ibkr_bracket_submitted")
+        .one()
+    )
+    assert audit.details_json["execution_preflight"] == preflight
+    assert signal.status == SignalStatus.EXECUTED
+
+
+def test_paper_submit_skips_live_execution_quote_thresholds(tmp_path) -> None:
+    db = session_factory()
+    signal = add_signal(db, status=SignalStatus.PAPER_APPROVED)
+    settings = Settings(
+        trading_mode="paper",
+        ibkr_readonly=False,
+        ibkr_port=7497,
+        ibkr_account="DU123456",
+        ibkr_allowed_symbols="AAPL",
+        artifacts_dir=str(tmp_path),
+        ibkr_execution_preflight_max_spread_pct=0.0,
+        ibkr_execution_preflight_max_spread_cost_r=0.0,
+        ibkr_execution_preflight_max_entry_slippage_pct=0.0,
+        ibkr_execution_preflight_max_entry_slippage_r=0.0,
+        ibkr_execution_preflight_min_bid_size=999_999.0,
+        ibkr_execution_preflight_min_ask_size=999_999.0,
+        ibkr_execution_preflight_min_top_of_book_notional_usd=999_999.0,
+    )
+    fake_ib = PreflightFakeIB(
+        SimpleNamespace(
+            bid=None,
+            ask=None,
+            last=None,
+            bidSize=None,
+            askSize=None,
+            time=None,
+        )
+    )
+
+    trade = LivePreflightBrokerUnderTest(fake_ib=fake_ib, settings=settings).submit_signal_bracket(
+        db,
+        signal,
+    )
+
+    assert fake_ib.req_mkt_data_calls == 0
+    assert fake_ib.what_if_calls == 0
+    assert fake_ib.bracket_calls == 1
+    assert len(fake_ib.placed_orders) == 3
+    assert trade.metadata_json["execution_preflight"] is None
     assert signal.status == SignalStatus.EXECUTED
 
 

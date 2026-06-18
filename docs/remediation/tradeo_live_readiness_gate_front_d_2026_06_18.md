@@ -26,11 +26,48 @@ Enforced now:
   non-crossed bid/ask;
 - quote timestamps older than the execution preflight max age are rejected
   (default 5 seconds);
+- spread, entry-quote slippage, bid/ask size, and top-of-book notional must pass
+  configurable hard thresholds before any WhatIf or order construction;
+- a same-connection IBKR parent-order `whatIfOrder` must return clean margin and
+  commission evidence before `bracketOrder`;
 - the accepted preflight evidence is stored on `Trade.metadata_json` and the
-  execution observation with `data_basis=ibkr_execution_preflight_quote_snapshot`.
+  execution observation with `data_basis=ibkr_execution_preflight_quote_snapshot`
+  and `data_basis=ibkr_live_parent_order_what_if`.
 
 The preflight is live-only. Paper order behavior is unchanged except for a
 nullable metadata field.
+
+## Execution preflight API shape
+
+The live submit sequence is intentionally ordered as:
+
+1. `LiveReadinessGate` and Fox/Director production provenance.
+2. Contract qualification.
+3. Submitted bracket geometry from operational prices.
+4. Regular-session check.
+5. Quote snapshot plus threshold gates.
+6. Parent-order WhatIf margin/commission gates.
+7. `bracketOrder` and `placeOrder`.
+
+Execution preflight config lives in `Settings` and maps to `TRADEO_...`
+environment names:
+
+- `ibkr_execution_preflight_quote_timeout_seconds=4.0`
+- `ibkr_execution_preflight_quote_max_age_seconds=5.0`
+- `ibkr_execution_preflight_max_spread_pct=0.005`
+- `ibkr_execution_preflight_max_spread_cost_r=0.05`
+- `ibkr_execution_preflight_max_entry_slippage_pct=0.0025`
+- `ibkr_execution_preflight_max_entry_slippage_r=0.10`
+- `ibkr_execution_preflight_min_bid_size=100.0`
+- `ibkr_execution_preflight_min_ask_size=100.0`
+- `ibkr_execution_preflight_min_top_of_book_notional_usd=1000.0`
+- `ibkr_execution_preflight_whatif_enabled=true`
+- `ibkr_execution_preflight_max_commission_usd=5.0`
+- `ibkr_execution_preflight_max_commission_r=0.05`
+
+All numeric execution-preflight thresholds are non-negative settings. Zero is
+allowed only as an explicit operator choice; missing/invalid live quote or
+WhatIf facts still fail closed.
 
 ## Current code facts
 
@@ -128,17 +165,39 @@ nullable metadata field.
      pattern is excluded by matcher/manifest checks and cannot submit live.
 
 8. **Execution-time market safety**
-   - Implemented for live submit: regular session open unless an explicit
-     after-hours mode exists, fresh quote/spread snapshot, valid submitted
-     bracket geometry, and no stale/crossed/missing bid-ask quote before broker
+   - Must require: regular session open unless an explicit after-hours mode
+     exists, valid submitted bracket geometry, fresh non-crossed bid/ask, quote
+     age <= `ibkr_execution_preflight_quote_max_age_seconds`, spread <=
+     `ibkr_execution_preflight_max_spread_pct`, spread cost <=
+     `ibkr_execution_preflight_max_spread_cost_r`, entry quote slippage <= both
+     `ibkr_execution_preflight_max_entry_slippage_pct` and
+     `ibkr_execution_preflight_max_entry_slippage_r`, bid/ask sizes >=
+     `ibkr_execution_preflight_min_bid_size` /
+     `ibkr_execution_preflight_min_ask_size`, and top-of-book notional >=
+     `ibkr_execution_preflight_min_top_of_book_notional_usd`.
+   - Why: a green readiness gate is not enough if the actionable quote, fill
+     price implied by the top of book, or immediate liquidity has moved outside
+     the edge budget.
+   - Verify: closed market, missing bid/ask, stale quote, wide spread, low
+     top-of-book liquidity, and persisted accepted quote evidence all execute
+     before `bracketOrder`/`placeOrder`.
+
+9. **WhatIf margin and commission safety**
+   - Must require: `ibkr_execution_preflight_whatif_enabled=true`; IBKR
+     `whatIfOrder` on the parent submitted-entry order returns no warning text;
+     status is not `Inactive`, `Rejected`, `Cancelled`, or `ApiError`; finite
+     `initMarginBefore/Change/After`, `maintMarginBefore/Change/After`, and
+     `equityWithLoanBefore/Change/After`; `equityWithLoanAfter > 0`;
+     `initMarginAfter` and `maintMarginAfter` do not exceed
+     `equityWithLoanAfter`; commission/min/max commission are non-negative; max
+     observed commission <= `ibkr_execution_preflight_max_commission_usd`; and
+     commission R <= `ibkr_execution_preflight_max_commission_r`.
+   - Why: account-readiness pings prove connectivity, not order affordability
+     or commission drag. WhatIf is the last broker-native dry run before live
      order construction.
-   - Why: a green readiness gate is not enough if the actionable quote or market
-     session has gone stale.
-   - Verify: stale quote, closed market, missing quote, and failed preflight
-     each block before order placement.
-   - Remaining gap: configurable max spread/slippage/liquidity thresholds and
-     a hard WhatIf-equivalent margin/commission preflight still need a config
-     ownership pass.
+   - Verify: WhatIf warning and over-limit commission block before bracket
+     creation, while accepted evidence is persisted with
+     `data_basis=ibkr_live_parent_order_what_if`.
 
 ## Verification package
 
@@ -156,10 +215,39 @@ Recommended focused tests when code ownership is clear:
 
 Focused tests were added in
 `backend/tradeo/tests/test_execution_state_transitions.py` for closed market,
-missing bid/ask, stale quote, and persisted fresh preflight evidence.
+missing bid/ask, stale quote, wide spread, spread cost R, entry quote
+slippage, low bid/ask size, low top-of-book notional, WhatIf warning, high
+WhatIf commission, missing/invalid WhatIf margin or commission fields, WhatIf
+API failure, paper-mode preflight skip, and persisted fresh quote/WhatIf
+evidence.
+
+Evidence run:
+
+- `backend/.venv/bin/python -m pytest backend/tradeo/tests/test_execution_state_transitions.py -q`
+  -> `87 passed in 35.53s`
+- `backend/.venv/bin/python -m pytest backend/tradeo/tests/test_ibkr_broker_preflight.py -q`
+  -> `5 passed in 7.37s`
+
+## Explicit Non-goals
+
+- This does not arm live trading, change `.env`, change runtime kill switches,
+  or alter production manifests.
+- This does not introduce after-hours or pre-market live execution; regular
+  session remains the only allowed live execution session.
+- This does not make thresholds per-symbol, per-regime, or dynamically
+  calibrated. The current API is a global hard threshold surface that future
+  calibration can tune from observed quote/fill distributions.
+- This does not replace broker-synced daily/monthly loss, exposure, open-order,
+  or open-position controls; those remain separate live-risk gates.
+- `/health/ibkr/live-preflight` remains a non-order account/connectivity check.
+  WhatIf order previews are part of live submit, not the health endpoint.
+- Manual live submit still uses `require_auto_submit=False`; an explicit
+  `manual_live_submit_enabled` decision remains open if manual live should be
+  separated from Fox auto-submit.
 
 ## Files Changed
 
+- `backend/tradeo/core/config.py`
 - `backend/tradeo/services/ibkr_broker.py`
 - `backend/tradeo/tests/test_execution_state_transitions.py`
 - `docs/remediation/tradeo_live_readiness_gate_front_d_2026_06_18.md`

@@ -30,6 +30,8 @@ from tradeo.services.live_readiness_gate import LiveReadinessGate, LiveReadiness
 from tradeo.services.market_session import market_session_status
 
 EXECUTION_PREFLIGHT_QUOTE_BASIS = "ibkr_execution_preflight_quote_snapshot"
+EXECUTION_PREFLIGHT_WHATIF_BASIS = "ibkr_live_parent_order_what_if"
+IBKR_UNSET_DOUBLE_ABS = 1e100
 
 
 class IBKRSafetyError(RuntimeError):
@@ -378,6 +380,7 @@ class IBKRBroker:
         return accounts[0] if len(accounts) == 1 else None
 
     def _build_parent_limit_order(self, signal: Signal):
+        _ensure_event_loop()
         from ib_insync import Order
 
         action = self._action_for_signal(signal)
@@ -387,6 +390,8 @@ class IBKRBroker:
         order.totalQuantity = int(signal.suggested_qty)
         order.lmtPrice = _finite_price(signal.entry, "entry")
         order.tif = "DAY"
+        if action == "SELL":
+            order.shortSaleSlot = 1
         if self.settings.ibkr_account:
             order.account = self.settings.ibkr_account
         return order
@@ -495,12 +500,24 @@ class IBKRBroker:
             )
 
         _validate_submitted_bracket_geometry(signal.side, bracket_prices["submitted"])
-        quote_snapshot = self._capture_live_preflight_quote(ib, contract, signal)
+        quote_snapshot = self._capture_live_preflight_quote(
+            ib,
+            contract,
+            signal,
+            submitted_bracket=bracket_prices["submitted"],
+        )
+        what_if = self._live_parent_whatif_preflight(
+            ib=ib,
+            contract=contract,
+            signal=signal,
+            submitted_entry=bracket_prices["entry"],
+        )
         return {
             "schema_version": 1,
             "checked_at": datetime.now(timezone.utc).isoformat(),
             "market_session": session,
             "quote_snapshot": quote_snapshot,
+            "what_if": what_if,
             "submitted_bracket": bracket_prices["submitted"],
         }
 
@@ -509,6 +526,8 @@ class IBKRBroker:
         ib,  # noqa: ANN001 - ib_insync client or test double
         contract: Any,
         signal: Signal,
+        *,
+        submitted_bracket: dict[str, Any],
     ) -> dict[str, Any]:
         timeout = max(
             0.0,
@@ -571,8 +590,41 @@ class IBKRBroker:
         mid = (bid + ask) / 2.0
         spread_abs = ask - bid
         spread_observed_pct = spread_abs / mid if mid > 0 else None
-        risk_per_share = abs(float(signal.entry or 0.0) - float(signal.stop or 0.0))
+        submitted_entry = _finite_price(submitted_bracket.get("entry"), "submitted entry")
+        submitted_stop = _finite_price(submitted_bracket.get("stop"), "submitted stop")
+        risk_per_share = abs(submitted_entry - submitted_stop)
         spread_cost_r = spread_abs / risk_per_share if risk_per_share > 0 else None
+        side = str(signal.side or "").lower().strip()
+        if side == "long":
+            entry_quote_price = ask
+            entry_quote_slippage_abs = max(0.0, ask - submitted_entry)
+        elif side == "short":
+            entry_quote_price = bid
+            entry_quote_slippage_abs = max(0.0, submitted_entry - bid)
+        else:
+            raise IBKRSafetyError(f"unsupported signal side: {signal.side}")
+        entry_quote_slippage_pct = (
+            entry_quote_slippage_abs / submitted_entry if submitted_entry > 0 else None
+        )
+        entry_quote_slippage_r = (
+            entry_quote_slippage_abs / risk_per_share if risk_per_share > 0 else None
+        )
+        bid_size = _clean_market_size(getattr(ticker, "bidSize", None))
+        ask_size = _clean_market_size(getattr(ticker, "askSize", None))
+        top_of_book_notional = (
+            min(bid_size, ask_size) * mid
+            if bid_size is not None and ask_size is not None
+            else None
+        )
+        self._validate_live_quote_thresholds(
+            spread_observed_pct=spread_observed_pct,
+            spread_cost_r=spread_cost_r,
+            entry_quote_slippage_pct=entry_quote_slippage_pct,
+            entry_quote_slippage_r=entry_quote_slippage_r,
+            bid_size=bid_size,
+            ask_size=ask_size,
+            top_of_book_notional=top_of_book_notional,
+        )
         return {
             "schema_version": 1,
             "data_basis": EXECUTION_PREFLIGHT_QUOTE_BASIS,
@@ -584,14 +636,277 @@ class IBKRBroker:
             "bid": bid,
             "ask": ask,
             "last": last,
-            "bid_size": _clean_market_size(getattr(ticker, "bidSize", None)),
-            "ask_size": _clean_market_size(getattr(ticker, "askSize", None)),
+            "bid_size": bid_size,
+            "ask_size": ask_size,
             "mid": round(mid, 6),
             "spread_abs": round(spread_abs, 6),
             "spread_observed_pct": (
                 round(spread_observed_pct, 6) if spread_observed_pct is not None else None
             ),
             "spread_cost_r": round(spread_cost_r, 6) if spread_cost_r is not None else None,
+            "entry_quote_price": entry_quote_price,
+            "entry_quote_slippage_abs": round(entry_quote_slippage_abs, 6),
+            "entry_quote_slippage_pct": (
+                round(entry_quote_slippage_pct, 6)
+                if entry_quote_slippage_pct is not None
+                else None
+            ),
+            "entry_quote_slippage_r": (
+                round(entry_quote_slippage_r, 6) if entry_quote_slippage_r is not None else None
+            ),
+            "top_of_book_notional_usd": (
+                round(top_of_book_notional, 2) if top_of_book_notional is not None else None
+            ),
+            "thresholds": self._live_quote_thresholds(),
+        }
+
+    def _validate_live_quote_thresholds(
+        self,
+        *,
+        spread_observed_pct: float | None,
+        spread_cost_r: float | None,
+        entry_quote_slippage_pct: float | None,
+        entry_quote_slippage_r: float | None,
+        bid_size: float | None,
+        ask_size: float | None,
+        top_of_book_notional: float | None,
+    ) -> None:
+        thresholds = self._live_quote_thresholds()
+        if spread_observed_pct is None or spread_observed_pct > thresholds["max_spread_pct"]:
+            raise IBKRSafetyError(
+                "live execution preflight rejected wide spread pct "
+                f"({spread_observed_pct!r} > {thresholds['max_spread_pct']})"
+            )
+        if spread_cost_r is None or spread_cost_r > thresholds["max_spread_cost_r"]:
+            raise IBKRSafetyError(
+                "live execution preflight rejected wide spread cost R "
+                f"({spread_cost_r!r} > {thresholds['max_spread_cost_r']})"
+            )
+        if (
+            entry_quote_slippage_pct is None
+            or entry_quote_slippage_pct > thresholds["max_entry_slippage_pct"]
+        ):
+            raise IBKRSafetyError(
+                "live execution preflight rejected entry quote slippage pct "
+                f"({entry_quote_slippage_pct!r} > {thresholds['max_entry_slippage_pct']})"
+            )
+        if (
+            entry_quote_slippage_r is None
+            or entry_quote_slippage_r > thresholds["max_entry_slippage_r"]
+        ):
+            raise IBKRSafetyError(
+                "live execution preflight rejected entry quote slippage R "
+                f"({entry_quote_slippage_r!r} > {thresholds['max_entry_slippage_r']})"
+            )
+        if bid_size is None or bid_size < thresholds["min_bid_size"]:
+            raise IBKRSafetyError(
+                "live execution preflight rejected low bid size "
+                f"({bid_size!r} < {thresholds['min_bid_size']})"
+            )
+        if ask_size is None or ask_size < thresholds["min_ask_size"]:
+            raise IBKRSafetyError(
+                "live execution preflight rejected low ask size "
+                f"({ask_size!r} < {thresholds['min_ask_size']})"
+            )
+        if (
+            top_of_book_notional is None
+            or top_of_book_notional < thresholds["min_top_of_book_notional_usd"]
+        ):
+            raise IBKRSafetyError(
+                "live execution preflight rejected low top-of-book notional "
+                f"({top_of_book_notional!r} < {thresholds['min_top_of_book_notional_usd']})"
+            )
+
+    def _live_quote_thresholds(self) -> dict[str, float]:
+        return {
+            "max_spread_pct": max(
+                0.0,
+                float(getattr(self.settings, "ibkr_execution_preflight_max_spread_pct", 0.005)),
+            ),
+            "max_spread_cost_r": max(
+                0.0,
+                float(getattr(self.settings, "ibkr_execution_preflight_max_spread_cost_r", 0.05)),
+            ),
+            "max_entry_slippage_pct": max(
+                0.0,
+                float(
+                    getattr(
+                        self.settings,
+                        "ibkr_execution_preflight_max_entry_slippage_pct",
+                        0.0025,
+                    )
+                ),
+            ),
+            "max_entry_slippage_r": max(
+                0.0,
+                float(getattr(self.settings, "ibkr_execution_preflight_max_entry_slippage_r", 0.10)),
+            ),
+            "min_bid_size": max(
+                0.0, float(getattr(self.settings, "ibkr_execution_preflight_min_bid_size", 100.0))
+            ),
+            "min_ask_size": max(
+                0.0, float(getattr(self.settings, "ibkr_execution_preflight_min_ask_size", 100.0))
+            ),
+            "min_top_of_book_notional_usd": max(
+                0.0,
+                float(
+                    getattr(
+                        self.settings,
+                        "ibkr_execution_preflight_min_top_of_book_notional_usd",
+                        1000.0,
+                    )
+                ),
+            ),
+        }
+
+    def _live_parent_whatif_preflight(
+        self,
+        *,
+        ib,  # noqa: ANN001 - ib_insync client or test double
+        contract: Any,
+        signal: Signal,
+        submitted_entry: float,
+    ) -> dict[str, Any] | None:
+        if not bool(getattr(self.settings, "ibkr_execution_preflight_whatif_enabled", True)):
+            raise IBKRSafetyError("live IBKR execution requires WhatIf preflight enabled")
+        order = self._build_parent_limit_order(signal)
+        order.lmtPrice = _finite_price(submitted_entry, "submitted entry")
+        try:
+            state = ib.whatIfOrder(contract, order)
+        except Exception as exc:  # noqa: BLE001 - fail closed before order placement.
+            raise IBKRSafetyError(
+                f"live IBKR execution WhatIf preflight failed: {type(exc).__name__}: {exc}"
+            ) from exc
+        return self._validate_live_whatif_state(state, signal=signal)
+
+    def _validate_live_whatif_state(self, state: Any, *, signal: Signal) -> dict[str, Any]:
+        warning_text = str(getattr(state, "warningText", "") or "").strip()
+        if warning_text:
+            raise IBKRSafetyError(
+                f"live IBKR execution WhatIf preflight warning: {warning_text}"
+            )
+        status = str(getattr(state, "status", "") or "").strip()
+        if status.lower() in {"inactive", "rejected", "cancelled", "apierror"}:
+            raise IBKRSafetyError(f"live IBKR execution WhatIf preflight rejected status={status}")
+
+        init_margin_before = _finite_whatif_number(
+            getattr(state, "initMarginBefore", None),
+            "initMarginBefore",
+        )
+        init_margin_change = _finite_whatif_number(
+            getattr(state, "initMarginChange", None),
+            "initMarginChange",
+        )
+        init_margin_after = _finite_whatif_number(
+            getattr(state, "initMarginAfter", None),
+            "initMarginAfter",
+        )
+        maint_margin_before = _finite_whatif_number(
+            getattr(state, "maintMarginBefore", None),
+            "maintMarginBefore",
+        )
+        maint_margin_change = _finite_whatif_number(
+            getattr(state, "maintMarginChange", None),
+            "maintMarginChange",
+        )
+        maint_margin_after = _finite_whatif_number(
+            getattr(state, "maintMarginAfter", None),
+            "maintMarginAfter",
+        )
+        equity_with_loan_before = _finite_whatif_number(
+            getattr(state, "equityWithLoanBefore", None),
+            "equityWithLoanBefore",
+        )
+        equity_with_loan_change = _finite_whatif_number(
+            getattr(state, "equityWithLoanChange", None),
+            "equityWithLoanChange",
+        )
+        equity_with_loan_after = _finite_whatif_number(
+            getattr(state, "equityWithLoanAfter", None),
+            "equityWithLoanAfter",
+        )
+        if init_margin_after < 0 or maint_margin_after < 0:
+            raise IBKRSafetyError("live IBKR execution WhatIf preflight invalid margin fields")
+        if equity_with_loan_after <= 0:
+            raise IBKRSafetyError(
+                "live IBKR execution WhatIf preflight rejected insufficient margin "
+                "(equityWithLoanAfter <= 0)"
+            )
+        if equity_with_loan_after < init_margin_after:
+            raise IBKRSafetyError(
+                "live IBKR execution WhatIf preflight rejected insufficient margin "
+                "(initMarginAfter exceeds equityWithLoanAfter)"
+            )
+        if equity_with_loan_after < maint_margin_after:
+            raise IBKRSafetyError(
+                "live IBKR execution WhatIf preflight rejected insufficient margin "
+                "(maintMarginAfter exceeds equityWithLoanAfter)"
+            )
+
+        commission = _required_whatif_number(
+            getattr(state, "commission", None),
+            field="commission",
+            allow_negative=False,
+        )
+        min_commission = _optional_whatif_number(
+            getattr(state, "minCommission", None),
+            "minCommission",
+            allow_negative=False,
+        )
+        max_commission = _optional_whatif_number(
+            getattr(state, "maxCommission", None),
+            "maxCommission",
+            allow_negative=False,
+        )
+        commission_values = [
+            value for value in (commission, min_commission, max_commission) if value is not None
+        ]
+        checked_commission = max(commission_values)
+        max_commission_usd = max(
+            0.0,
+            float(getattr(self.settings, "ibkr_execution_preflight_max_commission_usd", 5.0)),
+        )
+        if checked_commission > max_commission_usd:
+            raise IBKRSafetyError(
+                "live IBKR execution WhatIf preflight rejected commission USD "
+                f"({checked_commission:.4f} > {max_commission_usd:.4f})"
+            )
+        risk_per_share = abs(float(signal.entry or 0.0) - float(signal.stop or 0.0))
+        qty = abs(float(signal.suggested_qty or 0.0))
+        risk_usd = risk_per_share * qty
+        commission_r = checked_commission / risk_usd if risk_usd > 0 else None
+        max_commission_r = max(
+            0.0,
+            float(getattr(self.settings, "ibkr_execution_preflight_max_commission_r", 0.05)),
+        )
+        if commission_r is None or commission_r > max_commission_r:
+            raise IBKRSafetyError(
+                "live IBKR execution WhatIf preflight rejected commission R "
+                f"({commission_r!r} > {max_commission_r:.4f})"
+            )
+        return {
+            "schema_version": 1,
+            "data_basis": EXECUTION_PREFLIGHT_WHATIF_BASIS,
+            "status": status,
+            "warning_text": warning_text,
+            "init_margin_before": round(init_margin_before, 4),
+            "init_margin_change": round(init_margin_change, 4),
+            "init_margin_after": round(init_margin_after, 4),
+            "maint_margin_before": round(maint_margin_before, 4),
+            "maint_margin_change": round(maint_margin_change, 4),
+            "maint_margin_after": round(maint_margin_after, 4),
+            "equity_with_loan_before": round(equity_with_loan_before, 4),
+            "equity_with_loan_change": round(equity_with_loan_change, 4),
+            "equity_with_loan_after": round(equity_with_loan_after, 4),
+            "commission": round(commission, 4),
+            "min_commission": round(min_commission, 4) if min_commission is not None else None,
+            "max_commission": round(max_commission, 4) if max_commission is not None else None,
+            "checked_commission": round(checked_commission, 4),
+            "commission_r": round(float(commission_r), 6),
+            "thresholds": {
+                "max_commission_usd": max_commission_usd,
+                "max_commission_r": max_commission_r,
+            },
         }
 
     def preview_signal_order(self, signal: Signal) -> dict[str, Any]:
@@ -1251,6 +1566,46 @@ def _float_or_none(value: Any) -> float | None:
     except (TypeError, ValueError):
         return None
     return number
+
+
+def _finite_whatif_number(value: Any, field: str, *, allow_negative: bool = True) -> float:
+    return _required_whatif_number(value, field, allow_negative=allow_negative)
+
+
+def _required_whatif_number(value: Any, field: str, *, allow_negative: bool = True) -> float:
+    number = _whatif_number_or_none(value)
+    if number is None:
+        raise IBKRSafetyError(f"live IBKR execution WhatIf preflight missing/invalid {field}")
+    if not allow_negative and number < 0:
+        raise IBKRSafetyError(f"live IBKR execution WhatIf preflight invalid {field}")
+    return float(number)
+
+
+def _optional_whatif_number(
+    value: Any,
+    field: str,
+    *,
+    allow_negative: bool = True,
+) -> float | None:
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return None
+    number = _whatif_number_or_none(value)
+    if number is None:
+        raise IBKRSafetyError(f"live IBKR execution WhatIf preflight invalid {field}")
+    if not allow_negative and number < 0:
+        raise IBKRSafetyError(f"live IBKR execution WhatIf preflight invalid {field}")
+    return float(number)
+
+
+def _whatif_number_or_none(value: Any) -> float | None:
+    if isinstance(value, str):
+        value = value.strip().replace(",", "")
+    number = _float_or_none(value)
+    if number is None or not math.isfinite(number):
+        return None
+    if abs(number) >= IBKR_UNSET_DOUBLE_ABS:
+        return None
+    return float(number)
 
 
 def _str_or_none(value: Any) -> str | None:

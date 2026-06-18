@@ -151,8 +151,8 @@ class Settings(BaseSettings):
     discovery_min_dsr: float = 0.95
     discovery_min_symbols: int = 8
     discovery_min_years: int = 2
-    discovery_min_reward_risk: float = 2.5
-    discovery_candidate_reward_risk: float = 3.0
+    discovery_min_reward_risk: float = 4.0
+    discovery_candidate_reward_risk: float = 4.0
     discovery_premium_reward_risk: float = 4.0
     discovery_max_drawdown_r: float = 12.0
     unvalidated_pattern_min_reward_risk: float = 4.0
@@ -318,6 +318,18 @@ class Settings(BaseSettings):
     ibkr_paper_bracket_max_distance_pct: float = 0.20
     ibkr_allow_market_orders: bool = False
     ibkr_allowed_symbols: str = ""
+    ibkr_execution_preflight_quote_timeout_seconds: float = 4.0
+    ibkr_execution_preflight_quote_max_age_seconds: float = 5.0
+    ibkr_execution_preflight_max_spread_pct: float = 0.005
+    ibkr_execution_preflight_max_spread_cost_r: float = 0.05
+    ibkr_execution_preflight_max_entry_slippage_pct: float = 0.0025
+    ibkr_execution_preflight_max_entry_slippage_r: float = 0.10
+    ibkr_execution_preflight_min_bid_size: float = 100.0
+    ibkr_execution_preflight_min_ask_size: float = 100.0
+    ibkr_execution_preflight_min_top_of_book_notional_usd: float = 1000.0
+    ibkr_execution_preflight_whatif_enabled: bool = True
+    ibkr_execution_preflight_max_commission_usd: float = 5.0
+    ibkr_execution_preflight_max_commission_r: float = 0.05
 
     # Per-signal quote snapshot (informe §3.3.1): capture real bid/ask/last at
     # signal time so spread becomes a datum, not a proxy. Fail-soft: a failed
@@ -375,6 +387,25 @@ class Settings(BaseSettings):
     def pct_bounds(cls, value: float) -> float:
         if value <= 0 or value > 0.5:
             raise ValueError("risk percentages must be between 0 and 0.5")
+        return value
+
+    @field_validator(
+        "ibkr_execution_preflight_quote_timeout_seconds",
+        "ibkr_execution_preflight_quote_max_age_seconds",
+        "ibkr_execution_preflight_max_spread_pct",
+        "ibkr_execution_preflight_max_spread_cost_r",
+        "ibkr_execution_preflight_max_entry_slippage_pct",
+        "ibkr_execution_preflight_max_entry_slippage_r",
+        "ibkr_execution_preflight_min_bid_size",
+        "ibkr_execution_preflight_min_ask_size",
+        "ibkr_execution_preflight_min_top_of_book_notional_usd",
+        "ibkr_execution_preflight_max_commission_usd",
+        "ibkr_execution_preflight_max_commission_r",
+    )
+    @classmethod
+    def non_negative_execution_preflight_threshold(cls, value: float) -> float:
+        if value < 0:
+            raise ValueError("IBKR execution preflight thresholds must be non-negative")
         return value
 
     @property
