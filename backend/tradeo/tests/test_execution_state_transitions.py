@@ -46,6 +46,7 @@ from tradeo.services.ibkr_broker import (
 from tradeo.services.implementation_shortfall import trade_execution_adjusted_r
 from tradeo.modules.fox_hunter.production_manifest import build_production_manifest
 from tradeo.services.paper_broker import PaperBroker
+from tradeo.services.runtime_status import write_worker_heartbeat
 from tradeo.routers.risk import set_kill_switch
 from tradeo.schemas import KillSwitchRequest
 from tradeo.services.reconciliation import ReconciliationService
@@ -103,7 +104,31 @@ def add_production_pattern(db, *, active_manifest: bool = True) -> DiscoveredPat
         manifest = build_production_manifest(
             pattern,
             reviewer="test-director",
-            evidence_packet={"id": "packet-1", "hash": "abc123"},
+            evidence_packet={
+                "id": "packet-1",
+                "hash": "abc123",
+                "gate_scope": "director_production_gate",
+                "approved_for_production": True,
+                "blockers": [],
+                "ibkr_paper_fills": 30,
+                "min_paper_fills": 25,
+                "effective_paper_fills": 25.0,
+                "min_effective_paper_fills": 25.0,
+                "unique_fill_symbols": 8,
+                "min_fill_symbols": 8,
+                "unique_fill_days": 10,
+                "min_fill_trading_days": 10,
+                "scientific_contracts": {
+                    "director_gate_passed": True,
+                    "blockers": [],
+                    "evidence_packet": {"ref": "packet-1", "hash": "abc123"},
+                    "execution_provenance": {
+                        "costs_reconciled": True,
+                        "slippage_reconciled": True,
+                        "fills_reconciled": True,
+                    },
+                },
+            },
         )
         pattern.metrics_json = {"production_manifest": manifest}
     db.commit()
@@ -1417,6 +1442,37 @@ def live_order_settings(**overrides) -> Settings:
     return Settings(**values)
 
 
+def add_live_production_signal(db) -> Signal:
+    pattern = add_production_pattern(db, active_manifest=True)
+    signal = add_signal(db, status=SignalStatus.LIVE_APPROVED)
+    signal.metadata_json = {"entry_module": "fox_hunter", "pattern_id": pattern.id}
+    db.add(signal)
+    db.commit()
+    db.refresh(signal)
+    return signal
+
+
+def add_clean_reconciliation_audit(db, *, timestamp: datetime | None = None) -> None:
+    db.add(
+        AuditLog(
+            timestamp=timestamp or datetime.now(timezone.utc),
+            actor="reconciliation",
+            action="reconciliation_completed",
+            entity_type="system",
+            entity_id="ibkr",
+            details_json={
+                "divergence_count": 0,
+                "divergences": [],
+                "warning_count": 0,
+                "warnings": [],
+                "exit_protection_error_count": 0,
+                "exit_protection_errors": [],
+            },
+        )
+    )
+    db.commit()
+
+
 def test_live_ibkr_submission_rejects_paper_approved_signal_before_connect() -> None:
     db = session_factory()
     signal = add_signal(db, status=SignalStatus.PAPER_APPROVED)
@@ -1469,6 +1525,54 @@ def test_live_ibkr_submission_requires_explicit_account_and_allowlist(
         IBKRBroker(settings=live_order_settings(**settings_override)).submit_signal_bracket(db, signal)
 
     assert db.query(Trade).count() == 0
+
+
+def test_live_ibkr_submission_requires_central_readiness_before_connect(tmp_path) -> None:
+    db = session_factory()
+    signal = add_live_production_signal(db)
+    settings = live_order_settings(ibkr_port=7496, artifacts_dir=str(tmp_path))
+    write_worker_heartbeat(settings)
+
+    with pytest.raises(IBKRSafetyError, match="LiveReadinessGate: missing_clean_reconciliation"):
+        IBKRBroker(settings=settings).submit_signal_bracket(db, signal)
+
+    assert db.query(Trade).count() == 0
+    assert signal.status == SignalStatus.LIVE_APPROVED
+
+
+def test_live_ibkr_submission_rejects_stale_reconciliation_before_connect(tmp_path) -> None:
+    db = session_factory()
+    signal = add_live_production_signal(db)
+    settings = live_order_settings(ibkr_port=7496, artifacts_dir=str(tmp_path))
+    write_worker_heartbeat(settings)
+    stale_at = datetime.now(timezone.utc) - timedelta(
+        seconds=settings.live_readiness_reconciliation_max_age_seconds + 1
+    )
+    add_clean_reconciliation_audit(db, timestamp=stale_at)
+
+    with pytest.raises(IBKRSafetyError, match="LiveReadinessGate: stale_reconciliation"):
+        IBKRBroker(settings=settings).submit_signal_bracket(db, signal)
+
+    assert db.query(Trade).count() == 0
+    assert signal.status == SignalStatus.LIVE_APPROVED
+
+
+def test_live_ibkr_submission_reaches_connect_after_clean_readiness(tmp_path) -> None:
+    db = session_factory()
+    signal = add_live_production_signal(db)
+    settings = live_order_settings(ibkr_port=7496, artifacts_dir=str(tmp_path))
+    write_worker_heartbeat(settings)
+    add_clean_reconciliation_audit(db)
+
+    class BrokerUnderTest(IBKRBroker):
+        def _connect(self):
+            raise RuntimeError("connect attempted after live readiness passed")
+
+    with pytest.raises(RuntimeError, match="connect attempted after live readiness passed"):
+        BrokerUnderTest(settings=settings).submit_signal_bracket(db, signal)
+
+    assert db.query(Trade).count() == 0
+    assert signal.status == SignalStatus.LIVE_APPROVED
 
 
 def _fake_ib_trade(order_id: int, perm_id: int | None, status: str = "PendingSubmit"):

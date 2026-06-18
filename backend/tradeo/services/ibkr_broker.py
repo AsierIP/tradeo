@@ -24,6 +24,7 @@ from tradeo.db.models import (
 )
 from tradeo.modules.fox_hunter.production_manifest import production_manifest_is_active
 from tradeo.services.evidence import EvidenceQuality, EvidenceType
+from tradeo.services.live_readiness_gate import LiveReadinessGate, LiveReadinessError
 
 
 class IBKRSafetyError(RuntimeError):
@@ -339,6 +340,11 @@ class IBKRBroker:
             raise IBKRSafetyError("live IBKR execution requires pattern status production")
         if not production_manifest_is_active(pattern):
             raise IBKRSafetyError("live IBKR execution requires an active production manifest")
+        try:
+            LiveReadinessGate(self.settings).require_ready(db, require_auto_submit=False)
+        except LiveReadinessError as exc:
+            reason = str(exc.status.get("primary_block_reason") or "live_readiness_blocked")
+            raise IBKRSafetyError(f"live IBKR execution blocked by LiveReadinessGate: {reason}") from exc
 
     def preview_signal_order(self, signal: Signal) -> dict[str, Any]:
         """Run an IBKR WhatIf preview for the parent limit order without submitting it."""

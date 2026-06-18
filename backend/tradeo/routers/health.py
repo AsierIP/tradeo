@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import json
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
+from sqlalchemy.orm import Session
 
 from tradeo.core.config import get_settings
-from tradeo.db.session import SessionLocal
+from tradeo.db.session import SessionLocal, get_db
 from tradeo.services.ibkr_data_provider import inspect_ibkr_connection
+from tradeo.services.live_readiness_gate import LiveReadinessGate
 from tradeo.services.watchdog import SystemWatchdog
 
 router = APIRouter(tags=["health"])
@@ -52,12 +54,19 @@ def deep_health() -> dict[str, object]:
     db = SessionLocal()
     try:
         status = SystemWatchdog().inspect(db)
+        live_readiness = LiveReadinessGate().evaluate(db)
     finally:
         db.close()
     return {
         **health(),
         "watchdog": status,
+        "live_readiness": live_readiness,
     }
+
+
+@router.get("/health/live-readiness")
+def live_readiness(db: Session = Depends(get_db)) -> dict[str, object]:
+    return LiveReadinessGate().evaluate(db)
 
 
 @router.get("/health/ibkr")

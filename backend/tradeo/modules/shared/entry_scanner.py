@@ -19,6 +19,7 @@ from tradeo.services.evidence import (
     is_director_review_paper_fill_evidence,
 )
 from tradeo.services.ibkr_broker import IBKRBroker
+from tradeo.services.live_readiness_gate import LiveReadinessGate
 from tradeo.services.market_quotes import QuoteSnapshotProvider, capture_signal_spread_snapshot
 from tradeo.modules.laboratory.paper_observations import LAB_SHADOW_EXECUTION_MODE, LabPaperObservationService
 from tradeo.services.market_session import market_session_status
@@ -603,21 +604,6 @@ class PatternEntryScanner:
             )
             .count()
         )
-        production_patterns = (
-            db.query(DiscoveredPattern)
-            .filter(DiscoveredPattern.validation_passed.is_(True))
-            .filter(DiscoveredPattern.status == DiscoveredPatternStatus.PRODUCTION)
-            .all()
-        )
-        production_manifest_statuses = [
-            production_manifest_status(pattern) for pattern in production_patterns
-        ]
-        production_manifest_patterns = [
-            item for item in production_manifest_statuses if bool(item["valid"])
-        ]
-        production_manifest_blocked_reason_counts = self._reason_counts(
-            item for item in production_manifest_statuses if not bool(item["valid"])
-        )
         settings = self.settings
         assert settings is not None
         worker_status = worker_runtime_status(settings)
@@ -660,16 +646,27 @@ class PatternEntryScanner:
         default_lab_execute_orders = (
             settings.laboratory_auto_submit_paper_orders and paper_orders_allowed
         )
-        live_orders_allowed = (
-            settings.fox_hunter_auto_submit_live_orders
-            and settings.live_armed
-            and not settings.kill_switch_enabled
-            and not runtime_kill_switch_enabled
-            and not settings.ibkr_readonly
-            and bool(str(settings.ibkr_account or "").strip())
-            and bool(settings.ibkr_allowed_symbol_set)
-            and int(settings.ibkr_port) in {7496, 4001}
-            and len(production_manifest_patterns) > 0
+        live_readiness = LiveReadinessGate(settings).evaluate(db)
+        live_orders_allowed = bool(live_readiness["orders_allowed"])
+        production_manifest_readiness = live_readiness.get("production_manifest") or {}
+        eligible_production_manifests = (
+            self._safe_int(live_readiness.get("eligible_production_manifests"))
+            or self._safe_int(production_manifest_readiness.get("eligible_patterns"))
+            or 0
+        )
+        production_status_patterns = (
+            self._safe_int(live_readiness.get("production_status_patterns")) or 0
+        )
+        production_manifest_blocked_patterns = self._safe_int(
+            production_manifest_readiness.get("blocked_patterns")
+        )
+        if production_manifest_blocked_patterns is None:
+            production_manifest_blocked_patterns = max(
+                production_status_patterns - eligible_production_manifests,
+                0,
+            )
+        production_manifest_blocked_reason_counts = dict(
+            production_manifest_readiness.get("blocked_reason_counts") or {}
         )
         return {
             "research": {"purpose": "discover_new_patterns"},
@@ -732,33 +729,24 @@ class PatternEntryScanner:
                 "blocked_but_healthy": fox_hunter_ok and not live_orders_allowed,
                 "execution_block_reason": None
                 if live_orders_allowed
-                else self._live_order_block_reason(
-                    settings,
-                    runtime_kill_switch_enabled=runtime_kill_switch_enabled,
-                ),
-                "eligible_patterns": len(production_manifest_patterns),
-                "production_status_patterns": len(production_patterns),
+                else live_readiness.get("primary_block_reason"),
+                "eligible_patterns": eligible_production_manifests,
+                "production_status_patterns": production_status_patterns,
                 "production_manifest_required": True,
                 "production_gate_required": "DirectorProductionGate",
                 "production_manifest_policy": (
                     "canonical_manifest_with_director_production_gate_paper_fill_evidence"
                 ),
-                "production_manifest_blocked_patterns": len(production_patterns)
-                - len(production_manifest_patterns),
+                "production_manifest_blocked_patterns": production_manifest_blocked_patterns,
                 "production_manifest_blocked_reason_counts": production_manifest_blocked_reason_counts,
                 "live_readiness": {
+                    **live_readiness,
                     "orders_allowed": live_orders_allowed,
                     "live_armed": settings.live_armed,
                     "auto_submit_live_orders": settings.fox_hunter_auto_submit_live_orders,
-                    "eligible_production_manifests": len(production_manifest_patterns),
-                    "production_status_patterns": len(production_patterns),
-                    "block_reason": None
-                    if live_orders_allowed
-                    else self._live_order_block_reason(
-                        settings,
-                        runtime_kill_switch_enabled=runtime_kill_switch_enabled,
-                        eligible_production_manifests=len(production_manifest_patterns),
-                    ),
+                    "eligible_production_manifests": eligible_production_manifests,
+                    "production_status_patterns": production_status_patterns,
+                    "block_reason": live_readiness.get("primary_block_reason"),
                 },
                 "symbols_checked": fox_entry_status["symbols_checked"],
                 "last_symbols_checked": fox_entry_status["last_symbols_checked"],
@@ -824,33 +812,6 @@ class PatternEntryScanner:
             return "ibkr_readonly"
         if not paper_order_safety_ok:
             return "ibkr_live_port_blocked"
-        return "unknown"
-
-    @staticmethod
-    def _live_order_block_reason(
-        settings: Settings,
-        *,
-        runtime_kill_switch_enabled: bool = False,
-        eligible_production_manifests: int = 0,
-    ) -> str:
-        if not settings.fox_hunter_auto_submit_live_orders:
-            return "live_auto_submit_disabled"
-        if not settings.live_armed:
-            return "live_armed_false"
-        if settings.kill_switch_enabled:
-            return "kill_switch_enabled"
-        if runtime_kill_switch_enabled:
-            return "runtime_kill_switch_enabled"
-        if settings.ibkr_readonly:
-            return "ibkr_readonly"
-        if not str(settings.ibkr_account or "").strip():
-            return "missing_ibkr_account"
-        if not settings.ibkr_allowed_symbol_set:
-            return "missing_ibkr_allowed_symbols"
-        if int(settings.ibkr_port) not in {7496, 4001}:
-            return "ibkr_live_port_required"
-        if eligible_production_manifests <= 0:
-            return "no_active_production_manifest"
         return "unknown"
 
     def _requires_market_hours(self, module: EntryModule) -> bool:

@@ -287,6 +287,8 @@ class Settings(BaseSettings):
     reconciliation_interval_minutes: int = 30
     reconciliation_auto_kill_switch: bool = True
     reconciliation_auto_repair_paper_exits: bool = False
+    live_readiness_worker_max_age_seconds: int = 90
+    live_readiness_reconciliation_max_age_seconds: int = 3900
 
     # Pattern health monitor (informe §4.8): CUSUM over realized R per trade
     # vs the Research expectancy for PRODUCTION/DIRECTOR_REVIEW patterns. A

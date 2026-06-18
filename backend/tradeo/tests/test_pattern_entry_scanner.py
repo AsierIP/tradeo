@@ -8,6 +8,7 @@ from sqlalchemy.orm import sessionmaker
 
 from tradeo.core.config import Settings
 from tradeo.db.models import (
+    AuditLog,
     DiscoveredPattern,
     DiscoveredPatternMatch,
     DiscoveredPatternStatus,
@@ -21,6 +22,7 @@ from tradeo.research.novel_pattern_matcher import NovelPatternMatcher
 from tradeo.research.pattern_embedding_engine import PatternEmbeddingEngine
 from tradeo.services.director_review_gate import DirectorReviewGate
 from tradeo.services.evidence import EvidenceQuality, EvidenceType, FillProvenance
+from tradeo.services.runtime_status import write_worker_heartbeat
 from tradeo.services.system_controls import activate_runtime_kill_switch
 from tradeo.modules.fox_hunter.production_manifest import (
     build_production_manifest,
@@ -179,6 +181,23 @@ def production_gate_evidence_packet(
             },
         },
     }
+
+
+def add_clean_reconciliation_audit(db) -> None:
+    db.add(
+        AuditLog(
+            actor="reconciliation",
+            action="reconciliation_completed",
+            entity_type="system",
+            entity_id="test",
+            details_json={
+                "divergence_count": 0,
+                "warning_count": 0,
+                "exit_protection_error_count": 0,
+            },
+        )
+    )
+    db.commit()
 
 
 def add_shadow_observation(
@@ -701,14 +720,101 @@ def test_fox_status_reports_production_manifest_block_reasons() -> None:
     assert fox["production_manifest_policy"] == (
         "canonical_manifest_with_director_production_gate_paper_fill_evidence"
     )
-    assert fox["live_readiness"] == {
-        "orders_allowed": False,
-        "live_armed": False,
-        "auto_submit_live_orders": False,
-        "eligible_production_manifests": 0,
-        "production_status_patterns": 1,
-        "block_reason": "live_auto_submit_disabled",
+    readiness = fox["live_readiness"]
+    assert readiness["orders_allowed"] is False
+    assert readiness["live_armed"] is False
+    assert readiness["auto_submit_live_orders"] is False
+    assert readiness["eligible_production_manifests"] == 0
+    assert readiness["production_status_patterns"] == 1
+    assert readiness["primary_block_reason"] == "live_armed_false"
+    assert readiness["block_reason"] == "live_armed_false"
+    assert "live_auto_submit_disabled" in readiness["block_reasons"]
+    assert "no_active_production_manifest" in readiness["block_reasons"]
+    assert readiness["production_manifest"]["blocked_reason_counts"] == {
+        "missing_production_manifest": 1
     }
+
+
+def test_fox_status_uses_central_live_readiness_blockers(tmp_path) -> None:
+    db = session_factory()
+    provider = FixtureProvider("GATE")
+    production = add_pattern(db, provider, status=DiscoveredPatternStatus.PRODUCTION)
+    production.metrics_json = {
+        **(production.metrics_json or {}),
+        "production_manifest": build_production_manifest(
+            production,
+            reviewer="test_director",
+            evidence_packet=production_gate_evidence_packet(),
+        ),
+    }
+    db.add(production)
+    db.commit()
+
+    fox = scanner(
+        provider,
+        artifacts_dir=str(tmp_path),
+        fox_hunter_enabled=True,
+        fox_hunter_auto_submit_live_orders=True,
+        trading_mode="live",
+        live_trading_enabled=True,
+        live_trading_confirmation_value="I_ACCEPT_LIVE_MARKET_RISK",
+        ibkr_readonly=False,
+        ibkr_account="DU12345",
+        ibkr_allowed_symbols="GATE",
+        ibkr_port=4001,
+    ).status(db)["fox_hunter"]
+
+    assert fox["live_orders_allowed"] is False
+    assert fox["execution_block_reason"] == "missing_worker_heartbeat"
+    assert fox["eligible_patterns"] == 1
+    readiness = fox["live_readiness"]
+    assert readiness["orders_allowed"] is False
+    assert readiness["primary_block_reason"] == "missing_worker_heartbeat"
+    assert readiness["block_reason"] == "missing_worker_heartbeat"
+    assert "missing_clean_reconciliation" in readiness["block_reasons"]
+
+
+def test_fox_status_allows_live_orders_when_central_gate_allows(tmp_path) -> None:
+    db = session_factory()
+    provider = FixtureProvider("READY")
+    production = add_pattern(db, provider, status=DiscoveredPatternStatus.PRODUCTION)
+    production.metrics_json = {
+        **(production.metrics_json or {}),
+        "production_manifest": build_production_manifest(
+            production,
+            reviewer="test_director",
+            evidence_packet=production_gate_evidence_packet(),
+        ),
+    }
+    db.add(production)
+    db.commit()
+    add_clean_reconciliation_audit(db)
+
+    ready_scanner = scanner(
+        provider,
+        artifacts_dir=str(tmp_path),
+        fox_hunter_enabled=True,
+        fox_hunter_auto_submit_live_orders=True,
+        trading_mode="live",
+        live_trading_enabled=True,
+        live_trading_confirmation_value="I_ACCEPT_LIVE_MARKET_RISK",
+        ibkr_readonly=False,
+        ibkr_account="DU12345",
+        ibkr_allowed_symbols="READY",
+        ibkr_port=4001,
+    )
+    write_worker_heartbeat(ready_scanner.settings)
+
+    fox = ready_scanner.status(db)["fox_hunter"]
+
+    assert fox["live_orders_allowed"] is True
+    assert fox["execution_block_reason"] is None
+    assert fox["eligible_patterns"] == 1
+    readiness = fox["live_readiness"]
+    assert readiness["orders_allowed"] is True
+    assert readiness["primary_block_reason"] is None
+    assert readiness["block_reason"] is None
+    assert readiness["block_reasons"] == []
 
 
 def test_production_manifest_requires_canonical_hash_algorithm() -> None:
