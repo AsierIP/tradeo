@@ -1287,14 +1287,20 @@ class PatternEntryScanner:
             return True
         metadata = signal.metadata_json or {}
         outcome = metadata.get("execution_outcome") or {}
-        if not isinstance(outcome, dict) or "retryable" not in outcome:
-            return True
         open_real_trades = [
             trade
             for trade in signal.trades
             if trade.status == TradeStatus.OPEN and not cls._is_lab_shadow_no_order_trade(trade)
         ]
         if open_real_trades:
+            return True
+        if not isinstance(outcome, dict) or "retryable" not in outcome:
+            if not signal.trades:
+                created_at = cls._parse_datetime(signal.created_at)
+                if created_at is None:
+                    return True
+                stale_after = timedelta(minutes=max(5, retryable_failure_cooldown_minutes))
+                return datetime.now(timezone.utc) - created_at < stale_after
             return True
         if outcome.get("retryable") is False:
             return False

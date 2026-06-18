@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pandas as pd
 from sqlalchemy import create_engine
@@ -2656,6 +2656,47 @@ def test_laboratory_scanner_skips_active_exposure_for_new_lab_observation() -> N
     assert result["skipped_duplicates"] == 1
     assert result["signals_created"] == 0
     assert result["paper_observations_opened"] == 0
+
+
+def test_laboratory_scanner_ignores_stale_paper_signal_without_trade() -> None:
+    db = session_factory()
+    provider = FixtureProvider()
+    pattern = add_pattern(db, provider, status=DiscoveredPatternStatus.LAB_CANDIDATE)
+    db.add(
+        Signal(
+            symbol=provider.symbol,
+            pattern=pattern.name,
+            side="long",
+            entry=10.0,
+            stop=9.0,
+            target=14.0,
+            reward_risk=4.0,
+            confidence=0.7,
+            composite_score=0.7,
+            risk_usd=10.0,
+            suggested_qty=1,
+            strategy_version=f"laboratory_pattern_{pattern.id}",
+            status=SignalStatus.PAPER_APPROVED,
+            created_at=datetime.now(timezone.utc) - timedelta(days=3),
+            metadata_json={"entry_module": "laboratory", "pattern_id": pattern.id},
+        )
+    )
+    db.commit()
+    match = match_payload(
+        pattern_id=pattern.id,
+        pattern_name=pattern.name,
+        pattern_key=pattern.pattern_key,
+        window_end="2026-06-10T00:00:00+00:00",
+    )
+
+    result = PatternEntryScanner(
+        settings=scanner(provider).settings,
+        matcher=StaticMatcher(provider, [match]),
+    ).scan(db, module="laboratory", symbols=[provider.symbol], store_signals=True)
+
+    assert result["skipped_duplicates"] == 0
+    assert result["signals_created"] == 1
+    assert result["paper_observations_opened"] == 1
 
 
 def test_laboratory_scanner_skips_signal_creation_when_market_closed(monkeypatch) -> None:
