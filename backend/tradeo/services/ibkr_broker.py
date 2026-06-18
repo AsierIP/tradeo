@@ -1080,6 +1080,22 @@ class IBKRBroker:
                     "IBKR did not acknowledge the bracket safely: "
                     f"{json.dumps(status_snapshot, sort_keys=True)}"
                 )
+            paper_visibility_snapshot = None
+            if self.settings.trading_mode == "paper":
+                paper_visibility_snapshot = _paper_order_visibility_snapshot(
+                    ib,
+                    symbol=signal.symbol,
+                    order_ids=[t.order.orderId for t in trades],
+                    perm_ids=[t.orderStatus.permId or None for t in trades],
+                )
+                if not paper_visibility_snapshot["visible"]:
+                    for trade_status in trades:
+                        ib.cancelOrder(trade_status.order)
+                    ib.sleep(1.0)
+                    raise IBKRSafetyError(
+                        "IBKR paper bracket was not visible after submit: "
+                        f"{json.dumps(paper_visibility_snapshot, sort_keys=True, default=str)}"
+                    )
 
             parent_trade = trades[0]
             parent_order = parent_trade.order
@@ -1108,6 +1124,7 @@ class IBKRBroker:
                 "order_ids": order_ids,
                 "perm_ids": perm_ids,
                 "paper_bracket_ack_mode": paper_bracket_ack_mode,
+                "paper_visibility_snapshot": paper_visibility_snapshot,
             }
             if execution_preflight is not None:
                 execution_observation["execution_preflight"] = execution_preflight
@@ -1161,6 +1178,7 @@ class IBKRBroker:
                     "submitted_bracket": bracket_prices["submitted"],
                     "paper_bracket_adjusted": bracket_prices["adjusted"],
                     "paper_bracket_ack_mode": paper_bracket_ack_mode,
+                    "paper_visibility_snapshot": paper_visibility_snapshot,
                     "paper_bracket_degraded_to_parent_only": bracket_degraded_to_parent_only,
                     "bracket_failure_snapshot": bracket_failure_snapshot,
                     "order_ids": order_ids,
@@ -1464,6 +1482,105 @@ def _bracket_acknowledged(trades: list[Any], *, paper_mode: bool) -> bool:
     if paper_mode:
         return True
     return all(getattr(trade.orderStatus, "permId", 0) for trade in trades)
+
+
+def _paper_order_visibility_snapshot(
+    ib: Any,
+    *,
+    symbol: str,
+    order_ids: list[Any],
+    perm_ids: list[Any],
+) -> dict[str, Any]:
+    symbol = str(symbol or "").upper()
+    order_id_set = {str(value) for value in order_ids if value is not None}
+    perm_id_set = {str(value) for value in perm_ids if value is not None}
+    snapshot: dict[str, Any] = {
+        "visible": False,
+        "symbol": symbol,
+        "order_ids": sorted(order_id_set),
+        "perm_ids": sorted(perm_id_set),
+        "open_orders": [],
+        "positions": [],
+        "fills": [],
+        "visibility_checks": [],
+    }
+
+    try:
+        req_all_open_orders = getattr(ib, "reqAllOpenOrders", None)
+        if callable(req_all_open_orders):
+            req_all_open_orders()
+            snapshot["visibility_checks"].append("open_orders")
+        ib.sleep(1.0)
+        open_trades = getattr(ib, "openTrades", lambda: [])() or []
+        for row in open_trades:
+            contract = getattr(row, "contract", None)
+            order = getattr(row, "order", None)
+            status = getattr(row, "orderStatus", None)
+            row_symbol = str(getattr(contract, "symbol", "") or "").upper()
+            row_order_id = str(getattr(order, "orderId", "") or "")
+            row_parent_id = str(getattr(order, "parentId", "") or "")
+            row_perm_id = str(getattr(status, "permId", "") or "")
+            entry = {
+                "symbol": row_symbol,
+                "order_id": row_order_id,
+                "parent_order_id": row_parent_id,
+                "perm_id": row_perm_id,
+                "status": getattr(status, "status", None),
+            }
+            snapshot["open_orders"].append(entry)
+            if row_symbol == symbol and (
+                row_order_id in order_id_set
+                or row_parent_id in order_id_set
+                or (row_perm_id and row_perm_id in perm_id_set)
+            ):
+                snapshot["visible"] = True
+    except Exception as exc:  # noqa: BLE001
+        snapshot["open_orders_error"] = repr(exc)
+
+    try:
+        positions_fn = getattr(ib, "positions", None)
+        if callable(positions_fn):
+            positions = positions_fn() or []
+            snapshot["visibility_checks"].append("positions")
+            for row in positions:
+                contract = getattr(row, "contract", None)
+                row_symbol = str(getattr(contract, "symbol", "") or "").upper()
+                position = _float_or_none(getattr(row, "position", None)) or 0.0
+                entry = {"symbol": row_symbol, "position": position}
+                snapshot["positions"].append(entry)
+                if row_symbol == symbol and abs(position) > 0:
+                    snapshot["visible"] = True
+    except Exception as exc:  # noqa: BLE001
+        snapshot["positions_error"] = repr(exc)
+
+    try:
+        fills_fn = getattr(ib, "fills", None)
+        if callable(fills_fn):
+            fills = fills_fn() or []
+            snapshot["visibility_checks"].append("fills")
+            for row in fills:
+                normalized = _normalize_fill(row)
+                row_symbol = str(normalized.get("symbol") or "").upper()
+                row_order_id = str(normalized.get("order_id") or "")
+                row_perm_id = str(normalized.get("perm_id") or "")
+                entry = {
+                    "symbol": row_symbol,
+                    "order_id": row_order_id,
+                    "perm_id": row_perm_id,
+                    "execution_time": normalized.get("execution_time"),
+                }
+                snapshot["fills"].append(entry)
+                if row_symbol == symbol and (
+                    row_order_id in order_id_set or (row_perm_id and row_perm_id in perm_id_set)
+                ):
+                    snapshot["visible"] = True
+    except Exception as exc:  # noqa: BLE001
+        snapshot["fills_error"] = repr(exc)
+
+    if not snapshot["visibility_checks"]:
+        snapshot["visible"] = True
+        snapshot["visibility_unavailable"] = True
+    return snapshot
 
 
 def _bracket_has_terminal_rejection(trades: list[Any]) -> bool:
