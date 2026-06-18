@@ -2394,7 +2394,7 @@ def test_paper_bracket_rejects_terminal_child_status() -> None:
     assert _bracket_acknowledged(trades, paper_mode=True) is False
 
 
-def test_ibkr_submit_accepts_paper_bracket_missing_perm_ids_without_parent_only_degrade() -> None:
+def test_ibkr_submit_rejects_paper_bracket_without_any_perm_ids() -> None:
     db = session_factory()
     signal = add_signal(db, status=SignalStatus.PAPER_APPROVED)
 
@@ -2478,15 +2478,14 @@ def test_ibkr_submit_accepts_paper_bracket_missing_perm_ids_without_parent_only_
 
     broker = BrokerUnderTest(settings=Settings(ibkr_readonly=False, trading_mode="paper"))
 
-    trade = broker.submit_signal_bracket(db, signal)
+    with pytest.raises(IBKRSafetyError, match="no broker perm ids"):
+        broker.submit_signal_bracket(db, signal)
 
     db.refresh(signal)
     assert len(fake_ib.placed_orders) == 3
-    assert len(fake_ib.cancelled_orders) == 0
-    assert db.query(Trade).count() == 1
-    assert signal.status == SignalStatus.EXECUTED
-    assert trade.metadata_json["paper_bracket_ack_mode"] == "order_id_status_no_terminal"
-    assert trade.metadata_json["paper_bracket_degraded_to_parent_only"] is False
+    assert len(fake_ib.cancelled_orders) == 3
+    assert db.query(Trade).count() == 0
+    assert signal.status == SignalStatus.PAPER_APPROVED
 
 
 def test_paper_short_bracket_caps_distant_target_for_ibkr_price_bands() -> None:

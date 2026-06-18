@@ -1080,13 +1080,25 @@ class IBKRBroker:
                     "IBKR did not acknowledge the bracket safely: "
                     f"{json.dumps(status_snapshot, sort_keys=True)}"
                 )
+            order_ids = [t.order.orderId for t in trades]
+            perm_ids = [t.orderStatus.permId or None for t in trades]
+            if self.settings.trading_mode == "paper" and not any(perm_ids):
+                status_snapshot = _bracket_status_snapshot(trades)
+                for trade_status in trades:
+                    ib.cancelOrder(trade_status.order)
+                ib.sleep(1.0)
+                raise IBKRSafetyError(
+                    "IBKR paper bracket had no broker perm ids after submit: "
+                    f"{json.dumps(status_snapshot, sort_keys=True, default=str)}"
+                )
+
             paper_visibility_snapshot = None
             if self.settings.trading_mode == "paper":
                 paper_visibility_snapshot = _paper_order_visibility_snapshot(
                     ib,
                     symbol=signal.symbol,
-                    order_ids=[t.order.orderId for t in trades],
-                    perm_ids=[t.orderStatus.permId or None for t in trades],
+                    order_ids=order_ids,
+                    perm_ids=perm_ids,
                 )
                 if not paper_visibility_snapshot["visible"]:
                     for trade_status in trades:
@@ -1099,8 +1111,6 @@ class IBKRBroker:
 
             parent_trade = trades[0]
             parent_order = parent_trade.order
-            order_ids = [t.order.orderId for t in trades]
-            perm_ids = [t.orderStatus.permId or None for t in trades]
             paper_bracket_ack_mode = (
                 "order_id_status_no_terminal"
                 if self.settings.trading_mode == "paper" and not all(perm_ids)
