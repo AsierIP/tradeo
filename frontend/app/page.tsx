@@ -161,6 +161,8 @@ type ModuleSignal = Summary['recent_signals'][number]
     execution_reason?: string | null
     retryable?: boolean
     next_action?: string | null
+    cadence?: 'daily' | 'intraday' | string
+    metadata_json?: Record<string, unknown>
   }
 type ModuleTrade = Summary['open_trades'][number] & {
   signal_id?: number | null
@@ -188,6 +190,8 @@ type ModuleTrade = Summary['open_trades'][number] & {
   gross_r?: number | null
   net_r?: number | null
   cost_coverage?: string | null
+  cadence?: 'daily' | 'intraday' | string
+  metadata_json?: Record<string, unknown>
 }
 type ExecutionDiagnostics = {
   method?: string
@@ -207,6 +211,7 @@ type ExecutionDiagnostics = {
 }
 type ModuleOverview = {
   module: 'laboratory' | 'fox_hunter'
+  cadence?: 'all' | 'daily' | 'intraday'
   data_scope?: string
   query_limit?: number
   summary_limit?: number
@@ -941,37 +946,27 @@ function OperationsModule({
   title,
   subtitle,
   overview,
-  status,
-  diagnostics
+  status
 }: {
   title: string
   subtitle: string
   overview?: ModuleOverview
   status?: ModuleStatus
-  diagnostics?: LabDiagnostics
 }) {
-  const signals = overview?.signals || []
   const trades = overview?.trades || []
-  const patternOutcomes = overview?.pattern_outcomes || []
+  const activeTrades = trades.filter((trade) => trade.status.toLowerCase() === 'open')
   const pnl = overview?.pnl_points?.length ? overview.pnl_points : [{ timestamp: '', total_pnl_usd: 0, trade_pnl_usd: 0 }]
   const stats = overview?.stats || { signals: 0, trades: 0, open_trades: 0, closed_trades: 0, total_pnl_usd: 0, total_r: 0, win_rate: 0 }
   const executionDiagnostics = overview?.execution_diagnostics || stats.execution_diagnostics
-  const funnel = stats.funnel || { detected: stats.signals, actionable: 0, submitted: 0, executed: 0, blocked_or_expired: 0 }
-  const paperFills = stats.ibkr_paper_filled_trades ?? overview?.evidence_summary?.ibkr_paper_filled ?? 0
-  const liveFills = stats.live_trades ?? stats.live_filled_trades ?? overview?.evidence_summary?.live_filled ?? 0
-  const shadowClosed = stats.shadow_closed_trades ?? overview?.evidence_summary?.shadow_closed ?? 0
-  const nearMissClosed = stats.near_miss_closed_trades ?? overview?.evidence_summary?.near_miss_closed ?? 0
-  const scopeLabel = overview?.data_scope || 'scope pendiente'
-  const fillScopeLabel = overview?.query_limit && overview?.summary_limit
-    ? `${overview.summary_limit}/${overview.query_limit}`
-    : 'scope'
   const scopeNote = overview?.scope_note || 'Dashboard operativo; no fuente Director.'
   const pnlBasis = overview?.pnl_basis || stats.pnl_basis || 'operational_fills_only'
   const operationalOk = Boolean(status?.operational_ok)
   const operationalTone = status?.state === 'market_closed' ? 'warn' : operationalOk ? '' : 'bad'
   const blockedHealthy = Boolean(status?.blocked_but_healthy)
+  const lastPoint = pnl[pnl.length - 1]
+  const totalPnl = typeof lastPoint?.total_pnl_usd === 'number' ? lastPoint.total_pnl_usd : stats.total_pnl_usd
   return (
-    <section className="card full module-card">
+    <section className="card module-card operation-lane">
       <div className="section-head module-head">
         <div>
           <div className="module-kicker">{title}</div>
@@ -987,66 +982,49 @@ function OperationsModule({
           {typeof status?.live_orders_allowed === 'boolean' && (
             <div className="pill">live_orders_allowed: {status.live_orders_allowed ? 'true' : 'false'}</div>
           )}
-          <div className="pill" title={`${scopeNote} PnL: ${pnlBasis}`}>scope: {scopeLabel} · no Director</div>
+          <div className="pill" title={`${scopeNote} PnL: ${pnlBasis}`}>PnL cerradas</div>
         </div>
       </div>
 
-      <div className="module-stats">
-        <div><strong>{status?.eligible_patterns ?? 0}</strong><span>patrones elegibles</span></div>
-        <div><strong>{status?.symbols_checked ?? 0}</strong><span>acciones contrastadas</span></div>
-        <div><strong>{stats.signals}</strong><span>señales</span></div>
-        <div><strong>{funnel.actionable}</strong><span>accionables</span></div>
-        <div><strong>{stats.open_trades}</strong><span>operaciones abiertas</span></div>
-        <div><strong>{paperFills}/{liveFills}</strong><span title={scopeNote}>paper/live fills · {fillScopeLabel}</span></div>
-        <div><strong>{shadowClosed}</strong><span>shadow cerradas</span></div>
-        <div><strong>{nearMissClosed}</strong><span>near-miss cerradas</span></div>
-        <div><strong>{formatMoney(stats.total_pnl_usd)}</strong><span>PnL fills</span></div>
-        <div><strong>{(stats.win_rate * 100).toFixed(1)}%</strong><span>win rate fills</span></div>
-        <div title={`expected ${formatRValue(executionDiagnostics?.expected_expectancy_r)} · gross ${formatRValue(executionDiagnostics?.gross_expectancy_r)} · delta net ${formatRValue(executionDiagnostics?.net_delta_vs_expected_r)}`}>
-          <strong>{formatRValue(executionDiagnostics?.net_expectancy_r)}</strong><span>EV neta cerradas</span>
-        </div>
-        <div><strong>{formatRValue(executionDiagnostics?.mean_slippage_r, 3)}</strong><span>slippage medio</span></div>
-        <div title={`faltan shortfall ${executionDiagnostics?.missing_shortfall_rows ?? 0} · faltan comision ${executionDiagnostics?.missing_commission_rows ?? 0}`}>
-          <strong>{((executionDiagnostics?.coverage ?? 0) * 100).toFixed(0)}%</strong><span>cobertura coste</span>
+      <div className="operation-metrics">
+        <div><strong>{activeTrades.length}</strong><span>órdenes activas</span></div>
+        <div><strong>{stats.closed_trades}</strong><span>cerradas con fill</span></div>
+        <div><strong className={totalPnl > 0 ? 'positive' : totalPnl < 0 ? 'negative' : ''}>{formatMoney(totalPnl)}</strong><span>P/L cerrado</span></div>
+        <div title={`EV ${formatRValue(executionDiagnostics?.net_expectancy_r)} · cobertura coste ${((executionDiagnostics?.coverage ?? 0) * 100).toFixed(0)}%`}>
+          <strong>{(stats.win_rate * 100).toFixed(1)}%</strong><span>win rate</span>
         </div>
       </div>
 
-      <div className="module-split">
+      <div className="operation-layout">
         <section className="module-panel">
-          <h3>Operaciones</h3>
-          <div className="table-scroll compact-scroll">
+          <h3>Órdenes activas</h3>
+          <div className="table-scroll active-orders-scroll">
             <table>
               <thead>
-                <tr><th>Símbolo</th><th>Lado</th><th>Qty</th><th>Entrada</th><th>Salida</th><th>PnL</th><th>R</th><th>EV</th><th>Net R</th><th>Slip</th><th>Coste</th><th>Exit</th><th>Evidencia</th><th>Estado</th><th>Apertura</th></tr>
+                <tr><th>Símbolo</th><th>Lado</th><th>Qty</th><th>Entrada</th><th>Stop</th><th>Target</th><th>EV</th><th>Evidencia</th><th>Apertura</th></tr>
               </thead>
               <tbody>
-                {trades.map((t) => (
+                {activeTrades.map((t) => (
                   <tr key={t.id}>
                     <td>{t.symbol}</td>
                     <td>{t.side}</td>
                     <td>{t.qty}</td>
                     <td>{t.entry}</td>
-                    <td>{t.exit_price ?? '-'}</td>
-                    <td className={t.pnl_usd > 0 ? 'positive' : t.pnl_usd < 0 ? 'negative' : ''}>{formatMoney(t.pnl_usd)}</td>
-                    <td>{t.r_multiple.toFixed(2)}R</td>
+                    <td>{t.stop}</td>
+                    <td>{t.target}</td>
                     <td title={t.expected_value_source || undefined}>{expectedValueLabel(t)}</td>
-                    <td className={(t.net_r ?? 0) > 0 ? 'positive' : (t.net_r ?? 0) < 0 ? 'negative' : ''}>{formatRValue(t.net_r)}</td>
-                    <td title={`entry ${formatBps(t.entry_slippage_bps)} · total ${formatRValue(t.total_slippage_r, 3)}`}>{formatRValue(t.total_slippage_r, 3)}</td>
-                    <td title={`${costCoverageLabel(t.cost_coverage)} · est/acción ${formatOptionalMoney(t.estimated_cost_per_share_usd)}`}>{formatOptionalMoney(t.commission_usd)}</td>
-                    <td>{t.exit_reason || '-'}</td>
                     <td>{evidenceLabel(t)}</td>
-                    <td><StatusBadge status={t.status} /></td>
                     <td>{shortDateTime(t.opened_at)}</td>
                   </tr>
                 ))}
-                {!trades.length && <tr><td colSpan={15}>Sin operaciones todavía.</td></tr>}
+                {!activeTrades.length && <tr><td colSpan={9}>Sin órdenes activas.</td></tr>}
               </tbody>
             </table>
           </div>
         </section>
         <section className="module-panel">
-          <h3>PnL fills paper/live</h3>
-          <ResponsiveContainer width="100%" height={280}>
+          <h3>P/L acumulado de cerradas</h3>
+          <ResponsiveContainer width="100%" height={230}>
             <AreaChart data={pnl}>
               <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
               <XAxis dataKey="timestamp" hide />
@@ -1057,73 +1035,6 @@ function OperationsModule({
           </ResponsiveContainer>
         </section>
       </div>
-
-      {diagnostics && (
-        <CollapsibleSection
-          title="Diagnóstico Lab · candidatas y near-miss"
-          meta={`${diagnostics.opportunities.length} filas`}
-        >
-          <LabDiagnosticsPanel diagnostics={diagnostics} compact />
-        </CollapsibleSection>
-      )}
-
-      <CollapsibleSection title="Embudo por patrón" meta={`${patternOutcomes.length} patrones`}>
-        <div className="subsection embedded-panel">
-        <div className="table-scroll compact-scroll">
-          <table>
-            <thead>
-              <tr><th>Patrón</th><th>Señales</th><th>Acc.</th><th>Enviadas</th><th>Ejecutadas</th><th>Bloq/Exp</th><th>Shadow</th><th>Near</th><th>IBKR</th><th>Live</th><th>Calidad</th><th>R</th><th>PnL</th><th>Motivo</th></tr>
-            </thead>
-            <tbody>
-              {patternOutcomes.map((p) => (
-                <tr key={p.pattern}>
-                  <td title={p.pattern}>{p.pattern}</td>
-                  <td>{p.signals}</td>
-                  <td>{p.actionable}</td>
-                  <td>{p.submitted}</td>
-                  <td>{p.executed}</td>
-                  <td>{p.blocked_or_expired}</td>
-                  <td>{p.shadow_closed || 0}</td>
-                  <td>{p.near_miss_closed || 0}</td>
-                  <td>{p.ibkr_paper_filled || 0}</td>
-                  <td>{p.live ?? p.live_filled ?? 0}</td>
-                  <td>{(p.avg_quality_score * 100).toFixed(0)}%</td>
-                  <td>{p.total_r.toFixed(2)}R</td>
-                  <td className={p.total_pnl_usd > 0 ? 'positive' : p.total_pnl_usd < 0 ? 'negative' : ''}>{formatMoney(p.total_pnl_usd)}</td>
-                  <td>{p.top_reason_code}</td>
-                </tr>
-              ))}
-              {!patternOutcomes.length && <tr><td colSpan={14}>Sin outcomes todavía.</td></tr>}
-            </tbody>
-          </table>
-        </div>
-        </div>
-      </CollapsibleSection>
-
-      <CollapsibleSection title="Señales y patrones detectados" meta={`${signals.length} señales`}>
-        <div className="subsection embedded-panel">
-        <div className="table-scroll signal-scroll">
-          <table>
-            <thead>
-              <tr>
-                <th>Rank</th><th>Símbolo</th><th>Lado</th><th>Entrada</th><th>Stop</th><th>Target</th><th>R:R</th><th>EV</th><th>Conf.</th><th>Calidad</th><th>Qty</th><th>Estado</th><th>Motivo</th><th>Acción</th>
-              </tr>
-            </thead>
-            <tbody>
-              {signals.map((s) => (
-                <tr key={s.id}>
-                  <td title={typeof s.opportunity_rank_score === 'number' ? s.opportunity_rank_score.toFixed(3) : undefined}>{s.opportunity_rank ?? '-'}</td><td>{s.symbol}</td><td>{s.side}</td><td>{s.entry}</td><td>{s.stop}</td><td>{s.target}</td>
-                  <td>{s.reward_risk}</td><td title={s.expected_value_source || undefined}>{expectedValueLabel(s)}</td><td>{(s.confidence * 100).toFixed(1)}%</td><td title={(s.entry_quality_flags || []).join(', ') || undefined}>{formatQuality(s)}</td><td>{s.suggested_qty}</td><td><StatusBadge status={s.status} /></td>
-                  <td title={s.execution_reason || undefined}>{s.execution_reason_code || '-'}</td>
-                  <td>{s.retryable ? 'retry' : (s.next_action || '-')}</td>
-                </tr>
-              ))}
-              {!signals.length && <tr><td colSpan={14}>Sin señales todavía.</td></tr>}
-            </tbody>
-          </table>
-        </div>
-        </div>
-      </CollapsibleSection>
     </section>
   )
 }
@@ -1144,9 +1055,10 @@ export default function Page() {
   const { data: discoveryRuns, mutate: mutateRuns } = useSWR<DiscoveryRun[]>('/research/runs?limit=25', fetcher, { refreshInterval: 15000 })
   const { data: labStatus } = useSWR<ModuleStatus>('/laboratory/status', fetcher, { refreshInterval: 5000 })
   const { data: foxStatus } = useSWR<ModuleStatus>('/fox-hunter/status', fetcher, { refreshInterval: 5000 })
-  const { data: labOverview } = useSWR<ModuleOverview>('/laboratory/overview', fetcher, { refreshInterval: 15000 })
-  const { data: labDiagnostics } = useSWR<LabDiagnostics>('/laboratory/diagnostics?limit=24', fetcher, { refreshInterval: 15000 })
-  const { data: foxOverview } = useSWR<ModuleOverview>('/fox-hunter/overview', fetcher, { refreshInterval: 15000 })
+  const { data: labDailyOverview } = useSWR<ModuleOverview>('/laboratory/overview?cadence=daily', fetcher, { refreshInterval: 15000 })
+  const { data: labIntradayOverview } = useSWR<ModuleOverview>('/laboratory/overview?cadence=intraday', fetcher, { refreshInterval: 15000 })
+  const { data: foxDailyOverview } = useSWR<ModuleOverview>('/fox-hunter/overview?cadence=daily', fetcher, { refreshInterval: 15000 })
+  const { data: foxIntradayOverview } = useSWR<ModuleOverview>('/fox-hunter/overview?cadence=intraday', fetcher, { refreshInterval: 15000 })
   const { data: intradayStatus } = useSWR<IntradayStatus>('/intraday/status', fetcher, { refreshInterval: 5000 })
   const { data: intradayPacing } = useSWR<IntradayPacing>('/intraday/pacing', fetcher, { refreshInterval: 5000 })
   const { data: intradayFlatStatus, mutate: mutateIntradayFlatStatus } = useSWR<IntradayFlatStatus>('/intraday/flat/status', fetcher, { refreshInterval: 5000 })
@@ -1300,56 +1212,60 @@ export default function Page() {
       </section>
 
       <section className="grid">
-        <ScopeDivider label="Intraday" title="Intradía / sesión restante">
+        <ScopeDivider label="Operativa" title="Lab y Fox separados por daily / intradía">
           <ModeChip
-            label="Shadow"
-            value={intradayStatus ? intradayModeLabel(intradayStatus.config.shadow_enabled) : 'cargando'}
-            tone={intradayStatus ? intradayModeTone(intradayStatus.config.shadow_enabled) : 'warn'}
-          />
-          <ModeChip
-            label="Paper"
-            value={intradayStatus ? intradayModeLabel(intradayStatus.config.paper_enabled) : 'cargando'}
-            tone={intradayStatus ? intradayModeTone(intradayStatus.config.paper_enabled) : 'warn'}
-          />
-          <ModeChip
-            label="Live"
-            value={intradayStatus?.config.live_enabled ? intradayStatus.config.live_armed ? 'armado' : 'sin armar' : intradayStatus ? 'apagado' : 'cargando'}
-            tone={intradayStatus ? intradayModeTone(intradayStatus.config.live_enabled, intradayStatus.config.live_armed) : 'warn'}
-          />
-        </ScopeDivider>
-
-        <IntradayPanel
-          status={intradayStatus}
-          pacing={intradayPacing}
-          flatStatus={intradayFlatStatus}
-          flatPreview={flatPreview}
-          previewBusy={flatPreviewBusy}
-          previewError={flatPreviewError}
-          onPreviewFlat={previewIntradayFlat}
-        />
-
-        <ScopeDivider label="Daily" title="Daily / Research, Laboratorio y Fox Hunter">
-          <ModeChip
-            label="Shadow"
-            value={`${labOverview?.stats.shadow_closed_trades ?? 0} cerradas`}
+            label="Lab Daily"
+            value={`${labDailyOverview?.stats.open_trades ?? 0} activas`}
             tone="good"
           />
           <ModeChip
-            label="Paper"
-            value={labStatus?.paper_orders_allowed ? 'órdenes permitidas' : 'gate cerrado'}
-            tone={labStatus?.paper_orders_allowed ? 'good' : 'warn'}
+            label="Lab Intradía"
+            value={`${labIntradayOverview?.stats.open_trades ?? 0} activas`}
+            tone={intradayStatus ? intradayModeTone(intradayStatus.config.paper_enabled) : 'warn'}
           />
           <ModeChip
-            label="Live"
-            value={data.live_armed ? 'armado' : 'bloqueado'}
+            label="Fox Daily"
+            value={`${foxDailyOverview?.stats.open_trades ?? 0} activas`}
             tone={data.live_armed ? 'good' : 'warn'}
+          />
+          <ModeChip
+            label="Fox Intradía"
+            value={`${foxIntradayOverview?.stats.open_trades ?? 0} activas`}
+            tone={intradayStatus ? intradayModeTone(intradayStatus.config.live_enabled, intradayStatus.config.live_armed) : 'warn'}
           />
         </ScopeDivider>
 
         <StatCard label="Equity actual" value={`$${latestEquity.toFixed(2)}`} />
         <StatCard label="Research aceptados" value={acceptedResearch.length} />
-        <StatCard label="Lab señales" value={labOverview?.stats.signals ?? 0} />
-        <StatCard label="Fox operaciones" value={foxOverview?.stats.trades ?? 0} />
+        <StatCard label="Lab activas" value={(labDailyOverview?.stats.open_trades ?? 0) + (labIntradayOverview?.stats.open_trades ?? 0)} />
+        <StatCard label="Fox activas" value={(foxDailyOverview?.stats.open_trades ?? 0) + (foxIntradayOverview?.stats.open_trades ?? 0)} />
+
+        <div className="operation-grid full">
+          <OperationsModule
+            title="Lab Daily"
+            subtitle="Órdenes paper diarias activas y P/L acumulado de fills daily cerrados."
+            overview={labDailyOverview}
+            status={labStatus}
+          />
+          <OperationsModule
+            title="Lab Intradía"
+            subtitle="Órdenes paper intradía activas y P/L acumulado de fills intradía cerrados."
+            overview={labIntradayOverview}
+            status={labStatus}
+          />
+          <OperationsModule
+            title="Fox Daily"
+            subtitle="Órdenes live daily activas y P/L acumulado de operaciones daily cerradas."
+            overview={foxDailyOverview}
+            status={foxStatus}
+          />
+          <OperationsModule
+            title="Fox Intradía"
+            subtitle="Órdenes live intradía activas y P/L acumulado de operaciones intradía cerradas."
+            overview={foxIntradayOverview}
+            status={foxStatus}
+          />
+        </div>
 
         <section className="card full research-card">
           <div className="section-head">
@@ -1497,20 +1413,6 @@ export default function Page() {
           )}
         </section>
 
-        <OperationsModule
-          title="Laboratorio"
-          subtitle="Valida patrones aprobados por Research con señales y operaciones IB Paper. Misma estructura que Fox, datos de paper."
-          overview={labOverview}
-          status={labStatus}
-          diagnostics={labDiagnostics}
-        />
-
-        <OperationsModule
-          title="Fox Hunter"
-          subtitle="Escanea solo patrones en Producción. Misma estructura que Laboratorio, datos live cuando el sistema esté armado."
-          overview={foxOverview}
-          status={foxStatus}
-        />
       </section>
     </main>
   )

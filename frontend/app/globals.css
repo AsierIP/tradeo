@@ -150,6 +150,67 @@ button:disabled { opacity: .55; cursor: wait; }
   grid-template-columns: 1fr;
   gap: 14px;
 }
+.operation-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+.operation-lane {
+  min-width: 0;
+  padding: 16px;
+}
+.operation-lane .module-head {
+  align-items: flex-start;
+}
+.operation-lane .module-actions .pill {
+  padding: 6px 9px;
+  font-size: .76rem;
+}
+.operation-lane h2 {
+  margin-bottom: 6px;
+}
+.operation-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin: 12px 0;
+}
+.operation-metrics div {
+  border: 1px solid rgba(255,255,255,.11);
+  background: rgba(7, 11, 18, .30);
+  border-radius: 8px;
+  min-height: 58px;
+  padding: 9px;
+}
+.operation-metrics strong {
+  display: block;
+  font-size: 1rem;
+}
+.operation-metrics span {
+  display: block;
+  color: var(--muted);
+  font-size: .70rem;
+  margin-top: 4px;
+}
+.operation-layout {
+  display: grid;
+  grid-template-columns: 1.1fr .9fr;
+  gap: 12px;
+}
+.operation-layout .module-panel {
+  min-height: 260px;
+}
+.active-orders-scroll {
+  max-height: 230px;
+}
+.active-orders-scroll table {
+  min-width: 760px;
+}
+.active-orders-scroll th,
+.active-orders-scroll td {
+  padding: 9px 8px;
+  font-size: .82rem;
+}
 .mode-lane-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -361,8 +422,8 @@ button:disabled { opacity: .55; cursor: wait; }
   margin-bottom: 10px;
 }
 @media (max-width: 900px) { .section-head { flex-direction: column; } .mini-stats { justify-content: flex-start; } .lab-status-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-@media (max-width: 900px) { .module-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } .module-split, .intraday-grid { grid-template-columns: 1fr; } .module-actions { justify-content: flex-start; } .scope-divider { flex-direction: column; align-items: flex-start; } .mode-strip { justify-content: flex-start; } .intraday-stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-@media (max-width: 560px) { .lab-status-grid, .mode-lane-grid, .intraday-stat-grid { grid-template-columns: 1fr; } }
+@media (max-width: 900px) { .module-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } .module-split, .intraday-grid, .operation-grid, .operation-layout { grid-template-columns: 1fr; } .module-actions { justify-content: flex-start; } .scope-divider { flex-direction: column; align-items: flex-start; } .mode-strip { justify-content: flex-start; } .intraday-stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 560px) { .lab-status-grid, .mode-lane-grid, .intraday-stat-grid, .operation-metrics { grid-template-columns: 1fr; } }
 @media (max-width: 560px) { .module-stats { grid-template-columns: 1fr; } }
 .subsection { margin-top: 28px; padding-top: 18px; border-top: 1px solid rgba(255,255,255,.10); }
 .subsection h3 { margin: 0 0 12px; font-size: 1rem; }

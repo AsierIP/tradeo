@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from typing import Literal
+
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from tradeo.core.security import require_admin
@@ -25,8 +27,12 @@ def fox_hunter_status(
 def fox_hunter_overview(
     _: str = Depends(require_admin),
     db: Session = Depends(get_db),
+    cadence: Literal["all", "daily", "intraday"] = Query(
+        default="all",
+        pattern="^(all|daily|intraday)$",
+    ),
 ) -> dict[str, object]:
-    return module_overview(db, "fox_hunter")
+    return module_overview(db, "fox_hunter", cadence=cadence)
 
 
 @router.post("/scan", response_model=PatternEntryScanResponse)

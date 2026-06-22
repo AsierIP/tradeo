@@ -78,6 +78,88 @@ def test_module_overview_exposes_dashboard_data_scope() -> None:
     assert "Director review" in lab["scope_note"]
 
 
+def test_module_overview_splits_daily_and_intraday_cadence() -> None:
+    db = session_factory()
+    daily_signal = Signal(
+        symbol="DAIL",
+        pattern="daily_pattern",
+        side="long",
+        entry=10.0,
+        stop=9.0,
+        target=13.0,
+        reward_risk=3.0,
+        confidence=0.6,
+        composite_score=0.7,
+        risk_usd=30.0,
+        suggested_qty=3,
+        timeframe="1d",
+        strategy_version="laboratory_daily_v1",
+        status=SignalStatus.EXECUTED,
+        metadata_json={"entry_module": "laboratory"},
+    )
+    intraday_signal = Signal(
+        symbol="INTR",
+        pattern="intraday_breakout",
+        side="long",
+        entry=20.0,
+        stop=19.0,
+        target=23.0,
+        reward_risk=3.0,
+        confidence=0.6,
+        composite_score=0.7,
+        risk_usd=30.0,
+        suggested_qty=3,
+        timeframe="5m",
+        strategy_version="intraday_lab_v1",
+        status=SignalStatus.EXECUTED,
+        metadata_json={"entry_module": "laboratory", "intraday": {"session_id": "2026-06-22"}},
+    )
+    db.add_all([daily_signal, intraday_signal])
+    db.flush()
+    db.add_all(
+        [
+            Trade(
+                signal_id=daily_signal.id,
+                symbol="DAIL",
+                pattern="daily_pattern",
+                side="long",
+                qty=3,
+                entry=10.0,
+                stop=9.0,
+                target=13.0,
+                status=TradeStatus.OPEN,
+                metadata_json={"execution_mode": "paper"},
+            ),
+            Trade(
+                signal_id=intraday_signal.id,
+                symbol="INTR",
+                pattern="intraday_breakout",
+                side="long",
+                qty=3,
+                entry=20.0,
+                stop=19.0,
+                target=23.0,
+                status=TradeStatus.OPEN,
+                metadata_json={
+                    "execution_mode": "paper",
+                    "intraday": {"session_id": "2026-06-22"},
+                },
+            ),
+        ]
+    )
+    db.commit()
+
+    daily = module_overview(db, "laboratory", cadence="daily")
+    intraday = module_overview(db, "laboratory", cadence="intraday")
+
+    assert daily["cadence"] == "daily"
+    assert intraday["cadence"] == "intraday"
+    assert [trade["symbol"] for trade in daily["trades"]] == ["DAIL"]
+    assert [trade["symbol"] for trade in intraday["trades"]] == ["INTR"]
+    assert daily["trades"][0]["cadence"] == "daily"
+    assert intraday["trades"][0]["cadence"] == "intraday"
+
+
 def test_laboratory_overview_api_exposes_default_dashboard_data_scope() -> None:
     db = session_factory()
 
