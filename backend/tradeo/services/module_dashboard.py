@@ -18,16 +18,29 @@ from tradeo.services.evidence import (
 from tradeo.services.implementation_shortfall import execution_adjusted_r_summary, trade_slippage_r
 
 EntryModule = Literal["laboratory", "fox_hunter"]
+EntryCadence = Literal["all", "daily", "intraday"]
 
 MODULE_DASHBOARD_QUERY_LIMIT = 500
 PNL_BASIS = "operational_fills_only"
 
 
-def module_overview(db: Session, module: EntryModule, *, limit: int = 80) -> dict[str, Any]:
+def module_overview(
+    db: Session,
+    module: EntryModule,
+    *,
+    cadence: EntryCadence = "all",
+    limit: int = 80,
+) -> dict[str, Any]:
     signals = [
         signal
-        for signal in db.query(Signal).order_by(Signal.created_at.desc()).limit(MODULE_DASHBOARD_QUERY_LIMIT).all()
+        for signal in (
+            db.query(Signal)
+            .order_by(Signal.created_at.desc())
+            .limit(MODULE_DASHBOARD_QUERY_LIMIT)
+            .all()
+        )
         if _signal_module(signal) == module
+        and _cadence_matches(_signal_cadence(signal), cadence)
     ][:limit]
     signal_ids = {signal.id for signal in signals}
     all_trades = [
@@ -39,7 +52,11 @@ def module_overview(db: Session, module: EntryModule, *, limit: int = 80) -> dic
             .limit(MODULE_DASHBOARD_QUERY_LIMIT)
             .all()
         )
-        if _trade_module(trade) == module or (trade.signal_id in signal_ids)
+        if (
+            _trade_module(trade) == module
+            and _cadence_matches(_trade_cadence(trade), cadence)
+            or (trade.signal_id in signal_ids)
+        )
     ][:limit]
     signal_trade_statuses = _signal_trade_statuses(all_trades)
     trades = _dashboard_trades(
@@ -66,6 +83,7 @@ def module_overview(db: Session, module: EntryModule, *, limit: int = 80) -> dic
     evidence_summary = _evidence_summary(trades)
     return {
         "module": module,
+        "cadence": cadence,
         "data_scope": f"last_{MODULE_DASHBOARD_QUERY_LIMIT}_query/limit_{limit}",
         "query_limit": MODULE_DASHBOARD_QUERY_LIMIT,
         "summary_limit": limit,
@@ -85,6 +103,7 @@ def module_overview(db: Session, module: EntryModule, *, limit: int = 80) -> dic
         "execution_diagnostics": execution_diagnostics_summary,
         "stats": {
             "signals": len(signals),
+            "cadence": cadence,
             "trades": len(trades),
             "open_trades": sum(1 for trade in trades if _status_value(trade.status) == "open"),
             "closed_trades": len(execution_closed_trades),
@@ -115,6 +134,56 @@ def module_overview(db: Session, module: EntryModule, *, limit: int = 80) -> dic
             "funnel": _signal_funnel(signal_payloads),
         },
     }
+
+
+def _cadence_matches(actual: str, requested: EntryCadence) -> bool:
+    return requested == "all" or actual == requested
+
+
+def _signal_cadence(signal: Signal) -> str:
+    return _cadence_from_metadata(
+        signal.metadata_json or {},
+        timeframe=signal.timeframe,
+        strategy_version=signal.strategy_version,
+    )
+
+
+def _trade_cadence(trade: Trade) -> str:
+    if trade.signal is not None:
+        return _signal_cadence(trade.signal)
+    return _cadence_from_metadata(trade.metadata_json or {}, timeframe=None, strategy_version=None)
+
+
+def _cadence_from_metadata(
+    metadata: dict[str, Any],
+    *,
+    timeframe: str | None,
+    strategy_version: str | None,
+) -> str:
+    intraday = metadata.get("intraday")
+    if isinstance(intraday, dict) and intraday:
+        return "intraday"
+    if metadata.get("cadence") == "intraday" or metadata.get("scope") == "intraday":
+        return "intraday"
+    if strategy_version and strategy_version.startswith("intraday_"):
+        return "intraday"
+    frame = str(timeframe or metadata.get("timeframe") or "").lower()
+    if frame in {
+        "1m",
+        "2m",
+        "3m",
+        "5m",
+        "10m",
+        "15m",
+        "30m",
+        "60m",
+        "90m",
+        "1h",
+        "2h",
+        "4h",
+    }:
+        return "intraday"
+    return "daily"
 
 
 def _signal_module(signal: Signal) -> str:
@@ -342,6 +411,7 @@ def _signal_to_dict(signal: Signal, trade_status: dict[str, Any] | None = None) 
         "created_at": signal.created_at.isoformat() if signal.created_at else "",
         "signal_snapshot": signal_snapshot,
         "metadata_json": metadata,
+        "cadence": _signal_cadence(signal),
     }
 
 
@@ -380,6 +450,7 @@ def _trade_to_dict(
         "expected_value_history_count": expected_value["expected_value_history_count"],
         **cost,
         "metadata_json": trade.metadata_json or {},
+        "cadence": _trade_cadence(trade),
     }
 
 

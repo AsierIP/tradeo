@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Literal
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
@@ -26,8 +28,12 @@ def laboratory_status(
 def laboratory_overview(
     _: str = Depends(require_admin),
     db: Session = Depends(get_db),
+    cadence: Literal["all", "daily", "intraday"] = Query(
+        default="all",
+        pattern="^(all|daily|intraday)$",
+    ),
 ) -> dict[str, object]:
-    return module_overview(db, "laboratory")
+    return module_overview(db, "laboratory", cadence=cadence)
 
 
 @router.get("/diagnostics", response_model=LabDiagnosticsResponse)
