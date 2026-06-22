@@ -39,6 +39,7 @@ from tradeo.services.evidence import (
 )
 from tradeo.services.ibkr_broker import (
     IBKRBroker,
+    IBKROperationalError,
     IBKRSafetyError,
     _bracket_acknowledged,
     _operational_bracket_prices,
@@ -1615,6 +1616,63 @@ def _what_if_state(**overrides) -> SimpleNamespace:
     }
     values.update(overrides)
     return SimpleNamespace(**values)
+
+
+def test_ibkr_what_if_order_sets_and_restores_request_timeout() -> None:
+    class FakeIB:
+        RequestTimeout = 99.0
+
+        def __init__(self) -> None:
+            self.seen_timeout = None
+
+        def whatIfOrder(self, contract, order):  # noqa: ANN001, N802
+            self.seen_timeout = self.RequestTimeout
+            return _what_if_state(status="PreSubmitted")
+
+    fake_ib = FakeIB()
+    broker = IBKRBroker(settings=Settings(ibkr_whatif_timeout_seconds=1.25))
+
+    state = broker._what_if_order(fake_ib, SimpleNamespace(), SimpleNamespace())
+
+    assert state.status == "PreSubmitted"
+    assert fake_ib.seen_timeout == 1.25
+    assert fake_ib.RequestTimeout == 99.0
+
+
+def test_ibkr_what_if_order_timeout_becomes_operational_error() -> None:
+    class FakeIB:
+        RequestTimeout = 99.0
+
+        def whatIfOrder(self, contract, order):  # noqa: ANN001, N802
+            raise TimeoutError
+
+    fake_ib = FakeIB()
+    broker = IBKRBroker(settings=Settings(ibkr_whatif_timeout_seconds=0.5))
+
+    with pytest.raises(IBKROperationalError, match="timed out after 0.5s"):
+        broker._what_if_order(fake_ib, SimpleNamespace(), SimpleNamespace())
+
+    assert fake_ib.RequestTimeout == 99.0
+
+
+def test_ibkr_contract_qualification_uses_request_timeout() -> None:
+    class FakeIB:
+        RequestTimeout = 99.0
+
+        def __init__(self) -> None:
+            self.seen_timeout = None
+
+        def qualifyContracts(self, contract):  # noqa: ANN001, N802
+            self.seen_timeout = self.RequestTimeout
+            return [contract]
+
+    fake_ib = FakeIB()
+    broker = IBKRBroker(settings=Settings(ibkr_whatif_timeout_seconds=2.0))
+    contract = SimpleNamespace(symbol="AAPL")
+
+    assert broker._qualify_contracts(fake_ib, contract) == [contract]
+    assert fake_ib.seen_timeout == 2.0
+    assert fake_ib.RequestTimeout == 99.0
 
 
 class PreflightFakeIB:

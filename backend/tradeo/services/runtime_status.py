@@ -11,6 +11,7 @@ from tradeo.core.config import Settings, get_settings
 
 WORKER_HEARTBEAT = "worker_heartbeat.json"
 ENTRY_SCAN_STATUS = "entry_scan_status.json"
+INTRADAY_SESSION_STATUS = "intraday_session_status.json"
 ZERO_ORDER_ALERT_STREAK = 3
 
 
@@ -212,6 +213,71 @@ def entry_scan_status(module: str, settings: Settings | None = None) -> dict[str
         "skipped_reason": data.get("skipped_reason"),
         "market_session": data.get("market_session"),
         "generated_at": data.get("generated_at"),
+    }
+
+
+def write_intraday_session_status(
+    job_id: str,
+    result: dict[str, Any],
+    settings: Settings | None = None,
+) -> None:
+    settings = settings or get_settings()
+    path = settings.artifacts_path / INTRADAY_SESSION_STATUS
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+    except (OSError, json.JSONDecodeError):
+        payload = {}
+    jobs = dict(payload.get("jobs") or {})
+    generated_at = result.get("generated_at") or datetime.now(timezone.utc).isoformat()
+    jobs[job_id] = {
+        "job_id": job_id,
+        "status": str(result.get("status") or "noop"),
+        "reason": result.get("reason"),
+        "generated_at": generated_at,
+        "details": dict(result.get("details") or {}),
+    }
+    payload = {
+        "intraday_enabled": settings.intraday_enabled,
+        "paper_enabled": settings.intraday_paper_enabled,
+        "live_enabled": settings.intraday_live_enabled,
+        "live_armed": settings.intraday_live_armed,
+        "updated_at": generated_at,
+        "jobs": jobs,
+    }
+    _write_json_atomic(path, payload)
+
+
+def intraday_session_status(settings: Settings | None = None) -> dict[str, Any]:
+    settings = settings or get_settings()
+    path = settings.artifacts_path / INTRADAY_SESSION_STATUS
+    if not path.exists():
+        return {
+            "intraday_enabled": settings.intraday_enabled,
+            "paper_enabled": settings.intraday_paper_enabled,
+            "live_enabled": settings.intraday_live_enabled,
+            "live_armed": settings.intraday_live_armed,
+            "updated_at": None,
+            "jobs": {},
+        }
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {
+            "intraday_enabled": settings.intraday_enabled,
+            "paper_enabled": settings.intraday_paper_enabled,
+            "live_enabled": settings.intraday_live_enabled,
+            "live_armed": settings.intraday_live_armed,
+            "updated_at": None,
+            "jobs": {},
+            "reason": "invalid_intraday_session_status",
+        }
+    return {
+        "intraday_enabled": bool(payload.get("intraday_enabled")),
+        "paper_enabled": bool(payload.get("paper_enabled")),
+        "live_enabled": bool(payload.get("live_enabled")),
+        "live_armed": bool(payload.get("live_armed")),
+        "updated_at": payload.get("updated_at"),
+        "jobs": dict(payload.get("jobs") or {}),
     }
 
 

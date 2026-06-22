@@ -5,7 +5,8 @@ import json
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from tradeo.core.config import get_settings
+from tradeo.core.config import Settings, get_settings
+from tradeo.core.security import require_admin
 from tradeo.db.session import SessionLocal, get_db
 from tradeo.services.ibkr_broker import IBKRBroker
 from tradeo.services.ibkr_data_provider import inspect_ibkr_connection
@@ -25,6 +26,14 @@ def health() -> dict[str, object]:
         "live_armed": settings.live_armed,
         "kill_switch_enabled": settings.kill_switch_enabled,
     }
+
+
+@router.get("/health/config-doctor")
+def config_doctor(
+    _: str = Depends(require_admin),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, object]:
+    return settings.config_doctor()
 
 
 @router.get("/health/notice")
