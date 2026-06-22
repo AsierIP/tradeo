@@ -374,44 +374,6 @@ button:disabled { opacity: .55; cursor: wait; }
 .status.bad { color: var(--bad); }
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: .78rem; }
 .reason { color: var(--muted); max-width: 420px; }
-.module-collapse {
-  margin-top: 14px;
-  border: 1px solid rgba(255,255,255,.11);
-  background: rgba(7, 11, 18, .22);
-  border-radius: 8px;
-  overflow: hidden;
-}
-.module-collapse summary {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 13px 14px;
-  cursor: pointer;
-  list-style: none;
-  user-select: none;
-  font-weight: 850;
-}
-.module-collapse summary::-webkit-details-marker { display: none; }
-.module-collapse summary::before {
-  content: "▸";
-  color: var(--accent);
-  font-size: .86rem;
-}
-.module-collapse[open] summary::before { content: "▾"; }
-.module-collapse summary span {
-  flex: 1;
-  min-width: 0;
-}
-.module-collapse summary small {
-  color: var(--muted);
-  font-weight: 700;
-  white-space: nowrap;
-}
-.module-collapse-body {
-  padding: 0 14px 14px;
-  border-top: 1px solid rgba(255,255,255,.08);
-}
 .embedded-panel {
   margin-top: 0;
   padding-top: 14px;

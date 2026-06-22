@@ -299,57 +299,6 @@ type ModuleStatus = {
   last_symbols_checked?: number
   live_armed?: boolean
 }
-type LabGateComponent = {
-  name: string
-  value?: string | number | boolean | null
-  ok?: boolean | null
-}
-type LabOpportunityDiagnostic = {
-  source: 'candidate_signal' | 'rejected' | 'shadow_match' | string
-  status: string
-  symbol: string
-  pattern: string
-  pattern_id?: number | null
-  side: string
-  timeframe: string
-  entry_variant_id: string
-  entry_variant_label: string
-  regime_key: string
-  rank?: number | null
-  rank_score?: number | null
-  score?: number | null
-  entry_score?: number | null
-  similarity?: number | null
-  opportunity_rank_components?: Record<string, number | string | boolean | null>
-  entry_gate: Record<string, unknown>
-  entry_gate_components: LabGateComponent[]
-  entry_quality: Record<string, unknown>
-  regime_fit: Record<string, unknown>
-  rejection_stage?: string | null
-  rejection_reason: string
-  created_at: string
-  window_end: string
-  paper_history: {
-    closed_trades: number
-    open_trades: number
-    total_r: number
-    expectancy_r: number
-    win_rate: number
-    profit_factor: number
-    unique_symbols: number
-    unique_days: number
-    variant_closed_trades: number
-    regime_closed_trades: number
-    last_trade_status?: string | null
-  }
-  promotion: Record<string, unknown>
-  missing_to_promote: string[]
-}
-type LabDiagnostics = {
-  generated_at: string
-  summary: Record<string, number | string | boolean | null>
-  opportunities: LabOpportunityDiagnostic[]
-}
 type WebNotice = {
   visible: boolean
   level?: 'ok' | 'error'
@@ -501,29 +450,14 @@ function formatMoney(value: number) {
   return `${sign}$${value.toFixed(2)}`
 }
 
-function formatOptionalMoney(value?: number | null) {
-  return typeof value === 'number' && Number.isFinite(value) ? formatMoney(value) : '-'
-}
-
 function formatRValue(value?: number | null, digits = 2) {
   if (typeof value !== 'number' || !Number.isFinite(value)) return '-'
   return `${value.toFixed(digits)}R`
 }
 
-function formatBps(value?: number | null) {
-  if (typeof value !== 'number' || !Number.isFinite(value)) return '-'
-  return `${value.toFixed(1)}bps`
-}
-
 function shortDateTime(value?: string | null) {
   if (!value) return '-'
   return new Date(value).toLocaleString('es-ES', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
-}
-
-function formatQuality(signal: ModuleSignal) {
-  const score = typeof signal.entry_quality_score === 'number' ? signal.entry_quality_score : signal.composite_score
-  const label = signal.entry_quality_label || 'quality'
-  return `${(score * 100).toFixed(0)}% ${label}`
 }
 
 function formatScore(value?: number | null, digits = 3) {
@@ -575,31 +509,6 @@ function intradayModeLabel(enabled?: boolean, armed?: boolean) {
   return 'activo'
 }
 
-function sourceLabel(source: string) {
-  if (source === 'candidate_signal') return 'candidata'
-  if (source === 'rejected') return 'rechazada'
-  if (source === 'shadow_match') return 'shadow'
-  return source
-}
-
-function sourceTone(source: string) {
-  if (source === 'candidate_signal') return 'good'
-  if (source === 'rejected') return 'bad'
-  return 'warn'
-}
-
-function paperHistoryLabel(row: LabOpportunityDiagnostic) {
-  const history = row.paper_history
-  if (!history.closed_trades && !history.open_trades) return 'sin paper'
-  const state = `${history.closed_trades}C/${history.open_trades}O`
-  return `${state} · ${history.expectancy_r.toFixed(2)}R · ${(history.win_rate * 100).toFixed(0)}%`
-}
-
-function missingToPromoteLabel(row: LabOpportunityDiagnostic) {
-  if (!row.missing_to_promote.length) return '-'
-  return row.missing_to_promote.slice(0, 3).join(', ')
-}
-
 function evidenceLabel(trade: ModuleTrade) {
   const type = trade.evidence_type || 'unknown'
   const quality = trade.evidence_quality === 'degraded' ? ' degradada' : ''
@@ -622,14 +531,6 @@ function expectedValueLabel(item: { expected_value_r?: number | null; expected_v
   return `${value} · ${source}`
 }
 
-function costCoverageLabel(value?: string | null) {
-  if (value === 'complete') return 'coste OK'
-  if (value === 'entry_fill_only_open_trade') return 'entrada'
-  if (value === 'not_execution_fill') return 'no fill'
-  if (value?.startsWith('missing_')) return value.replace('missing_', 'falta ')
-  return value || '-'
-}
-
 function explainAcceptedPattern(pattern: DiscoveredPattern) {
   const lines = [
     `Lo acepto porque, en las pruebas, su mejor punto esta en ${pattern.best_rr.toFixed(1)}R: por cada 1R que arriesga, intenta sacar ${pattern.best_rr.toFixed(1)}R.`,
@@ -650,104 +551,6 @@ function explainAcceptedPattern(pattern: DiscoveredPattern) {
     lines.push('Y encima tambien pasa 4R, asi que es candidato premium.')
   }
   return lines.join(' ')
-}
-
-function LabDiagnosticsPanel({ diagnostics, compact = false }: { diagnostics?: LabDiagnostics; compact?: boolean }) {
-  const rows = diagnostics?.opportunities || []
-  const summary = diagnostics?.summary || {}
-  return (
-    <div className={`subsection lab-diagnostics ${compact ? 'embedded-panel' : ''}`}>
-      {!compact && (
-        <div className="section-head">
-          <div>
-            <h3>Diagnóstico Lab · candidatas y near-miss</h3>
-            <p className="muted">
-              Rechazos y sombras recientes con gate de entrada, variante, régimen e historial paper.
-            </p>
-          </div>
-          <div className="mini-stats">
-            <span>{summary.candidates ?? 0} candidatas</span>
-            <span>{summary.rejected ?? 0} rechazadas</span>
-            <span>{summary.shadow_near_misses ?? 0} shadow</span>
-            <span>{summary.entry_gate_failures ?? 0} gate</span>
-          </div>
-        </div>
-      )}
-      {compact && (
-        <div className="mini-stats diagnostics-mini">
-          <span>{summary.candidates ?? 0} candidatas</span>
-          <span>{summary.rejected ?? 0} rechazadas</span>
-          <span>{summary.shadow_near_misses ?? 0} shadow</span>
-          <span>{summary.entry_gate_failures ?? 0} gate</span>
-        </div>
-      )}
-      <div className="table-scroll diagnostics-scroll">
-        <table>
-          <thead>
-            <tr>
-              <th>Tipo</th><th>Símbolo</th><th>Patrón</th><th>Variante</th><th>Régimen</th><th>Rank</th><th>Score</th><th>Rechazo</th><th>Gate</th><th>Paper</th><th>Promoción</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row, index) => (
-              <tr key={`${row.source}-${row.symbol}-${row.pattern_id || row.pattern}-${row.entry_variant_id}-${row.window_end}-${index}`}>
-                <td><span className={`status ${sourceTone(row.source)}`}>{sourceLabel(row.source)}</span></td>
-                <td className="mono">{row.symbol}</td>
-                <td className="wrap-cell" title={row.pattern}>{row.pattern}</td>
-                <td className="wrap-cell" title={row.entry_variant_id}>{row.entry_variant_label || row.entry_variant_id || '-'}</td>
-                <td className="wrap-cell" title={row.regime_key}>{row.regime_key || '-'}</td>
-                <td title={typeof row.rank_score === 'number' ? row.rank_score.toFixed(4) : undefined}>{row.rank ?? '-'}</td>
-                <td>
-                  <div className="score-stack">
-                    <span>{formatScore(row.rank_score ?? row.score)}</span>
-                    <small>entry {formatScore(row.entry_score, 2)}</small>
-                  </div>
-                </td>
-                <td className="wrap-cell reason" title={row.rejection_reason}>{row.rejection_reason || '-'}</td>
-                <td>
-                  <div className="gate-components">
-                    {row.entry_gate_components.slice(0, 6).map((component) => (
-                      <span key={component.name} className={`gate-pill ${component.ok === false ? 'bad' : component.ok === true ? 'good' : 'warn'}`}>
-                        {component.name}: {formatCompactValue(component.value)}
-                      </span>
-                    ))}
-                    {!row.entry_gate_components.length && <span className="muted">-</span>}
-                  </div>
-                </td>
-                <td title={`variante ${row.paper_history.variant_closed_trades} · régimen ${row.paper_history.regime_closed_trades}`}>
-                  {paperHistoryLabel(row)}
-                </td>
-                <td className="wrap-cell" title={row.missing_to_promote.join(', ')}>
-                  {missingToPromoteLabel(row)}
-                </td>
-              </tr>
-            ))}
-            {!rows.length && <tr><td colSpan={11}>Sin diagnósticos recientes.</td></tr>}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  )
-}
-
-function CollapsibleSection({
-  title,
-  meta,
-  children
-}: {
-  title: string
-  meta?: string
-  children: ReactNode
-}) {
-  return (
-    <details className="module-collapse">
-      <summary>
-        <span>{title}</span>
-        {meta && <small>{meta}</small>}
-      </summary>
-      <div className="module-collapse-body">{children}</div>
-    </details>
-  )
 }
 
 function IntradayPanel({
