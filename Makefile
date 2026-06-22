@@ -42,7 +42,10 @@ test-safety:
 		tradeo/tests/test_intraday_noop_regression.py \
 		tradeo/tests/test_intraday_models.py \
 		tradeo/tests/test_intraday_calendar.py \
-		tradeo/tests/test_ibkr_pacing.py
+		tradeo/tests/test_ibkr_pacing.py \
+		tradeo/tests/test_intraday_universe.py \
+		tradeo/tests/test_intraday_features.py \
+		tradeo/tests/test_intraday_candidates.py
 
 scan:
 	bash -lc 'set -a; source .env; set +a; curl -u "$${TRADEO_ADMIN_USERNAME:-admin}:$${TRADEO_ADMIN_PASSWORD:-change-me}" -X POST http://localhost:8000/api/scan -H "Content-Type: application/json" -d '\''{"limit":50}'\'''
