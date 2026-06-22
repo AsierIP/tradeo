@@ -14,6 +14,7 @@ from tradeo.routers import (
     fox_hunter,
     health,
     ibkr,
+    intraday,
     laboratory,
     reports,
     research,
@@ -47,6 +48,7 @@ def create_app() -> FastAPI:
     )
     app.include_router(health.router, prefix=settings.api_prefix)
     app.include_router(ibkr.router, prefix=settings.api_prefix)
+    app.include_router(intraday.router, prefix=settings.api_prefix)
     app.include_router(laboratory.router, prefix=settings.api_prefix)
     app.include_router(fox_hunter.router, prefix=settings.api_prefix)
     app.include_router(dashboard.router, prefix=settings.api_prefix)
