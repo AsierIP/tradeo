@@ -4,7 +4,7 @@ export
 PYTHON ?= python3
 AUDIT_PACKAGE ?= $(shell ls -dt research/audit_bridge/requests/TRADEO-AUDIT-* 2>/dev/null | head -1)
 
-.PHONY: setup up down logs ps test scan report self-improve discover-patterns match-discovered-patterns current-matches research-runs research-director research-director-latest audit-package-validate audit-package-gate prepaper-verify
+.PHONY: setup up down logs ps test test-safety scan report self-improve discover-patterns match-discovered-patterns current-matches research-runs research-director research-director-latest audit-package-validate audit-package-gate prepaper-verify
 
 setup:
 	cp -n .env.example .env || true
@@ -24,6 +24,25 @@ ps:
 
 test:
 	docker compose run --rm backend pytest
+
+test-safety:
+	cd backend && .venv/bin/python -m compileall -q tradeo
+	cd backend && TRADEO_DATABASE_URL='sqlite:///:memory:' .venv/bin/python -m pytest -q \
+		tradeo/tests/test_quant_validation.py \
+		tradeo/tests/test_reward_risk_analyzer.py \
+		tradeo/tests/test_conformal_matching.py \
+		tradeo/tests/test_sequential_tests.py \
+		tradeo/tests/test_meta_labeling.py \
+		tradeo/tests/test_risk.py \
+		tradeo/tests/test_pattern_entry_scanner.py \
+		tradeo/tests/test_research_lab_fox_lifecycle.py \
+		tradeo/tests/test_director_review_gate.py \
+		tradeo/tests/test_execution_state_transitions.py \
+		tradeo/tests/test_intraday_config.py \
+		tradeo/tests/test_intraday_noop_regression.py \
+		tradeo/tests/test_intraday_models.py \
+		tradeo/tests/test_intraday_calendar.py \
+		tradeo/tests/test_ibkr_pacing.py
 
 scan:
 	bash -lc 'set -a; source .env; set +a; curl -u "$${TRADEO_ADMIN_USERNAME:-admin}:$${TRADEO_ADMIN_PASSWORD:-change-me}" -X POST http://localhost:8000/api/scan -H "Content-Type: application/json" -d '\''{"limit":50}'\'''

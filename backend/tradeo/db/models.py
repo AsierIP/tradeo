@@ -1,10 +1,23 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from enum import Enum
 from typing import Any
 
-from sqlalchemy import Boolean, DateTime, Enum as SAEnum, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import (
+    Boolean,
+    Date,
+    DateTime,
+    Enum as SAEnum,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    text,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.types import JSON
@@ -38,6 +51,14 @@ class TradeStatus(str, Enum):
 
 
 class Signal(Base):
+    """Canonical trading signal.
+
+    Intraday extensions must use ``metadata_json["intraday"]`` for
+    session-scoped fields such as ``session_id``, ``entry_variant`` and
+    ``window_end``. Orders remain represented by Signal/Trade plus ledgers; WP-02
+    intentionally does not introduce a parallel order table.
+    """
+
     __tablename__ = "signals"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
@@ -65,6 +86,13 @@ class Signal(Base):
 
 
 class Trade(Base):
+    """Canonical trade/fill lifecycle row.
+
+    Intraday-only execution metadata belongs under ``metadata_json["intraday"]``
+    (for example ``must_flat_by``, ``reduce_only_after`` and EOD flat details)
+    so daily Trade semantics stay unchanged.
+    """
+
     __tablename__ = "trades"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
@@ -88,6 +116,244 @@ class Trade(Base):
     metadata_json: Mapped[dict[str, Any]] = mapped_column(json_type(), default=dict)
 
     signal: Mapped[Signal | None] = relationship(back_populates="trades")
+
+
+_SIGNALS_INTRADAY_DEDUPE_PG = Index(
+    "uq_signals_intraday_dedupe_pg",
+    Signal.symbol,
+    Signal.pattern,
+    Signal.timeframe,
+    text(
+        "COALESCE("
+        "metadata_json -> 'intraday' ->> 'entry_variant', "
+        "metadata_json -> 'intraday' ->> 'entry_variant_id'"
+        ")"
+    ),
+    text("metadata_json -> 'intraday' ->> 'window_end'"),
+    text("metadata_json -> 'intraday' ->> 'session_id'"),
+    unique=True,
+    postgresql_where=text(
+        "metadata_json ? 'intraday' "
+        "AND metadata_json -> 'intraday' ->> 'session_id' IS NOT NULL "
+        "AND COALESCE("
+        "metadata_json -> 'intraday' ->> 'entry_variant', "
+        "metadata_json -> 'intraday' ->> 'entry_variant_id'"
+        ") IS NOT NULL "
+        "AND metadata_json -> 'intraday' ->> 'window_end' IS NOT NULL"
+    ),
+).ddl_if(dialect="postgresql")
+
+_SIGNALS_INTRADAY_DEDUPE_SQLITE = Index(
+    "uq_signals_intraday_dedupe_sqlite",
+    Signal.symbol,
+    Signal.pattern,
+    Signal.timeframe,
+    text(
+        "COALESCE("
+        "json_extract(metadata_json, '$.intraday.entry_variant'), "
+        "json_extract(metadata_json, '$.intraday.entry_variant_id')"
+        ")"
+    ),
+    text("json_extract(metadata_json, '$.intraday.window_end')"),
+    text("json_extract(metadata_json, '$.intraday.session_id')"),
+    unique=True,
+    sqlite_where=text(
+        "json_extract(metadata_json, '$.intraday.session_id') IS NOT NULL "
+        "AND COALESCE("
+        "json_extract(metadata_json, '$.intraday.entry_variant'), "
+        "json_extract(metadata_json, '$.intraday.entry_variant_id')"
+        ") IS NOT NULL "
+        "AND json_extract(metadata_json, '$.intraday.window_end') IS NOT NULL"
+    ),
+).ddl_if(dialect="sqlite")
+
+
+class IntradaySession(Base):
+    __tablename__ = "intraday_sessions"
+    __table_args__ = (
+        UniqueConstraint("session_date", "market", name="uq_intraday_sessions_date_market"),
+        Index("ix_intraday_sessions_session_date_state", "session_date", "state"),
+        Index("ix_intraday_sessions_session_date_flat_status", "session_date", "flat_status"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    session_date: Mapped[date] = mapped_column(Date, index=True)
+    market: Mapped[str] = mapped_column(String(24), default="US")
+    timezone: Mapped[str] = mapped_column(String(64), default="America/New_York")
+    regular_open_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    regular_close_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    is_half_day: Mapped[bool] = mapped_column(Boolean, default=False)
+    no_new_entries_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    cancel_entries_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    force_flat_start_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    hard_flat_deadline_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    state: Mapped[str] = mapped_column(String(40), default="PREMARKET_PREP", index=True)
+    flat_status: Mapped[str] = mapped_column(String(40), default="pending", index=True)
+    flat_confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    flat_failed_reason: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    universe_snapshots: Mapped[list["IntradayUniverseSnapshot"]] = relationship(
+        back_populates="session", cascade="all, delete-orphan"
+    )
+    symbol_states: Mapped[list["IntradaySymbolState"]] = relationship(
+        back_populates="session", cascade="all, delete-orphan"
+    )
+    pacing_events: Mapped[list["IntradayPacingLedger"]] = relationship(
+        back_populates="session", cascade="all, delete-orphan"
+    )
+    risk_events: Mapped[list["IntradayRiskLedger"]] = relationship(
+        back_populates="session", cascade="all, delete-orphan"
+    )
+    flatten_attempts: Mapped[list["IntradayFlattenAttempt"]] = relationship(
+        back_populates="session", cascade="all, delete-orphan"
+    )
+
+
+class IntradayUniverseSnapshot(Base):
+    __tablename__ = "intraday_universe_snapshots"
+    __table_args__ = (
+        UniqueConstraint(
+            "session_id",
+            "bucket",
+            "timeframe",
+            "generated_at",
+            name="uq_intraday_universe_snapshot_version",
+        ),
+        Index("ix_intraday_universe_snapshots_session_date_bucket", "session_date", "bucket"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    session_id: Mapped[int] = mapped_column(ForeignKey("intraday_sessions.id"), index=True)
+    session_date: Mapped[date] = mapped_column(Date, index=True)
+    bucket: Mapped[str] = mapped_column(String(40), default="premarket", index=True)
+    timeframe: Mapped[str] = mapped_column(String(16), default="multi", index=True)
+    generated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    symbols_json: Mapped[list[str]] = mapped_column(json_type(), default=list)
+    filters_json: Mapped[dict[str, Any]] = mapped_column(json_type(), default=dict)
+    excluded_json: Mapped[list[dict[str, Any]]] = mapped_column(json_type(), default=list)
+    pacing_budget_json: Mapped[dict[str, Any]] = mapped_column(json_type(), default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    session: Mapped[IntradaySession] = relationship(back_populates="universe_snapshots")
+
+
+class IntradaySymbolState(Base):
+    __tablename__ = "intraday_symbol_state"
+    __table_args__ = (
+        UniqueConstraint("session_id", "symbol", "timeframe", name="uq_intraday_symbol_state_symbol_timeframe"),
+        Index("ix_intraday_symbol_state_session_date_symbol", "session_date", "symbol"),
+        Index("ix_intraday_symbol_state_session_date_status", "session_date", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    session_id: Mapped[int] = mapped_column(ForeignKey("intraday_sessions.id"), index=True)
+    session_date: Mapped[date] = mapped_column(Date, index=True)
+    symbol: Mapped[str] = mapped_column(String(24), index=True)
+    timeframe: Mapped[str] = mapped_column(String(16), default="multi", index=True)
+    status: Mapped[str] = mapped_column(String(40), default="active", index=True)
+    trades_today: Mapped[int] = mapped_column(Integer, default=0)
+    signals_today: Mapped[int] = mapped_column(Integer, default=0)
+    open_position_qty: Mapped[float] = mapped_column(Float, default=0.0)
+    cooldown_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_stop_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_signal_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    blocked_reason: Mapped[str] = mapped_column(Text, default="")
+    risk_used_usd: Mapped[float] = mapped_column(Float, default=0.0)
+    realized_r: Mapped[float] = mapped_column(Float, default=0.0)
+    unrealized_r: Mapped[float] = mapped_column(Float, default=0.0)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(json_type(), default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    session: Mapped[IntradaySession] = relationship(back_populates="symbol_states")
+
+
+class IntradayPacingLedger(Base):
+    __tablename__ = "intraday_pacing_ledger"
+    __table_args__ = (
+        Index("ix_intraday_pacing_ledger_session_date_symbol", "session_date", "symbol"),
+        Index("ix_intraday_pacing_ledger_timeframe_status", "timeframe", "status"),
+        Index("ix_intraday_pacing_ledger_request_type_timestamp", "request_type", "timestamp"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    session_id: Mapped[int | None] = mapped_column(ForeignKey("intraday_sessions.id"), nullable=True, index=True)
+    session_date: Mapped[date | None] = mapped_column(Date, nullable=True, index=True)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    request_type: Mapped[str] = mapped_column(String(60), index=True)
+    symbol: Mapped[str | None] = mapped_column(String(24), nullable=True, index=True)
+    timeframe: Mapped[str] = mapped_column(String(16), default="", index=True)
+    status: Mapped[str] = mapped_column(String(40), default="allowed", index=True)
+    allowed: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    budget_remaining: Mapped[int] = mapped_column(Integer, default=0)
+    blocked_reason: Mapped[str] = mapped_column(Text, default="")
+    ibkr_error_code: Mapped[str | None] = mapped_column(String(40), nullable=True, index=True)
+    payload_json: Mapped[dict[str, Any]] = mapped_column(json_type(), default=dict)
+
+    session: Mapped[IntradaySession | None] = relationship(back_populates="pacing_events")
+
+
+class IntradayRiskLedger(Base):
+    __tablename__ = "intraday_risk_ledger"
+    __table_args__ = (
+        Index("ix_intraday_risk_ledger_session_date_symbol", "session_date", "symbol"),
+        Index("ix_intraday_risk_ledger_timeframe_status", "timeframe", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    session_id: Mapped[int] = mapped_column(ForeignKey("intraday_sessions.id"), index=True)
+    session_date: Mapped[date] = mapped_column(Date, index=True)
+    event_type: Mapped[str] = mapped_column(String(60), index=True)
+    symbol: Mapped[str | None] = mapped_column(String(24), nullable=True, index=True)
+    timeframe: Mapped[str] = mapped_column(String(16), default="", index=True)
+    status: Mapped[str] = mapped_column(String(40), default="recorded", index=True)
+    scope: Mapped[str] = mapped_column(String(20), default="intraday", index=True)
+    source_signal_id: Mapped[int | None] = mapped_column(ForeignKey("signals.id"), nullable=True, index=True)
+    trade_id: Mapped[int | None] = mapped_column(ForeignKey("trades.id"), nullable=True, index=True)
+    delta_risk_usd: Mapped[float] = mapped_column(Float, default=0.0)
+    daily_loss_used_usd: Mapped[float] = mapped_column(Float, default=0.0)
+    payload_json: Mapped[dict[str, Any]] = mapped_column(json_type(), default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+
+    session: Mapped[IntradaySession] = relationship(back_populates="risk_events")
+    source_signal: Mapped[Signal | None] = relationship()
+    trade: Mapped[Trade | None] = relationship()
+
+
+class IntradayFlattenAttempt(Base):
+    __tablename__ = "intraday_flatten_attempts"
+    __table_args__ = (
+        Index("ix_intraday_flatten_attempts_session_date_status", "session_date", "status"),
+        Index("ix_intraday_flatten_attempts_symbol_status", "symbol", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    session_id: Mapped[int] = mapped_column(ForeignKey("intraday_sessions.id"), index=True)
+    session_date: Mapped[date] = mapped_column(Date, index=True)
+    trade_id: Mapped[int | None] = mapped_column(ForeignKey("trades.id"), nullable=True, index=True)
+    source_signal_id: Mapped[int | None] = mapped_column(ForeignKey("signals.id"), nullable=True, index=True)
+    symbol: Mapped[str] = mapped_column(String(24), index=True)
+    timeframe: Mapped[str] = mapped_column(String(16), default="", index=True)
+    broker_position_qty_before: Mapped[float] = mapped_column(Float, default=0.0)
+    db_position_qty_before: Mapped[float] = mapped_column(Float, default=0.0)
+    action: Mapped[str] = mapped_column(String(60), index=True)
+    order_id: Mapped[str | None] = mapped_column(String(120), nullable=True, index=True)
+    perm_id: Mapped[str | None] = mapped_column(String(120), nullable=True, index=True)
+    side: Mapped[str] = mapped_column(String(8), default="")
+    qty: Mapped[float] = mapped_column(Float, default=0.0)
+    limit_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    status: Mapped[str] = mapped_column(String(40), default="pending", index=True)
+    broker_response_json: Mapped[dict[str, Any]] = mapped_column(json_type(), default=dict)
+    verified_position_qty_after: Mapped[float | None] = mapped_column(Float, nullable=True)
+    reason_code: Mapped[str] = mapped_column(String(80), default="", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    session: Mapped[IntradaySession] = relationship(back_populates="flatten_attempts")
+    trade: Mapped[Trade | None] = relationship()
+    source_signal: Mapped[Signal | None] = relationship()
 
 
 class EquityPoint(Base):

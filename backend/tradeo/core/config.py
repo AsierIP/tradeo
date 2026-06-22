@@ -2,12 +2,54 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 TradingMode = Literal["research", "paper", "live"]
+
+SENSITIVE_ENV_KEY_PARTS = (
+    "ACCOUNT",
+    "API_KEY",
+    "CONFIRMATION_VALUE",
+    "KEY",
+    "PASSWORD",
+    "SECRET",
+    "TOKEN",
+    "USERNAME",
+)
+
+
+def _env_key_for_field(field_name: str) -> str:
+    return f"TRADEO_{field_name.upper()}"
+
+
+def _is_sensitive_env_key(key: str) -> bool:
+    upper = key.upper()
+    return any(part in upper for part in SENSITIVE_ENV_KEY_PARTS)
+
+
+def _env_keys_from_file(path: Path) -> set[str]:
+    """Return only key names from a dotenv-style file; values are never retained."""
+
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return set()
+    keys: set[str] = set()
+    for raw_line in lines:
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[len("export ") :].strip()
+        if "=" not in line:
+            continue
+        key = line.split("=", 1)[0].strip()
+        if key:
+            keys.add(key)
+    return keys
 
 
 class Settings(BaseSettings):
@@ -95,6 +137,54 @@ class Settings(BaseSettings):
     strategy_config_file: str = "/app/config/strategy_cup_v0.json"
     reports_dir: str = "/app/reports"
     artifacts_dir: str = "/app/artifacts"
+
+    # Intraday lane. Everything is globally disabled by default and remains a
+    # no-op unless TRADEO_INTRADAY_ENABLED=true. Live intraday additionally fails
+    # closed behind the daily live arm, a real calendar service and EOD flat.
+    intraday_enabled: bool = False
+    intraday_shadow_enabled: bool = False
+    intraday_paper_enabled: bool = False
+    intraday_live_enabled: bool = False
+    intraday_universe_enabled: bool = False
+    intraday_data_sync_enabled: bool = False
+    intraday_research_enabled: bool = False
+    intraday_candidate_scan_enabled: bool = False
+    intraday_observation_closer_enabled: bool = False
+    intraday_risk_heartbeat_enabled: bool = True
+    intraday_reconciliation_enabled: bool = True
+    intraday_eod_flat_enabled: bool = True
+    intraday_calendar_enabled: bool = False
+    intraday_timeframes: str = "15m,5m"
+    intraday_execution_timeframe: str = "1m"
+    intraday_session_timezone: str = "America/New_York"
+    intraday_no_new_entries_at: str = "15:30"
+    intraday_cancel_entries_at: str = "15:45"
+    intraday_force_flat_start_at: str = "15:50"
+    intraday_hard_flat_deadline_at: str = "15:55"
+    intraday_min_price: float = 3.0
+    intraday_min_dollar_volume: float = 1_000_000.0
+    intraday_max_spread_bps: float = 50.0
+    intraday_min_relative_volume: float = 1.5
+    intraday_risk_per_trade_pct: float = 0.0025
+    intraday_daily_loss_limit_pct: float = 0.005
+    intraday_max_open_positions: int = 0
+    intraday_max_trades_per_day: int = 0
+    intraday_max_trades_per_symbol: int = 0
+    intraday_min_reward_risk: float = 4.0
+    intraday_pacing_budget_per_10min: int = 0
+    intraday_data_sync_interval_seconds: int = 300
+    intraday_candidate_scan_interval_seconds: int = 60
+    intraday_observation_closer_interval_seconds: int = 60
+    intraday_risk_heartbeat_interval_seconds: int = 60
+    intraday_reconciliation_interval_seconds: int = 300
+    intraday_job_jitter_seconds: int = 10
+    intraday_universe_premarket_hour_utc: int = 12
+    intraday_universe_premarket_minute_utc: int = 45
+    intraday_universe_early_hour_utc: int = 14
+    intraday_universe_early_minute_utc: int = 45
+    intraday_eod_flat_hour_utc: int = 20
+    intraday_eod_flat_minute_utc: int = 55
+    intraday_eod_emergency_market_allowed: bool = False
 
     scan_period: str = "2y"
     scan_interval: str = "1d"
@@ -319,6 +409,7 @@ class Settings(BaseSettings):
     ibkr_paper_bracket_max_distance_pct: float = 0.20
     ibkr_allow_market_orders: bool = False
     ibkr_allowed_symbols: str = ""
+    ibkr_whatif_timeout_seconds: float = 8.0
     ibkr_execution_preflight_quote_timeout_seconds: float = 4.0
     ibkr_execution_preflight_quote_max_age_seconds: float = 5.0
     ibkr_execution_preflight_max_spread_pct: float = 0.005
@@ -390,9 +481,71 @@ class Settings(BaseSettings):
             raise ValueError("risk percentages must be between 0 and 0.5")
         return value
 
+    @field_validator("intraday_timeframes")
+    @classmethod
+    def intraday_timeframes_must_be_explicit(cls, value: str) -> str:
+        timeframes = [item.strip() for item in value.split(",") if item.strip()]
+        if not timeframes:
+            raise ValueError("intraday_timeframes must include at least one explicit timeframe")
+        return ",".join(timeframes)
+
+    @field_validator("intraday_risk_per_trade_pct", "intraday_daily_loss_limit_pct")
+    @classmethod
+    def intraday_pct_bounds(cls, value: float) -> float:
+        if value < 0 or value > 0.5:
+            raise ValueError("intraday risk percentages must be between 0 and 0.5")
+        return value
+
+    @field_validator(
+        "intraday_min_price",
+        "intraday_min_dollar_volume",
+        "intraday_max_spread_bps",
+        "intraday_min_relative_volume",
+        "intraday_min_reward_risk",
+    )
+    @classmethod
+    def non_negative_intraday_thresholds(cls, value: float) -> float:
+        if value < 0:
+            raise ValueError("intraday thresholds must be non-negative")
+        return value
+
+    @field_validator(
+        "intraday_max_open_positions",
+        "intraday_max_trades_per_day",
+        "intraday_max_trades_per_symbol",
+        "intraday_pacing_budget_per_10min",
+        "intraday_data_sync_interval_seconds",
+        "intraday_candidate_scan_interval_seconds",
+        "intraday_observation_closer_interval_seconds",
+        "intraday_risk_heartbeat_interval_seconds",
+        "intraday_reconciliation_interval_seconds",
+        "intraday_job_jitter_seconds",
+        "intraday_universe_premarket_hour_utc",
+        "intraday_universe_premarket_minute_utc",
+        "intraday_universe_early_hour_utc",
+        "intraday_universe_early_minute_utc",
+        "intraday_eod_flat_hour_utc",
+        "intraday_eod_flat_minute_utc",
+    )
+    @classmethod
+    def non_negative_intraday_ints(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError("intraday integer settings must be non-negative")
+        return value
+
+    @model_validator(mode="after")
+    def intraday_live_fails_closed(self) -> "Settings":
+        blockers = self.intraday_live_config_blockers
+        if self.intraday_live_enabled and blockers:
+            raise ValueError(
+                "intraday live is blocked by config: " + ",".join(sorted(blockers))
+            )
+        return self
+
     @field_validator(
         "ibkr_execution_preflight_quote_timeout_seconds",
         "ibkr_execution_preflight_quote_max_age_seconds",
+        "ibkr_whatif_timeout_seconds",
         "ibkr_execution_preflight_max_spread_pct",
         "ibkr_execution_preflight_max_spread_cost_r",
         "ibkr_execution_preflight_max_entry_slippage_pct",
@@ -413,6 +566,123 @@ class Settings(BaseSettings):
     def cors_origins_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
 
+    @property
+    def intraday_timeframe_list(self) -> list[str]:
+        return [timeframe.strip() for timeframe in self.intraday_timeframes.split(",") if timeframe.strip()]
+
+    @property
+    def intraday_live_config_blockers(self) -> list[str]:
+        blockers: list[str] = []
+        if not self.intraday_enabled:
+            blockers.append("intraday_disabled")
+        if not self.live_armed:
+            blockers.append("daily_live_not_armed")
+        if self.ibkr_readonly:
+            blockers.append("ibkr_readonly")
+        if not self.intraday_calendar_enabled:
+            blockers.append("intraday_calendar_disabled")
+        if not self.intraday_eod_flat_enabled:
+            blockers.append("intraday_eod_flat_disabled")
+        return blockers
+
+    @property
+    def intraday_live_armed(self) -> bool:
+        return self.intraday_live_enabled and not self.intraday_live_config_blockers
+
+    def redacted_config_snapshot(self) -> dict[str, Any]:
+        snapshot: dict[str, Any] = {}
+        for field_name in sorted(type(self).model_fields):
+            env_key = _env_key_for_field(field_name)
+            value = getattr(self, field_name)
+            if _is_sensitive_env_key(env_key):
+                snapshot[env_key] = "<redacted>" if value not in (None, "") else ""
+            elif isinstance(value, Path):
+                snapshot[env_key] = str(value)
+            else:
+                snapshot[env_key] = value
+        return snapshot
+
+    def config_doctor(
+        self,
+        *,
+        env_path: str | Path = ".env",
+        example_path: str | Path = ".env.example",
+    ) -> dict[str, Any]:
+        env_file = Path(env_path)
+        example_file = Path(example_path)
+        env_keys = _env_keys_from_file(env_file)
+        example_keys = _env_keys_from_file(example_file)
+        documented_intraday_keys = {
+            _env_key_for_field(name)
+            for name in type(self).model_fields
+            if name.startswith("intraday_")
+        }
+        missing_from_env = sorted(example_keys - env_keys) if env_file.exists() else []
+        undocumented_env_keys = sorted(
+            key for key in (env_keys - example_keys) if key.startswith("TRADEO_")
+        )
+        missing_intraday_example_keys = sorted(documented_intraday_keys - example_keys)
+        critical_defaults = self._critical_default_warnings()
+        blockers = {
+            "intraday_live": self.intraday_live_config_blockers,
+            "intraday_paper": self._intraday_paper_blockers(),
+        }
+        has_warnings = bool(
+            undocumented_env_keys
+            or missing_intraday_example_keys
+            or critical_defaults
+            or blockers["intraday_live"]
+        )
+        return {
+            "ok": not has_warnings,
+            "status": "warning" if has_warnings else "ok",
+            "redacted": True,
+            "env": {
+                "env_file_present": env_file.exists(),
+                "example_file_present": example_file.exists(),
+                "missing_keys_count": len(missing_from_env),
+                "missing_keys": missing_from_env,
+                "undocumented_tradeo_keys": undocumented_env_keys,
+            },
+            "intraday": {
+                "enabled": self.intraday_enabled,
+                "shadow_enabled": self.intraday_shadow_enabled,
+                "paper_enabled": self.intraday_paper_enabled,
+                "live_enabled": self.intraday_live_enabled,
+                "live_armed": self.intraday_live_armed,
+                "timeframes": self.intraday_timeframe_list,
+                "missing_example_keys": missing_intraday_example_keys,
+                "blockers": blockers,
+            },
+            "critical_defaults": critical_defaults,
+            "secret_values_exposed": False,
+        }
+
+    def _critical_default_warnings(self) -> list[dict[str, str]]:
+        warnings: list[dict[str, str]] = []
+        defaults = type(self).model_fields
+        for field_name, reason in (
+            ("secret_key", "default_secret_key"),
+            ("admin_password", "default_admin_password"),
+        ):
+            if getattr(self, field_name) == defaults[field_name].default:
+                warnings.append({"key": _env_key_for_field(field_name), "reason": reason})
+        if self.intraday_enabled and self.intraday_pacing_budget_per_10min <= 0:
+            warnings.append(
+                {
+                    "key": "TRADEO_INTRADAY_PACING_BUDGET_PER_10MIN",
+                    "reason": "intraday_pacing_budget_blocks_data_jobs",
+                }
+            )
+        return warnings
+
+    def _intraday_paper_blockers(self) -> list[str]:
+        blockers: list[str] = []
+        if self.intraday_paper_enabled and not self.intraday_enabled:
+            blockers.append("intraday_disabled")
+        if self.intraday_paper_enabled and not self.intraday_eod_flat_enabled:
+            blockers.append("intraday_eod_flat_disabled")
+        return blockers
 
     @property
     def discovery_window_size_list(self) -> list[int]:

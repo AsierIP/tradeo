@@ -102,6 +102,10 @@ class IBKRBroker:
             return max(timeout, 45.0)
         return timeout
 
+    @property
+    def whatif_timeout(self) -> float:
+        return max(0.0, float(getattr(self.settings, "ibkr_whatif_timeout_seconds", 8.0)))
+
     def _connect(self):
         _ensure_event_loop()
         from ib_insync import IB
@@ -128,6 +132,42 @@ class IBKRBroker:
         if last_exc:
             raise IBKROperationalError(str(last_exc)) from last_exc
         raise IBKROperationalError("IBKR connection failed")
+
+    def _run_ib_request_with_timeout(
+        self,
+        ib: Any,
+        *,
+        label: str,
+        timeout: float,
+        call: Any,
+    ) -> Any:
+        previous_timeout = getattr(ib, "RequestTimeout", None)
+        if previous_timeout is not None:
+            ib.RequestTimeout = timeout
+        try:
+            return call()
+        except TimeoutError as exc:
+            raise IBKROperationalError(f"IBKR {label} timed out after {timeout:.1f}s") from exc
+        finally:
+            if previous_timeout is not None:
+                ib.RequestTimeout = previous_timeout
+
+    def _qualify_contracts(self, ib: Any, contract: Any, *, timeout: float | None = None) -> list[Any]:
+        request_timeout = self.whatif_timeout if timeout is None else max(0.0, float(timeout))
+        return self._run_ib_request_with_timeout(
+            ib,
+            label="contract qualification",
+            timeout=request_timeout,
+            call=lambda: ib.qualifyContracts(contract),
+        )
+
+    def _what_if_order(self, ib: Any, contract: Any, order: Any) -> Any:
+        return self._run_ib_request_with_timeout(
+            ib,
+            label="WhatIf order preview",
+            timeout=self.whatif_timeout,
+            call=lambda: ib.whatIfOrder(contract, order),
+        )
 
     def status(self) -> dict[str, Any]:
         from ib_insync import util
@@ -830,7 +870,7 @@ class IBKRBroker:
         order = self._build_parent_limit_order(signal)
         order.lmtPrice = _finite_price(submitted_entry, "submitted entry")
         try:
-            state = ib.whatIfOrder(contract, order)
+            state = self._what_if_order(ib, contract, order)
         except Exception as exc:  # noqa: BLE001 - fail closed before order placement.
             raise IBKRSafetyError(
                 f"live IBKR execution WhatIf preflight failed: {type(exc).__name__}: {exc}"
@@ -973,12 +1013,12 @@ class IBKRBroker:
         ib = self._connect()
         try:
             contract = self._stock_contract(signal.symbol)
-            qualified = ib.qualifyContracts(contract)
+            qualified = self._qualify_contracts(ib, contract)
             if not qualified:
                 raise IBKRSafetyError(f"IBKR could not qualify contract for {signal.symbol}")
             contract = qualified[0]
             order = self._build_parent_limit_order(signal)
-            state = ib.whatIfOrder(contract, order)
+            state = self._what_if_order(ib, contract, order)
             return {
                 "ok": True,
                 "signal_id": signal.id,
@@ -989,6 +1029,7 @@ class IBKRBroker:
                 "stop": float(signal.stop),
                 "target": float(signal.target),
                 "notional_usd": round(float(signal.entry) * int(signal.suggested_qty), 2),
+                "what_if_timeout_seconds": self.whatif_timeout,
                 "contract": {
                     "con_id": contract.conId,
                     "symbol": contract.symbol,
@@ -1028,7 +1069,7 @@ class IBKRBroker:
         try:
             self._validate_paper_account_target(ib)
             contract = self._stock_contract(signal.symbol)
-            qualified = ib.qualifyContracts(contract)
+            qualified = self._qualify_contracts(ib, contract, timeout=self.order_timeout)
             if not qualified:
                 raise IBKRSafetyError(f"IBKR could not qualify contract for {signal.symbol}")
             contract = qualified[0]
@@ -1262,7 +1303,7 @@ class IBKRBroker:
         ib = self._connect()
         try:
             contract = self._stock_contract(trade.symbol)
-            qualified = ib.qualifyContracts(contract)
+            qualified = self._qualify_contracts(ib, contract, timeout=self.order_timeout)
             if not qualified:
                 raise IBKRSafetyError(f"IBKR could not qualify contract for {trade.symbol}")
             contract = qualified[0]
