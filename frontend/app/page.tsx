@@ -352,6 +352,69 @@ type WebNotice = {
   message?: string
   updated_at?: string
 }
+type IntradayConfig = {
+  enabled: boolean
+  shadow_enabled: boolean
+  paper_enabled: boolean
+  live_enabled: boolean
+  live_armed: boolean
+  timeframes: string[]
+}
+type IntradaySessionJob = {
+  job_id: string
+  status: string
+  reason?: string | null
+  generated_at?: string | null
+  details?: Record<string, unknown>
+}
+type IntradaySessionStatus = {
+  intraday_enabled: boolean
+  paper_enabled: boolean
+  live_enabled: boolean
+  live_armed: boolean
+  updated_at?: string | null
+  jobs: Record<string, IntradaySessionJob>
+  reason?: string | null
+}
+type IntradayStatus = {
+  config: IntradayConfig
+  session: IntradaySessionStatus
+}
+type IntradayFlatStatus = {
+  enabled: boolean
+  session: IntradaySessionStatus
+}
+type IntradayPacingWindow = {
+  window_seconds: number
+  capacity: number
+  daily_reserved: number
+  used: number
+  remaining: number
+  next_available_at?: string | null
+}
+type IntradayPacing = {
+  generated_at: string
+  request_types: Record<string, { windows: IntradayPacingWindow[] }>
+  omitted_symbols_by_pacing: string[]
+  last_update_by_timeframe: Record<string, string>
+  degraded_to_shadow_safe: boolean
+  last_degraded_at?: string | null
+  new_entries_allowed: boolean
+}
+type FlatPreviewOrder = {
+  symbol: string
+  side: string
+  qty: number
+  reason: string
+  preview: boolean
+}
+type IntradayFlatPreview = {
+  ok: boolean
+  preview: boolean
+  state: string
+  orders: FlatPreviewOrder[]
+  reason_code: string
+}
 
 function StatCard({ label, value, suffix }: { label: string; value: string | number; suffix?: string }) {
   return (
@@ -370,8 +433,45 @@ function StatusBadge({ status }: { status: string }) {
       ? 'good'
       : normalized.includes('watch') || normalized.includes('lab')
         ? 'warn'
-        : 'good'
+      : 'good'
   return <span className={`status ${tone}`}>{status}</span>
+}
+
+function ScopeDivider({
+  label,
+  title,
+  children
+}: {
+  label: string
+  title: string
+  children?: ReactNode
+}) {
+  return (
+    <section className="scope-divider full">
+      <div>
+        <div className="module-kicker">{label}</div>
+        <h2>{title}</h2>
+      </div>
+      {children && <div className="mode-strip">{children}</div>}
+    </section>
+  )
+}
+
+function ModeChip({
+  label,
+  value,
+  tone = 'warn'
+}: {
+  label: string
+  value: string
+  tone?: 'good' | 'warn' | 'bad'
+}) {
+  return (
+    <span className={`mode-chip ${tone}`}>
+      <strong>{label}</strong>
+      <span>{value}</span>
+    </span>
+  )
 }
 
 function EdgeBadges({ pattern }: { pattern: DiscoveredPattern }) {
@@ -432,6 +532,42 @@ function formatCompactValue(value?: string | number | boolean | null) {
   }
   if (typeof value === 'boolean') return value ? 'sí' : 'no'
   return value || '-'
+}
+
+function formatDetailValue(value: unknown) {
+  if (typeof value === 'number') return formatCompactValue(value)
+  if (typeof value === 'boolean') return value ? 'sí' : 'no'
+  if (typeof value === 'string') return value || '-'
+  if (value === null || typeof value === 'undefined') return '-'
+  if (Array.isArray(value)) return `${value.length} items`
+  if (typeof value === 'object') return 'objeto'
+  return String(value)
+}
+
+function intradayJobDetails(job: IntradaySessionJob) {
+  const detailText = Object.entries(job.details || {})
+    .slice(0, 4)
+    .map(([key, value]) => `${key}: ${formatDetailValue(value)}`)
+    .join(' · ')
+  return detailText || job.reason || '-'
+}
+
+function formatWindowSeconds(value: number) {
+  if (value % 3600 === 0) return `${value / 3600}h`
+  if (value % 60 === 0) return `${value / 60}m`
+  return `${value}s`
+}
+
+function intradayModeTone(enabled?: boolean, armed?: boolean): 'good' | 'warn' | 'bad' {
+  if (!enabled) return 'bad'
+  if (armed === false) return 'warn'
+  return 'good'
+}
+
+function intradayModeLabel(enabled?: boolean, armed?: boolean) {
+  if (!enabled) return 'apagado'
+  if (armed === false) return 'gate cerrado'
+  return 'activo'
 }
 
 function sourceLabel(source: string) {
@@ -606,6 +742,198 @@ function CollapsibleSection({
       </summary>
       <div className="module-collapse-body">{children}</div>
     </details>
+  )
+}
+
+function IntradayPanel({
+  status,
+  pacing,
+  flatStatus,
+  flatPreview,
+  previewBusy,
+  previewError,
+  onPreviewFlat
+}: {
+  status?: IntradayStatus
+  pacing?: IntradayPacing
+  flatStatus?: IntradayFlatStatus
+  flatPreview?: IntradayFlatPreview | null
+  previewBusy: boolean
+  previewError?: string | null
+  onPreviewFlat: () => void
+}) {
+  const config = status?.config
+  const session = status?.session || flatStatus?.session
+  const timeframes = config?.timeframes?.length ? config.timeframes : []
+  const jobs = Object.values(session?.jobs || {}).sort((a, b) => {
+    const left = a.generated_at ? new Date(a.generated_at).getTime() : 0
+    const right = b.generated_at ? new Date(b.generated_at).getTime() : 0
+    return right - left
+  })
+  const requestTypes = Object.entries(pacing?.request_types || {})
+  const flatEnabled = Boolean(flatStatus?.enabled)
+  const liveLabel = config?.live_enabled
+    ? config.live_armed ? 'armado' : 'sin armar'
+    : status ? 'apagado' : 'cargando'
+  const liveTone = status ? intradayModeTone(config?.live_enabled, config?.live_armed) : 'warn'
+
+  return (
+    <section className="card full intraday-card">
+      <div className="section-head module-head">
+        <div>
+          <div className="module-kicker">Intraday</div>
+          <h2>Panel intradía operativo</h2>
+          <p className="muted">
+            Estado de sesión, lanes shadow/paper/live, pacing IBKR y flat EOD con preview obligatorio.
+          </p>
+        </div>
+        <div className="module-actions">
+          <div className="pill">
+            <span className={`dot ${config?.enabled ? '' : 'warn'}`} />
+            intraday {config?.enabled ? 'activo' : 'apagado'}
+          </div>
+          <div className="pill">
+            <span className={`dot ${config?.live_armed ? '' : 'warn'}`} />
+            live {config?.live_armed ? 'armado' : 'bloqueado'}
+          </div>
+          <div className="pill">actualizado: {shortDateTime(session?.updated_at)}</div>
+        </div>
+      </div>
+
+      <div className="mode-lane-grid">
+        <ModeChip
+          label="Shadow"
+          value={status ? intradayModeLabel(config?.shadow_enabled) : 'cargando'}
+          tone={status ? intradayModeTone(config?.shadow_enabled) : 'warn'}
+        />
+        <ModeChip
+          label="Paper"
+          value={status ? intradayModeLabel(config?.paper_enabled) : 'cargando'}
+          tone={status ? intradayModeTone(config?.paper_enabled) : 'warn'}
+        />
+        <ModeChip label="Live" value={liveLabel} tone={liveTone} />
+      </div>
+
+      <div className="intraday-stat-grid">
+        <div>
+          <strong>{timeframes.join(', ') || '-'}</strong>
+          <span>timeframes</span>
+        </div>
+        <div>
+          <strong>{pacing?.new_entries_allowed ? 'sí' : 'no'}</strong>
+          <span>nuevas entradas por pacing</span>
+        </div>
+        <div>
+          <strong>{pacing?.degraded_to_shadow_safe ? 'shadow' : 'normal'}</strong>
+          <span>degradación pacing</span>
+        </div>
+        <div>
+          <strong>{flatEnabled ? 'activo' : 'apagado'}</strong>
+          <span>flat EOD</span>
+        </div>
+      </div>
+
+      <div className="intraday-grid">
+        <section className="module-panel">
+          <h3>Sesión</h3>
+          <div className="table-scroll intraday-scroll">
+            <table>
+              <thead>
+                <tr><th>Job</th><th>Estado</th><th>Detalle</th><th>Hora</th></tr>
+              </thead>
+              <tbody>
+                {jobs.map((job) => (
+                  <tr key={job.job_id}>
+                    <td className="mono">{job.job_id}</td>
+                    <td><StatusBadge status={job.status} /></td>
+                    <td className="wrap-cell" title={job.reason || undefined}>{intradayJobDetails(job)}</td>
+                    <td>{shortDateTime(job.generated_at)}</td>
+                  </tr>
+                ))}
+                {!jobs.length && <tr><td colSpan={4}>Sin jobs intradía reportados todavía.</td></tr>}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section className="module-panel">
+          <h3>Pacing IBKR</h3>
+          <div className="table-scroll intraday-scroll">
+            <table>
+              <thead>
+                <tr><th>Tipo</th><th>Ventana</th><th>Uso</th><th>Reservado daily</th><th>Next</th></tr>
+              </thead>
+              <tbody>
+                {requestTypes.flatMap(([requestType, payload]) => (
+                  payload.windows.map((window) => (
+                    <tr key={`${requestType}-${window.window_seconds}`}>
+                      <td className="mono">{requestType}</td>
+                      <td>{formatWindowSeconds(window.window_seconds)}</td>
+                      <td>{window.used}/{window.capacity} · quedan {window.remaining}</td>
+                      <td>{window.daily_reserved}</td>
+                      <td>{shortDateTime(window.next_available_at)}</td>
+                    </tr>
+                  ))
+                ))}
+                {!requestTypes.length && <tr><td colSpan={5}>Sin métricas de pacing todavía.</td></tr>}
+              </tbody>
+            </table>
+          </div>
+          <div className="mini-stats intraday-mini">
+            <span>omitidos: {pacing?.omitted_symbols_by_pacing?.length ?? 0}</span>
+            <span>última degradación: {shortDateTime(pacing?.last_degraded_at)}</span>
+          </div>
+        </section>
+
+        <section className="module-panel">
+          <h3>Flat EOD</h3>
+          <div className="flat-action-row">
+            <button onClick={onPreviewFlat} disabled={previewBusy}>
+              {previewBusy ? 'Calculando preview...' : 'Preview flat'}
+            </button>
+            <button className="gated-action" disabled title="Backend gated: flat real requiere adapter broker y preview previo">
+              Flat real bloqueado
+            </button>
+          </div>
+          <div className="flat-gate">
+            <span>gate: preview obligatorio</span>
+            <span>backend: flat/request 409 hasta broker-backed flat</span>
+            <span>live_armed: {config?.live_armed ? 'sí' : 'no'}</span>
+          </div>
+          {previewError && <p className="error">Preview flat fallido: {previewError}</p>}
+          {flatPreview && (
+            <div className="preview-result">
+              <div className="preview-head">
+                <strong>{flatPreview.state}</strong>
+                <span>{flatPreview.reason_code}</span>
+                <span>{flatPreview.orders.length} órdenes preview</span>
+              </div>
+              {flatPreview.orders.length ? (
+                <div className="table-scroll intraday-scroll">
+                  <table>
+                    <thead>
+                      <tr><th>Símbolo</th><th>Lado</th><th>Qty</th><th>Motivo</th></tr>
+                    </thead>
+                    <tbody>
+                      {flatPreview.orders.map((order) => (
+                        <tr key={`${order.symbol}-${order.side}-${order.qty}`}>
+                          <td className="mono">{order.symbol}</td>
+                          <td>{order.side}</td>
+                          <td>{order.qty}</td>
+                          <td>{order.reason}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <p className="muted">Preview sin posiciones que cerrar.</p>
+              )}
+            </div>
+          )}
+        </section>
+      </div>
+    </section>
   )
 }
 
@@ -808,6 +1136,9 @@ export default function Page() {
   const [scanResult, setScanResult] = useState<ScanResult | null>(null)
   const [scanError, setScanError] = useState<string | null>(null)
   const [showWebNotice, setShowWebNotice] = useState(false)
+  const [flatPreview, setFlatPreview] = useState<IntradayFlatPreview | null>(null)
+  const [flatPreviewBusy, setFlatPreviewBusy] = useState(false)
+  const [flatPreviewError, setFlatPreviewError] = useState<string | null>(null)
   const { data, error, mutate, isLoading } = useSWR<Summary>('/dashboard/summary', fetcher, { refreshInterval: 15000 })
   const { data: discoveredPatterns, mutate: mutateResearch } = useSWR<DiscoveredPattern[]>('/research/discovered-patterns?limit=100', fetcher, { refreshInterval: 30000 })
   const { data: discoveryRuns, mutate: mutateRuns } = useSWR<DiscoveryRun[]>('/research/runs?limit=25', fetcher, { refreshInterval: 15000 })
@@ -816,6 +1147,9 @@ export default function Page() {
   const { data: labOverview } = useSWR<ModuleOverview>('/laboratory/overview', fetcher, { refreshInterval: 15000 })
   const { data: labDiagnostics } = useSWR<LabDiagnostics>('/laboratory/diagnostics?limit=24', fetcher, { refreshInterval: 15000 })
   const { data: foxOverview } = useSWR<ModuleOverview>('/fox-hunter/overview', fetcher, { refreshInterval: 15000 })
+  const { data: intradayStatus } = useSWR<IntradayStatus>('/intraday/status', fetcher, { refreshInterval: 5000 })
+  const { data: intradayPacing } = useSWR<IntradayPacing>('/intraday/pacing', fetcher, { refreshInterval: 5000 })
+  const { data: intradayFlatStatus, mutate: mutateIntradayFlatStatus } = useSWR<IntradayFlatStatus>('/intraday/flat/status', fetcher, { refreshInterval: 5000 })
   const { data: webNotice } = useSWR<WebNotice>('/health/notice', fetcher, { refreshInterval: 10000 })
 
   useEffect(() => {
@@ -868,6 +1202,20 @@ export default function Page() {
       await mutateRuns()
     } finally {
       setBusyDiscovery(false)
+    }
+  }
+
+  async function previewIntradayFlat() {
+    setFlatPreviewBusy(true)
+    setFlatPreviewError(null)
+    try {
+      const result = await postJson('/intraday/flat/preview', {}) as IntradayFlatPreview
+      setFlatPreview(result)
+      await mutateIntradayFlatStatus()
+    } catch (err) {
+      setFlatPreviewError(err instanceof Error ? err.message : 'Error calculando preview flat')
+    } finally {
+      setFlatPreviewBusy(false)
     }
   }
 
@@ -930,7 +1278,7 @@ export default function Page() {
           <div className="kicker">Tradeo · dashboard privado</div>
           <h1>Director de patrones mid/small cap</h1>
           <p className="subtitle">
-            Tres módulos independientes: Research descubre patrones, Laboratorio los valida con IB Paper y Fox Hunter opera solo patrones en Producción.
+            Daily e intradía separados: Research descubre patrones, Laboratorio valida con IB Paper, Fox Hunter opera Producción e Intraday queda bajo gates propios.
           </p>
           <div className="actions">
             <button onClick={runScan} disabled={isScanning}>{isScanning ? 'Escaneando...' : 'Escanear Lab'}</button>
@@ -952,6 +1300,52 @@ export default function Page() {
       </section>
 
       <section className="grid">
+        <ScopeDivider label="Intraday" title="Intradía / sesión restante">
+          <ModeChip
+            label="Shadow"
+            value={intradayStatus ? intradayModeLabel(intradayStatus.config.shadow_enabled) : 'cargando'}
+            tone={intradayStatus ? intradayModeTone(intradayStatus.config.shadow_enabled) : 'warn'}
+          />
+          <ModeChip
+            label="Paper"
+            value={intradayStatus ? intradayModeLabel(intradayStatus.config.paper_enabled) : 'cargando'}
+            tone={intradayStatus ? intradayModeTone(intradayStatus.config.paper_enabled) : 'warn'}
+          />
+          <ModeChip
+            label="Live"
+            value={intradayStatus?.config.live_enabled ? intradayStatus.config.live_armed ? 'armado' : 'sin armar' : intradayStatus ? 'apagado' : 'cargando'}
+            tone={intradayStatus ? intradayModeTone(intradayStatus.config.live_enabled, intradayStatus.config.live_armed) : 'warn'}
+          />
+        </ScopeDivider>
+
+        <IntradayPanel
+          status={intradayStatus}
+          pacing={intradayPacing}
+          flatStatus={intradayFlatStatus}
+          flatPreview={flatPreview}
+          previewBusy={flatPreviewBusy}
+          previewError={flatPreviewError}
+          onPreviewFlat={previewIntradayFlat}
+        />
+
+        <ScopeDivider label="Daily" title="Daily / Research, Laboratorio y Fox Hunter">
+          <ModeChip
+            label="Shadow"
+            value={`${labOverview?.stats.shadow_closed_trades ?? 0} cerradas`}
+            tone="good"
+          />
+          <ModeChip
+            label="Paper"
+            value={labStatus?.paper_orders_allowed ? 'órdenes permitidas' : 'gate cerrado'}
+            tone={labStatus?.paper_orders_allowed ? 'good' : 'warn'}
+          />
+          <ModeChip
+            label="Live"
+            value={data.live_armed ? 'armado' : 'bloqueado'}
+            tone={data.live_armed ? 'good' : 'warn'}
+          />
+        </ScopeDivider>
+
         <StatCard label="Equity actual" value={`$${latestEquity.toFixed(2)}`} />
         <StatCard label="Research aceptados" value={acceptedResearch.length} />
         <StatCard label="Lab señales" value={labOverview?.stats.signals ?? 0} />

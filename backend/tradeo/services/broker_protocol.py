@@ -30,9 +30,27 @@ class BrokerGatewayProtocol(Protocol):
 
     def cancel_order(self, order_id: str) -> dict[str, Any]: ...
 
-    def preview_reduce_only_exit(self, symbol: str, qty: float, side: str, reason: str) -> BrokerOrderPreview: ...
+    def preview_reduce_only_exit(
+        self,
+        symbol: str,
+        qty: float,
+        side: str,
+        reason: str,
+        *,
+        limit_price: float | None = None,
+        allow_market: bool = False,
+    ) -> BrokerOrderPreview: ...
 
-    def submit_reduce_only_exit(self, symbol: str, qty: float, side: str, reason: str) -> dict[str, Any]: ...
+    def submit_reduce_only_exit(
+        self,
+        symbol: str,
+        qty: float,
+        side: str,
+        reason: str,
+        *,
+        limit_price: float | None = None,
+        allow_market: bool = False,
+    ) -> dict[str, Any]: ...
 
     def fills(self, since: str | None = None) -> list[dict[str, Any]]: ...
 
@@ -55,10 +73,28 @@ class DisabledIbAsyncBroker:
     def cancel_order(self, order_id: str) -> dict[str, Any]:
         return {"ok": False, "order_id": order_id, "reason": "adapter_disabled"}
 
-    def preview_reduce_only_exit(self, symbol: str, qty: float, side: str, reason: str) -> BrokerOrderPreview:
+    def preview_reduce_only_exit(
+        self,
+        symbol: str,
+        qty: float,
+        side: str,
+        reason: str,
+        *,
+        limit_price: float | None = None,
+        allow_market: bool = False,
+    ) -> BrokerOrderPreview:
         return BrokerOrderPreview(False, symbol.upper(), side.upper(), qty, reason, {"reason": "adapter_disabled"})
 
-    def submit_reduce_only_exit(self, symbol: str, qty: float, side: str, reason: str) -> dict[str, Any]:
+    def submit_reduce_only_exit(
+        self,
+        symbol: str,
+        qty: float,
+        side: str,
+        reason: str,
+        *,
+        limit_price: float | None = None,
+        allow_market: bool = False,
+    ) -> dict[str, Any]:
         return {"ok": False, "symbol": symbol.upper(), "reason": "adapter_disabled"}
 
     def fills(self, since: str | None = None) -> list[dict[str, Any]]:
