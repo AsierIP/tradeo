@@ -52,7 +52,9 @@ test-safety:
 		tradeo/tests/test_intraday_audit_report.py \
 		tradeo/tests/test_broker_protocol.py \
 		tradeo/tests/test_intraday_paper_execution.py \
-		tradeo/tests/test_intraday_router.py
+		tradeo/tests/test_intraday_router.py \
+		tradeo/tests/test_intraday_data_sync.py \
+		tradeo/tests/test_intraday_lab.py
 
 scan:
 	bash -lc 'set -a; source .env; set +a; curl -u "$${TRADEO_ADMIN_USERNAME:-admin}:$${TRADEO_ADMIN_PASSWORD:-change-me}" -X POST http://localhost:8000/api/scan -H "Content-Type: application/json" -d '\''{"limit":50}'\'''
