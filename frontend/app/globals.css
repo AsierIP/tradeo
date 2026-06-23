@@ -117,6 +117,30 @@ button:disabled { opacity: .55; cursor: wait; }
 .mode-chip.good { border-color: rgba(134, 239, 172, .28); background: rgba(134, 239, 172, .08); }
 .mode-chip.warn { border-color: rgba(253, 230, 138, .26); background: rgba(253, 230, 138, .08); }
 .mode-chip.bad { border-color: rgba(252, 165, 165, .28); background: rgba(252, 165, 165, .08); }
+.workspace-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  border: 1px solid rgba(255,255,255,.12);
+  background: rgba(255,255,255,.045);
+  border-radius: 8px;
+  padding: 6px;
+}
+.workspace-tabs button {
+  min-height: 46px;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+}
+.workspace-tabs button.active {
+  color: var(--text);
+  border-color: rgba(125, 211, 252, .38);
+  background: rgba(125, 211, 252, .14);
+}
+.top-workspace-tabs {
+  width: min(820px, 100%);
+  margin: 6px 0 18px;
+}
 .research-card { border-color: rgba(125, 211, 252, .28); background: rgba(125,211,252,.07); }
 .module-card { border-color: rgba(255,255,255,.16); background: rgba(255,255,255,.06); }
 .intraday-card { border-color: rgba(134, 239, 172, .26); background: rgba(14, 57, 42, .24); }
@@ -385,14 +409,14 @@ button:disabled { opacity: .55; cursor: wait; }
 }
 @media (max-width: 900px) { .section-head { flex-direction: column; } .mini-stats { justify-content: flex-start; } .lab-status-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 900px) { .module-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } .module-split, .intraday-grid, .operation-grid, .operation-layout { grid-template-columns: 1fr; } .module-actions { justify-content: flex-start; } .scope-divider { flex-direction: column; align-items: flex-start; } .mode-strip { justify-content: flex-start; } .intraday-stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-@media (max-width: 560px) { .lab-status-grid, .mode-lane-grid, .intraday-stat-grid, .operation-metrics { grid-template-columns: 1fr; } }
+@media (max-width: 560px) { .lab-status-grid, .mode-lane-grid, .intraday-stat-grid, .operation-metrics, .workspace-tabs { grid-template-columns: 1fr; } }
 @media (max-width: 560px) { .module-stats { grid-template-columns: 1fr; } }
 .subsection { margin-top: 28px; padding-top: 18px; border-top: 1px solid rgba(255,255,255,.10); }
 .subsection h3 { margin: 0 0 12px; font-size: 1rem; }
 .table-caption { color: var(--muted); font-size: .82rem; margin: 14px 0 8px; }
 .table-scroll { overflow: auto; border-top: 1px solid rgba(255,255,255,.08); border-bottom: 1px solid rgba(255,255,255,.08); }
 .table-scroll thead th { position: sticky; top: 0; z-index: 1; background: #101c27; }
-.pattern-scroll { max-height: 900px; }
+.pattern-scroll { max-height: 430px; }
 	.pattern-scroll table { min-width: 1180px; }
 	.pattern-scroll th, .pattern-scroll td { padding: 9px 10px; font-size: .86rem; vertical-align: top; }
 	.pattern-scroll tr { cursor: pointer; }
@@ -411,6 +435,27 @@ button:disabled { opacity: .55; cursor: wait; }
 	.edge-badge.premium { color: var(--warn); border-color: rgba(253, 230, 138, .30); background: rgba(253, 230, 138, .10); }
 	.edge-badge.bad { color: var(--bad); border-color: rgba(252, 165, 165, .28); background: rgba(252, 165, 165, .10); }
 	.pattern-detail { background: rgba(7, 11, 18, .22); border-radius: 8px; padding: 14px; }
+	.pattern-example-meta { margin-bottom: 10px; font-size: .82rem; }
+	.pattern-detail-grid {
+	  display: grid;
+	  grid-template-columns: minmax(0, 1.4fr) minmax(280px, .8fr);
+	  gap: 14px;
+	}
+	.detail-kv-grid {
+	  display: grid;
+	  grid-template-columns: repeat(2, minmax(0, 1fr));
+	  gap: 10px;
+	}
+	.detail-kv-grid div {
+	  border: 1px solid rgba(255,255,255,.10);
+	  background: rgba(255,255,255,.045);
+	  border-radius: 8px;
+	  padding: 10px;
+	  min-height: 58px;
+	}
+	.detail-kv-grid strong { display: block; font-size: 1.05rem; }
+	.detail-kv-grid span { display: block; color: var(--muted); font-size: .74rem; margin-top: 3px; }
+	.compact-subsection { margin-top: 18px; padding-top: 14px; }
 	.accepted-explanation {
 	  color: var(--text);
 	  background: rgba(134, 239, 172, .08);
@@ -420,3 +465,4 @@ button:disabled { opacity: .55; cursor: wait; }
 	  line-height: 1.5;
 	  margin: 10px 0 16px;
 	}
+@media (max-width: 900px) { .pattern-detail-grid { grid-template-columns: 1fr; } }

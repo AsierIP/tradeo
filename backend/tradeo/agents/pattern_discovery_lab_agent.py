@@ -116,13 +116,19 @@ class PatternDiscoveryLabAgent:
                     warnings.append(msg)
                     continue
 
+            is_intraday = str(params["interval"]).lower() not in {"1d", "d", "day", "daily"}
+            engine_min_samples = (
+                max(30, min(int(params["min_cluster_size"]), settings.discovery_min_samples))
+                if is_intraday
+                else settings.discovery_min_samples
+            )
             engine = ClusterResearchEngine(
                 min_cluster_size=params["min_cluster_size"],
                 max_clusters_per_window=params["max_clusters_per_window"],
                 target_r=settings.discovery_min_reward_risk,
                 out_of_sample_pct=settings.discovery_out_of_sample_pct,
                 rr_levels=params["rr_levels"],
-                min_samples=settings.discovery_min_samples,
+                min_samples=engine_min_samples,
                 walk_forward_folds=settings.discovery_walk_forward_folds,
                 walk_forward_embargo_samples=settings.discovery_walk_forward_embargo_samples,
                 cost_stress_multipliers=settings.discovery_cost_stress_multiplier_list,
@@ -363,6 +369,7 @@ class PatternDiscoveryLabAgent:
         s = self.settings
         assert s is not None
         max_total_windows = min(request.max_total_windows or s.discovery_max_total_windows, 80_000)
+        rr_levels = sorted({float(x) for x in (request.rr_levels or s.discovery_rr_level_list) if float(x) > 0})
         return {
             "limit": request.limit or s.discovery_limit_default,
             "period": request.period or s.discovery_period,
@@ -375,7 +382,7 @@ class PatternDiscoveryLabAgent:
             "min_cluster_size": max(20, request.min_cluster_size or s.discovery_min_cluster_size),
             "max_clusters_per_window": max(2, min(request.max_clusters_per_window or s.discovery_max_clusters_per_window, 40)),
             "store_rejected": s.discovery_store_rejected if request.store_rejected is None else request.store_rejected,
-            "rr_levels": s.discovery_rr_level_list,
+            "rr_levels": rr_levels or s.discovery_rr_level_list,
             "min_reward_risk": s.discovery_min_reward_risk,
             "candidate_reward_risk": s.discovery_candidate_reward_risk,
             "premium_reward_risk": s.discovery_premium_reward_risk,

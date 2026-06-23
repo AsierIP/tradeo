@@ -84,6 +84,7 @@ class PatternEntryScanner:
         max_patterns: int | None = None,
         max_results: int | None = None,
         similarity_threshold: float | None = None,
+        timeframes: list[str] | None = None,
         store_signals: bool | None = None,
         execute_orders: bool | None = None,
     ) -> dict[str, Any]:
@@ -145,6 +146,7 @@ class PatternEntryScanner:
             max_patterns=resolved["max_patterns"],
             max_results=resolved["max_results"],
             similarity_threshold=resolved["similarity_threshold"],
+            timeframes=timeframes,
             module=module,
             store=True,
         )

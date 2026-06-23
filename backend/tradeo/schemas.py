@@ -197,6 +197,7 @@ class DiscoveryRunRequest(BaseModel):
     max_windows_per_symbol: int | None = None
     min_cluster_size: int | None = None
     max_clusters_per_window: int | None = None
+    rr_levels: list[float] | None = None
     store_rejected: bool | None = None
 
 
@@ -217,6 +218,7 @@ class DiscoveryRunResponse(BaseModel):
 
 class DiscoveredPatternOut(BaseModel):
     id: int
+    run_id: int | None = None
     pattern_key: str
     name: str
     status: str
@@ -266,6 +268,7 @@ class DiscoveredPatternOut(BaseModel):
     out_of_sample_max_drawdown_r: float = 0.0
     validation_passed: bool
     validation_reasons_json: list[str]
+    centroid_json: list[float] = Field(default_factory=list)
     metrics_json: dict[str, Any]
     feature_summary_json: dict[str, Any]
     created_at: datetime

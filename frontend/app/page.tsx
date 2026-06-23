@@ -16,6 +16,8 @@ import {
 } from 'recharts'
 import { fetcher, postJson } from '../lib/api'
 
+type WorkspaceTab = 'research' | 'laboratory' | 'fox_hunter'
+
 type Summary = {
   mode: string
   live_armed: boolean
@@ -63,6 +65,7 @@ type Summary = {
 
 type DiscoveredPattern = {
   id: number
+  run_id?: number | null
   pattern_key: string
   name: string
   status: string
@@ -101,9 +104,29 @@ type DiscoveredPattern = {
   out_of_sample_max_drawdown_r: number
   validation_passed: boolean
   validation_reasons_json: string[]
+  centroid_json?: number[]
   metrics_json: Record<string, unknown>
   feature_summary_json: Record<string, unknown>
   created_at: string
+}
+
+type DiscoveredPatternExample = {
+  id: number
+  pattern_id: number
+  symbol: string
+  timeframe: string
+  window_start: string
+  window_end: string
+  outcome_r: number
+  mfe_r: number
+  mae_r: number
+  similarity: number
+  kind: string
+  chart_json: {
+    close_norm?: number[]
+    range_pct?: number[]
+    volume_rel?: number[]
+  }
 }
 
 type DiscoveryRunResponse = {
@@ -132,6 +155,7 @@ type DiscoveryRun = {
   accepted_patterns: number
   rejected_patterns: number
   duration_seconds: number
+  params_json?: Record<string, unknown>
   report_path?: string | null
 }
 
@@ -553,6 +577,253 @@ function explainAcceptedPattern(pattern: DiscoveredPattern) {
   return lines.join(' ')
 }
 
+function isDailyPattern(pattern: DiscoveredPattern) {
+  const timeframe = pattern.timeframe.toLowerCase()
+  return timeframe === '1d' || timeframe === 'd' || timeframe === 'day' || timeframe === 'daily'
+}
+
+function isDailyRun(run: DiscoveryRun) {
+  const interval = String(run.params_json?.interval || '').toLowerCase()
+  return !interval || interval === '1d' || interval === 'd' || interval === 'day' || interval === 'daily'
+}
+
+function isIntradayRun(run: DiscoveryRun) {
+  return !isDailyRun(run)
+}
+
+function patternRrRows(pattern?: DiscoveredPattern | null) {
+  const metrics = pattern?.rr_metrics_json || {}
+  return Object.entries(metrics)
+    .map(([rr, values]) => ({
+      rr,
+      win_rate: Number(values.win_rate || 0),
+      expectancy_r: Number(values.expectancy_r || 0),
+      profit_factor: Number(values.profit_factor || 0),
+      max_drawdown_r: Number(values.max_drawdown_r || 0),
+      target_hit_rate: Number(values.target_hit_rate || 0),
+      stop_hit_rate: Number(values.stop_hit_rate || 0),
+      avg_bars_to_target: Number(values.avg_bars_to_target || 0),
+      avg_bars_to_stop: Number(values.avg_bars_to_stop || 0)
+    }))
+    .sort((a, b) => Number(a.rr) - Number(b.rr))
+}
+
+function representativeExample(examples?: DiscoveredPatternExample[]) {
+  const rows = [...(examples || [])].sort((a, b) => {
+    const aWinner = a.kind.toLowerCase().includes('winner') ? 1 : 0
+    const bWinner = b.kind.toLowerCase().includes('winner') ? 1 : 0
+    const aProfitable = a.outcome_r > 0 ? 1 : 0
+    const bProfitable = b.outcome_r > 0 ? 1 : 0
+    const aTypical = a.kind.toLowerCase().includes('typical') ? 1 : 0
+    const bTypical = b.kind.toLowerCase().includes('typical') ? 1 : 0
+    return bWinner - aWinner || bProfitable - aProfitable || bTypical - aTypical || b.similarity - a.similarity
+  })
+  return rows[0] || null
+}
+
+function exampleShapeRows(example?: DiscoveredPatternExample | null) {
+  const close = example?.chart_json.close_norm || []
+  const range = example?.chart_json.range_pct || []
+  const volume = example?.chart_json.volume_rel || []
+  return close
+    .filter((value) => typeof value === 'number' && Number.isFinite(value))
+    .map((close_norm, index) => ({
+      bar: index + 1,
+      close_norm,
+      range_pct: typeof range[index] === 'number' ? range[index] : null,
+      volume_rel: typeof volume[index] === 'number' ? volume[index] : null
+    }))
+}
+
+function ResearchPatternPanel({
+  title,
+  subtitle,
+  patterns,
+  selectedPatternId,
+  onSelectPattern,
+  latestRun,
+  latestCompletedRun,
+  discoveryRunsCount
+}: {
+  title: string
+  subtitle: string
+  patterns: DiscoveredPattern[]
+  selectedPatternId: number | null
+  onSelectPattern: (patternId: number) => void
+  latestRun?: DiscoveryRun
+  latestCompletedRun?: DiscoveryRun
+  discoveryRunsCount: number
+}) {
+  const selectedPattern = patterns.find((p) => p.id === selectedPatternId) || null
+  const { data: selectedExamples } = useSWR<DiscoveredPatternExample[]>(
+    selectedPattern ? `/research/discovered-patterns/${selectedPattern.id}/examples` : null,
+    fetcher,
+    { refreshInterval: 30000 }
+  )
+  const selectedExample = representativeExample(selectedExamples)
+  const currentRunPatterns = latestRun ? patterns.filter((p) => p.run_id === latestRun.id).length : 0
+  const currentRunDetected = latestRun ? latestRun.accepted_patterns + latestRun.rejected_patterns : 0
+  const shapeRows = exampleShapeRows(selectedExample)
+  const rrRows = patternRrRows(selectedPattern)
+
+  return (
+    <section className="card full research-card">
+      <div className="section-head">
+        <div>
+          <div className="module-kicker">Research</div>
+          <h2>{title}</h2>
+          <p className="muted">{subtitle}</p>
+        </div>
+        <div className="mini-stats">
+          <span>{patterns.length} aceptados</span>
+          <span>{discoveryRunsCount} runs recientes</span>
+          {latestRun && <span>run #{latestRun.id}: {latestRun.status}</span>}
+        </div>
+      </div>
+
+      <div className="lab-status-grid research-run-grid">
+        <div>
+          <strong>Run actual</strong>
+          <span>{latestRun ? `#${latestRun.id} · ${latestRun.status} · ${formatRunTime(latestRun.started_at)}` : 'sin datos'}</span>
+        </div>
+        <div>
+          <strong>Detectados en run</strong>
+          <span>{currentRunDetected} total · {currentRunPatterns} visibles en esta tabla</span>
+        </div>
+        <div>
+          <strong>Detectados totales</strong>
+          <span>{patterns.length} patrones aceptados</span>
+        </div>
+        <div>
+          <strong>Última completa</strong>
+          <span>
+            {latestCompletedRun
+              ? `#${latestCompletedRun.id} · ${latestCompletedRun.accepted_patterns} aceptados · ${latestCompletedRun.windows_sampled} ventanas`
+              : 'sin runs completas'}
+          </span>
+        </div>
+      </div>
+
+      <div className="table-caption">
+        Patrones aceptados. Click en una fila para abrir detalle debajo.
+      </div>
+      <div className="table-scroll pattern-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>Patrón</th><th>TF</th><th>Status</th><th>Best R:R</th><th>Expectancy</th><th>PF</th><th>Win</th><th>OOS</th><th>Score</th><th>Muestras</th><th>Símb.</th><th>Run</th>
+            </tr>
+          </thead>
+          <tbody>
+            {patterns.map((p) => (
+              <tr key={p.id} onClick={() => onSelectPattern(p.id)} className={selectedPattern?.id === p.id ? 'selected-row' : ''}>
+                <td className="mono">{p.name}</td>
+                <td>{p.timeframe}</td>
+                <td><StatusBadge status={p.status} /></td>
+                <td>{p.best_rr.toFixed(1)}</td>
+                <td>{p.best_expectancy_r.toFixed(2)}R</td>
+                <td>{p.best_profit_factor.toFixed(2)}</td>
+                <td>{(p.best_win_rate * 100).toFixed(1)}%</td>
+                <td>{p.out_of_sample_expectancy_r.toFixed(2)}R</td>
+                <td>{p.score.toFixed(3)}</td>
+                <td>{p.sample_count}</td>
+                <td>{p.symbol_count}</td>
+                <td>{p.run_id ? `#${p.run_id}` : '-'}</td>
+              </tr>
+            ))}
+            {!patterns.length && <tr><td colSpan={12}>Sin patrones aceptados en este bloque todavía.</td></tr>}
+          </tbody>
+        </table>
+      </div>
+
+      {selectedPattern && (
+        <div className="subsection pattern-detail">
+          <div className="section-head">
+            <div>
+              <h3>{selectedPattern.name}</h3>
+              <p className="muted">
+                {selectedPattern.timeframe} · Best R:R {selectedPattern.best_rr.toFixed(1)} · Exp {selectedPattern.best_expectancy_r.toFixed(2)}R · PF {selectedPattern.best_profit_factor.toFixed(2)} · Win {(selectedPattern.best_win_rate * 100).toFixed(1)}%
+              </p>
+            </div>
+            <div>
+              <StatusBadge status={selectedPattern.status} />
+              <EdgeBadges pattern={selectedPattern} />
+            </div>
+          </div>
+          <p className="accepted-explanation">{explainAcceptedPattern(selectedPattern)}</p>
+
+          <div className="pattern-detail-grid">
+            <section className="module-panel">
+              <h3>Forma real del patrón</h3>
+              {shapeRows.length > 0 ? (
+                <>
+                  <p className="muted pattern-example-meta">
+                    {selectedExample?.symbol} · {selectedPattern.side.toUpperCase()} · {selectedExample?.kind} · {formatRValue(selectedExample?.outcome_r)} resultado · {shapeRows.length} velas · {shortDateTime(selectedExample?.window_start)}-{shortDateTime(selectedExample?.window_end)}
+                  </p>
+                  <ResponsiveContainer width="100%" height={240}>
+                  <LineChart data={shapeRows}>
+                    <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
+                    <XAxis dataKey="bar" />
+                    <YAxis />
+                    <Tooltip />
+                    <Line type="monotone" dataKey="close_norm" strokeWidth={2} dot={false} />
+                    <Line type="monotone" dataKey="range_pct" strokeWidth={1} dot={false} />
+                  </LineChart>
+                  </ResponsiveContainer>
+                </>
+              ) : (
+                <p className="muted">Selecciona un patrón con ejemplos guardados para ver una ventana real, no el vector interno.</p>
+              )}
+            </section>
+
+            <section className="module-panel">
+              <h3>Datos clave</h3>
+              <div className="detail-kv-grid">
+                <div><strong>{selectedPattern.sample_count}</strong><span>muestras</span></div>
+                <div><strong>{selectedPattern.symbol_count}</strong><span>símbolos</span></div>
+                <div><strong>{selectedPattern.year_count}</strong><span>años</span></div>
+                <div><strong>{selectedPattern.stability_score.toFixed(2)}</strong><span>estabilidad</span></div>
+                <div><strong>{selectedPattern.avg_mfe_r.toFixed(2)}R</strong><span>avg MFE</span></div>
+                <div><strong>{selectedPattern.avg_mae_r.toFixed(2)}R</strong><span>avg MAE</span></div>
+                <div><strong>{selectedPattern.side.toUpperCase()}</strong><span>dirección</span></div>
+                <div><strong>{formatRValue(selectedExample?.outcome_r)}</strong><span>resultado ejemplo</span></div>
+              </div>
+            </section>
+          </div>
+
+          {rrRows.length > 0 && (
+            <div className="subsection compact-subsection">
+              <h3>Sensibilidad por R:R</h3>
+              <div className="table-scroll">
+                <table>
+                  <thead>
+                    <tr><th>R:R</th><th>Win rate</th><th>Expectancy</th><th>Profit factor</th><th>Drawdown</th><th>Target hit</th><th>Stop hit</th><th>Bars target</th><th>Bars stop</th></tr>
+                  </thead>
+                  <tbody>
+                    {rrRows.map((row) => (
+                      <tr key={row.rr}>
+                        <td>{row.rr}</td>
+                        <td>{(row.win_rate * 100).toFixed(1)}%</td>
+                        <td>{row.expectancy_r.toFixed(2)}R</td>
+                        <td>{row.profit_factor.toFixed(2)}</td>
+                        <td>{row.max_drawdown_r.toFixed(2)}R</td>
+                        <td>{(row.target_hit_rate * 100).toFixed(1)}%</td>
+                        <td>{(row.stop_hit_rate * 100).toFixed(1)}%</td>
+                        <td>{row.avg_bars_to_target.toFixed(1)}</td>
+                        <td>{row.avg_bars_to_stop.toFixed(1)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </section>
+  )
+}
+
 function IntradayPanel({
   status,
   pacing,
@@ -769,7 +1040,7 @@ function OperationsModule({
   const lastPoint = pnl[pnl.length - 1]
   const totalPnl = typeof lastPoint?.total_pnl_usd === 'number' ? lastPoint.total_pnl_usd : stats.total_pnl_usd
   return (
-    <section className="card module-card operation-lane">
+    <section className="card full module-card operation-lane">
       <div className="section-head module-head">
         <div>
           <div className="module-kicker">{title}</div>
@@ -843,10 +1114,12 @@ function OperationsModule({
 }
 
 export default function Page() {
+  const [activeTab, setActiveTab] = useState<WorkspaceTab>('research')
   const [lastDiscovery, setLastDiscovery] = useState<DiscoveryRunResponse | null>(null)
   const [busyDiscovery, setBusyDiscovery] = useState(false)
   const [isScanning, setIsScanning] = useState(false)
-  const [selectedPatternId, setSelectedPatternId] = useState<number | null>(null)
+  const [selectedIntradayPatternId, setSelectedIntradayPatternId] = useState<number | null>(null)
+  const [selectedDailyPatternId, setSelectedDailyPatternId] = useState<number | null>(null)
   const [scanResult, setScanResult] = useState<ScanResult | null>(null)
   const [scanError, setScanError] = useState<string | null>(null)
   const [showWebNotice, setShowWebNotice] = useState(false)
@@ -934,51 +1207,26 @@ export default function Page() {
     }
   }
 
-  const researchRows = useMemo(() => {
-    const rows = (discoveredPatterns || []).filter((p) => p.validation_passed)
-    return rows.slice(0, 18).map((p) => ({
-      name: p.name.replace('DISCOVERED_', '').slice(0, 18),
-      expectancy_r: Number(p.expectancy_r.toFixed(3)),
-      score: Number(p.score.toFixed(3)),
-      profit_factor: Number(p.profit_factor.toFixed(2)),
-      rr: Number(p.reward_risk_estimate.toFixed(2))
-    }))
-  }, [discoveredPatterns])
   const discoveredPatternRows = useMemo(() => {
     return [...(discoveredPatterns || [])].filter((p) => p.validation_passed).sort((a, b) => {
       const createdDiff = new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
       return createdDiff || b.id - a.id
     })
   }, [discoveredPatterns])
-  const selectedPattern = useMemo(() => {
-    const rows = discoveredPatternRows
-    if (!rows.length) return null
-    return rows.find((p) => p.id === selectedPatternId) || rows[0]
-  }, [discoveredPatternRows, selectedPatternId])
-  const selectedRrRows = useMemo(() => {
-    const metrics = selectedPattern?.rr_metrics_json || {}
-    return Object.entries(metrics)
-      .map(([rr, values]) => ({
-        rr,
-        win_rate: Number(values.win_rate || 0),
-        expectancy_r: Number(values.expectancy_r || 0),
-        profit_factor: Number(values.profit_factor || 0),
-        max_drawdown_r: Number(values.max_drawdown_r || 0),
-        target_hit_rate: Number(values.target_hit_rate || 0),
-        stop_hit_rate: Number(values.stop_hit_rate || 0),
-        avg_bars_to_target: Number(values.avg_bars_to_target || 0),
-        avg_bars_to_stop: Number(values.avg_bars_to_stop || 0)
-      }))
-      .sort((a, b) => Number(a.rr) - Number(b.rr))
-  }, [selectedPattern])
+  const intradayPatternRows = useMemo(() => discoveredPatternRows.filter((p) => !isDailyPattern(p)), [discoveredPatternRows])
+  const dailyPatternRows = useMemo(() => discoveredPatternRows.filter(isDailyPattern), [discoveredPatternRows])
+  const intradayRuns = useMemo(() => (discoveryRuns || []).filter(isIntradayRun), [discoveryRuns])
+  const dailyRuns = useMemo(() => (discoveryRuns || []).filter(isDailyRun), [discoveryRuns])
 
   if (error) return <main className="main"><p className="error">No puedo conectar con el backend: {error.message}</p></main>
   if (isLoading || !data) return <main className="main"><p>Cargando Tradeo…</p></main>
 
   const latestEquity = data.equity.length ? data.equity[data.equity.length - 1].equity : data.initial_capital_usd
   const acceptedResearch = (discoveredPatterns || []).filter((p) => p.validation_passed)
-  const latestRun = discoveryRuns?.[0]
-  const latestCompletedRun = discoveryRuns?.find((run) => run.status === 'completed')
+  const latestIntradayRun = intradayRuns[0]
+  const latestDailyRun = dailyRuns[0]
+  const latestCompletedIntradayRun = intradayRuns.find((run) => run.status === 'completed')
+  const latestCompletedDailyRun = dailyRuns.find((run) => run.status === 'completed')
 
   return (
     <main className="main">
@@ -1001,6 +1249,17 @@ export default function Page() {
             <button onClick={generateReport}>Generar revisión</button>
             <button onClick={runDiscovery} disabled={busyDiscovery}>{busyDiscovery ? 'Descubriendo…' : 'Research Lab'}</button>
           </div>
+          <nav className="workspace-tabs top-workspace-tabs" aria-label="Módulos Tradeo">
+            <button className={activeTab === 'research' ? 'active' : ''} onClick={() => setActiveTab('research')}>
+              Research
+            </button>
+            <button className={activeTab === 'laboratory' ? 'active' : ''} onClick={() => setActiveTab('laboratory')}>
+              Laboratorio
+            </button>
+            <button className={activeTab === 'fox_hunter' ? 'active' : ''} onClick={() => setActiveTab('fox_hunter')}>
+              Fox Hunter
+            </button>
+          </nav>
           {scanResult && (
             <p className="scan-notice">
               Último Lab: {scanResult.symbols_checked} símbolos, {scanResult.matches_found} matches,
@@ -1015,206 +1274,110 @@ export default function Page() {
       </section>
 
       <section className="grid">
-        <ScopeDivider label="Operativa" title="Lab y Fox separados por daily / intradía">
-          <ModeChip
-            label="Lab Daily"
-            value={`${labDailyOverview?.stats.open_trades ?? 0} activas`}
-            tone="good"
-          />
-          <ModeChip
-            label="Lab Intradía"
-            value={`${labIntradayOverview?.stats.open_trades ?? 0} activas`}
-            tone={intradayStatus ? intradayModeTone(intradayStatus.config.paper_enabled) : 'warn'}
-          />
-          <ModeChip
-            label="Fox Daily"
-            value={`${foxDailyOverview?.stats.open_trades ?? 0} activas`}
-            tone={data.live_armed ? 'good' : 'warn'}
-          />
-          <ModeChip
-            label="Fox Intradía"
-            value={`${foxIntradayOverview?.stats.open_trades ?? 0} activas`}
-            tone={intradayStatus ? intradayModeTone(intradayStatus.config.live_enabled, intradayStatus.config.live_armed) : 'warn'}
-          />
-        </ScopeDivider>
-
         <StatCard label="Equity actual" value={`$${latestEquity.toFixed(2)}`} />
         <StatCard label="Research aceptados" value={acceptedResearch.length} />
         <StatCard label="Lab activas" value={(labDailyOverview?.stats.open_trades ?? 0) + (labIntradayOverview?.stats.open_trades ?? 0)} />
         <StatCard label="Fox activas" value={(foxDailyOverview?.stats.open_trades ?? 0) + (foxIntradayOverview?.stats.open_trades ?? 0)} />
 
-        <div className="operation-grid full">
-          <OperationsModule
-            title="Lab Daily"
-            subtitle="Órdenes paper diarias activas y P/L acumulado de fills daily cerrados."
-            overview={labDailyOverview}
-            status={labStatus}
-          />
-          <OperationsModule
-            title="Lab Intradía"
-            subtitle="Órdenes paper intradía activas y P/L acumulado de fills intradía cerrados."
-            overview={labIntradayOverview}
-            status={labStatus}
-          />
-          <OperationsModule
-            title="Fox Daily"
-            subtitle="Órdenes live daily activas y P/L acumulado de operaciones daily cerradas."
-            overview={foxDailyOverview}
-            status={foxStatus}
-          />
-          <OperationsModule
-            title="Fox Intradía"
-            subtitle="Órdenes live intradía activas y P/L acumulado de operaciones intradía cerradas."
-            overview={foxIntradayOverview}
-            status={foxStatus}
-          />
-        </div>
+        {activeTab === 'research' && (
+          <>
+            <ScopeDivider label="Research" title="Intradía">
+              <ModeChip label="Aceptados" value={`${intradayPatternRows.length}`} tone={intradayPatternRows.length ? 'good' : 'warn'} />
+              <ModeChip label="Run" value={latestIntradayRun ? `#${latestIntradayRun.id}` : 'sin run intradía'} tone={latestIntradayRun ? 'good' : 'warn'} />
+              <ModeChip label="Total run" value={latestIntradayRun ? `${latestIntradayRun.accepted_patterns + latestIntradayRun.rejected_patterns}` : '0'} tone="warn" />
+            </ScopeDivider>
+            <ResearchPatternPanel
+              title="Research Intradía"
+              subtitle="Patrones intradía detectados y aceptados. Sin gráficos en lista; solo tabla y detalle al seleccionar."
+              patterns={intradayPatternRows}
+              selectedPatternId={selectedIntradayPatternId}
+              onSelectPattern={setSelectedIntradayPatternId}
+              latestRun={latestIntradayRun}
+              latestCompletedRun={latestCompletedIntradayRun}
+              discoveryRunsCount={intradayRuns.length}
+            />
 
-        <section className="card full research-card">
-          <div className="section-head">
-            <div>
-              <div className="module-kicker">Research</div>
-              <h2>Research · patrones descubiertos desde cero</h2>
-              <p className="muted">
-                Descubre patrones nuevos con clustering OHLCV. No opera; solo propone patrones para Laboratorio.
-              </p>
-            </div>
-            <div className="mini-stats">
-              <span>{acceptedResearch.length} LAB</span>
-              <span>scroll filtrado: solo aceptados</span>
-              <span>{discoveryRuns?.length || 0} runs recientes</span>
-              {latestRun && <span>run #{latestRun.id}: {latestRun.status}</span>}
-              {latestCompletedRun && (
-                <span>
-                  última completa #{latestCompletedRun.id}: {latestCompletedRun.accepted_patterns} aceptados · {latestCompletedRun.windows_sampled} ventanas
-                </span>
-              )}
-              {lastDiscovery && <span>última run #{lastDiscovery.run_id}: {lastDiscovery.windows_sampled} ventanas</span>}
-            </div>
-          </div>
-          <div className="lab-status-grid">
-            <div>
-              <strong>Run actual</strong>
-              <span>{latestRun ? `#${latestRun.id} · ${latestRun.status} · ${formatRunTime(latestRun.started_at)}` : 'sin datos'}</span>
-            </div>
-            <div>
-              <strong>Última completa</strong>
-              <span>
-                {latestCompletedRun
-                  ? `#${latestCompletedRun.id} · ${latestCompletedRun.accepted_patterns} aceptados · ${latestCompletedRun.windows_sampled} ventanas`
-                  : 'sin runs completas'}
-              </span>
-            </div>
-            <div>
-              <strong>Actividad reciente</strong>
-              <span>{discoveryRuns?.length || 0} runs revisadas · tabla sin rechazados</span>
-            </div>
-            <div>
-              <strong>Patrones únicos</strong>
-              <span>{acceptedResearch.length} aceptados visibles</span>
-            </div>
-          </div>
-          {researchRows.length > 0 ? (
-            <ResponsiveContainer width="100%" height={260}>
-              <LineChart data={researchRows}>
-                <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
-                <XAxis dataKey="name" hide />
-                <YAxis />
-                <Tooltip />
-                <Line type="monotone" dataKey="expectancy_r" strokeWidth={2} />
-                <Line type="monotone" dataKey="score" strokeWidth={2} />
-              </LineChart>
-            </ResponsiveContainer>
-          ) : (
-            <p className="muted">Aún no hay patrones descubiertos. Pulsa “Research Lab” o deja que trabaje el worker.</p>
-          )}
-          <div className="table-caption">
-            Solo patrones aceptados. El historial restante queda dentro del scroll.
-          </div>
-          <div className="table-scroll pattern-scroll">
-            <table>
-              <thead>
-                <tr>
-                  <th>Patrón</th><th>Status</th><th>Best R:R</th><th>Expectancy R</th><th>Profit Factor</th><th>Win Rate</th><th>Max DD R</th><th>OOS Exp.</th><th>Preferred 3R</th><th>Premium 4R</th><th>Muestras</th><th>Símbolos</th><th>Años</th>
-                </tr>
-              </thead>
-              <tbody>
-                {discoveredPatternRows.map((p) => (
-                  <tr key={p.id} onClick={() => setSelectedPatternId(p.id)} className={selectedPattern?.id === p.id ? 'selected-row' : ''}>
-                    <td className="mono">{p.name}</td>
-                    <td><StatusBadge status={p.status} /></td>
-                    <td>{p.best_rr.toFixed(1)}</td>
-                    <td>{p.best_expectancy_r.toFixed(2)}R</td>
-                    <td>{p.best_profit_factor.toFixed(2)}</td>
-                    <td>{(p.best_win_rate * 100).toFixed(1)}%</td>
-                    <td>{p.best_max_drawdown_r.toFixed(2)}R</td>
-                    <td>{p.out_of_sample_expectancy_r.toFixed(2)}R</td>
-                    <td>{p.preferred_rr_passed ? 'sí' : 'no'}</td>
-                    <td>{p.premium_rr_passed ? 'sí' : 'no'}</td>
-                    <td>{p.sample_count}</td>
-                    <td>{p.symbol_count}</td>
-                    <td>{p.year_count}</td>
-                  </tr>
-                ))}
-                {!discoveredPatternRows.length && <tr><td colSpan={13}>Sin patrones aceptados todavía.</td></tr>}
-              </tbody>
-            </table>
-          </div>
-          {selectedPattern && (
-            <div className="subsection pattern-detail">
-              <div className="section-head">
-                <div>
-                  <h3>{selectedPattern.name}</h3>
-                  <p className="muted">
-                    Best R:R {selectedPattern.best_rr.toFixed(1)} · Exp {selectedPattern.best_expectancy_r.toFixed(2)}R · PF {selectedPattern.best_profit_factor.toFixed(2)} · Win {(selectedPattern.best_win_rate * 100).toFixed(1)}%
-                  </p>
-                </div>
-                <div>
-                  <StatusBadge status={selectedPattern.status} />
-                  <EdgeBadges pattern={selectedPattern} />
-                </div>
-              </div>
-              <p className="accepted-explanation">{explainAcceptedPattern(selectedPattern)}</p>
-              {selectedRrRows.length > 0 && (
-                <>
-                  <ResponsiveContainer width="100%" height={230}>
-                    <LineChart data={selectedRrRows}>
-                      <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
-                      <XAxis dataKey="rr" />
-                      <YAxis />
-                      <Tooltip />
-                      <Line type="monotone" dataKey="expectancy_r" strokeWidth={2} />
-                      <Line type="monotone" dataKey="profit_factor" strokeWidth={2} />
-                      <Line type="monotone" dataKey="max_drawdown_r" strokeWidth={2} />
-                    </LineChart>
-                  </ResponsiveContainer>
-                  <div className="table-scroll">
-                    <table>
-                      <thead>
-                        <tr><th>R:R</th><th>Win rate</th><th>Expectancy</th><th>Profit factor</th><th>Drawdown</th><th>Target hit</th><th>Stop hit</th><th>Bars target</th><th>Bars stop</th></tr>
-                      </thead>
-                      <tbody>
-                        {selectedRrRows.map((row) => (
-                          <tr key={row.rr}>
-                            <td>{row.rr}</td>
-                            <td>{(row.win_rate * 100).toFixed(1)}%</td>
-                            <td>{row.expectancy_r.toFixed(2)}R</td>
-                            <td>{row.profit_factor.toFixed(2)}</td>
-                            <td>{row.max_drawdown_r.toFixed(2)}R</td>
-                            <td>{(row.target_hit_rate * 100).toFixed(1)}%</td>
-                            <td>{(row.stop_hit_rate * 100).toFixed(1)}%</td>
-                            <td>{row.avg_bars_to_target.toFixed(1)}</td>
-                            <td>{row.avg_bars_to_stop.toFixed(1)}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </>
-              )}
-            </div>
-          )}
-        </section>
+            <ScopeDivider label="Research" title="Daily">
+              <ModeChip label="Aceptados" value={`${dailyPatternRows.length}`} tone={dailyPatternRows.length ? 'good' : 'warn'} />
+              <ModeChip label="Run" value={latestDailyRun ? `#${latestDailyRun.id}` : 'sin run daily'} tone={latestDailyRun ? 'good' : 'warn'} />
+              <ModeChip label="Total run" value={latestDailyRun ? `${latestDailyRun.accepted_patterns + latestDailyRun.rejected_patterns}` : '0'} tone="warn" />
+            </ScopeDivider>
+            <ResearchPatternPanel
+              title="Research Daily"
+              subtitle="Patrones daily detectados y aceptados. La lista queda en tabla con scroll; el gráfico solo aparece en detalle."
+              patterns={dailyPatternRows}
+              selectedPatternId={selectedDailyPatternId}
+              onSelectPattern={setSelectedDailyPatternId}
+              latestRun={latestDailyRun}
+              latestCompletedRun={latestCompletedDailyRun}
+              discoveryRunsCount={dailyRuns.length}
+            />
+          </>
+        )}
+
+        {activeTab === 'laboratory' && (
+          <>
+            <ScopeDivider label="Laboratorio" title="Intradía">
+              <ModeChip
+                label="Paper"
+                value={intradayStatus ? intradayModeLabel(intradayStatus.config.paper_enabled) : 'cargando'}
+                tone={intradayStatus ? intradayModeTone(intradayStatus.config.paper_enabled) : 'warn'}
+              />
+              <ModeChip label="Activas" value={`${labIntradayOverview?.stats.open_trades ?? 0}`} tone="good" />
+              <ModeChip label="Cerradas" value={`${labIntradayOverview?.stats.closed_trades ?? 0}`} tone="warn" />
+            </ScopeDivider>
+            <OperationsModule
+              title="Lab Intradía"
+              subtitle="Órdenes paper intradía activas y P/L acumulado de fills intradía cerrados."
+              overview={labIntradayOverview}
+              status={labStatus}
+            />
+
+            <ScopeDivider label="Laboratorio" title="Daily">
+              <ModeChip label="Paper" value={labStatus?.paper_orders_allowed ? 'permitido' : 'bloqueado'} tone={labStatus?.paper_orders_allowed ? 'good' : 'warn'} />
+              <ModeChip label="Activas" value={`${labDailyOverview?.stats.open_trades ?? 0}`} tone="good" />
+              <ModeChip label="Cerradas" value={`${labDailyOverview?.stats.closed_trades ?? 0}`} tone="warn" />
+            </ScopeDivider>
+            <OperationsModule
+              title="Lab Daily"
+              subtitle="Órdenes paper diarias activas y P/L acumulado de fills daily cerrados."
+              overview={labDailyOverview}
+              status={labStatus}
+            />
+          </>
+        )}
+
+        {activeTab === 'fox_hunter' && (
+          <>
+            <ScopeDivider label="Fox Hunter" title="Intradía">
+              <ModeChip
+                label="Live"
+                value={intradayStatus ? intradayModeLabel(intradayStatus.config.live_enabled, intradayStatus.config.live_armed) : 'cargando'}
+                tone={intradayStatus ? intradayModeTone(intradayStatus.config.live_enabled, intradayStatus.config.live_armed) : 'warn'}
+              />
+              <ModeChip label="Activas" value={`${foxIntradayOverview?.stats.open_trades ?? 0}`} tone="good" />
+              <ModeChip label="Cerradas" value={`${foxIntradayOverview?.stats.closed_trades ?? 0}`} tone="warn" />
+            </ScopeDivider>
+            <OperationsModule
+              title="Fox Intradía"
+              subtitle="Órdenes live intradía activas y P/L acumulado de operaciones intradía cerradas."
+              overview={foxIntradayOverview}
+              status={foxStatus}
+            />
+
+            <ScopeDivider label="Fox Hunter" title="Daily">
+              <ModeChip label="Live" value={data.live_armed ? 'armado' : 'bloqueado'} tone={data.live_armed ? 'good' : 'warn'} />
+              <ModeChip label="Activas" value={`${foxDailyOverview?.stats.open_trades ?? 0}`} tone="good" />
+              <ModeChip label="Cerradas" value={`${foxDailyOverview?.stats.closed_trades ?? 0}`} tone="warn" />
+            </ScopeDivider>
+            <OperationsModule
+              title="Fox Daily"
+              subtitle="Órdenes live daily activas y P/L acumulado de operaciones daily cerradas."
+              overview={foxDailyOverview}
+              status={foxStatus}
+            />
+          </>
+        )}
 
       </section>
     </main>

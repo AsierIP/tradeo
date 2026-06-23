@@ -66,6 +66,7 @@ class NovelPatternMatcher:
         max_patterns: int | None = None,
         max_results: int | None = None,
         similarity_threshold: float | None = None,
+        timeframes: list[str] | None = None,
         module: Literal["laboratory", "fox_hunter"] = "laboratory",
         store: bool = True,
     ) -> dict[str, Any]:
@@ -79,6 +80,8 @@ class NovelPatternMatcher:
             .filter(DiscoveredPattern.status.in_(statuses))
             .order_by(DiscoveredPattern.score.desc())
         )
+        if timeframes:
+            pattern_query = pattern_query.filter(DiscoveredPattern.timeframe.in_([str(x) for x in timeframes]))
         if module == "fox_hunter":
             patterns = [
                 pattern
@@ -216,7 +219,7 @@ class NovelPatternMatcher:
                         features["avg_dollar_volume"] = float(
                             (df_for_match["close"] * df_for_match["volume"]).tail(20).mean()
                         )
-                        reward_risk_floor = self._runtime_reward_risk_floor(settings)
+                        reward_risk_floor = self._runtime_reward_risk_floor(settings, pattern.timeframe)
                         reward_risk = float(pattern.best_rr or settings.unvalidated_pattern_min_reward_risk)
                         if not math.isfinite(reward_risk) or reward_risk < reward_risk_floor:
                             reward_risk_gate_blocked += 1
@@ -370,6 +373,7 @@ class NovelPatternMatcher:
             "stored_matches": len(matches) if store else 0,
             "max_results": result_limit,
             "module": module,
+            "timeframes": [str(x) for x in timeframes] if timeframes else [],
             "similarity_threshold": threshold,
             "feature_parity_contract": feature_parity_contract,
             "benchmark_regime": benchmark_regime,
@@ -383,7 +387,9 @@ class NovelPatternMatcher:
         }
 
     @staticmethod
-    def _runtime_reward_risk_floor(settings: Settings) -> float:
+    def _runtime_reward_risk_floor(settings: Settings, timeframe: str | None = None) -> float:
+        if timeframe and str(timeframe).lower() not in {"1d", "d", "day", "daily"}:
+            return 1.5
         return max(
             4.0,
             float(settings.discovery_min_reward_risk),

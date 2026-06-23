@@ -102,52 +102,95 @@ def self_improvement_job() -> None:
 def discovery_job() -> None:
     db = SessionLocal()
     try:
-        from tradeo.schemas import DiscoveryRunRequest
-
         settings = get_settings()
-        if not settings.discovery_enabled:
-            logger.info("discovery job skipped: discovery_enabled=false")
-            return
-        request = DiscoveryRunRequest(
-            limit=settings.discovery_limit_default,
-            period=settings.discovery_period,
-            interval=settings.discovery_interval,
-            max_total_windows=settings.discovery_max_total_windows,
-            max_windows_per_symbol=settings.discovery_max_windows_per_symbol,
-        )
-        params = {
-            "limit": request.limit,
-            "period": request.period,
-            "interval": request.interval,
-            "max_total_windows": request.max_total_windows,
-            "max_windows_per_symbol": request.max_windows_per_symbol,
-            "rr_levels": settings.discovery_rr_level_list,
-            "window_sizes": settings.discovery_window_size_list,
-            "forward_bars": settings.discovery_forward_bar_list,
-        }
-        running = db.query(DiscoveryRun).filter(DiscoveryRun.status == "running").first()
-        if running:
-            logger.info("discovery job skipped: run {} already running", running.id)
-            return
-        recent_cutoff = datetime.now(timezone.utc) - timedelta(
-            minutes=max(1, settings.discovery_scan_minutes)
-        )
-        recent = (
-            db.query(DiscoveryRun)
-            .filter(DiscoveryRun.status == "completed", DiscoveryRun.started_at >= recent_cutoff)
-            .order_by(DiscoveryRun.started_at.desc())
-            .first()
-        )
-        if recent and {k: recent.params_json.get(k) for k in params} == params:
-            logger.info("discovery job skipped: recent equivalent run {}", recent.id)
-            return
-        result = PatternDiscoveryLabAgent().run(request, db)
+        result = _run_discovery_cycle(settings, db)
         logger.info("pattern discovery result: {}", result.model_dump())
     except Exception as exc:  # noqa: BLE001
         logger.exception("pattern discovery job failed: {}", exc)
         _record_job_failure(db, "pattern_discovery_lab", exc)
     finally:
         db.close()
+
+
+def _run_discovery_cycle(
+    settings: Settings,
+    db,  # noqa: ANN001
+    request: Any | None = None,  # noqa: ANN401
+) -> Any:
+    from tradeo.schemas import DiscoveryRunRequest, DiscoveryRunResponse
+
+    if not settings.discovery_enabled:
+        logger.info("discovery job skipped: discovery_enabled=false")
+        return DiscoveryRunResponse(
+            run_id=0,
+            status="skipped",
+            symbols_scanned=0,
+            windows_sampled=0,
+            clusters_evaluated=0,
+            accepted_patterns=0,
+            rejected_patterns=0,
+            stored_patterns=0,
+            duration_seconds=0.0,
+            warnings=["discovery_enabled=false"],
+        )
+    request = request or DiscoveryRunRequest(
+        limit=settings.discovery_limit_default,
+        period=settings.discovery_period,
+        interval=settings.discovery_interval,
+        max_total_windows=settings.discovery_max_total_windows,
+        max_windows_per_symbol=settings.discovery_max_windows_per_symbol,
+    )
+    params = {
+        "limit": request.limit or settings.discovery_limit_default,
+        "period": request.period or settings.discovery_period,
+        "interval": request.interval or settings.discovery_interval,
+        "max_total_windows": request.max_total_windows or settings.discovery_max_total_windows,
+        "max_windows_per_symbol": request.max_windows_per_symbol or settings.discovery_max_windows_per_symbol,
+        "rr_levels": request.rr_levels or settings.discovery_rr_level_list,
+        "window_sizes": request.window_sizes or settings.discovery_window_size_list,
+        "forward_bars": request.forward_bars or settings.discovery_forward_bar_list,
+    }
+    running_runs = db.query(DiscoveryRun).filter(DiscoveryRun.status == "running").all()
+    for running in running_runs:
+        if {k: (running.params_json or {}).get(k) for k in params} == params:
+            logger.info("discovery job skipped: equivalent run {} already running", running.id)
+            return DiscoveryRunResponse(
+                run_id=running.id,
+                status="skipped",
+                symbols_scanned=0,
+                windows_sampled=0,
+                clusters_evaluated=0,
+                accepted_patterns=0,
+                rejected_patterns=0,
+                stored_patterns=0,
+                duration_seconds=0.0,
+                warnings=["equivalent_discovery_run_already_running"],
+            )
+    recent_cutoff = datetime.now(timezone.utc) - timedelta(
+        minutes=max(1, settings.discovery_scan_minutes)
+    )
+    recent_runs = (
+        db.query(DiscoveryRun)
+        .filter(DiscoveryRun.status == "completed", DiscoveryRun.started_at >= recent_cutoff)
+        .order_by(DiscoveryRun.started_at.desc())
+        .all()
+    )
+    for recent in recent_runs:
+        if {k: (recent.params_json or {}).get(k) for k in params} == params:
+            logger.info("discovery job skipped: recent equivalent run {}", recent.id)
+            return DiscoveryRunResponse(
+                run_id=recent.id,
+                status="skipped",
+                symbols_scanned=0,
+                windows_sampled=0,
+                clusters_evaluated=0,
+                accepted_patterns=0,
+                rejected_patterns=0,
+                stored_patterns=0,
+                duration_seconds=0.0,
+                warnings=["recent_equivalent_discovery_run"],
+            )
+    return PatternDiscoveryLabAgent().run(request, db)
 
 
 def novel_match_job() -> None:
@@ -198,7 +241,7 @@ def laboratory_entry_job() -> None:
         if not settings.laboratory_scanner_enabled:
             logger.info("laboratory entry scanner skipped: laboratory_scanner_enabled=false")
             return
-        result = PatternEntryScanner(settings=settings).scan(db, module="laboratory")
+        result = PatternEntryScanner(settings=settings).scan(db, module="laboratory", timeframes=["1d"])
         review_result = DirectorReviewGate.from_settings(settings).refresh(db)
         logger.info("laboratory entry scanner result: {}", result)
         logger.info("director review gate result: {}", review_result)
@@ -344,12 +387,7 @@ def intraday_research_job() -> None:
     _run_intraday_job(
         "intraday_research",
         "intraday_research_enabled",
-        lambda settings: _intraday_placeholder(
-            settings,
-            component="research",
-            reason="research_worker_not_wired",
-            details={"timeframes": settings.intraday_timeframe_list},
-        ),
+        _intraday_research_cycle,
     )
 
 
@@ -357,16 +395,7 @@ def intraday_candidate_scan_job() -> None:
     _run_intraday_job(
         "intraday_candidate_scan",
         "intraday_candidate_scan_enabled",
-        lambda settings: _intraday_placeholder(
-            settings,
-            component="candidate_scan",
-            reason="candidate_scan_worker_not_wired",
-            details={
-                "timeframe": settings.intraday_execution_timeframe,
-                "paper_enabled": settings.intraday_paper_enabled,
-                "live_armed": settings.intraday_live_armed,
-            },
-        ),
+        _intraday_candidate_scan_cycle,
     )
 
 
@@ -569,6 +598,111 @@ def _intraday_placeholder(
     }
 
 
+def _intraday_research_cycle(settings: Settings) -> dict[str, Any]:
+    from tradeo.schemas import DiscoveryRunRequest
+
+    db = SessionLocal()
+    try:
+        discoveries = []
+        for timeframe in settings.intraday_timeframe_list:
+            request = DiscoveryRunRequest(
+                limit=min(settings.discovery_limit_default, 40),
+                period="60d",
+                interval=timeframe,
+                window_sizes=[20, 50],
+                forward_bars=[4, 8, 16],
+                rr_levels=[1.5, 2.0, 2.5, 3.0],
+                stride=max(1, settings.discovery_stride),
+                max_total_windows=min(settings.discovery_max_total_windows, 6000),
+                max_windows_per_symbol=min(settings.discovery_max_windows_per_symbol, 220),
+                min_cluster_size=max(20, min(settings.discovery_min_cluster_size, 40)),
+                max_clusters_per_window=min(settings.discovery_max_clusters_per_window, 8),
+                store_rejected=settings.discovery_store_rejected,
+            )
+            discoveries.append(_run_discovery_cycle(settings, db, request=request))
+        discovery = discoveries[-1] if discoveries else _run_discovery_cycle(settings, db)
+        match_result: dict[str, Any] | None = None
+        if settings.discovery_match_enabled:
+            match_result = NovelPatternMatcher().match_current(
+                db,
+                limit=settings.discovery_match_symbol_limit,
+                max_patterns=settings.discovery_match_max_patterns,
+                similarity_threshold=settings.discovery_match_similarity_threshold,
+                timeframes=settings.intraday_timeframe_list,
+                store=True,
+            )
+        details: dict[str, Any] = {
+            "market_hours_required": False,
+            "timeframes": settings.intraday_timeframe_list,
+            "discovery_status": discovery.status,
+            "discovery_run_id": discovery.run_id,
+            "accepted_patterns": discovery.accepted_patterns,
+            "stored_patterns": discovery.stored_patterns,
+            "discovery_warnings": discovery.warnings,
+            "discovery_runs": [
+                {
+                    "timeframe": timeframe,
+                    "run_id": result.run_id,
+                    "status": result.status,
+                    "accepted_patterns": result.accepted_patterns,
+                    "stored_patterns": result.stored_patterns,
+                    "warnings": result.warnings,
+                }
+                for timeframe, result in zip(settings.intraday_timeframe_list, discoveries, strict=False)
+            ],
+            "match_enabled": settings.discovery_match_enabled,
+        }
+        if match_result is not None:
+            details.update(
+                {
+                    "patterns_checked": match_result.get("patterns_checked", 0),
+                    "symbols_checked": match_result.get("symbols_checked", 0),
+                    "stored_matches": match_result.get("stored_matches", 0),
+                }
+            )
+        return {
+            "status": "ok" if discovery.status != "error" else "error",
+            "reason": "research_cycle_closed_market_allowed",
+            "details": details,
+        }
+    finally:
+        db.close()
+
+
+def _intraday_candidate_scan_cycle(settings: Settings) -> dict[str, Any]:
+    db = SessionLocal()
+    try:
+        timeframes = [str(x) for x in settings.intraday_timeframe_list if str(x).strip()]
+        if not timeframes:
+            timeframes = [settings.intraday_execution_timeframe]
+        result = PatternEntryScanner(settings=settings).scan(
+            db,
+            module="laboratory",
+            limit=settings.discovery_match_symbol_limit,
+            max_patterns=settings.discovery_match_max_patterns,
+            similarity_threshold=settings.discovery_match_similarity_threshold,
+            timeframes=timeframes,
+            execute_orders=bool(settings.intraday_paper_enabled),
+        )
+        review_result = DirectorReviewGate.from_settings(settings).refresh(db)
+        return {
+            "status": "ok",
+            "reason": "intraday_lab_candidate_scan",
+            "details": {
+                "timeframes": timeframes,
+                "paper_enabled": settings.intraday_paper_enabled,
+                "execute_orders_requested": bool(settings.intraday_paper_enabled),
+                "matches": result.get("matches_found", result.get("stored_matches", 0)),
+                "signals_created": result.get("signals_created", 0),
+                "orders_submitted": result.get("orders_submitted", 0),
+                "review": review_result,
+                "scan": result,
+            },
+        }
+    finally:
+        db.close()
+
+
 def _intraday_risk_heartbeat(settings: Settings) -> dict[str, Any]:
     return {
         "status": "ok",
@@ -723,7 +857,7 @@ INTRADAY_JOB_SPECS: tuple[IntradayJobSpec, ...] = (
         func=intraday_research_job,
         enabled_attr="intraday_research_enabled",
         trigger="interval",
-        seconds_attr="intraday_candidate_scan_interval_seconds",
+        seconds_attr="intraday_research_interval_seconds",
     ),
     IntradayJobSpec(
         job_id="intraday_candidate_scan",

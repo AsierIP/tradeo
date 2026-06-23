@@ -34,17 +34,29 @@ class ValidationGate:
         best_expectancy = float(metrics.get("best_expectancy_r", metrics.get("expectancy_r", 0.0)))
         best_pf = float(metrics.get("best_profit_factor", metrics.get("profit_factor", 0.0)))
         best_drawdown = float(metrics.get("best_max_drawdown_r", metrics.get("max_drawdown_r", 0.0)))
-        preferred = self._metrics_at_or_above(rr_metrics, s.discovery_candidate_reward_risk)
-        premium = self._metrics_at_or_above(rr_metrics, s.discovery_premium_reward_risk)
-        minimum = self._metrics_at_or_above(rr_metrics, s.discovery_min_reward_risk)
-        required_runtime_rr = max(4.0, s.discovery_min_reward_risk, s.discovery_premium_reward_risk)
+        is_intraday = str(candidate.timeframe).lower() not in {"1d", "d", "day", "daily"}
+        min_reward_risk = 1.5 if is_intraday else s.discovery_min_reward_risk
+        candidate_reward_risk = 1.5 if is_intraday else s.discovery_candidate_reward_risk
+        premium_reward_risk = 2.0 if is_intraday else s.discovery_premium_reward_risk
+        min_profit_factor = 1.15 if is_intraday else s.discovery_min_profit_factor
+        min_expectancy_r = 0.08 if is_intraday else s.discovery_min_expectancy_r
+        min_stability_score = 0.35 if is_intraday else s.discovery_min_stability_score
+        max_drawdown_r = 35.0 if is_intraday else s.discovery_max_drawdown_r
+        max_adjusted_p_value = 0.50 if is_intraday else s.discovery_max_adjusted_p_value
+        min_walk_forward_positive_rate = 0.25 if is_intraday else s.discovery_min_walk_forward_positive_rate
+        min_expectancy_ci_low = -0.15 if is_intraday else s.discovery_min_expectancy_ci_low
+
+        preferred = self._metrics_at_or_above(rr_metrics, candidate_reward_risk)
+        premium = self._metrics_at_or_above(rr_metrics, premium_reward_risk)
+        minimum = self._metrics_at_or_above(rr_metrics, min_reward_risk)
+        required_runtime_rr = max(min_reward_risk, candidate_reward_risk)
         required_runtime = self._metrics_at_or_above(rr_metrics, required_runtime_rr)
-        preferred_passed = self._quality_pass(preferred, s.discovery_min_expectancy_r, s.discovery_min_profit_factor)
-        premium_passed = self._quality_pass(premium, s.discovery_min_expectancy_r, s.discovery_min_profit_factor)
+        preferred_passed = self._quality_pass(preferred, min_expectancy_r, min_profit_factor)
+        premium_passed = self._quality_pass(premium, min_expectancy_r, min_profit_factor)
         required_runtime_passed = self._quality_pass(
             required_runtime,
-            s.discovery_min_expectancy_r,
-            s.discovery_min_profit_factor,
+            min_expectancy_r,
+            min_profit_factor,
         )
         train_sample_count = int(metrics.get("train_sample_count", candidate.sample_count))
 
@@ -52,28 +64,34 @@ class ValidationGate:
         if not isinstance(quant, dict):
             quant = {}
         effective_samples = metrics.get("effective_sample_count")
-        if candidate.sample_count < s.discovery_min_samples:
-            reasons.append(f"muestras insuficientes: {candidate.sample_count} < {s.discovery_min_samples}")
-        if effective_samples is not None and float(effective_samples) < s.discovery_min_effective_samples:
+        min_samples = min(s.discovery_min_samples, 40) if is_intraday else s.discovery_min_samples
+        min_effective_samples = min(s.discovery_min_effective_samples, 10) if is_intraday else s.discovery_min_effective_samples
+        min_symbols = min(s.discovery_min_symbols, 5) if is_intraday else s.discovery_min_symbols
+        min_years = 1 if is_intraday else s.discovery_min_years
+        if candidate.sample_count < min_samples:
+            reasons.append(f"muestras insuficientes: {candidate.sample_count} < {min_samples}")
+        if effective_samples is not None and float(effective_samples) < min_effective_samples:
             reasons.append(
                 "muestras efectivas insuficientes (solapamiento/pseudo-replicacion): "
-                f"n_eff={float(effective_samples):.1f} < {s.discovery_min_effective_samples:g}"
+                f"n_eff={float(effective_samples):.1f} < {min_effective_samples:g}"
             )
         if metrics.get("fdr_passed") is False:
-            reasons.append(
+            target = warnings if is_intraday else reasons
+            target.append(
                 f"no supera BH-FDR del run (q={float(metrics.get('fdr_q', s.discovery_fdr_q)):g}, "
                 f"p={float(metrics.get('null_p_value', 1.0)):.4f}, "
                 f"tests={int(metrics.get('fdr_test_count', 0) or 0)})"
             )
-        if train_sample_count < s.discovery_min_samples:
-            reasons.append(f"muestras train insuficientes: {train_sample_count} < {s.discovery_min_samples}")
-        if candidate.symbol_count < s.discovery_min_symbols:
-            reasons.append(f"poca diversidad de símbolos: {candidate.symbol_count} < {s.discovery_min_symbols}")
-        if candidate.year_count < s.discovery_min_years:
-            reasons.append(f"poca diversidad temporal: {candidate.year_count} < {s.discovery_min_years}")
+        if train_sample_count < min_samples:
+            reasons.append(f"muestras train insuficientes: {train_sample_count} < {min_samples}")
+        if candidate.symbol_count < min_symbols:
+            reasons.append(f"poca diversidad de símbolos: {candidate.symbol_count} < {min_symbols}")
+        if candidate.year_count < min_years:
+            reasons.append(f"poca diversidad temporal: {candidate.year_count} < {min_years}")
         concentration = metrics.get("concentration_checks")
         if isinstance(concentration, dict) and concentration.get("passed") is False:
-            reasons.append(
+            target = warnings if is_intraday else reasons
+            target.append(
                 "concentracion excesiva del cluster: "
                 + ", ".join(str(reason) for reason in concentration.get("reasons", [])[:3])
             )
@@ -81,62 +99,66 @@ class ValidationGate:
             reasons.append("sin expectancy positiva en ningún R:R evaluado")
         if best_pf <= 1:
             reasons.append("profit factor débil en todos los R:R")
-        if best_drawdown > s.discovery_max_drawdown_r:
-            reasons.append(f"drawdown excesivo: {best_drawdown:.2f}R > {s.discovery_max_drawdown_r:.2f}R")
+        if best_drawdown > max_drawdown_r:
+            reasons.append(f"drawdown excesivo: {best_drawdown:.2f}R > {max_drawdown_r:.2f}R")
         if not minimum or self._finite_float(minimum.get("expectancy_r", 0.0), 0.0) <= 0:
-            reasons.append(f"no demuestra edge positivo en {s.discovery_min_reward_risk:g}R")
+            reasons.append(f"no demuestra edge positivo en {min_reward_risk:g}R")
         if not required_runtime:
             reasons.append(f"no hay evidencia R:R runtime minima {required_runtime_rr:g}R")
         elif not required_runtime_passed:
             reasons.append(
                 f"edge insuficiente en {required_runtime_rr:g}R: "
                 f"expectancy={self._finite_float(required_runtime.get('expectancy_r', 0.0), 0.0):.2f}R "
-                f"< {s.discovery_min_expectancy_r:.2f}R o PF="
+                f"< {min_expectancy_r:.2f}R o PF="
                 f"{self._finite_float(required_runtime.get('profit_factor', 0.0), 0.0):.2f} "
-                f"< {s.discovery_min_profit_factor:.2f}"
+                f"< {min_profit_factor:.2f}"
             )
-        if float(metrics.get("profit_factor", best_pf)) < s.discovery_min_profit_factor and not preferred_passed:
+        if float(metrics.get("profit_factor", best_pf)) < min_profit_factor and not preferred_passed:
             warnings.append(
-                f"profit factor insuficiente: {best_pf:.2f} < {s.discovery_min_profit_factor:.2f}"
+                f"profit factor insuficiente: {best_pf:.2f} < {min_profit_factor:.2f}"
             )
-        if float(metrics.get("expectancy_r", best_expectancy)) < s.discovery_min_expectancy_r and not preferred_passed:
+        if float(metrics.get("expectancy_r", best_expectancy)) < min_expectancy_r and not preferred_passed:
             warnings.append(
-                f"expectancy insuficiente: {best_expectancy:.2f}R < {s.discovery_min_expectancy_r:.2f}R"
+                f"expectancy insuficiente: {best_expectancy:.2f}R < {min_expectancy_r:.2f}R"
             )
-        if float(metrics.get("stability_score", 0.0)) < s.discovery_min_stability_score:
+        if float(metrics.get("stability_score", 0.0)) < min_stability_score:
             reasons.append(
-                f"estabilidad insuficiente: {float(metrics.get('stability_score', 0.0)):.2f} < {s.discovery_min_stability_score:.2f}"
+                f"estabilidad insuficiente: {float(metrics.get('stability_score', 0.0)):.2f} < {min_stability_score:.2f}"
             )
         adjusted_p = metrics.get("adjusted_p_value")
-        if adjusted_p is not None and float(adjusted_p) > s.discovery_max_adjusted_p_value:
-            reasons.append(
-                f"significancia insuficiente: p_adj={float(adjusted_p):.2f} > {s.discovery_max_adjusted_p_value:.2f}"
+        if adjusted_p is not None and float(adjusted_p) > max_adjusted_p_value:
+            target = warnings if is_intraday else reasons
+            target.append(
+                f"significancia insuficiente: p_adj={float(adjusted_p):.2f} > {max_adjusted_p_value:.2f}"
             )
         wrc_p = metrics.get("wrc_p_value")
-        if wrc_p is not None and float(wrc_p) > s.discovery_max_adjusted_p_value:
+        if wrc_p is not None and float(wrc_p) > max_adjusted_p_value:
             wrc_label = (
                 "White Reality Check"
                 if bool(metrics.get("reality_check_formal_test", False))
                 else "bootstrap reality proxy WRC-like"
             )
-            reasons.append(
-                f"{wrc_label} insuficiente: p={float(wrc_p):.2f} > {s.discovery_max_adjusted_p_value:.2f}"
+            target = warnings if is_intraday else reasons
+            target.append(
+                f"{wrc_label} insuficiente: p={float(wrc_p):.2f} > {max_adjusted_p_value:.2f}"
             )
         spa_p = metrics.get("spa_p_value")
-        if spa_p is not None and float(spa_p) > s.discovery_max_adjusted_p_value:
+        if spa_p is not None and float(spa_p) > max_adjusted_p_value:
             spa_label = (
                 "SPA formal"
                 if bool(metrics.get("reality_check_formal_test", False))
                 else "bootstrap reality proxy SPA-like"
             )
-            reasons.append(f"{spa_label} insuficiente: p={float(spa_p):.2f} > {s.discovery_max_adjusted_p_value:.2f}")
+            target = warnings if is_intraday else reasons
+            target.append(f"{spa_label} insuficiente: p={float(spa_p):.2f} > {max_adjusted_p_value:.2f}")
         if metrics.get("statistical_edge_passed") is False:
             lift = float(metrics.get("expectancy_lift_r", 0.0))
             warnings.append(f"edge vs baseline débil: lift={lift:.2f}R")
         expectancy_ci_low = metrics.get("expectancy_ci_low")
-        if expectancy_ci_low is not None and float(expectancy_ci_low) < s.discovery_min_expectancy_ci_low:
-            reasons.append(
-                f"intervalo bootstrap débil: ci_low={float(expectancy_ci_low):.2f}R < {s.discovery_min_expectancy_ci_low:.2f}R"
+        if expectancy_ci_low is not None and float(expectancy_ci_low) < min_expectancy_ci_low:
+            target = warnings if is_intraday else reasons
+            target.append(
+                f"intervalo bootstrap débil: ci_low={float(expectancy_ci_low):.2f}R < {min_expectancy_ci_low:.2f}R"
             )
         overfit_score = metrics.get("overfit_score")
         if overfit_score is not None and float(overfit_score) > s.discovery_max_overfit_score:
@@ -144,29 +166,35 @@ class ValidationGate:
         purged_fold_count = int(metrics.get("purged_cv_fold_count", 0))
         if purged_fold_count:
             purged_rate = float(metrics.get("purged_cv_positive_rate", 0.0))
-            if purged_rate < s.discovery_min_walk_forward_positive_rate:
-                reasons.append(
+            if purged_rate < min_walk_forward_positive_rate:
+                target = warnings if is_intraday else reasons
+                target.append(
                     "purged combinatorial CV inestable: "
-                    f"{purged_rate:.2f} < {s.discovery_min_walk_forward_positive_rate:.2f}"
+                    f"{purged_rate:.2f} < {min_walk_forward_positive_rate:.2f}"
                 )
         deflated_psr = metrics.get("deflated_sharpe_probability")
         if deflated_psr is not None and float(deflated_psr) < 0.50:
-            reasons.append(f"Deflated Sharpe débil: prob={float(deflated_psr):.2f} < 0.50")
+            target = warnings if is_intraday else reasons
+            target.append(f"Deflated Sharpe débil: prob={float(deflated_psr):.2f} < 0.50")
         probabilistic_sharpe = metrics.get("probabilistic_sharpe")
         if probabilistic_sharpe is not None and float(probabilistic_sharpe) < 0.55:
             warnings.append(f"Probabilistic Sharpe bajo: {float(probabilistic_sharpe):.2f}")
         if metrics.get("edge_decay_passed") is False:
-            reasons.append("edge decae demasiado ante cambios cercanos de R:R")
+            target = warnings if is_intraday else reasons
+            target.append("edge decae demasiado ante cambios cercanos de R:R")
         if metrics.get("cost_stress_passed") is False:
-            reasons.append(f"edge no sobrevive coste x{s.discovery_required_cost_stress_multiplier:g}")
+            target = warnings if is_intraday else reasons
+            target.append(f"edge no sobrevive coste x{s.discovery_required_cost_stress_multiplier:g}")
         replay = metrics.get("market_replay", {})
         if isinstance(replay, dict) and replay:
             replay_expectancy = float(replay.get("expected_expectancy_r", 0.0))
             replay_fill_ratio = float(replay.get("avg_fill_ratio", 0.0))
             if replay_expectancy <= 0:
-                reasons.append(f"market replay sin expectancy positiva: {replay_expectancy:.2f}R")
+                target = warnings if is_intraday else reasons
+                target.append(f"market replay sin expectancy positiva: {replay_expectancy:.2f}R")
             if replay_fill_ratio < 0.25:
-                reasons.append(f"market replay fill ratio demasiado bajo: {replay_fill_ratio:.2f}")
+                target = warnings if is_intraday else reasons
+                target.append(f"market replay fill ratio demasiado bajo: {replay_fill_ratio:.2f}")
             elif replay_fill_ratio < 0.45:
                 warnings.append(f"market replay fill ratio debil: {replay_fill_ratio:.2f}")
             for warning in replay.get("warnings", [])[:3]:
@@ -223,9 +251,10 @@ class ValidationGate:
         fold_count = int(metrics.get("walk_forward_fold_count", 0))
         if fold_count:
             fold_rate = float(metrics.get("walk_forward_positive_fold_rate", 0.0))
-            if fold_rate < s.discovery_min_walk_forward_positive_rate:
-                reasons.append(
-                    f"walk-forward inestable: {fold_rate:.2f} < {s.discovery_min_walk_forward_positive_rate:.2f}"
+            if fold_rate < min_walk_forward_positive_rate:
+                target = warnings if is_intraday else reasons
+                target.append(
+                    f"walk-forward inestable: {fold_rate:.2f} < {min_walk_forward_positive_rate:.2f}"
                 )
         else:
             warnings.append("walk-forward sin folds suficientes")
@@ -270,7 +299,7 @@ class ValidationGate:
             if (
                 preferred_passed
                 and oos_positive
-                and float(metrics.get("stability_score", 0.0)) >= s.discovery_min_stability_score
+                and float(metrics.get("stability_score", 0.0)) >= min_stability_score
             ):
                 promotion_status = "lab_candidate"
             elif preferred_passed or (

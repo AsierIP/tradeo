@@ -294,11 +294,11 @@ class PatternEmbeddingEngine:
             "volume_price_pressure_last": float(volume_price_pressure[-1]),
         }
         chart = {
-            "close_norm": self._resample(price_norm, 48).round(5).tolist(),
-            "volume_rel": self._resample(volume_rel, 48).round(5).tolist(),
-            "range_pct": self._resample(range_pct, 48).round(5).tolist(),
-            "swing_state": self._resample(swing_state_channel, 48).round(5).tolist(),
-            "volume_price_pressure": self._resample(volume_price_pressure, 48).round(5).tolist(),
+            "close_norm": price_norm.round(5).tolist(),
+            "volume_rel": volume_rel.round(5).tolist(),
+            "range_pct": range_pct.round(5).tolist(),
+            "swing_state": swing_state_channel.round(5).tolist(),
+            "volume_price_pressure": volume_price_pressure.round(5).tolist(),
         }
         return vector, features, chart
 

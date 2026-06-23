@@ -173,6 +173,7 @@ class Settings(BaseSettings):
     intraday_min_reward_risk: float = 4.0
     intraday_pacing_budget_per_10min: int = 0
     intraday_data_sync_interval_seconds: int = 300
+    intraday_research_interval_seconds: int = 60
     intraday_candidate_scan_interval_seconds: int = 60
     intraday_observation_closer_interval_seconds: int = 60
     intraday_risk_heartbeat_interval_seconds: int = 60
@@ -515,6 +516,7 @@ class Settings(BaseSettings):
         "intraday_max_trades_per_symbol",
         "intraday_pacing_budget_per_10min",
         "intraday_data_sync_interval_seconds",
+        "intraday_research_interval_seconds",
         "intraday_candidate_scan_interval_seconds",
         "intraday_observation_closer_interval_seconds",
         "intraday_risk_heartbeat_interval_seconds",
