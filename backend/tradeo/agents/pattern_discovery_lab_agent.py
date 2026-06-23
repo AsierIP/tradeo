@@ -30,7 +30,13 @@ from tradeo.research.research_director import ResearchDirector as CandidateResea
 from tradeo.research.validation_gate import ValidationGate
 from tradeo.research.window_sampler import WindowSampler
 from tradeo.schemas import DiscoveryRunRequest, DiscoveryRunResponse
-from tradeo.services.data_provider import MarketDataProvider, pick_symbols
+from tradeo.services.data_provider import (
+    MarketDataProvider,
+    load_universe,
+    pick_symbols,
+    universe_file_for_interval,
+    universe_scope_for_interval,
+)
 from tradeo.services.data_quality import assess_ohlcv_quality_from_settings
 from tradeo.services.market_regime import MarketRegimeService
 from tradeo.services.provider_factory import get_market_data_provider
@@ -67,7 +73,10 @@ class PatternDiscoveryLabAgent:
 
         try:
             symbols = self._resolve_symbols(request, params)
-            universe_snapshot = self._build_universe_snapshot(warnings)
+            universe_snapshot = self._build_universe_snapshot(
+                warnings,
+                universe_file=params["universe_file"],
+            )
             samples = []
             sampler = WindowSampler(target_r=settings.discovery_min_reward_risk)
             benchmark_frames = self._benchmark_frames(params, warnings)
@@ -378,6 +387,13 @@ class PatternDiscoveryLabAgent:
             "limit": request.limit or s.discovery_limit_default,
             "period": request.period or s.discovery_period,
             "interval": request.interval or s.discovery_interval,
+            "universe_scope": universe_scope_for_interval(
+                request.interval or s.discovery_interval
+            ),
+            "universe_file": universe_file_for_interval(
+                s,
+                request.interval or s.discovery_interval,
+            ),
             "window_sizes": request.window_sizes or s.discovery_window_size_list,
             "forward_bars": request.forward_bars or s.discovery_forward_bar_list,
             "stride": max(1, request.stride or s.discovery_stride),
@@ -397,23 +413,30 @@ class PatternDiscoveryLabAgent:
             "required_cost_stress_multiplier": s.discovery_required_cost_stress_multiplier,
         }
 
-    @staticmethod
-    def _resolve_symbols(request: DiscoveryRunRequest, params: dict[str, Any]) -> list[str]:
+    def _resolve_symbols(self, request: DiscoveryRunRequest, params: dict[str, Any]) -> list[str]:
         if request.symbols:
             return [s.upper().strip() for s in request.symbols if s.strip()]
-        return pick_symbols(limit=params["limit"])
+        return pick_symbols(
+            limit=params["limit"],
+            interval=params["interval"],
+            universe_file=params["universe_file"],
+        )
 
-    def _build_universe_snapshot(self, warnings: list[str]) -> dict[str, Any]:
+    def _build_universe_snapshot(self, warnings: list[str], *, universe_file: str) -> dict[str, Any]:
         settings = self.settings
         assert settings is not None
         if not settings.universe_snapshot_monthly:
             return {
                 "enabled": False,
+                "source_universe_file": universe_file,
                 "point_in_time": settings.universe_point_in_time_available,
                 "survivorship_biased": not settings.universe_point_in_time_available,
             }
         try:
-            return UniverseSnapshotService(settings).build_monthly_snapshot()
+            return UniverseSnapshotService(settings).build_monthly_snapshot(
+                universe=load_universe(universe_file),
+                source_universe_file=universe_file,
+            )
         except Exception as exc:  # noqa: BLE001
             msg = f"UniverseSnapshotService failed: {exc}"
             logger.warning(msg)
@@ -421,6 +444,7 @@ class PatternDiscoveryLabAgent:
             return {
                 "enabled": True,
                 "error": str(exc),
+                "source_universe_file": universe_file,
                 "point_in_time": settings.universe_point_in_time_available,
                 "survivorship_biased": not settings.universe_point_in_time_available,
             }

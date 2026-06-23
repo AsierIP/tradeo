@@ -109,7 +109,7 @@ class SelfImprovementEngine:
 
     def run_lab_cycle(self, db: Session, max_symbols: int = 25) -> SelfImprovementResponse:
         base = load_strategy_config(self.settings.strategy_config_file)
-        symbols = pick_symbols(limit=max_symbols)
+        symbols = pick_symbols(limit=max_symbols, interval="1d")
         candidates = self._mutations(base)
         provider = CachedMarketDataProvider(upstream=get_market_data_provider())
         records: list[dict[str, Any]] = []

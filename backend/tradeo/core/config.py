@@ -118,6 +118,8 @@ class Settings(BaseSettings):
     market_data_incremental_intraday_min_gap_bars: int = 2
     market_data_incremental_intraday_max_gap_days: int = 5
     universe_file: str = "/app/data/universe_us_mid_small.csv"
+    daily_universe_file: str = "/app/data/universe_us_mid_caps.csv"
+    intraday_universe_file: str = "/app/data/universe_us_small_caps.csv"
     universe_snapshot_monthly: bool = True
     universe_snapshot_dir: str = "/app/data/universe_snapshots"
     universe_point_in_time_available: bool = False

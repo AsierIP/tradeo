@@ -30,6 +30,10 @@ from tradeo.modules.shared.entry_scanner import (
     PatternEntryScannerSafetyError,
 )
 from tradeo.services.director_review_gate import DirectorReviewGate
+from tradeo.services.data_provider import (
+    universe_file_for_interval,
+    universe_scope_for_interval,
+)
 from tradeo.services.reports import ReportService
 from tradeo.services.runtime_status import write_intraday_session_status, write_worker_heartbeat
 from tradeo.services.scanner import MarketScanner
@@ -121,6 +125,8 @@ def discovery_job() -> None:
             "interval": request.interval,
             "max_total_windows": request.max_total_windows,
             "max_windows_per_symbol": request.max_windows_per_symbol,
+            "universe_scope": universe_scope_for_interval(request.interval),
+            "universe_file": universe_file_for_interval(settings, request.interval),
             "rr_levels": settings.discovery_rr_level_list,
             "window_sizes": settings.discovery_window_size_list,
             "forward_bars": settings.discovery_forward_bar_list,

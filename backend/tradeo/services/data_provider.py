@@ -20,7 +20,7 @@ class MarketDataProvider(Protocol):
     ) -> pd.DataFrame: ...
 
 
-_DAILY_INTERVALS = {"1d", "1day", "1 day"}
+_DAILY_INTERVALS = {"1d", "1day", "1 day", "daily"}
 # Bar widths for the intraday intervals the IBKR provider understands; used
 # both for completeness masking and for bar-relative refresh gap thresholds.
 _INTRADAY_BAR_MINUTES = {
@@ -53,6 +53,20 @@ def _normalized_interval_key(interval: str) -> str:
     return " ".join(str(interval).strip().lower().split())
 
 
+def is_daily_interval(interval: str | None) -> bool:
+    return _normalized_interval_key(interval or "1d") in _DAILY_INTERVALS
+
+
+def universe_scope_for_interval(interval: str | None) -> str:
+    return "daily_midcap" if is_daily_interval(interval) else "intraday_smallcap"
+
+
+def universe_file_for_interval(settings: Any, interval: str | None) -> str:
+    if is_daily_interval(interval):
+        return str(getattr(settings, "daily_universe_file", settings.universe_file))
+    return str(getattr(settings, "intraday_universe_file", settings.universe_file))
+
+
 def load_universe(path: str | None = None) -> pd.DataFrame:
     settings = get_settings()
     p = Path(path or settings.universe_file)
@@ -66,11 +80,23 @@ def load_universe(path: str | None = None) -> pd.DataFrame:
     return df
 
 
-def pick_symbols(limit: int | None = None, force_symbols: list[str] | None = None) -> list[str]:
+def pick_symbols(
+    limit: int | None = None,
+    force_symbols: list[str] | None = None,
+    *,
+    interval: str | None = None,
+    universe_file: str | None = None,
+) -> list[str]:
     if force_symbols:
         return [s.upper().strip() for s in force_symbols if s.strip()]
     settings = get_settings()
-    df = load_universe(settings.universe_file)
+    selected_universe = universe_file or universe_file_for_interval(
+        settings,
+        interval or settings.scan_interval,
+    )
+    df = load_universe(selected_universe)
+    if limit is not None and int(limit) <= 0:
+        return df["symbol"].tolist()
     n = limit or settings.scan_limit_default
     return df["symbol"].head(n).tolist()
 

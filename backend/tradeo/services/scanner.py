@@ -23,9 +23,9 @@ class MarketScanner:
         self.provider = provider or get_market_data_provider()
 
     def run(self, request: ScanRequest, db: Session, store: bool = True) -> ScanResponse:
-        symbols = pick_symbols(request.limit, request.force_symbols)
         period = request.period or self.settings.scan_period
         interval = request.interval or self.settings.scan_interval
+        symbols = pick_symbols(request.limit, request.force_symbols, interval=interval)
         decisions: list[SupervisorDecision] = []
         stored = 0
         rejected = 0

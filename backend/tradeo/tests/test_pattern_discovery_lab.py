@@ -17,6 +17,7 @@ from tradeo.research.global_experiment_registry import GlobalExperimentRegistry
 from tradeo.research.types import ClusterCandidate, ForwardOutcome, WindowSample
 from tradeo.research.validation_gate import ValidationGate
 from tradeo.research.window_sampler import WindowSampler
+from tradeo.schemas import DiscoveryRunRequest
 from tradeo.tests.fixtures import fixture_ohlcv
 
 
@@ -877,6 +878,30 @@ def test_lab_agent_persists_compressed_event_ledger(tmp_path: Path) -> None:
     assert candidate.metrics["event_ledger_persisted"] is True
     assert "event_ledger" not in candidate.metrics
     assert len(candidate.metrics["event_ledger_preview"]) == 2
+
+
+def test_lab_agent_routes_research_universe_by_timeframe(tmp_path: Path) -> None:
+    midcaps = tmp_path / "midcaps.csv"
+    smallcaps = tmp_path / "smallcaps.csv"
+    midcaps.write_text("symbol\nMID1\nMID2\n", encoding="utf-8")
+    smallcaps.write_text("symbol\nSML1\nSML2\n", encoding="utf-8")
+    settings = Settings(
+        daily_universe_file=str(midcaps),
+        intraday_universe_file=str(smallcaps),
+        reports_dir=str(tmp_path / "reports"),
+        universe_snapshot_monthly=False,
+    )
+    agent = PatternDiscoveryLabAgent(provider=object(), settings=settings)
+
+    daily_request = DiscoveryRunRequest(limit=2, interval="1d")
+    daily_params = agent._resolve_params(daily_request)
+    assert daily_params["universe_scope"] == "daily_midcap"
+    assert agent._resolve_symbols(daily_request, daily_params) == ["MID1", "MID2"]
+
+    intraday_request = DiscoveryRunRequest(limit=2, interval="5m")
+    intraday_params = agent._resolve_params(intraday_request)
+    assert intraday_params["universe_scope"] == "intraday_smallcap"
+    assert agent._resolve_symbols(intraday_request, intraday_params) == ["SML1", "SML2"]
 
 
 def test_global_experiment_registry_does_not_recount_repeated_experiments(tmp_path: Path) -> None:

@@ -1,0 +1,17 @@
+symbol,name,cap_segment,note
+ACMR,ACM Research,smallcap,seed small-cap lane; refresh from market-cap source before live
+AMBA,Ambarella,smallcap,seed small-cap lane; refresh from market-cap source before live
+ARWR,Arrowhead Pharmaceuticals,smallcap,seed small-cap lane; refresh from market-cap source before live
+CARG,CarGurus,smallcap,seed small-cap lane; refresh from market-cap source before live
+DLO,DLocal,smallcap,seed small-cap lane; refresh from market-cap source before live
+FIVN,Five9,smallcap,seed small-cap lane; refresh from market-cap source before live
+FUBO,FuboTV,smallcap,seed small-cap lane; refresh from market-cap source before live
+GH,Guardant Health,smallcap,seed small-cap lane; refresh from market-cap source before live
+IOVA,Iovance Biotherapeutics,smallcap,seed small-cap lane; refresh from market-cap source before live
+PATH,UiPath,smallcap,seed small-cap lane; refresh from market-cap source before live
+PRVA,Privia Health Group,smallcap,seed small-cap lane; refresh from market-cap source before live
+RXRX,Recursion Pharmaceuticals,smallcap,seed small-cap lane; refresh from market-cap source before live
+SEDG,SolarEdge Technologies,smallcap,seed small-cap lane; refresh from market-cap source before live
+SG,Sweetgreen,smallcap,seed small-cap lane; refresh from market-cap source before live
+SOUN,SoundHound AI,smallcap,seed small-cap lane; refresh from market-cap source before live
+UPST,Upstart Holdings,smallcap,seed small-cap lane; refresh from market-cap source before live

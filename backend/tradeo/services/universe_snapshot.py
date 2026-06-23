@@ -36,12 +36,14 @@ class UniverseSnapshotService:
         as_of: date | datetime | str | None = None,
         *,
         universe: pd.DataFrame | None = None,
+        source_universe_file: str | None = None,
     ) -> dict[str, Any]:
         settings = self.settings
         assert settings is not None
         snapshot_date = _coerce_date(as_of)
         month_key = snapshot_date.strftime("%Y-%m")
-        raw = universe.copy() if universe is not None else load_universe(settings.universe_file)
+        source_file = source_universe_file or settings.universe_file
+        raw = universe.copy() if universe is not None else load_universe(source_file)
         filtered, rules = self._eligible(raw)
         filtered = filtered.sort_values("symbol").drop_duplicates("symbol").reset_index(drop=True)
         filtered["snapshot_month"] = month_key
@@ -57,7 +59,7 @@ class UniverseSnapshotService:
             "schema_version": 1,
             "snapshot_month": month_key,
             "snapshot_as_of": snapshot_date.isoformat(),
-            "source_universe_file": settings.universe_file,
+            "source_universe_file": source_file,
             "path": str(path),
             "sha256": digest,
             "row_count": int(len(filtered)),

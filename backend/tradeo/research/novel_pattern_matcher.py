@@ -25,7 +25,7 @@ from tradeo.research.shape_verifier import (
     shape_distance,
     shape_matrix_from_chart,
 )
-from tradeo.services.data_provider import MarketDataProvider, load_universe, pick_symbols
+from tradeo.services.data_provider import MarketDataProvider, pick_symbols, universe_scope_for_interval
 from tradeo.services.data_quality import assess_ohlcv_quality_from_settings
 from tradeo.services.entry_variants import (
     build_entry_audit_context,
@@ -89,11 +89,9 @@ class NovelPatternMatcher:
                 patterns = patterns[:pattern_limit]
         else:
             patterns = pattern_query.limit(pattern_limit).all() if pattern_limit is not None else pattern_query.all()
-        if symbols is None:
-            symbol_limit = _optional_limit(limit, settings.discovery_match_symbol_limit)
-            symbols = _pick_symbols(settings, symbol_limit)
-        else:
-            symbols = [s.upper().strip() for s in symbols if s.strip()]
+        explicit_symbols = symbols is not None
+        symbol_limit = _optional_limit(limit, settings.discovery_match_symbol_limit)
+        requested_symbols = [s.upper().strip() for s in symbols or [] if s.strip()]
         threshold = self._resolved_similarity_threshold(
             similarity_threshold,
             settings.discovery_match_similarity_threshold,
@@ -128,14 +126,21 @@ class NovelPatternMatcher:
         for pattern in patterns:
             patterns_by_timeframe[pattern.timeframe].append(pattern)
 
+        symbols_by_timeframe: dict[str, list[str]] = {}
         for timeframe, timeframe_patterns in patterns_by_timeframe.items():
+            timeframe_symbols = (
+                requested_symbols
+                if explicit_symbols
+                else _pick_symbols(settings, symbol_limit, timeframe=timeframe)
+            )
+            symbols_by_timeframe[timeframe] = timeframe_symbols
             required_bars = required_bars_by_timeframe[timeframe]
             benchmark_cache[timeframe] = self._benchmark_frames(
                 timeframe,
                 required_bars=required_bars,
                 cache=data_cache,
             )
-            for symbol in symbols:
+            for symbol in timeframe_symbols:
                 df = self._current_data(
                     symbol,
                     timeframe,
@@ -365,7 +370,12 @@ class NovelPatternMatcher:
             self._store_matches(db, matches)
         return {
             "patterns_checked": len(patterns),
-            "symbols_checked": len(symbols),
+            "symbols_checked": sum(len(symbols) for symbols in symbols_by_timeframe.values()),
+            "symbols_by_timeframe": symbols_by_timeframe,
+            "universe_scope_by_timeframe": {
+                timeframe: universe_scope_for_interval(timeframe)
+                for timeframe in symbols_by_timeframe
+            },
             "matches": matches,
             "stored_matches": len(matches) if store else 0,
             "max_results": result_limit,
@@ -1358,8 +1368,13 @@ def _optional_limit(value: int | None, fallback: int) -> int | None:
     return int(raw)
 
 
-def _pick_symbols(settings: Settings, limit: int | None) -> list[str]:
-    if limit is not None:
-        return pick_symbols(limit=limit)
-    df = load_universe(settings.universe_file)
-    return [str(symbol).upper().strip() for symbol in df["symbol"].tolist() if str(symbol).strip()]
+def _pick_symbols(settings: Settings, limit: int | None, *, timeframe: str) -> list[str]:
+    return pick_symbols(
+        limit=0 if limit is None else limit,
+        interval=timeframe,
+        universe_file=(
+            settings.daily_universe_file
+            if universe_scope_for_interval(timeframe) == "daily_midcap"
+            else settings.intraday_universe_file
+        ),
+    )

@@ -118,15 +118,17 @@ def add_pattern(
     *,
     status: DiscoveredPatternStatus,
     best_rr: float = 4.0,
+    timeframe: str = "1d",
+    key_suffix: str = "",
 ) -> DiscoveredPattern:
     window = provider.df.iloc[-20:]
     vector, _, _ = PatternEmbeddingEngine().embed(window)
     pattern = DiscoveredPattern(
-        pattern_key=f"{status.value}_key",
-        name=f"{status.value}_pattern",
+        pattern_key=f"{status.value}_key{key_suffix}",
+        name=f"{status.value}_pattern{key_suffix}",
         status=status,
         side="long",
-        timeframe="1d",
+        timeframe=timeframe,
         window_size=20,
         sample_count=120,
         symbol_count=12,
@@ -172,6 +174,53 @@ def test_laboratory_matcher_blocks_patterns_below_4r_runtime_floor() -> None:
     assert result["reward_risk_floor"] == 4.0
     assert result["reward_risk_gate_blocked"] == 1
     assert result["matches"] == []
+
+
+def test_laboratory_matcher_routes_automatic_symbols_by_pattern_timeframe(
+    tmp_path,
+) -> None:
+    db = session_factory()
+    provider = FixtureProvider()
+    midcaps = tmp_path / "midcaps.csv"
+    smallcaps = tmp_path / "smallcaps.csv"
+    midcaps.write_text("symbol\nMID1\n", encoding="utf-8")
+    smallcaps.write_text("symbol\nSML1\n", encoding="utf-8")
+    add_pattern(
+        db,
+        provider,
+        status=DiscoveredPatternStatus.LAB_CANDIDATE,
+        timeframe="1d",
+        key_suffix="_daily",
+    )
+    add_pattern(
+        db,
+        provider,
+        status=DiscoveredPatternStatus.LAB_CANDIDATE,
+        timeframe="5m",
+        key_suffix="_intraday",
+    )
+    settings = Settings(
+        daily_universe_file=str(midcaps),
+        intraday_universe_file=str(smallcaps),
+        discovery_match_complete_bars_only=False,
+        discovery_match_max_patterns=10,
+        discovery_match_max_results=10,
+        discovery_match_ambiguity_hard_gate_enabled=False,
+        entry_gate_enabled=False,
+    )
+
+    result = NovelPatternMatcher(provider=provider, settings=settings).match_current(
+        db,
+        store=False,
+    )
+
+    assert result["symbols_by_timeframe"] == {"1d": ["MID1"], "5m": ["SML1"]}
+    assert result["universe_scope_by_timeframe"] == {
+        "1d": "daily_midcap",
+        "5m": "intraday_smallcap",
+    }
+    assert any(symbol == "MID1" and interval == "1d" for symbol, _, interval in provider.fetch_calls)
+    assert any(symbol == "SML1" and interval == "5m" for symbol, _, interval in provider.fetch_calls)
 
 
 def production_gate_evidence_packet(

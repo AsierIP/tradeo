@@ -9,9 +9,15 @@ from types import SimpleNamespace
 import pandas as pd
 import pytest
 
-from tradeo.core.config import Settings
+from tradeo.core.config import Settings, get_settings
 import tradeo.services.data_provider as data_provider_module
-from tradeo.services.data_provider import CachedMarketDataProvider, detect_unadjusted_splits
+from tradeo.services.data_provider import (
+    CachedMarketDataProvider,
+    detect_unadjusted_splits,
+    pick_symbols,
+    universe_file_for_interval,
+    universe_scope_for_interval,
+)
 from tradeo.services.provider_factory import get_market_data_provider
 from tradeo.services.ibkr_data_provider import inspect_ibkr_connection
 from tradeo.services.universe_snapshot import UniverseSnapshotService
@@ -58,6 +64,30 @@ def test_market_data_factory_wraps_ibkr_with_cache(
         get_settings.cache_clear()
 
     assert provider.__class__.__name__ == "CachedMarketDataProvider"
+
+
+def test_pick_symbols_routes_timeframes_to_cap_segment_universes(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    midcaps = tmp_path / "midcaps.csv"
+    smallcaps = tmp_path / "smallcaps.csv"
+    midcaps.write_text("symbol\nMID1\nMID2\n", encoding="utf-8")
+    smallcaps.write_text("symbol\nSML1\nSML2\n", encoding="utf-8")
+    monkeypatch.setenv("TRADEO_DAILY_UNIVERSE_FILE", str(midcaps))
+    monkeypatch.setenv("TRADEO_INTRADAY_UNIVERSE_FILE", str(smallcaps))
+    get_settings.cache_clear()
+
+    try:
+        settings = get_settings()
+        assert universe_scope_for_interval("1d") == "daily_midcap"
+        assert universe_scope_for_interval("5m") == "intraday_smallcap"
+        assert universe_file_for_interval(settings, "1d") == str(midcaps)
+        assert universe_file_for_interval(settings, "15m") == str(smallcaps)
+        assert pick_symbols(limit=2, interval="1d") == ["MID1", "MID2"]
+        assert pick_symbols(limit=2, interval="5m") == ["SML1", "SML2"]
+    finally:
+        get_settings.cache_clear()
 
 
 def _ohlcv_frame() -> pd.DataFrame:
