@@ -383,13 +383,13 @@ class PatternDiscoveryLabAgent:
         s = self.settings
         assert s is not None
         max_total_windows = min(request.max_total_windows or s.discovery_max_total_windows, 80_000)
+        universe_scope = universe_scope_for_interval(request.interval or s.discovery_interval)
         return {
             "limit": request.limit or s.discovery_limit_default,
             "period": request.period or s.discovery_period,
             "interval": request.interval or s.discovery_interval,
-            "universe_scope": universe_scope_for_interval(
-                request.interval or s.discovery_interval
-            ),
+            "cadence": "daily" if universe_scope == "daily_midcap" else "intraday",
+            "universe_scope": universe_scope,
             "universe_file": universe_file_for_interval(
                 s,
                 request.interval or s.discovery_interval,

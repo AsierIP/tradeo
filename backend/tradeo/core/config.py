@@ -175,6 +175,16 @@ class Settings(BaseSettings):
     intraday_min_reward_risk: float = 4.0
     intraday_pacing_budget_per_10min: int = 0
     intraday_data_sync_interval_seconds: int = 300
+    intraday_research_interval_seconds: int = 900
+    intraday_research_period: str = "30d"
+    intraday_research_limit_default: int = 25
+    intraday_research_window_sizes: str = "20,50,100"
+    intraday_research_forward_bars: str = "3,6,12"
+    intraday_research_stride: int = 1
+    intraday_research_max_total_windows: int = 8000
+    intraday_research_max_windows_per_symbol: int = 300
+    intraday_research_min_cluster_size: int = 40
+    intraday_research_max_clusters_per_window: int = 8
     intraday_candidate_scan_interval_seconds: int = 60
     intraday_observation_closer_interval_seconds: int = 60
     intraday_risk_heartbeat_interval_seconds: int = 60
@@ -518,6 +528,13 @@ class Settings(BaseSettings):
         "intraday_max_trades_per_symbol",
         "intraday_pacing_budget_per_10min",
         "intraday_data_sync_interval_seconds",
+        "intraday_research_interval_seconds",
+        "intraday_research_limit_default",
+        "intraday_research_stride",
+        "intraday_research_max_total_windows",
+        "intraday_research_max_windows_per_symbol",
+        "intraday_research_min_cluster_size",
+        "intraday_research_max_clusters_per_window",
         "intraday_candidate_scan_interval_seconds",
         "intraday_observation_closer_interval_seconds",
         "intraday_risk_heartbeat_interval_seconds",
@@ -572,6 +589,14 @@ class Settings(BaseSettings):
     @property
     def intraday_timeframe_list(self) -> list[str]:
         return [timeframe.strip() for timeframe in self.intraday_timeframes.split(",") if timeframe.strip()]
+
+    @property
+    def intraday_research_window_size_list(self) -> list[int]:
+        return [int(x.strip()) for x in self.intraday_research_window_sizes.split(",") if x.strip()]
+
+    @property
+    def intraday_research_forward_bar_list(self) -> list[int]:
+        return [int(x.strip()) for x in self.intraday_research_forward_bars.split(",") if x.strip()]
 
     @property
     def intraday_live_config_blockers(self) -> list[str]:

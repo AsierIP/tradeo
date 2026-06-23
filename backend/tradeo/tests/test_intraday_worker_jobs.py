@@ -46,6 +46,7 @@ def test_register_intraday_jobs_only_adds_enabled_intraday_specs() -> None:
         intraday_universe_enabled=True,
         intraday_data_sync_enabled=True,
         intraday_research_enabled=True,
+        intraday_research_interval_seconds=123,
         intraday_candidate_scan_enabled=True,
         intraday_observation_closer_enabled=True,
         intraday_risk_heartbeat_enabled=True,
@@ -73,6 +74,8 @@ def test_register_intraday_jobs_only_adds_enabled_intraday_specs() -> None:
     interval_jobs = [job for job in scheduler.jobs if job["trigger"] == "interval"]
     assert interval_jobs
     assert all(job["kwargs"]["jitter"] == 7 for job in interval_jobs)
+    research_job = next(job for job in scheduler.jobs if job["kwargs"]["id"] == "intraday_research")
+    assert research_job["kwargs"]["seconds"] == 123
 
 
 def test_intraday_job_runner_uses_lock_and_redacts_sensitive_details(monkeypatch) -> None:
@@ -98,3 +101,53 @@ def test_intraday_job_runner_uses_lock_and_redacts_sensitive_details(monkeypatch
     assert payload["status"] == "ok"
     assert statuses[-1]["job_id"] == "intraday_risk_heartbeat"
     assert statuses[-1]["details"] == {"api_key": "<redacted>", "component": "risk"}
+
+
+def test_intraday_research_job_wires_real_runner(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_run(job_id, enabled_attr, action):  # noqa: ANN001
+        captured["job_id"] = job_id
+        captured["enabled_attr"] = enabled_attr
+        captured["result"] = action(Settings())
+
+    monkeypatch.setattr(worker, "_run_intraday_job", fake_run)
+    monkeypatch.setattr(
+        worker,
+        "_run_intraday_research",
+        lambda _settings: {"status": "ok", "reason": "wired", "details": {}},
+    )
+
+    worker.intraday_research_job()
+
+    assert captured == {
+        "job_id": "intraday_research",
+        "enabled_attr": "intraday_research_enabled",
+        "result": {"status": "ok", "reason": "wired", "details": {}},
+    }
+
+
+def test_intraday_research_request_uses_intraday_specific_parameters() -> None:
+    settings = Settings(
+        intraday_research_period="15d",
+        intraday_research_limit_default=7,
+        intraday_research_window_sizes="10,20",
+        intraday_research_forward_bars="2,4",
+        intraday_research_stride=2,
+        intraday_research_max_total_windows=500,
+        intraday_research_max_windows_per_symbol=50,
+        intraday_research_min_cluster_size=12,
+        intraday_research_max_clusters_per_window=3,
+        intraday_universe_file="/tmp/small.csv",
+    )
+
+    request = worker._intraday_research_request(settings, "5m")
+    expected = worker._intraday_research_expected_params(settings, request)
+
+    assert request.period == "15d"
+    assert request.interval == "5m"
+    assert request.limit == 7
+    assert request.window_sizes == [10, 20]
+    assert request.forward_bars == [2, 4]
+    assert expected["cadence"] == "intraday"
+    assert expected["universe_file"] == "/tmp/small.csv"

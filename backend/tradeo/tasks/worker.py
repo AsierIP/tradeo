@@ -23,7 +23,7 @@ from tradeo.ops.false_match_metrics import (
 )
 from tradeo.research.autonomous_research_director import ResearchDirector
 from tradeo.research.novel_pattern_matcher import NovelPatternMatcher
-from tradeo.schemas import ScanRequest
+from tradeo.schemas import DiscoveryRunRequest, ScanRequest
 from tradeo.services.intraday_calendar import IntradayMarketCalendar
 from tradeo.modules.shared.entry_scanner import (
     PatternEntryScanner,
@@ -106,8 +106,6 @@ def self_improvement_job() -> None:
 def discovery_job() -> None:
     db = SessionLocal()
     try:
-        from tradeo.schemas import DiscoveryRunRequest
-
         settings = get_settings()
         if not settings.discovery_enabled:
             logger.info("discovery job skipped: discovery_enabled=false")
@@ -120,6 +118,7 @@ def discovery_job() -> None:
             max_windows_per_symbol=settings.discovery_max_windows_per_symbol,
         )
         params = {
+            "cadence": "daily",
             "limit": request.limit,
             "period": request.period,
             "interval": request.interval,
@@ -350,12 +349,7 @@ def intraday_research_job() -> None:
     _run_intraday_job(
         "intraday_research",
         "intraday_research_enabled",
-        lambda settings: _intraday_placeholder(
-            settings,
-            component="research",
-            reason="research_worker_not_wired",
-            details={"timeframes": settings.intraday_timeframe_list},
-        ),
+        _run_intraday_research,
     )
 
 
@@ -575,6 +569,114 @@ def _intraday_placeholder(
     }
 
 
+def _run_intraday_research(settings: Settings) -> dict[str, Any]:
+    timeframes = settings.intraday_timeframe_list
+    if not timeframes:
+        return {
+            "status": "noop",
+            "reason": "intraday_timeframes_empty",
+            "details": {"component": "research"},
+        }
+
+    db = SessionLocal()
+    runs: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+    try:
+        running = db.query(DiscoveryRun).filter(DiscoveryRun.status == "running").all()
+        recent_cutoff = datetime.now(timezone.utc) - timedelta(
+            seconds=max(60, settings.intraday_research_interval_seconds)
+        )
+        recent_completed = (
+            db.query(DiscoveryRun)
+            .filter(DiscoveryRun.status == "completed", DiscoveryRun.started_at >= recent_cutoff)
+            .order_by(DiscoveryRun.started_at.desc())
+            .all()
+        )
+
+        for timeframe in timeframes:
+            request = _intraday_research_request(settings, timeframe)
+            expected = _intraday_research_expected_params(settings, request)
+            if any(_discovery_params_match(run.params_json or {}, expected) for run in running):
+                skipped.append({"timeframe": timeframe, "reason": "run_already_running"})
+                continue
+            if any(
+                _discovery_params_match(run.params_json or {}, expected)
+                for run in recent_completed
+            ):
+                skipped.append({"timeframe": timeframe, "reason": "recent_equivalent_run"})
+                continue
+
+            result = PatternDiscoveryLabAgent(settings=settings).run(request, db)
+            runs.append(
+                {
+                    "timeframe": timeframe,
+                    "run_id": result.run_id,
+                    "symbols_scanned": result.symbols_scanned,
+                    "windows_sampled": result.windows_sampled,
+                    "clusters_evaluated": result.clusters_evaluated,
+                    "accepted_patterns": result.accepted_patterns,
+                    "rejected_patterns": result.rejected_patterns,
+                    "stored_patterns": result.stored_patterns,
+                }
+            )
+    finally:
+        db.close()
+
+    return {
+        "status": "ok",
+        "reason": "intraday_research_completed" if runs else "intraday_research_waiting",
+        "details": {
+            "component": "research",
+            "safe_placeholder": False,
+            "timeframes": timeframes,
+            "runs": runs,
+            "skipped": skipped,
+            "period": settings.intraday_research_period,
+            "limit": settings.intraday_research_limit_default,
+            "interval_seconds": settings.intraday_research_interval_seconds,
+        },
+    }
+
+
+def _intraday_research_request(settings: Settings, timeframe: str) -> DiscoveryRunRequest:
+    return DiscoveryRunRequest(
+        limit=settings.intraday_research_limit_default,
+        period=settings.intraday_research_period,
+        interval=timeframe,
+        window_sizes=settings.intraday_research_window_size_list,
+        forward_bars=settings.intraday_research_forward_bar_list,
+        stride=settings.intraday_research_stride,
+        max_total_windows=settings.intraday_research_max_total_windows,
+        max_windows_per_symbol=settings.intraday_research_max_windows_per_symbol,
+        min_cluster_size=settings.intraday_research_min_cluster_size,
+        max_clusters_per_window=settings.intraday_research_max_clusters_per_window,
+    )
+
+
+def _intraday_research_expected_params(
+    settings: Settings,
+    request: DiscoveryRunRequest,
+) -> dict[str, Any]:
+    return {
+        "cadence": "intraday",
+        "limit": request.limit,
+        "period": request.period,
+        "interval": request.interval,
+        "window_sizes": request.window_sizes,
+        "forward_bars": request.forward_bars,
+        "stride": request.stride,
+        "max_total_windows": request.max_total_windows,
+        "max_windows_per_symbol": request.max_windows_per_symbol,
+        "min_cluster_size": request.min_cluster_size,
+        "max_clusters_per_window": request.max_clusters_per_window,
+        "universe_file": settings.intraday_universe_file,
+    }
+
+
+def _discovery_params_match(stored: dict[str, Any], expected: dict[str, Any]) -> bool:
+    return all(stored.get(key) == value for key, value in expected.items())
+
+
 def _intraday_risk_heartbeat(settings: Settings) -> dict[str, Any]:
     return {
         "status": "ok",
@@ -729,7 +831,7 @@ INTRADAY_JOB_SPECS: tuple[IntradayJobSpec, ...] = (
         func=intraday_research_job,
         enabled_attr="intraday_research_enabled",
         trigger="interval",
-        seconds_attr="intraday_candidate_scan_interval_seconds",
+        seconds_attr="intraday_research_interval_seconds",
     ),
     IntradayJobSpec(
         job_id="intraday_candidate_scan",
