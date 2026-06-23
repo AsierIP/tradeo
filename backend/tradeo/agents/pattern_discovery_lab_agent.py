@@ -20,6 +20,7 @@ from tradeo.research.autonomous_research_director import ResearchDirector as Per
 from tradeo.research.determinism import CONTENT_HASH_ALGO, DEFAULT_VOLATILE_KEYS, content_hash
 from tradeo.research.global_experiment_registry import GlobalExperimentRegistry
 from tradeo.research.novel_pattern_registry import NovelPatternRegistry
+from tradeo.research.pattern_committee import PatternResearchCommittee
 from tradeo.research.quant_validation import (
     benjamini_hochberg,
     deflated_sharpe_ratio,
@@ -162,8 +163,6 @@ class PatternDiscoveryLabAgent:
                 candidate.metrics["survivorship_biased"] = not bool(candidate.metrics["universe_point_in_time"])
             self._apply_run_level_inference(raw_candidates)
             candidates = ValidationGate(settings).evaluate_many(raw_candidates)
-            accepted = [c for c in candidates if c.validation_passed]
-            rejected = [c for c in candidates if not c.validation_passed]
             ledger_artifacts = self._write_event_ledgers(run.id, candidates)
             global_registry = GlobalExperimentRegistry(
                 settings.reports_path / "research" / "global_experiment_registry.json"
@@ -182,6 +181,16 @@ class PatternDiscoveryLabAgent:
                     msg = f"CandidateResearchDirector failed: {exc}"
                     logger.exception(msg)
                     warnings.append(msg)
+            committee_summary: dict[str, Any] = {}
+            if settings.research_committee_enabled:
+                logger.info("PatternResearchCommittee: revisando candidatos antes del registry")
+                committee_summary = PatternResearchCommittee(settings=settings).review_candidates(
+                    candidates,
+                    run_id=run.id,
+                    params=params,
+                )
+            accepted = [c for c in candidates if c.validation_passed]
+            rejected = [c for c in candidates if not c.validation_passed]
             stored = NovelPatternRegistry().store_candidates(
                 db,
                 candidates,
@@ -213,6 +222,7 @@ class PatternDiscoveryLabAgent:
             summary["research_director"] = {
                 "candidate_completion": candidate_director_summary,
             }
+            summary["research_committee"] = committee_summary
             if director_result is not None:
                 summary["research_director"]["db_director"] = {
                     "patterns_reviewed": director_result.get("patterns_reviewed", 0),
@@ -245,6 +255,7 @@ class PatternDiscoveryLabAgent:
                         "rejected": len(rejected),
                         "stored": len(stored),
                         "research_director": summary.get("research_director", {}),
+                        "research_committee": summary.get("research_committee", {}),
                         "event_ledgers": ledger_artifacts,
                         "data_manifest": summary.get("data_manifest", {}),
                         "universe_snapshot": universe_snapshot,
@@ -653,6 +664,7 @@ class PatternDiscoveryLabAgent:
             "active_learning": metrics.get("active_learning", {}),
             "pattern_lifecycle": metrics.get("pattern_lifecycle", {}),
             "research_director": metrics.get("research_director", {}),
+            "research_committee": metrics.get("research_committee_compact", {}),
             "research_paper_report_path": metrics.get("research_paper_report_path"),
             "walk_forward_fold_count": metrics.get("walk_forward_fold_count", 0),
             "walk_forward_positive_fold_rate": metrics.get("walk_forward_positive_fold_rate", 0.0),

@@ -306,6 +306,7 @@ class Settings(BaseSettings):
     discovery_match_max_results: int = 100
     discovery_registry_similarity_threshold: float = 0.96
     research_director_enabled: bool = True
+    research_committee_enabled: bool = True
     research_director_interval_minutes: int = 180
     research_director_pattern_limit: int = 120
     entry_gate_enabled: bool = True

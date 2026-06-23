@@ -17,6 +17,18 @@ from tradeo.db.models import (
 from tradeo.services.state_policy import is_legacy_promotion_state
 from tradeo.research.types import ClusterCandidate
 
+DISCOVERY_BLOCKED_PROMOTION_STATES = {
+    "approved",
+    "live",
+    "live_candidate",
+    "paper_candidate",
+    "paper_limited_candidate",
+    "paper_extended_candidate",
+    "premium_candidate",
+    "production",
+    "production_candidate",
+}
+
 
 @dataclass(slots=True)
 class NovelPatternRegistry:
@@ -205,7 +217,7 @@ class NovelPatternRegistry:
         validation_passed: bool,
         confirmation_recommended: bool,
     ) -> str:
-        if is_legacy_promotion_state(status):
+        if status in DISCOVERY_BLOCKED_PROMOTION_STATES or is_legacy_promotion_state(status):
             return "lab_candidate" if validation_passed else "rejected"
         if confirmation_recommended and status == "rejected":
             return "needs_confirmation"

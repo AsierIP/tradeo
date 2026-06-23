@@ -128,3 +128,16 @@ def test_registry_blocks_legacy_promotion_states() -> None:
     assert stored.promotion_status == "lab_candidate"
     assert stored.metrics_json["legacy_promotion_status_blocked"] == "paper_candidate"
     assert stored.metrics_json["runtime_promotion_blocked"] is True
+
+
+def test_registry_blocks_production_promotion_state_from_discovery() -> None:
+    db = session_factory()
+    candidate = _candidate("novel_illegal_production", [0.0, 0.0, 0.0])
+    candidate.metrics["promotion_status"] = "production"
+
+    stored = NovelPatternRegistry(similarity_threshold=0.99).store_candidates(db, [candidate])[0]
+
+    assert stored.status == DiscoveredPatternStatus.LAB_CANDIDATE
+    assert stored.promotion_status == "lab_candidate"
+    assert stored.metrics_json["legacy_promotion_status_blocked"] == "production"
+    assert stored.metrics_json["runtime_promotion_blocked"] is True
