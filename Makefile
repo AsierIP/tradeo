@@ -55,6 +55,7 @@ test-safety:
 		tradeo/tests/test_intraday_router.py \
 		tradeo/tests/test_intraday_data_sync.py \
 		tradeo/tests/test_intraday_lab.py \
+		tradeo/tests/test_intraday_lab_bridge.py \
 		tradeo/tests/test_intraday_research.py \
 		tradeo/tests/test_intraday_research_validation_stack.py \
 		tradeo/tests/test_intraday_worker_jobs.py

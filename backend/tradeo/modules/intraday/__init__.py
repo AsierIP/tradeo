@@ -5,6 +5,14 @@ from tradeo.modules.intraday.research_contracts import (
     IntradayResearchDataContract,
     IntradayResearchDataContractBuilder,
 )
+from tradeo.modules.intraday.lab_bridge import (
+    IntradayLabBridgeThresholds,
+    IntradayLabEntryPlan,
+    IntradayPaperExitDecision,
+    IntradayPaperExitManager,
+    IntradayPaperExitPolicy,
+    IntradayResearchLabBridge,
+)
 from tradeo.modules.intraday.research_features import (
     IntradayFeatureCube,
     IntradayFeatureCubeBuilder,
@@ -22,12 +30,18 @@ from tradeo.modules.intraday.research_validation_stack import (
 
 __all__ = [
     "INTRADAY_RESEARCH_CORE_VERSION",
+    "IntradayLabBridgeThresholds",
+    "IntradayLabEntryPlan",
     "IntradayFeatureCube",
     "IntradayFeatureCubeBuilder",
     "IntradayMatchedBaseline",
     "IntradayMatchedBaselineFactory",
+    "IntradayPaperExitDecision",
+    "IntradayPaperExitManager",
+    "IntradayPaperExitPolicy",
     "IntradayResearchDataContract",
     "IntradayResearchDataContractBuilder",
+    "IntradayResearchLabBridge",
     "IntradayValidationResult",
     "IntradayValidationStack",
     "IntradayValidationThresholds",
