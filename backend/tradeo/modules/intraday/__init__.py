@@ -12,13 +12,25 @@ from tradeo.modules.intraday.research_features import (
     MultiScaleIntradaySampler,
     MultiScaleSamplerConfig,
 )
+from tradeo.modules.intraday.research_validation_stack import (
+    IntradayMatchedBaseline,
+    IntradayMatchedBaselineFactory,
+    IntradayValidationResult,
+    IntradayValidationStack,
+    IntradayValidationThresholds,
+)
 
 __all__ = [
     "INTRADAY_RESEARCH_CORE_VERSION",
     "IntradayFeatureCube",
     "IntradayFeatureCubeBuilder",
+    "IntradayMatchedBaseline",
+    "IntradayMatchedBaselineFactory",
     "IntradayResearchDataContract",
     "IntradayResearchDataContractBuilder",
+    "IntradayValidationResult",
+    "IntradayValidationStack",
+    "IntradayValidationThresholds",
     "MultiScaleIntradaySample",
     "MultiScaleIntradaySampler",
     "MultiScaleSamplerConfig",
