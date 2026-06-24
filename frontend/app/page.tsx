@@ -901,6 +901,7 @@ export default function Page() {
   const [activeFoxCadence, setActiveFoxCadence] = useState<'daily' | 'intraday'>('daily')
   const [lastDiscovery, setLastDiscovery] = useState<DiscoveryRunResponse | null>(null)
   const [busyDiscovery, setBusyDiscovery] = useState(false)
+  const [discoveryError, setDiscoveryError] = useState<string | null>(null)
   const [isScanning, setIsScanning] = useState(false)
   const [selectedPatternId, setSelectedPatternId] = useState<number | null>(null)
   const [scanResult, setScanResult] = useState<ScanResult | null>(null)
@@ -912,6 +913,8 @@ export default function Page() {
   const { data, error, mutate, isLoading } = useSWR<Summary>('/dashboard/summary', fetcher, { refreshInterval: 15000 })
   const { data: dailyDiscoveredPatterns, mutate: mutateDailyResearch } = useSWR<DiscoveredPattern[]>('/research/discovered-patterns?cadence=daily&visibility=green&limit=100', fetcher, { refreshInterval: 30000 })
   const { data: intradayDiscoveredPatterns, mutate: mutateIntradayResearch } = useSWR<DiscoveredPattern[]>('/research/discovered-patterns?cadence=intraday&visibility=green&limit=100', fetcher, { refreshInterval: 30000 })
+  const { data: dailyAllDiscoveredPatterns, mutate: mutateDailyAllResearch } = useSWR<DiscoveredPattern[]>('/research/discovered-patterns?cadence=daily&visibility=all&limit=100', fetcher, { refreshInterval: 30000 })
+  const { data: intradayAllDiscoveredPatterns, mutate: mutateIntradayAllResearch } = useSWR<DiscoveredPattern[]>('/research/discovered-patterns?cadence=intraday&visibility=all&limit=100', fetcher, { refreshInterval: 30000 })
   const { data: dailyDiscoveryRuns, mutate: mutateDailyRuns } = useSWR<DiscoveryRun[]>('/research/runs?cadence=daily&limit=25', fetcher, { refreshInterval: 15000 })
   const { data: intradayDiscoveryRuns, mutate: mutateIntradayRuns } = useSWR<DiscoveryRun[]>('/research/runs?cadence=intraday&limit=25', fetcher, { refreshInterval: 15000 })
   const { data: labStatus } = useSWR<ModuleStatus>('/laboratory/status', fetcher, { refreshInterval: 5000 })
@@ -961,6 +964,7 @@ export default function Page() {
 
   async function runDiscovery() {
     setBusyDiscovery(true)
+    setDiscoveryError(null)
     try {
       const payload = activeResearchCadence === 'intraday'
         ? {
@@ -989,9 +993,13 @@ export default function Page() {
       await Promise.all([
         mutateDailyResearch(),
         mutateIntradayResearch(),
+        mutateDailyAllResearch(),
+        mutateIntradayAllResearch(),
         mutateDailyRuns(),
         mutateIntradayRuns()
       ])
+    } catch (err) {
+      setDiscoveryError(err instanceof Error ? err.message : 'Error lanzando Research')
     } finally {
       setBusyDiscovery(false)
     }
@@ -1024,7 +1032,22 @@ export default function Page() {
       return createdDiff || b.id - a.id
     })
   }, [intradayDiscoveredPatterns])
-  const discoveredPatternRows = activeResearchCadence === 'intraday' ? intradayPatternRows : dailyPatternRows
+  const dailyAllPatternRows = useMemo(() => {
+    return [...(dailyAllDiscoveredPatterns || [])].sort((a, b) => {
+      const createdDiff = new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+      return createdDiff || b.id - a.id
+    })
+  }, [dailyAllDiscoveredPatterns])
+  const intradayAllPatternRows = useMemo(() => {
+    return [...(intradayAllDiscoveredPatterns || [])].sort((a, b) => {
+      const createdDiff = new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+      return createdDiff || b.id - a.id
+    })
+  }, [intradayAllDiscoveredPatterns])
+  const greenPatternRows = activeResearchCadence === 'intraday' ? intradayPatternRows : dailyPatternRows
+  const allPatternRows = activeResearchCadence === 'intraday' ? intradayAllPatternRows : dailyAllPatternRows
+  const discoveredPatternRows = greenPatternRows.length ? greenPatternRows : allPatternRows
+  const showingRejectedFallback = !greenPatternRows.length && allPatternRows.length > 0
   const selectedPattern = useMemo(() => {
     const rows = discoveredPatternRows
     if (!rows.length) return null
@@ -1065,7 +1088,8 @@ export default function Page() {
     ? '5m/15m · ventanas cortas · horizonte intradía'
     : '1d · ventanas diarias · horizonte swing'
   const activePatternCount = discoveredPatternRows.length
-  const activeAcceptedCount = discoveredPatternRows.length
+  const activeAcceptedCount = greenPatternRows.length
+  const activeRejectedCount = allPatternRows.filter((p) => String(p.status).toUpperCase() === 'REJECTED').length
 
   return (
     <main className="main">
@@ -1097,6 +1121,15 @@ export default function Page() {
             </p>
           )}
           {scanError && <p className="error">Escaneo fallido: {scanError}</p>}
+          {discoveryError && <p className="error">Research falló: {discoveryError}</p>}
+          {lastDiscovery && (
+            <p className="scan-notice">
+              Research #{lastDiscovery.run_id}: {lastDiscovery.windows_sampled} ventanas,
+              {' '}{lastDiscovery.clusters_evaluated} clusters,
+              {' '}{lastDiscovery.accepted_patterns} aceptados,
+              {' '}{lastDiscovery.rejected_patterns} rechazados.
+            </p>
+          )}
         </div>
         <div className="pill"><span className={`dot ${data.live_armed ? '' : 'warn'}`} />Modo {data.mode} · live {data.live_armed ? 'armado' : 'bloqueado'}</div>
       </section>
@@ -1156,6 +1189,7 @@ export default function Page() {
               <span>{activeCadenceLabel}</span>
               <span>{activeCadenceDetail}</span>
               <span>{activeAcceptedCount} patrones verdes</span>
+              <span>{activeRejectedCount} rechazados recientes</span>
               {latestRun && <span>run #{latestRun.id}: {runInterval(latestRun)} · {latestRun.status}</span>}
               {latestCompletedRun && (
                 <span>
@@ -1184,6 +1218,7 @@ export default function Page() {
               <span>Última run: {latestDailyRun ? `#${latestDailyRun.id} · ${runInterval(latestDailyRun)} · ${latestDailyRun.status}` : 'sin datos'}</span>
               <span>Última completa: {latestDailyCompletedRun ? `#${latestDailyCompletedRun.id} · ${latestDailyCompletedRun.windows_sampled} ventanas · ${latestDailyCompletedRun.clusters_evaluated} clusters` : 'sin completas'}</span>
               <span>Patrones verdes: {acceptedDailyResearch.length}</span>
+              <span>Recientes totales: {dailyAllPatternRows.length}</span>
             </button>
             <button
               type="button"
@@ -1195,6 +1230,7 @@ export default function Page() {
               <span>Última run: {latestIntradayRun ? `#${latestIntradayRun.id} · ${runInterval(latestIntradayRun)} · ${latestIntradayRun.status}` : 'sin datos'}</span>
               <span>Última completa: {latestIntradayCompletedRun ? `#${latestIntradayCompletedRun.id} · ${latestIntradayCompletedRun.windows_sampled} ventanas · ${latestIntradayCompletedRun.clusters_evaluated} clusters` : 'sin completas'}</span>
               <span>Patrones verdes: {acceptedIntradayResearch.length}</span>
+              <span>Recientes totales: {intradayAllPatternRows.length}</span>
             </button>
           </div>
           <div className="lab-status-grid">
@@ -1212,7 +1248,10 @@ export default function Page() {
             </div>
             <div>
               <strong>Patrones recientes</strong>
-              <span>{activePatternCount} visibles · solo verdes</span>
+              <span>
+                {activePatternCount} visibles · {activeAcceptedCount} verdes
+                {showingRejectedFallback ? ` · mostrando rechazados (${activeRejectedCount})` : ''}
+              </span>
             </div>
             <div>
               <strong>Última run</strong>
@@ -1250,11 +1289,16 @@ export default function Page() {
               </tbody>
             </table>
           </div>
+          {showingRejectedFallback && (
+            <p className="muted">
+              No hay patrones verdes para {activeCadenceLabel}; se muestran los rechazados recientes para que Research no parezca vacío.
+            </p>
+          )}
           {!discoveredPatternRows.length && (
-            <p className="muted">Aún no hay patrones descubiertos para {activeCadenceLabel}. Pulsa “Research Lab” o deja que trabaje el worker.</p>
+            <p className="muted">Aún no hay patrones guardados para {activeCadenceLabel}. Pulsa “Research Lab” o deja que trabaje el worker.</p>
           )}
           <div className="table-caption">
-            Patrones recientes de {activeCadenceLabel}. Solo se muestran los patrones en verde, incluyendo needs_confirmation.
+            Patrones recientes de {activeCadenceLabel}. Prioriza verdes; si no hay, muestra rechazados recientes.
           </div>
           <div className="table-scroll pattern-scroll">
             <table>
@@ -1284,7 +1328,7 @@ export default function Page() {
                     <td>{shortDateTime(p.created_at)}</td>
                   </tr>
                 ))}
-                {!discoveredPatternRows.length && <tr><td colSpan={16}>Sin patrones en esta cadencia todavía.</td></tr>}
+                {!discoveredPatternRows.length && <tr><td colSpan={16}>Sin patrones guardados en esta cadencia todavía.</td></tr>}
               </tbody>
             </table>
           </div>
