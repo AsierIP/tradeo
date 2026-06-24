@@ -9,7 +9,7 @@ import numpy as np
 from sqlalchemy.orm import Session
 
 from tradeo.core.config import Settings, get_settings
-from tradeo.db.models import DiscoveredPattern, DiscoveredPatternMetric
+from tradeo.db.models import DiscoveredPattern, DiscoveredPatternMetric, DiscoveredPatternStatus
 
 
 @dataclass(slots=True)
@@ -49,6 +49,7 @@ class ResearchDirector:
                 metrics["research_hypothesis"] = intelligence["hypothesis"]
                 metrics["research_lifecycle"] = intelligence["lifecycle"]
                 metrics["research_director_updated_at"] = generated_at
+                self._resolve_confirmation_pattern(pattern, metrics, intelligence, generated_at)
                 pattern.metrics_json = self._json_clean(metrics)
                 pattern.updated_at = datetime.now(timezone.utc)
                 db.add(pattern)
@@ -78,14 +79,87 @@ class ResearchDirector:
         return self._json_clean(summary)
 
     def _patterns(self, db: Session, *, run_id: int | None, limit: int) -> list[DiscoveredPattern]:
+        capped_limit = max(1, min(int(limit), 500))
         query = db.query(DiscoveredPattern).order_by(
             DiscoveredPattern.score.desc(),
             DiscoveredPattern.created_at.desc(),
             DiscoveredPattern.pattern_key.asc(),
         )
-        if run_id is not None:
-            query = query.filter(DiscoveredPattern.run_id == run_id)
-        return query.limit(max(1, min(int(limit), 500))).all()
+        if run_id is None:
+            confirmation = self._confirmation_patterns(db, limit=capped_limit)
+            top = query.limit(capped_limit).all()
+            return self._dedupe_patterns([*confirmation, *top])[:capped_limit]
+
+        run_patterns = query.filter(DiscoveredPattern.run_id == run_id).limit(capped_limit).all()
+        confirmation = self._confirmation_patterns(db, limit=capped_limit)
+        return self._dedupe_patterns([*run_patterns, *confirmation])[:capped_limit]
+
+    @staticmethod
+    def _confirmation_patterns(db: Session, *, limit: int) -> list[DiscoveredPattern]:
+        return (
+            db.query(DiscoveredPattern)
+            .filter(DiscoveredPattern.confirmation_status == "needs_confirmation")
+            .order_by(
+                DiscoveredPattern.confirmation_priority_score.desc(),
+                DiscoveredPattern.created_at.desc(),
+                DiscoveredPattern.pattern_key.asc(),
+            )
+            .limit(limit)
+            .all()
+        )
+
+    @staticmethod
+    def _dedupe_patterns(patterns: list[DiscoveredPattern]) -> list[DiscoveredPattern]:
+        seen: set[int] = set()
+        deduped: list[DiscoveredPattern] = []
+        for pattern in patterns:
+            if pattern.id in seen:
+                continue
+            seen.add(pattern.id)
+            deduped.append(pattern)
+        return deduped
+
+    @staticmethod
+    def _resolve_confirmation_pattern(
+        pattern: DiscoveredPattern,
+        metrics: dict[str, Any],
+        intelligence: dict[str, Any],
+        generated_at: str,
+    ) -> None:
+        if pattern.confirmation_status != "needs_confirmation":
+            return
+        lifecycle = intelligence.get("lifecycle") if isinstance(intelligence.get("lifecycle"), dict) else {}
+        if lifecycle.get("status") != "needs_confirmation":
+            return
+
+        reasons = [
+            *[str(reason) for reason in (pattern.rejection_reasons_json or [])],
+            *[str(reason) for reason in (pattern.validation_reasons_json or [])],
+        ]
+        committee_rejected = any("research_committee:rejected_false_positive" in reason for reason in reasons)
+        resolved_status = (
+            DiscoveredPatternStatus.REJECTED
+            if committee_rejected
+            else DiscoveredPatternStatus.LAB_WATCHLIST
+        )
+        pattern.status = resolved_status
+        pattern.promotion_status = resolved_status.value
+        pattern.confirmation_status = "reviewed_rejected" if committee_rejected else "reviewed_watchlist"
+        pattern.confirmation_next_action = str(lifecycle.get("next_action") or "rerun expanded confirmation before promotion")
+        metrics["confirmation_review"] = {
+            "reviewed_at": generated_at,
+            "previous_status": "needs_confirmation",
+            "resolved_status": resolved_status.value,
+            "confirmation_status": pattern.confirmation_status,
+            "reason": (
+                "committee_rejected_false_positive"
+                if committee_rejected
+                else "insufficient_confirmation_evidence_watchlist_only"
+            ),
+            "next_action": pattern.confirmation_next_action,
+        }
+        metrics["confirmation_status"] = pattern.confirmation_status
+        metrics["promotion_status"] = resolved_status.value
 
     def _pattern_intelligence(self, pattern: DiscoveredPattern, *, generated_at: str) -> dict[str, Any]:
         metrics = dict(pattern.metrics_json or {})
