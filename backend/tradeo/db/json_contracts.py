@@ -37,6 +37,10 @@ class _StringList(BaseModel):
     root: list[str] = Field(default_factory=list)
 
 
+class _FreeformDictList(BaseModel):
+    root: list[dict[str, Any]] = Field(default_factory=list)
+
+
 class _FloatList(BaseModel):
     root: list[float] = Field(default_factory=list)
 
@@ -89,6 +93,14 @@ _CONTRACTS: tuple[JsonContract, ...] = (
     JsonContract("discovered_pattern_metrics", "metrics_json", 1, _FreeformDict),
     JsonContract("discovered_pattern_matches", "chart_json", 1, _FreeformDict),
     JsonContract("discovered_pattern_matches", "metrics_json", 1, _FreeformDict),
+    JsonContract("intraday_universe_snapshots", "symbols_json", 1, _StringList),
+    JsonContract("intraday_universe_snapshots", "filters_json", 1, _FreeformDict),
+    JsonContract("intraday_universe_snapshots", "excluded_json", 1, _FreeformDictList),
+    JsonContract("intraday_universe_snapshots", "pacing_budget_json", 1, _FreeformDict),
+    JsonContract("intraday_symbol_state", "metadata_json", 1, _FreeformDict),
+    JsonContract("intraday_pacing_ledger", "payload_json", 1, _FreeformDict),
+    JsonContract("intraday_risk_ledger", "payload_json", 1, _FreeformDict),
+    JsonContract("intraday_flatten_attempts", "broker_response_json", 1, _FreeformDict),
     JsonContract("agent_messages", "input_refs", 1, _StringList, strict=True),
     JsonContract("agent_messages", "payload_json", 1, AgentMessagePayloadV1, strict=True),
     JsonContract("agent_messages", "consumed_by", 1, _StringList, strict=True),

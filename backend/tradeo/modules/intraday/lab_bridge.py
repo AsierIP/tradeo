@@ -10,7 +10,6 @@ import pandas as pd
 
 from tradeo.modules.intraday.research_validation_stack import (
     IntradayValidationResult,
-    IntradayValidationThresholds,
 )
 
 LabEntryAction = Literal["ENTER_PAPER", "SHADOW_ONLY", "WAIT", "REJECT"]
