@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+from datetime import datetime, timezone
 
 import numpy as np
 import pandas as pd
@@ -10,6 +11,12 @@ from tradeo.modules.intraday.features import (
     CONTRACT_VERSION,
     IntradayFeatureBuilder,
     IntradayFeatureConfig,
+)
+from tradeo.modules.intraday.research_contracts import IntradayResearchDataContractBuilder
+from tradeo.modules.intraday.research_features import (
+    IntradayFeatureCubeBuilder,
+    MultiScaleIntradaySampler,
+    MultiScaleSamplerConfig,
 )
 
 
@@ -99,3 +106,91 @@ def test_intraday_feature_builder_rejects_nan_inf_and_bad_rvol_baseline() -> Non
             minute_volume_baseline={0: 50_000, 5: 0, 10: 75_000, 15: 80_000, 20: 90_000},
             session_open=pd.Timestamp("2026-06-22 13:30", tz="UTC"),
         )
+
+
+def _research_baseline(frame: pd.DataFrame) -> dict[int, float]:
+    first = frame.index[0]
+    return {
+        int((ts - first) / pd.Timedelta(minutes=1)): max(1.0, float(volume) / 2.0)
+        for ts, volume in zip(frame.index, frame["volume"], strict=True)
+    }
+
+
+def test_intraday_research_data_contract_hashes_and_flags_quality() -> None:
+    bars = _bars()
+    contract = IntradayResearchDataContractBuilder().build(
+        {"5m": bars},
+        symbol="soun",
+        session_id="2026-06-22",
+        decision_ts=datetime(2026, 6, 22, 14, 30, tzinfo=timezone.utc),
+        min_bars_by_timeframe={"5m": 5},
+    )
+
+    assert contract.accepted is True
+    assert contract.symbol == "SOUN"
+    assert contract.complete_bars_by_timeframe == {"5m": 5}
+    assert len(contract.frame_hashes["5m"]) == 64
+    assert len(contract.manifest_hash) == 64
+    assert contract.entry_eligible_ts > contract.data_cutoff_ts
+
+    duplicated = pd.concat([bars, bars.iloc[[-1]]]).sort_index()
+    bad = IntradayResearchDataContractBuilder().build(
+        {"5m": duplicated},
+        symbol="soun",
+        session_id="2026-06-22",
+    )
+    assert "duplicates:5m" in bad.reason_codes
+
+
+def test_intraday_feature_cube_adds_vectorized_research_channels() -> None:
+    bars = _bars()
+    cube = IntradayFeatureCubeBuilder().build(
+        {"5m": bars},
+        symbol="soun",
+        session_id="2026-06-22",
+        previous_close=9.75,
+        minute_volume_baselines={"5m": _research_baseline(bars)},
+        session_open=bars.index[0],
+    )
+
+    frame = cube.frame("5m")
+    assert cube.metadata["math_backend"] == "numpy_pandas_vectorized"
+    assert {
+        "return_3",
+        "vwap_slope",
+        "rvol_acceleration",
+        "spread_compression",
+        "opening_range_position",
+        "liquidity_phase_score",
+    }.issubset(frame.columns)
+    assert frame["liquidity_phase_score"].notna().all()
+    assert cube.latest_snapshot("5m")["symbol"] == "SOUN"
+
+
+def test_intraday_multiscale_sampler_aligns_without_lookahead() -> None:
+    bars_5m = _bars()
+    bars_15m = _bars().resample("15min").agg(
+        {"open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum"}
+    )
+    bars_15m["bid"] = bars_15m["close"] - 0.01
+    bars_15m["ask"] = bars_15m["close"] + 0.01
+    cube = IntradayFeatureCubeBuilder().build(
+        {"15m": bars_15m, "5m": bars_5m},
+        symbol="soun",
+        session_id="2026-06-22",
+        previous_close={"15m": 9.75, "5m": 9.75},
+        minute_volume_baselines={"15m": _research_baseline(bars_15m), "5m": _research_baseline(bars_5m)},
+        session_open=bars_5m.index[0],
+    )
+
+    samples = MultiScaleIntradaySampler(
+        MultiScaleSamplerConfig(context_bars_by_timeframe={"15m": 1, "5m": 3}, stride=1)
+    ).sample(cube, trigger_timeframe="5m")
+
+    assert samples
+    for sample in samples:
+        trigger_ts = pd.Timestamp(sample.trigger_end_ts)
+        assert sample.metadata["no_lookahead"] is True
+        assert len(sample.source_hash) == 64
+        assert sample.windows["5m"].index[-1] <= trigger_ts
+        assert sample.windows["15m"].index[-1] <= trigger_ts
