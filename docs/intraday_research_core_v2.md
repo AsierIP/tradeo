@@ -8,15 +8,15 @@ Principios:
 - Usa contratos de datos cerrados por barra y hashes deterministas.
 - Prioriza matematicas vectorizadas con NumPy/pandas.
 - Acepta complejidad cuando reduce falsos positivos, coste computacional o riesgo metodologico.
-- Separa descubrimiento, nulls estratificados y validacion cientifica.
+- Separa descubrimiento, baselines estratificados y validacion cientifica.
 
-Componentes previstos:
+Componentes implementados:
 
 - `IntradayResearchDataContract`: valida barras cerradas, calidad y reproducibilidad.
 - `IntradayFeatureCube`: cubo multitimeframe con canales VWAP, RVOL, spread, liquidez y rango.
 - `MultiScaleIntradaySampler`: alinea contexto/setup/trigger sin lookahead.
-- `IntradayStratifiedNullFactory`: crea nulls por bucket intradia.
-- `IntradayValidationStack`: aplica n_eff, diversidad, costes y edge contra null.
+- `IntradayMatchedBaselineFactory`: crea baselines deterministas por bucket intradia.
+- `IntradayValidationStack`: aplica n_eff, diversidad, concentracion, costes y edge contra baseline.
 
 Eficiencia:
 
@@ -24,3 +24,14 @@ Eficiencia:
 - Hashing sobre buffers NumPy contiguos.
 - Sampling con `DatetimeIndex.searchsorted`.
 - Metricas agrupadas por sesion para evitar pseudo-replicacion.
+- Matched baseline determinista sin aleatoriedad: orden estable y round-robin por bucket.
+
+Gates cientificos de la segunda fase:
+
+- eventos brutos minimos;
+- eventos efectivos (`n_eff`) minimos;
+- diversidad minima de simbolos, sesiones y buckets;
+- concentracion maxima por simbolo y sesion;
+- expectancy neta minima por multiplicador de coste;
+- edge minimo contra baseline emparejado;
+- profit factor minimo en coste 1x.
