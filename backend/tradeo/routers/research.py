@@ -3,12 +3,20 @@ from __future__ import annotations
 import json
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import not_
 from sqlalchemy.orm import Session, selectinload
 
 from tradeo.agents.pattern_discovery_lab_agent import PatternDiscoveryLabAgent
 from tradeo.core.config import get_settings
 from tradeo.core.security import require_admin
-from tradeo.db.models import DiscoveredPattern, DiscoveredPatternExample, DiscoveredPatternMatch, DiscoveredPatternMetric, DiscoveryRun
+from tradeo.db.models import (
+    DiscoveredPattern,
+    DiscoveredPatternExample,
+    DiscoveredPatternMatch,
+    DiscoveredPatternMetric,
+    DiscoveredPatternStatus,
+    DiscoveryRun,
+)
 from tradeo.db.session import get_db
 from tradeo.research.autonomous_research_director import ResearchDirector
 from tradeo.research.novel_pattern_matcher import NovelPatternMatcher
@@ -30,6 +38,46 @@ from tradeo.schemas import (
 
 router = APIRouter(prefix="/research", tags=["research"])
 
+_DAILY_INTERVALS = {"1d", "1day", "daily", "day"}
+_INTRADAY_INTERVAL_SUFFIXES = ("m", "min", "mins", "minute", "minutes", "h", "hour", "hours")
+_GREEN_RESEARCH_STATUSES = {
+    DiscoveredPatternStatus.LAB_CANDIDATE,
+    DiscoveredPatternStatus.NEEDS_CONFIRMATION,
+    DiscoveredPatternStatus.CONFIRMED_CANDIDATE,
+    DiscoveredPatternStatus.DIRECTOR_REVIEW,
+    DiscoveredPatternStatus.PREMIUM_CANDIDATE,
+    DiscoveredPatternStatus.PAPER_CANDIDATE,
+    DiscoveredPatternStatus.PRODUCTION,
+}
+
+
+def _normalize_research_cadence(cadence: str | None) -> str | None:
+    if cadence is None:
+        return None
+    normalized = cadence.strip().lower()
+    if normalized in {"", "all"}:
+        return None
+    if normalized not in {"daily", "intraday"}:
+        raise HTTPException(422, "cadence must be daily, intraday, or all")
+    return normalized
+
+
+def _research_cadence_from_interval(interval: str | None) -> str:
+    value = (interval or "1d").strip().lower()
+    if value in _DAILY_INTERVALS:
+        return "daily"
+    if value.endswith(_INTRADAY_INTERVAL_SUFFIXES):
+        return "intraday"
+    return "daily"
+
+
+def _research_cadence_from_run(run: DiscoveryRun) -> str:
+    params = run.params_json or {}
+    cadence = str(params.get("cadence") or "").strip().lower()
+    if cadence in {"daily", "intraday"}:
+        return cadence
+    return _research_cadence_from_interval(str(params.get("interval") or "1d"))
+
 
 @router.post("/run-discovery", response_model=DiscoveryRunResponse)
 def run_discovery(
@@ -43,11 +91,31 @@ def run_discovery(
 @router.get("/discovered-patterns", response_model=list[DiscoveredPatternOut])
 def list_discovered_patterns(
     status: str | None = None,
+    visibility: str | None = Query(default=None, pattern="^(green|all)$"),
+    cadence: str | None = Query(default=None, pattern="^(daily|intraday|all)$"),
     limit: int = Query(default=100, ge=1, le=500),
     _: str = Depends(require_admin),
     db: Session = Depends(get_db),
 ) -> list[DiscoveredPattern]:
-    return NovelPatternRegistry.list_patterns(db, limit=limit, status=status)
+    normalized_cadence = _normalize_research_cadence(cadence)
+    normalized_visibility = (visibility or "all").strip().lower()
+    if normalized_cadence is None:
+        if normalized_visibility == "green":
+            query = db.query(DiscoveredPattern).filter(DiscoveredPattern.status.in_(_GREEN_RESEARCH_STATUSES))
+            if status:
+                query = query.filter(DiscoveredPattern.status == status)
+            return query.order_by(DiscoveredPattern.created_at.desc()).limit(limit).all()
+        return NovelPatternRegistry.list_patterns(db, limit=limit, status=status)
+    query = db.query(DiscoveredPattern)
+    if status:
+        query = query.filter(DiscoveredPattern.status == status)
+    if normalized_visibility == "green":
+        query = query.filter(DiscoveredPattern.status.in_(_GREEN_RESEARCH_STATUSES))
+    if normalized_cadence == "daily":
+        query = query.filter(DiscoveredPattern.timeframe == "1d")
+    else:
+        query = query.filter(not_(DiscoveredPattern.timeframe == "1d"))
+    return query.order_by(DiscoveredPattern.created_at.desc()).limit(limit).all()
 
 
 @router.get("/discovered-patterns/{pattern_id}", response_model=DiscoveredPatternDetailOut)
@@ -186,11 +254,17 @@ def list_current_matches(
 
 @router.get("/runs", response_model=list[DiscoveryRunOut])
 def list_discovery_runs(
+    cadence: str | None = Query(default=None, pattern="^(daily|intraday|all)$"),
     limit: int = Query(default=50, ge=1, le=200),
     _: str = Depends(require_admin),
     db: Session = Depends(get_db),
 ) -> list[DiscoveryRun]:
-    return db.query(DiscoveryRun).order_by(DiscoveryRun.started_at.desc()).limit(limit).all()
+    normalized_cadence = _normalize_research_cadence(cadence)
+    query = db.query(DiscoveryRun).order_by(DiscoveryRun.started_at.desc())
+    if normalized_cadence is None:
+        return query.limit(limit).all()
+    candidates = query.limit(1000).all()
+    return [run for run in candidates if _research_cadence_from_run(run) == normalized_cadence][:limit]
 
 
 @router.post("/director/run", response_model=ResearchDirectorResponse)

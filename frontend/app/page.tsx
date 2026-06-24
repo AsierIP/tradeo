@@ -132,6 +132,8 @@ type DiscoveryRun = {
   accepted_patterns: number
   rejected_patterns: number
   duration_seconds: number
+  params_json: Record<string, unknown>
+  summary_json: Record<string, unknown>
   report_path?: string | null
 }
 
@@ -391,6 +393,20 @@ function StatusBadge({ status }: { status: string }) {
   return <span className={`status ${tone}`}>{status}</span>
 }
 
+const GREEN_RESEARCH_STATUSES = new Set([
+  'lab_candidate',
+  'needs_confirmation',
+  'confirmed_candidate',
+  'director_review',
+  'premium_candidate',
+  'paper_candidate',
+  'production'
+])
+
+function isVisibleResearchPattern(pattern: DiscoveredPattern) {
+  return pattern.validation_passed || GREEN_RESEARCH_STATUSES.has(pattern.status.toLowerCase())
+}
+
 function ScopeDivider({
   label,
   title,
@@ -551,6 +567,42 @@ function explainAcceptedPattern(pattern: DiscoveredPattern) {
     lines.push('Y encima tambien pasa 4R, asi que es candidato premium.')
   }
   return lines.join(' ')
+}
+
+function explainResearchPattern(pattern: DiscoveredPattern) {
+  if (pattern.validation_passed) return explainAcceptedPattern(pattern)
+  const reasons = [
+    ...(pattern.validation_reasons_json || []),
+    ...(pattern.rejection_reasons_json || [])
+  ].filter(Boolean)
+  if (reasons.length) {
+    return `Rechazado por validacion: ${reasons.slice(0, 4).join(' · ')}.`
+  }
+  return `Rechazado o pendiente de promocion. Best R:R ${pattern.best_rr.toFixed(1)}, expectancy ${pattern.best_expectancy_r.toFixed(2)}R, profit factor ${pattern.best_profit_factor.toFixed(2)} y OOS ${pattern.out_of_sample_expectancy_r.toFixed(2)}R.`
+}
+
+function runInterval(run?: DiscoveryRun | null) {
+  const interval = run?.params_json?.interval
+  return typeof interval === 'string' ? interval : '-'
+}
+
+function runPeriod(run?: DiscoveryRun | null) {
+  const period = run?.params_json?.period
+  return typeof period === 'string' ? period : '-'
+}
+
+function runWindowSizes(run?: DiscoveryRun | null) {
+  const raw = run?.params_json?.window_sizes
+  if (!Array.isArray(raw) || !raw.length) return '-'
+  return raw.join('/')
+}
+
+function formatDuration(seconds?: number | null) {
+  if (typeof seconds !== 'number' || !Number.isFinite(seconds) || seconds <= 0) return '-'
+  if (seconds < 60) return `${seconds.toFixed(1)}s`
+  const minutes = Math.floor(seconds / 60)
+  const rest = Math.round(seconds % 60)
+  return `${minutes}m ${rest}s`
 }
 
 function IntradayPanel({
@@ -843,6 +895,10 @@ function OperationsModule({
 }
 
 export default function Page() {
+  const [activeModule, setActiveModule] = useState<'research' | 'laboratory' | 'fox_hunter'>('research')
+  const [activeResearchCadence, setActiveResearchCadence] = useState<'daily' | 'intraday'>('daily')
+  const [activeLabCadence, setActiveLabCadence] = useState<'daily' | 'intraday'>('intraday')
+  const [activeFoxCadence, setActiveFoxCadence] = useState<'daily' | 'intraday'>('daily')
   const [lastDiscovery, setLastDiscovery] = useState<DiscoveryRunResponse | null>(null)
   const [busyDiscovery, setBusyDiscovery] = useState(false)
   const [isScanning, setIsScanning] = useState(false)
@@ -854,8 +910,10 @@ export default function Page() {
   const [flatPreviewBusy, setFlatPreviewBusy] = useState(false)
   const [flatPreviewError, setFlatPreviewError] = useState<string | null>(null)
   const { data, error, mutate, isLoading } = useSWR<Summary>('/dashboard/summary', fetcher, { refreshInterval: 15000 })
-  const { data: discoveredPatterns, mutate: mutateResearch } = useSWR<DiscoveredPattern[]>('/research/discovered-patterns?limit=100', fetcher, { refreshInterval: 30000 })
-  const { data: discoveryRuns, mutate: mutateRuns } = useSWR<DiscoveryRun[]>('/research/runs?limit=25', fetcher, { refreshInterval: 15000 })
+  const { data: dailyDiscoveredPatterns, mutate: mutateDailyResearch } = useSWR<DiscoveredPattern[]>('/research/discovered-patterns?cadence=daily&visibility=green&limit=100', fetcher, { refreshInterval: 30000 })
+  const { data: intradayDiscoveredPatterns, mutate: mutateIntradayResearch } = useSWR<DiscoveredPattern[]>('/research/discovered-patterns?cadence=intraday&visibility=green&limit=100', fetcher, { refreshInterval: 30000 })
+  const { data: dailyDiscoveryRuns, mutate: mutateDailyRuns } = useSWR<DiscoveryRun[]>('/research/runs?cadence=daily&limit=25', fetcher, { refreshInterval: 15000 })
+  const { data: intradayDiscoveryRuns, mutate: mutateIntradayRuns } = useSWR<DiscoveryRun[]>('/research/runs?cadence=intraday&limit=25', fetcher, { refreshInterval: 15000 })
   const { data: labStatus } = useSWR<ModuleStatus>('/laboratory/status', fetcher, { refreshInterval: 5000 })
   const { data: foxStatus } = useSWR<ModuleStatus>('/fox-hunter/status', fetcher, { refreshInterval: 5000 })
   const { data: labDailyOverview } = useSWR<ModuleOverview>('/laboratory/overview?cadence=daily', fetcher, { refreshInterval: 15000 })
@@ -904,17 +962,36 @@ export default function Page() {
   async function runDiscovery() {
     setBusyDiscovery(true)
     try {
-      const result = await postJson('/research/run-discovery', {
-        limit: 40,
-        period: '5y',
-        interval: '1d',
-        max_total_windows: 6000,
-        max_windows_per_symbol: 250,
-        store_rejected: true
-      }) as DiscoveryRunResponse
+      const payload = activeResearchCadence === 'intraday'
+        ? {
+            limit: 25,
+            period: '30d',
+            interval: '5m',
+            window_sizes: [20, 50, 100],
+            forward_bars: [3, 6, 12],
+            stride: 1,
+            max_total_windows: 6000,
+            max_windows_per_symbol: 250,
+            min_cluster_size: 40,
+            max_clusters_per_window: 8,
+            store_rejected: true
+          }
+        : {
+            limit: 40,
+            period: '5y',
+            interval: '1d',
+            max_total_windows: 6000,
+            max_windows_per_symbol: 250,
+            store_rejected: true
+          }
+      const result = await postJson('/research/run-discovery', payload) as DiscoveryRunResponse
       setLastDiscovery(result)
-      await mutateResearch()
-      await mutateRuns()
+      await Promise.all([
+        mutateDailyResearch(),
+        mutateIntradayResearch(),
+        mutateDailyRuns(),
+        mutateIntradayRuns()
+      ])
     } finally {
       setBusyDiscovery(false)
     }
@@ -934,22 +1011,20 @@ export default function Page() {
     }
   }
 
-  const researchRows = useMemo(() => {
-    const rows = (discoveredPatterns || []).filter((p) => p.validation_passed)
-    return rows.slice(0, 18).map((p) => ({
-      name: p.name.replace('DISCOVERED_', '').slice(0, 18),
-      expectancy_r: Number(p.expectancy_r.toFixed(3)),
-      score: Number(p.score.toFixed(3)),
-      profit_factor: Number(p.profit_factor.toFixed(2)),
-      rr: Number(p.reward_risk_estimate.toFixed(2))
-    }))
-  }, [discoveredPatterns])
-  const discoveredPatternRows = useMemo(() => {
-    return [...(discoveredPatterns || [])].filter((p) => p.validation_passed).sort((a, b) => {
+  const discoveryRuns = activeResearchCadence === 'intraday' ? intradayDiscoveryRuns : dailyDiscoveryRuns
+  const dailyPatternRows = useMemo(() => {
+    return [...(dailyDiscoveredPatterns || [])].filter(isVisibleResearchPattern).sort((a, b) => {
       const createdDiff = new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
       return createdDiff || b.id - a.id
     })
-  }, [discoveredPatterns])
+  }, [dailyDiscoveredPatterns])
+  const intradayPatternRows = useMemo(() => {
+    return [...(intradayDiscoveredPatterns || [])].filter(isVisibleResearchPattern).sort((a, b) => {
+      const createdDiff = new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+      return createdDiff || b.id - a.id
+    })
+  }, [intradayDiscoveredPatterns])
+  const discoveredPatternRows = activeResearchCadence === 'intraday' ? intradayPatternRows : dailyPatternRows
   const selectedPattern = useMemo(() => {
     const rows = discoveredPatternRows
     if (!rows.length) return null
@@ -976,9 +1051,21 @@ export default function Page() {
   if (isLoading || !data) return <main className="main"><p>Cargando Tradeo…</p></main>
 
   const latestEquity = data.equity.length ? data.equity[data.equity.length - 1].equity : data.initial_capital_usd
-  const acceptedResearch = (discoveredPatterns || []).filter((p) => p.validation_passed)
+  const acceptedDailyResearch = dailyPatternRows
+  const acceptedIntradayResearch = intradayPatternRows
+  const acceptedResearchTotal = acceptedDailyResearch.length + acceptedIntradayResearch.length
   const latestRun = discoveryRuns?.[0]
   const latestCompletedRun = discoveryRuns?.find((run) => run.status === 'completed')
+  const latestDailyRun = dailyDiscoveryRuns?.[0]
+  const latestIntradayRun = intradayDiscoveryRuns?.[0]
+  const latestDailyCompletedRun = dailyDiscoveryRuns?.find((run) => run.status === 'completed')
+  const latestIntradayCompletedRun = intradayDiscoveryRuns?.find((run) => run.status === 'completed')
+  const activeCadenceLabel = activeResearchCadence === 'intraday' ? 'Intradía' : 'Daily'
+  const activeCadenceDetail = activeResearchCadence === 'intraday'
+    ? '5m/15m · ventanas cortas · horizonte intradía'
+    : '1d · ventanas diarias · horizonte swing'
+  const activePatternCount = discoveredPatternRows.length
+  const activeAcceptedCount = discoveredPatternRows.length
 
   return (
     <main className="main">
@@ -1039,38 +1126,24 @@ export default function Page() {
         </ScopeDivider>
 
         <StatCard label="Equity actual" value={`$${latestEquity.toFixed(2)}`} />
-        <StatCard label="Research aceptados" value={acceptedResearch.length} />
+        <StatCard label="Research aceptados" value={acceptedResearchTotal} />
         <StatCard label="Lab activas" value={(labDailyOverview?.stats.open_trades ?? 0) + (labIntradayOverview?.stats.open_trades ?? 0)} />
         <StatCard label="Fox activas" value={(foxDailyOverview?.stats.open_trades ?? 0) + (foxIntradayOverview?.stats.open_trades ?? 0)} />
 
-        <div className="operation-grid full">
-          <OperationsModule
-            title="Lab Daily"
-            subtitle="Órdenes paper diarias activas y P/L acumulado de fills daily cerrados."
-            overview={labDailyOverview}
-            status={labStatus}
-          />
-          <OperationsModule
-            title="Lab Intradía"
-            subtitle="Órdenes paper intradía activas y P/L acumulado de fills intradía cerrados."
-            overview={labIntradayOverview}
-            status={labStatus}
-          />
-          <OperationsModule
-            title="Fox Daily"
-            subtitle="Órdenes live daily activas y P/L acumulado de operaciones daily cerradas."
-            overview={foxDailyOverview}
-            status={foxStatus}
-          />
-          <OperationsModule
-            title="Fox Intradía"
-            subtitle="Órdenes live intradía activas y P/L acumulado de operaciones intradía cerradas."
-            overview={foxIntradayOverview}
-            status={foxStatus}
-          />
-        </div>
+        <nav className="top-tabs full" aria-label="Módulos Tradeo">
+          <button className={activeModule === 'research' ? 'active' : ''} onClick={() => setActiveModule('research')}>
+            Research
+          </button>
+          <button className={activeModule === 'laboratory' ? 'active' : ''} onClick={() => setActiveModule('laboratory')}>
+            Laboratorio
+          </button>
+          <button className={activeModule === 'fox_hunter' ? 'active' : ''} onClick={() => setActiveModule('fox_hunter')}>
+            Fox Hunter
+          </button>
+        </nav>
 
-        <section className="card full research-card">
+        {activeModule === 'research' && (
+        <section className="card full research-card module-view">
           <div className="section-head">
             <div>
               <div className="module-kicker">Research</div>
@@ -1080,68 +1153,122 @@ export default function Page() {
               </p>
             </div>
             <div className="mini-stats">
-              <span>{acceptedResearch.length} LAB</span>
-              <span>scroll filtrado: solo aceptados</span>
-              <span>{discoveryRuns?.length || 0} runs recientes</span>
-              {latestRun && <span>run #{latestRun.id}: {latestRun.status}</span>}
+              <span>{activeCadenceLabel}</span>
+              <span>{activeCadenceDetail}</span>
+              <span>{activeAcceptedCount} patrones verdes</span>
+              {latestRun && <span>run #{latestRun.id}: {runInterval(latestRun)} · {latestRun.status}</span>}
               {latestCompletedRun && (
                 <span>
-                  última completa #{latestCompletedRun.id}: {latestCompletedRun.accepted_patterns} aceptados · {latestCompletedRun.windows_sampled} ventanas
+                  última completa #{latestCompletedRun.id}: {runInterval(latestCompletedRun)} · {latestCompletedRun.windows_sampled} ventanas
                 </span>
               )}
               {lastDiscovery && <span>última run #{lastDiscovery.run_id}: {lastDiscovery.windows_sampled} ventanas</span>}
             </div>
           </div>
+          <div className="sub-tabs" aria-label="Cadencia Research">
+            <button className={activeResearchCadence === 'daily' ? 'active' : ''} onClick={() => setActiveResearchCadence('daily')}>
+              Daily · 1d
+            </button>
+            <button className={activeResearchCadence === 'intraday' ? 'active' : ''} onClick={() => setActiveResearchCadence('intraday')}>
+              Intradía · 5m/15m
+            </button>
+          </div>
+          <div className="research-compare-grid">
+            <button
+              type="button"
+              className={`research-compare-card ${activeResearchCadence === 'daily' ? 'active' : ''}`}
+              onClick={() => setActiveResearchCadence('daily')}
+            >
+              <strong>Daily Research</strong>
+              <span className="cadence-token daily">1d · 5y · swing</span>
+              <span>Última run: {latestDailyRun ? `#${latestDailyRun.id} · ${runInterval(latestDailyRun)} · ${latestDailyRun.status}` : 'sin datos'}</span>
+              <span>Última completa: {latestDailyCompletedRun ? `#${latestDailyCompletedRun.id} · ${latestDailyCompletedRun.windows_sampled} ventanas · ${latestDailyCompletedRun.clusters_evaluated} clusters` : 'sin completas'}</span>
+              <span>Patrones verdes: {acceptedDailyResearch.length}</span>
+            </button>
+            <button
+              type="button"
+              className={`research-compare-card ${activeResearchCadence === 'intraday' ? 'active' : ''}`}
+              onClick={() => setActiveResearchCadence('intraday')}
+            >
+              <strong>Intradía Research</strong>
+              <span className="cadence-token intraday">5m/15m · 30d · sesión</span>
+              <span>Última run: {latestIntradayRun ? `#${latestIntradayRun.id} · ${runInterval(latestIntradayRun)} · ${latestIntradayRun.status}` : 'sin datos'}</span>
+              <span>Última completa: {latestIntradayCompletedRun ? `#${latestIntradayCompletedRun.id} · ${latestIntradayCompletedRun.windows_sampled} ventanas · ${latestIntradayCompletedRun.clusters_evaluated} clusters` : 'sin completas'}</span>
+              <span>Patrones verdes: {acceptedIntradayResearch.length}</span>
+            </button>
+          </div>
           <div className="lab-status-grid">
             <div>
-              <strong>Run actual</strong>
-              <span>{latestRun ? `#${latestRun.id} · ${latestRun.status} · ${formatRunTime(latestRun.started_at)}` : 'sin datos'}</span>
+              <strong>Cadencia activa</strong>
+              <span>{activeCadenceLabel} · {activeCadenceDetail}</span>
             </div>
             <div>
               <strong>Última completa</strong>
               <span>
                 {latestCompletedRun
-                  ? `#${latestCompletedRun.id} · ${latestCompletedRun.accepted_patterns} aceptados · ${latestCompletedRun.windows_sampled} ventanas`
+                  ? `#${latestCompletedRun.id} · ${runInterval(latestCompletedRun)} · ${latestCompletedRun.windows_sampled} ventanas · ${latestCompletedRun.clusters_evaluated} clusters`
                   : 'sin runs completas'}
               </span>
             </div>
             <div>
-              <strong>Actividad reciente</strong>
-              <span>{discoveryRuns?.length || 0} runs revisadas · tabla sin rechazados</span>
+              <strong>Patrones recientes</strong>
+              <span>{activePatternCount} visibles · solo verdes</span>
             </div>
             <div>
-              <strong>Patrones únicos</strong>
-              <span>{acceptedResearch.length} aceptados visibles</span>
+              <strong>Última run</strong>
+              <span>{latestRun ? `#${latestRun.id} · ${runInterval(latestRun)} · ${runPeriod(latestRun)} · ${latestRun.status}` : 'sin datos'}</span>
             </div>
           </div>
-          {researchRows.length > 0 ? (
-            <ResponsiveContainer width="100%" height={260}>
-              <LineChart data={researchRows}>
-                <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
-                <XAxis dataKey="name" hide />
-                <YAxis />
-                <Tooltip />
-                <Line type="monotone" dataKey="expectancy_r" strokeWidth={2} />
-                <Line type="monotone" dataKey="score" strokeWidth={2} />
-              </LineChart>
-            </ResponsiveContainer>
-          ) : (
-            <p className="muted">Aún no hay patrones descubiertos. Pulsa “Research Lab” o deja que trabaje el worker.</p>
+          <div className="table-caption">
+            Runs recientes de {activeCadenceLabel}. Aquí se ve claramente si la pestaña está leyendo daily o intradía.
+          </div>
+          <div className="table-scroll run-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>Cadencia</th><th>Run</th><th>Inicio</th><th>Status</th><th>Intervalo</th><th>Periodo</th><th>Ventanas cfg</th><th>Windows</th><th>Clusters</th><th>Aceptados</th><th>Rechazados</th><th>Duración</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(discoveryRuns || []).slice(0, 8).map((run) => (
+                  <tr key={run.id}>
+                    <td><span className={`cadence-token ${activeResearchCadence}`}>{activeCadenceLabel}</span></td>
+                    <td className="mono">#{run.id}</td>
+                    <td>{shortDateTime(run.started_at)}</td>
+                    <td><StatusBadge status={run.status} /></td>
+                    <td>{runInterval(run)}</td>
+                    <td>{runPeriod(run)}</td>
+                    <td>{runWindowSizes(run)}</td>
+                    <td>{run.windows_sampled}</td>
+                    <td>{run.clusters_evaluated}</td>
+                    <td>{run.accepted_patterns}</td>
+                    <td>{run.rejected_patterns}</td>
+                    <td>{formatDuration(run.duration_seconds)}</td>
+                  </tr>
+                ))}
+                {!(discoveryRuns || []).length && <tr><td colSpan={12}>Sin runs para esta cadencia.</td></tr>}
+              </tbody>
+            </table>
+          </div>
+          {!discoveredPatternRows.length && (
+            <p className="muted">Aún no hay patrones descubiertos para {activeCadenceLabel}. Pulsa “Research Lab” o deja que trabaje el worker.</p>
           )}
           <div className="table-caption">
-            Solo patrones aceptados. El historial restante queda dentro del scroll.
+            Patrones recientes de {activeCadenceLabel}. Solo se muestran los patrones en verde, incluyendo needs_confirmation.
           </div>
           <div className="table-scroll pattern-scroll">
             <table>
               <thead>
                 <tr>
-                  <th>Patrón</th><th>Status</th><th>Best R:R</th><th>Expectancy R</th><th>Profit Factor</th><th>Win Rate</th><th>Max DD R</th><th>OOS Exp.</th><th>Preferred 3R</th><th>Premium 4R</th><th>Muestras</th><th>Símbolos</th><th>Años</th>
+                  <th>Cadencia</th><th>Patrón</th><th>Timeframe</th><th>Status</th><th>Best R:R</th><th>Expectancy R</th><th>Profit Factor</th><th>Win Rate</th><th>Max DD R</th><th>OOS Exp.</th><th>3R</th><th>4R</th><th>Muestras</th><th>Símbolos</th><th>Años</th><th>Creado</th>
                 </tr>
               </thead>
               <tbody>
                 {discoveredPatternRows.map((p) => (
                   <tr key={p.id} onClick={() => setSelectedPatternId(p.id)} className={selectedPattern?.id === p.id ? 'selected-row' : ''}>
+                    <td><span className={`cadence-token ${activeResearchCadence}`}>{activeCadenceLabel}</span></td>
                     <td className="mono">{p.name}</td>
+                    <td>{p.timeframe}</td>
                     <td><StatusBadge status={p.status} /></td>
                     <td>{p.best_rr.toFixed(1)}</td>
                     <td>{p.best_expectancy_r.toFixed(2)}R</td>
@@ -1154,9 +1281,10 @@ export default function Page() {
                     <td>{p.sample_count}</td>
                     <td>{p.symbol_count}</td>
                     <td>{p.year_count}</td>
+                    <td>{shortDateTime(p.created_at)}</td>
                   </tr>
                 ))}
-                {!discoveredPatternRows.length && <tr><td colSpan={13}>Sin patrones aceptados todavía.</td></tr>}
+                {!discoveredPatternRows.length && <tr><td colSpan={16}>Sin patrones en esta cadencia todavía.</td></tr>}
               </tbody>
             </table>
           </div>
@@ -1174,7 +1302,7 @@ export default function Page() {
                   <EdgeBadges pattern={selectedPattern} />
                 </div>
               </div>
-              <p className="accepted-explanation">{explainAcceptedPattern(selectedPattern)}</p>
+              <p className="accepted-explanation">{explainResearchPattern(selectedPattern)}</p>
               {selectedRrRows.length > 0 && (
                 <>
                   <ResponsiveContainer width="100%" height={230}>
@@ -1215,6 +1343,74 @@ export default function Page() {
             </div>
           )}
         </section>
+        )}
+
+        {activeModule === 'laboratory' && (
+          <section className="module-view full">
+            <div className="sub-tabs" aria-label="Cadencia Laboratorio">
+              <button className={activeLabCadence === 'intraday' ? 'active' : ''} onClick={() => setActiveLabCadence('intraday')}>
+                Intradía
+              </button>
+              <button className={activeLabCadence === 'daily' ? 'active' : ''} onClick={() => setActiveLabCadence('daily')}>
+                Daily
+              </button>
+            </div>
+            {activeLabCadence === 'intraday' ? (
+              <>
+                <OperationsModule
+                  title="Lab Intradía"
+                  subtitle="Órdenes paper intradía activas y P/L acumulado de fills intradía cerrados."
+                  overview={labIntradayOverview}
+                  status={labStatus}
+                />
+                <IntradayPanel
+                  status={intradayStatus}
+                  pacing={intradayPacing}
+                  flatStatus={intradayFlatStatus}
+                  flatPreview={flatPreview}
+                  previewBusy={flatPreviewBusy}
+                  previewError={flatPreviewError}
+                  onPreviewFlat={previewIntradayFlat}
+                />
+              </>
+            ) : (
+              <OperationsModule
+                title="Lab Daily"
+                subtitle="Órdenes paper diarias activas y P/L acumulado de fills daily cerrados."
+                overview={labDailyOverview}
+                status={labStatus}
+              />
+            )}
+          </section>
+        )}
+
+        {activeModule === 'fox_hunter' && (
+          <section className="module-view full">
+            <div className="sub-tabs" aria-label="Cadencia Fox Hunter">
+              <button className={activeFoxCadence === 'intraday' ? 'active' : ''} onClick={() => setActiveFoxCadence('intraday')}>
+                Intradía
+              </button>
+              <button className={activeFoxCadence === 'daily' ? 'active' : ''} onClick={() => setActiveFoxCadence('daily')}>
+                Daily
+              </button>
+            </div>
+            {activeFoxCadence === 'intraday' ? (
+              <OperationsModule
+                title="Fox Intradía"
+                subtitle="Órdenes live intradía activas y P/L acumulado de operaciones intradía cerradas."
+                overview={foxIntradayOverview}
+                status={foxStatus}
+              />
+            ) : (
+              <OperationsModule
+                title="Fox Daily"
+                subtitle="Órdenes live daily activas y P/L acumulado de operaciones daily cerradas."
+                overview={foxDailyOverview}
+                status={foxStatus}
+              />
+            )}
+          </section>
+        )}
 
       </section>
     </main>
