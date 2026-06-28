@@ -21,7 +21,7 @@ class FakeProvider:
 
 def _frame(price: float, volume: float, *, rows: int = 160, spike: bool = False) -> pd.DataFrame:
     index = pd.date_range("2026-01-01", periods=rows, freq="30min", tz="UTC")
-    close = pd.Series(price, index=index, dtype=float)
+    close = pd.Series([price * (1.0 + (idx % 7) * 0.0001) for idx in range(rows)], index=index, dtype=float)
     if spike:
         close.iloc[rows // 2] = price * 1.50
     return pd.DataFrame(
