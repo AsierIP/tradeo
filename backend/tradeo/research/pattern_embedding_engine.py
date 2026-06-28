@@ -1,12 +1,41 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from typing import ClassVar
 
 import numpy as np
 import pandas as pd
 
 from tradeo.services.technical_indicators import atr
+
+_MISSING_BENCHMARK = object()
+
+
+def _zscore_constant(values: np.ndarray) -> np.ndarray:
+    arr = np.asarray(values, dtype=float)
+    std = float(np.std(arr))
+    if std == 0.0:
+        return np.zeros_like(arr, dtype=float)
+    return (arr - float(np.mean(arr))) / std
+
+
+_SHAPELET_X = np.linspace(-1, 1, 16)
+_SHAPELET_V_TEMPLATE_Z = _zscore_constant(-np.abs(_SHAPELET_X) + np.max(np.abs(_SHAPELET_X)))
+_SHAPELET_INVERTED_V_TEMPLATE_Z = _zscore_constant(-(-np.abs(_SHAPELET_X) + np.max(np.abs(_SHAPELET_X))))
+_SHAPELET_FLAG_TEMPLATE_Z = _zscore_constant(
+    np.r_[
+        np.linspace(0.0, 1.0, 6),
+        np.linspace(0.65, 0.45, 5),
+        np.linspace(0.45, 1.15, 5),
+    ]
+)
+_SHAPELET_IMPULSE_TEMPLATE_Z = _zscore_constant(np.r_[np.zeros(10), np.linspace(0.2, 1.0, 6)])
+
+_BenchmarkCloseValues = (
+    Mapping[str, np.ndarray | None]
+    | tuple[np.ndarray | None, np.ndarray | None, np.ndarray | None, np.ndarray | None]
+)
 
 
 @dataclass(slots=True)
@@ -28,6 +57,17 @@ class PatternEmbeddingEngine:
     ENHANCED_CHANNEL_COUNT: ClassVar[int] = 3
     ENHANCED_SCALAR_COUNT: ClassVar[int] = 23
     MATCHER_SCALING_BASE: ClassVar[str] = "train_fit_standard_scaler_prefix"
+    BENCHMARK_KEY_GROUPS: ClassVar[tuple[tuple[str, ...], ...]] = (
+        ("SPY",),
+        ("QQQ",),
+        ("SECTOR", "sector", "sector_etf", "SECTOR_ETF"),
+        ("INDUSTRY", "industry", "industry_etf", "INDUSTRY_ETF"),
+    )
+    _resample_grid_cache: dict[tuple[int, int], tuple[np.ndarray, np.ndarray]] = field(
+        default_factory=dict,
+        init=False,
+        repr=False,
+    )
 
     def contract(
         self,
@@ -87,15 +127,60 @@ class PatternEmbeddingEngine:
     ) -> tuple[np.ndarray, dict[str, float], dict[str, list[float]]]:
         if len(window) < 5:
             raise ValueError("window must contain at least 5 bars")
-        df = window.copy()
-        close = df["close"].astype(float).to_numpy()
-        high = df["high"].astype(float).to_numpy()
-        low = df["low"].astype(float).to_numpy()
-        open_ = df["open"].astype(float).to_numpy()
-        volume = df["volume"].astype(float).to_numpy()
+        atr_raw = (
+            atr(window, 14).to_numpy(dtype=float, copy=False)
+            if len(window) >= 15
+            else np.zeros(len(window), dtype=float)
+        )
+        return self.embed_arrays(
+            open_values=window["open"].to_numpy(dtype=float, copy=False),
+            high_values=window["high"].to_numpy(dtype=float, copy=False),
+            low_values=window["low"].to_numpy(dtype=float, copy=False),
+            close_values=window["close"].to_numpy(dtype=float, copy=False),
+            volume_values=window["volume"].to_numpy(dtype=float, copy=False),
+            index=window.index,
+            benchmark_frames=benchmark_frames,
+            atr_raw=atr_raw,
+        )
 
-        safe_close = np.where(close == 0, 1e-9, close)
-        log_close = np.log(np.maximum(safe_close, 1e-9))
+    def embed_arrays(
+        self,
+        *,
+        open_values: np.ndarray,
+        high_values: np.ndarray,
+        low_values: np.ndarray,
+        close_values: np.ndarray,
+        volume_values: np.ndarray,
+        index: pd.Index,
+        benchmark_frames: dict[str, pd.DataFrame] | None = None,
+        benchmark_close_values: _BenchmarkCloseValues | None = None,
+        benchmark_close_slice: tuple[int, int] | None = None,
+        week_codes: np.ndarray | None = None,
+        atr_raw: np.ndarray | None = None,
+    ) -> tuple[np.ndarray, dict[str, float], dict[str, list[float]]]:
+        close = np.asarray(close_values, dtype=float)
+        if len(close) < 5:
+            raise ValueError("window must contain at least 5 bars")
+        high = np.asarray(high_values, dtype=float)
+        low = np.asarray(low_values, dtype=float)
+        open_ = np.asarray(open_values, dtype=float)
+        volume = np.asarray(volume_values, dtype=float)
+        if not (len(high) == len(low) == len(open_) == len(volume) == len(close)):
+            raise ValueError("OHLCV arrays must have the same length")
+        if len(index) != len(close):
+            raise ValueError("index length must match OHLCV arrays")
+        atr_values = (
+            np.asarray(atr_raw, dtype=float)
+            if atr_raw is not None
+            else self._atr_from_arrays(high=high, low=low, close=close)
+        )
+        if len(atr_values) != len(close):
+            raise ValueError("atr_raw length must match OHLCV arrays")
+
+        safe_close = np.maximum(close, 1e-9)
+        bar_range = high - low
+        safe_bar_range = np.maximum(bar_range, 1e-9)
+        log_close = np.log(safe_close)
         returns = np.diff(log_close, prepend=log_close[0])
         returns = self._winsorize(returns, 0.01, 0.99)
         cumulative_return = close[-1] / close[0] - 1 if close[0] else 0.0
@@ -103,9 +188,9 @@ class PatternEmbeddingEngine:
         price_norm = close / max(close[0], 1e-9) - 1.0
         volume_rel = volume / max(float(np.nanmedian(volume)), 1.0)
         volume_rel = np.clip(volume_rel, 0, 5) / 5.0
-        range_pct = np.clip((high - low) / np.maximum(safe_close, 1e-9), 0, 0.35) / 0.35
-        close_position = np.clip((close - low) / np.maximum(high - low, 1e-9), 0, 1)
-        body_pct = np.clip(np.abs(close - open_) / np.maximum(high - low, 1e-9), 0, 1)
+        range_pct = np.clip(bar_range / safe_close, 0, 0.35) / 0.35
+        close_position = np.clip((close - low) / safe_bar_range, 0, 1)
+        body_pct = np.clip(np.abs(close - open_) / safe_bar_range, 0, 1)
         rolling_vol = pd.Series(returns).rolling(5, min_periods=2).std().fillna(0).to_numpy()
         rolling_vol = np.clip(rolling_vol, 0, np.nanpercentile(rolling_vol, 95) + 1e-9)
         if rolling_vol.max() > 0:
@@ -123,12 +208,18 @@ class PatternEmbeddingEngine:
         local_runup = float(np.max(distance_from_low))
         last_quarter_return = float(close[-1] / close[max(0, len(close) * 3 // 4)] - 1)
         volume_trend = self._slope(volume_rel)
-        atr_pct = float(atr(df, 14).iloc[-1] / close[-1]) if len(df) >= 15 and close[-1] else 0.0
+        atr_pct = float(atr_values[-1] / close[-1]) if len(close) >= 15 and close[-1] else 0.0
         sma20 = float(np.mean(close[-min(20, len(close)) :]))
         sma50 = float(np.mean(close[-min(50, len(close)) :]))
         trend_regime = self._trend_regime(close[-1], sma20, sma50)
-        atr_series = atr(df, 14).bfill().fillna(0.0) if len(df) >= 15 else pd.Series([0.0] * len(df), index=df.index)
-        median_atr_pct = float(np.median(atr_series.tail(50) / np.maximum(df["close"].tail(50).astype(float), 1e-9)))
+        atr_series = self._bfill_nan(atr_values)
+        atr_tail_length = min(50, len(close))
+        median_atr_pct = float(
+            np.median(
+                atr_series[-atr_tail_length:]
+                / np.maximum(close[-atr_tail_length:], 1e-9)
+            )
+        )
         volatility_regime = float(atr_pct / max(median_atr_pct, 1e-9)) if median_atr_pct > 0 else 1.0
         previous_close = float(close[-2]) if len(close) >= 2 else float(close[-1])
         gap_pct = float(open_[-1] / max(previous_close, 1e-9) - 1.0)
@@ -139,7 +230,9 @@ class PatternEmbeddingEngine:
         breakdown_strength = float(previous_low / max(close[-1], 1e-9) - 1.0)
         avg_dollar_volume = float(np.mean(close[-lookback:] * volume[-lookback:]))
         liquidity_score = float(min(1.0, np.log1p(max(avg_dollar_volume, 0.0)) / np.log1p(50_000_000.0)))
-        distance_sma20_atr = float((close[-1] - sma20) / max(float(atr_series.iloc[-1]), close[-1] * 0.01, 1e-9))
+        distance_sma20_atr = float(
+            (close[-1] - sma20) / max(float(atr_series[-1]), close[-1] * 0.01, 1e-9)
+        )
         long_trigger_score = self._entry_trigger_score(
             side="long",
             close=float(close[-1]),
@@ -162,10 +255,17 @@ class PatternEmbeddingEngine:
             previous_low=previous_low,
             sma20=sma20,
         )
-        market_context = self._market_context_features(df, benchmark_frames or {})
+        market_context = self._market_context_features_from_values(
+            close,
+            index,
+            benchmark_frames or {},
+            benchmark_close_values=benchmark_close_values,
+            benchmark_close_slice=benchmark_close_slice,
+            week_codes=week_codes,
+        )
         phase_features = self._phase_features(volume_rel, range_pct, returns)
-        shapelet_features = self._shapelet_features(price_norm, volume_rel)
-        swing_features = self._swing_features(high, low, close)
+        shapelet_features = self._shapelet_features_cached(price_norm, volume_rel)
+        swing_features, swing_state_channel = self._swing_features_and_state_channel(high, low, close)
         gap_reclaim_features = self._gap_reclaim_features(
             close=close,
             open_=open_,
@@ -175,9 +275,8 @@ class PatternEmbeddingEngine:
             previous_high=previous_high,
             previous_low=previous_low,
         )
-        range_velocity = pd.Series(range_pct).diff().fillna(0.0).to_numpy()
+        range_velocity = self._first_zero_diff(range_pct)
         volume_price_pressure = np.clip(np.sign(returns) * volume_rel, -1.0, 1.0)
-        swing_state_channel = self._swing_state_channel(high, low, close)
 
         # Keep this legacy prefix stable. Stored pattern centroids may be shorter
         # and NovelPatternMatcher intentionally compares only the saved prefix.
@@ -193,7 +292,7 @@ class PatternEmbeddingEngine:
             distance_from_low,
         ]
         legacy_downsampled = np.concatenate(
-            [self._resample(channel, self.points_per_channel) for channel in legacy_channels]
+            [self._resample_cached(channel, self.points_per_channel) for channel in legacy_channels]
         )
         legacy_scalar_features = np.array(
             [
@@ -229,7 +328,7 @@ class PatternEmbeddingEngine:
             swing_state_channel,
         ]
         enhanced_downsampled = np.concatenate(
-            [self._resample(channel, self.points_per_channel) for channel in enhanced_channels]
+            [self._resample_cached(channel, self.points_per_channel) for channel in enhanced_channels]
         )
         enhanced_scalar_features = np.array(
             [
@@ -294,13 +393,30 @@ class PatternEmbeddingEngine:
             "volume_price_pressure_last": float(volume_price_pressure[-1]),
         }
         chart = {
-            "close_norm": self._resample(price_norm, 48).round(5).tolist(),
-            "volume_rel": self._resample(volume_rel, 48).round(5).tolist(),
-            "range_pct": self._resample(range_pct, 48).round(5).tolist(),
-            "swing_state": self._resample(swing_state_channel, 48).round(5).tolist(),
-            "volume_price_pressure": self._resample(volume_price_pressure, 48).round(5).tolist(),
+            "close_norm": self._resample_cached(price_norm, 48).round(5).tolist(),
+            "volume_rel": self._resample_cached(volume_rel, 48).round(5).tolist(),
+            "range_pct": self._resample_cached(range_pct, 48).round(5).tolist(),
+            "swing_state": self._resample_cached(swing_state_channel, 48).round(5).tolist(),
+            "volume_price_pressure": self._resample_cached(
+                volume_price_pressure,
+                48,
+            ).round(5).tolist(),
         }
         return vector, features, chart
+
+    def _resample_cached(self, values: np.ndarray, length: int) -> np.ndarray:
+        values = np.asarray(values, dtype=float)
+        if len(values) == length:
+            return values
+        if len(values) == 1:
+            return np.repeat(values[0], length)
+        key = (len(values), int(length))
+        grids = self._resample_grid_cache.get(key)
+        if grids is None:
+            grids = (np.linspace(0, 1, len(values)), np.linspace(0, 1, length))
+            self._resample_grid_cache[key] = grids
+        old_x, new_x = grids
+        return np.interp(new_x, old_x, values)
 
     @staticmethod
     def _resample(values: np.ndarray, length: int) -> np.ndarray:
@@ -312,6 +428,52 @@ class PatternEmbeddingEngine:
         old_x = np.linspace(0, 1, len(values))
         new_x = np.linspace(0, 1, length)
         return np.interp(new_x, old_x, values)
+
+    @staticmethod
+    def _atr_from_arrays(*, high: np.ndarray, low: np.ndarray, close: np.ndarray) -> np.ndarray:
+        if len(close) < 15:
+            return np.zeros(len(close), dtype=float)
+        previous_close = np.empty(len(close), dtype=float)
+        previous_close[0] = np.nan
+        previous_close[1:] = close[:-1]
+        true_range = np.nanmax(
+            np.vstack(
+                [
+                    np.abs(high - low),
+                    np.abs(high - previous_close),
+                    np.abs(low - previous_close),
+                ]
+            ),
+            axis=0,
+        )
+        rolling = pd.Series(true_range).rolling(window=14, min_periods=14).mean()
+        return rolling.to_numpy(dtype=float, copy=False)
+
+    @staticmethod
+    def _bfill_nan(values: np.ndarray) -> np.ndarray:
+        out = np.asarray(values, dtype=float).copy()
+        if out.size == 0:
+            return out
+        mask = np.isnan(out)
+        if not mask.any():
+            return out
+        valid = np.flatnonzero(~mask)
+        if valid.size == 0:
+            out.fill(0.0)
+            return out
+        positions = np.arange(out.size)
+        next_valid_positions = np.searchsorted(valid, positions, side="left")
+        fillable = mask & (next_valid_positions < valid.size)
+        out[fillable] = out[valid[next_valid_positions[fillable]]]
+        out[np.isnan(out)] = 0.0
+        return out
+
+    @staticmethod
+    def _first_zero_diff(values: np.ndarray) -> np.ndarray:
+        out = np.empty_like(values, dtype=float)
+        out[0] = 0.0
+        out[1:] = np.diff(values)
+        return out
 
     @staticmethod
     def _slope(values: np.ndarray) -> float:
@@ -373,10 +535,23 @@ class PatternEmbeddingEngine:
                 "range_phase_expansion": 0.0,
                 "return_phase_acceleration": 0.0,
             }
-        thirds = np.array_split(np.arange(n), 3)
-        volume_means = [float(np.mean(volume_rel[idxs])) if len(idxs) else 0.0 for idxs in thirds]
-        range_means = [float(np.mean(range_pct[idxs])) if len(idxs) else 0.0 for idxs in thirds]
-        return_means = [float(np.mean(returns[idxs])) if len(idxs) else 0.0 for idxs in thirds]
+        split_a = (n + 2) // 3
+        split_b = (2 * n + 2) // 3
+        volume_means = (
+            float(np.mean(volume_rel[:split_a])) if split_a else 0.0,
+            float(np.mean(volume_rel[split_a:split_b])) if split_b > split_a else 0.0,
+            float(np.mean(volume_rel[split_b:])) if n > split_b else 0.0,
+        )
+        range_means = (
+            float(np.mean(range_pct[:split_a])) if split_a else 0.0,
+            float(np.mean(range_pct[split_a:split_b])) if split_b > split_a else 0.0,
+            float(np.mean(range_pct[split_b:])) if n > split_b else 0.0,
+        )
+        return_means = (
+            float(np.mean(returns[:split_a])) if split_a else 0.0,
+            float(np.mean(returns[split_a:split_b])) if split_b > split_a else 0.0,
+            float(np.mean(returns[split_b:])) if n > split_b else 0.0,
+        )
         return {
             "volume_phase_early": volume_means[0] * 5.0,
             "volume_phase_mid": volume_means[1] * 5.0,
@@ -403,10 +578,74 @@ class PatternEmbeddingEngine:
             "price_volume_impulse_corr": cls._corr(np.diff(price, prepend=price[0]), volume),
         }
 
+    def _shapelet_features_cached(
+        self,
+        price_norm: np.ndarray,
+        volume_rel: np.ndarray,
+    ) -> dict[str, float]:
+        price = self._zscore(self._resample_cached(price_norm, 16))
+        volume = self._zscore(self._resample_cached(volume_rel, 16))
+        price_corr = self._zscore(price)
+        volume_corr = self._zscore(volume)
+        price_diff = np.diff(price, prepend=price[0])
+        with np.errstate(divide="ignore", invalid="ignore"):
+            corr_matrix = np.corrcoef(
+                np.vstack(
+                    [
+                        price_corr,
+                        _SHAPELET_V_TEMPLATE_Z,
+                        _SHAPELET_INVERTED_V_TEMPLATE_Z,
+                        _SHAPELET_FLAG_TEMPLATE_Z,
+                        volume_corr,
+                        _SHAPELET_IMPULSE_TEMPLATE_Z,
+                        price_diff,
+                        volume,
+                    ]
+                )
+            )
+        price_volume_impulse_corr = float(corr_matrix[6, 7])
+        if np.isnan(price_volume_impulse_corr) and (
+            float(np.std(price_diff)) == 0.0 or float(np.std(volume)) == 0.0
+        ):
+            price_volume_impulse_corr = 0.0
+        return {
+            "shapelet_v_reversal_score": max(0.0, float(corr_matrix[0, 1])),
+            "shapelet_inverted_v_score": max(
+                0.0,
+                float(corr_matrix[0, 2]),
+            ),
+            "shapelet_flag_continuation_score": max(
+                0.0,
+                float(corr_matrix[0, 3]),
+            ),
+            "shapelet_volume_impulse_score": max(
+                0.0,
+                float(corr_matrix[4, 5]),
+            ),
+            "price_volume_impulse_corr": price_volume_impulse_corr,
+        }
+
     @staticmethod
     def _swing_features(high: np.ndarray, low: np.ndarray, close: np.ndarray) -> dict[str, float]:
+        features, _ = PatternEmbeddingEngine._swing_features_and_state_channel(high, low, close)
+        return features
+
+    @staticmethod
+    def _swing_state_channel(high: np.ndarray, low: np.ndarray, close: np.ndarray) -> np.ndarray:
+        _, state = PatternEmbeddingEngine._swing_features_and_state_channel(high, low, close)
+        return state
+
+    @staticmethod
+    def _swing_features_and_state_channel(
+        high: np.ndarray,
+        low: np.ndarray,
+        close: np.ndarray,
+    ) -> tuple[dict[str, float], np.ndarray]:
         pivot_highs: list[float] = []
         pivot_lows: list[float] = []
+        state = np.zeros(len(close), dtype=float)
+        last_high: float | None = None
+        last_low: float | None = None
         hh = hl = lh = ll = 0
         for idx in range(1, max(1, len(close) - 1)):
             if high[idx] >= high[idx - 1] and high[idx] >= high[idx + 1]:
@@ -415,15 +654,28 @@ class PatternEmbeddingEngine:
                         hh += 1
                     else:
                         lh += 1
-                pivot_highs.append(float(high[idx]))
+                if last_high is not None:
+                    state[idx] += 1.0 if high[idx] > last_high else -1.0
+                last_high = float(high[idx])
+                pivot_highs.append(last_high)
             if low[idx] <= low[idx - 1] and low[idx] <= low[idx + 1]:
                 if pivot_lows:
                     if low[idx] > pivot_lows[-1]:
                         hl += 1
                     else:
                         ll += 1
-                pivot_lows.append(float(low[idx]))
+                if last_low is not None:
+                    state[idx] += 1.0 if low[idx] > last_low else -1.0
+                last_low = float(low[idx])
+                pivot_lows.append(last_low)
         total = max(1, hh + hl + lh + ll)
+        if len(state) > 1:
+            last_state = 0.0
+            for idx, value in enumerate(state):
+                if value == 0.0:
+                    state[idx] = last_state
+                else:
+                    last_state = value
         return {
             "swing_hh_rate": hh / total,
             "swing_hl_rate": hl / total,
@@ -431,25 +683,7 @@ class PatternEmbeddingEngine:
             "swing_ll_rate": ll / total,
             "swing_trend_score": (hh + hl - lh - ll) / total,
             "swing_pivot_count": float(len(pivot_highs) + len(pivot_lows)),
-        }
-
-    @staticmethod
-    def _swing_state_channel(high: np.ndarray, low: np.ndarray, close: np.ndarray) -> np.ndarray:
-        state = np.zeros(len(close), dtype=float)
-        last_high: float | None = None
-        last_low: float | None = None
-        for idx in range(1, max(1, len(close) - 1)):
-            if high[idx] >= high[idx - 1] and high[idx] >= high[idx + 1]:
-                if last_high is not None:
-                    state[idx] += 1.0 if high[idx] > last_high else -1.0
-                last_high = float(high[idx])
-            if low[idx] <= low[idx - 1] and low[idx] <= low[idx + 1]:
-                if last_low is not None:
-                    state[idx] += 1.0 if low[idx] > last_low else -1.0
-                last_low = float(low[idx])
-        if len(state) > 1:
-            state = pd.Series(state).replace(0.0, np.nan).ffill().fillna(0.0).to_numpy()
-        return np.clip(state, -1.0, 1.0)
+        }, np.clip(state, -1.0, 1.0)
 
     @staticmethod
     def _gap_reclaim_features(
@@ -503,37 +737,76 @@ class PatternEmbeddingEngine:
         window: pd.DataFrame,
         benchmark_frames: dict[str, pd.DataFrame],
     ) -> dict[str, float]:
-        close = window["close"].astype(float)
-        local_return = float(close.iloc[-1] / max(close.iloc[0], 1e-9) - 1.0)
-        weekly_close = close.resample("W").last() if isinstance(window.index, pd.DatetimeIndex) else close
+        return PatternEmbeddingEngine._market_context_features_from_values(
+            window["close"].to_numpy(dtype=float, copy=False),
+            window.index,
+            benchmark_frames,
+        )
+
+    @staticmethod
+    def _market_context_features_from_values(
+        close: np.ndarray,
+        index: pd.Index,
+        benchmark_frames: dict[str, pd.DataFrame],
+        *,
+        benchmark_close_values: _BenchmarkCloseValues | None = None,
+        benchmark_close_slice: tuple[int, int] | None = None,
+        week_codes: np.ndarray | None = None,
+    ) -> dict[str, float]:
+        local_return = float(close[-1] / max(close[0], 1e-9) - 1.0)
+        weekly_close = (
+            PatternEmbeddingEngine._weekly_close_values_from_week_codes(close, week_codes)
+            if week_codes is not None
+            else PatternEmbeddingEngine._weekly_close_values(close, index)
+        )
         weekly_return = (
-            float(weekly_close.iloc[-1] / max(weekly_close.iloc[0], 1e-9) - 1.0)
+            float(weekly_close[-1] / max(float(weekly_close[0]), 1e-9) - 1.0)
             if len(weekly_close) >= 2
             else local_return
         )
         weekly_trend = (
             PatternEmbeddingEngine._slope(
-                (weekly_close / max(float(weekly_close.iloc[0]), 1e-9) - 1.0).to_numpy()
+                weekly_close / max(float(weekly_close[0]), 1e-9) - 1.0
             )
             if len(weekly_close) >= 2
             else 0.0
         )
-        spy_return = PatternEmbeddingEngine._benchmark_return(window, benchmark_frames.get("SPY"))
-        qqq_return = PatternEmbeddingEngine._benchmark_return(window, benchmark_frames.get("QQQ"))
-        sector_return = PatternEmbeddingEngine._benchmark_return(
-            window,
-            PatternEmbeddingEngine._first_benchmark(
-                benchmark_frames,
-                ("SECTOR", "sector", "sector_etf", "SECTOR_ETF"),
-            ),
+        spy_close = PatternEmbeddingEngine._benchmark_close_values_from_context(
+            index,
+            benchmark_frames,
+            benchmark_close_values,
+            PatternEmbeddingEngine.BENCHMARK_KEY_GROUPS[0],
+            benchmark_group_index=0,
+            benchmark_close_slice=benchmark_close_slice,
         )
-        industry_return = PatternEmbeddingEngine._benchmark_return(
-            window,
-            PatternEmbeddingEngine._first_benchmark(
-                benchmark_frames,
-                ("INDUSTRY", "industry", "industry_etf", "INDUSTRY_ETF"),
-            ),
+        qqq_close = PatternEmbeddingEngine._benchmark_close_values_from_context(
+            index,
+            benchmark_frames,
+            benchmark_close_values,
+            PatternEmbeddingEngine.BENCHMARK_KEY_GROUPS[1],
+            benchmark_group_index=1,
+            benchmark_close_slice=benchmark_close_slice,
         )
+        sector_close = PatternEmbeddingEngine._benchmark_close_values_from_context(
+            index,
+            benchmark_frames,
+            benchmark_close_values,
+            PatternEmbeddingEngine.BENCHMARK_KEY_GROUPS[2],
+            benchmark_group_index=2,
+            benchmark_close_slice=benchmark_close_slice,
+        )
+        industry_close = PatternEmbeddingEngine._benchmark_close_values_from_context(
+            index,
+            benchmark_frames,
+            benchmark_close_values,
+            PatternEmbeddingEngine.BENCHMARK_KEY_GROUPS[3],
+            benchmark_group_index=3,
+            benchmark_close_slice=benchmark_close_slice,
+        )
+        spy_return = PatternEmbeddingEngine._benchmark_return_from_close_values(spy_close)
+        qqq_return = PatternEmbeddingEngine._benchmark_return_from_close_values(qqq_close)
+        sector_return = PatternEmbeddingEngine._benchmark_return_from_close_values(sector_close)
+        industry_return = PatternEmbeddingEngine._benchmark_return_from_close_values(industry_close)
         benchmark_return = spy_return if spy_return != 0.0 else qqq_return
         alignment = (
             1.0
@@ -545,8 +818,8 @@ class PatternEmbeddingEngine:
         market_returns = [value for value in (spy_return, qqq_return) if value != 0.0]
         market_return = float(np.mean(market_returns)) if market_returns else 0.0
         breadth_inputs = [
-            PatternEmbeddingEngine._benchmark_breadth_proxy(window, benchmark_frames.get("SPY")),
-            PatternEmbeddingEngine._benchmark_breadth_proxy(window, benchmark_frames.get("QQQ")),
+            PatternEmbeddingEngine._benchmark_breadth_proxy_from_close_values(spy_close),
+            PatternEmbeddingEngine._benchmark_breadth_proxy_from_close_values(qqq_close),
         ]
         breadth_values = [value for value in breadth_inputs if value is not None]
         breadth_proxy = float(np.mean(breadth_values)) if breadth_values else 0.5
@@ -569,12 +842,126 @@ class PatternEmbeddingEngine:
         }
 
     @staticmethod
+    def _weekly_close_values(close: np.ndarray, index: pd.Index) -> np.ndarray:
+        close_values = np.asarray(close, dtype=float)
+        if not isinstance(index, pd.DatetimeIndex):
+            return close_values
+        if close_values.size == 0:
+            return close_values
+        if index.hasnans or not index.is_monotonic_increasing:
+            return pd.Series(close_values, index=index).resample("W").last().to_numpy(
+                dtype=float,
+                copy=False,
+            )
+        local_index = index.tz_localize(None) if index.tz is not None else index
+        week_codes = local_index.to_period("W-SUN").asi8
+        first_week = int(week_codes[0])
+        last_week = int(week_codes[-1])
+        if last_week < first_week:
+            return pd.Series(close_values, index=index).resample("W").last().to_numpy(
+                dtype=float,
+                copy=False,
+            )
+        weekly_close = np.full(last_week - first_week + 1, np.nan, dtype=float)
+        valid_closes = ~np.isnan(close_values)
+        if bool(np.any(valid_closes)):
+            weekly_close[week_codes[valid_closes] - first_week] = close_values[valid_closes]
+        return weekly_close
+
+    @staticmethod
+    def _weekly_close_values_from_week_codes(close: np.ndarray, week_codes: np.ndarray) -> np.ndarray:
+        close_values = np.asarray(close, dtype=float)
+        if close_values.size == 0:
+            return close_values
+        codes = np.asarray(week_codes, dtype=np.int64)
+        if codes.size != close_values.size:
+            raise ValueError("week_codes length must match close values")
+        first_week = int(codes[0])
+        last_week = int(codes[-1])
+        if last_week < first_week:
+            raise ValueError("week_codes must be sorted ascending")
+        weekly_close = np.full(last_week - first_week + 1, np.nan, dtype=float)
+        valid_closes = ~np.isnan(close_values)
+        if bool(np.any(valid_closes)):
+            weekly_close[codes[valid_closes] - first_week] = close_values[valid_closes]
+        return weekly_close
+
+    @staticmethod
+    def _benchmark_close_values_from_context(
+        index: pd.Index,
+        benchmark_frames: dict[str, pd.DataFrame],
+        benchmark_close_values: _BenchmarkCloseValues | None,
+        keys: tuple[str, ...],
+        *,
+        benchmark_group_index: int | None = None,
+        benchmark_close_slice: tuple[int, int] | None = None,
+    ) -> np.ndarray | None:
+        if isinstance(benchmark_close_values, tuple):
+            if benchmark_group_index is None or benchmark_group_index >= len(benchmark_close_values):
+                return None
+            return PatternEmbeddingEngine._benchmark_window_close_values(
+                benchmark_close_values[benchmark_group_index],
+                benchmark_close_slice,
+            )
+        provided = PatternEmbeddingEngine._first_benchmark_close_values(
+            benchmark_close_values,
+            keys,
+            benchmark_close_slice=benchmark_close_slice,
+        )
+        if provided is not _MISSING_BENCHMARK:
+            return provided
+        return PatternEmbeddingEngine._benchmark_close_values_for_index(
+            index,
+            PatternEmbeddingEngine._first_benchmark(benchmark_frames, keys),
+        )
+
+    @staticmethod
+    def _first_benchmark_close_values(
+        benchmark_close_values: Mapping[str, np.ndarray | None] | None,
+        keys: tuple[str, ...],
+        *,
+        benchmark_close_slice: tuple[int, int] | None = None,
+    ) -> np.ndarray | None | object:
+        if not benchmark_close_values:
+            return _MISSING_BENCHMARK
+        for key in keys:
+            if key in benchmark_close_values:
+                return PatternEmbeddingEngine._benchmark_window_close_values(
+                    benchmark_close_values[key],
+                    benchmark_close_slice,
+                )
+        lower_map = {key.lower(): value for key, value in benchmark_close_values.items()}
+        for key in keys:
+            value = lower_map.get(key.lower(), _MISSING_BENCHMARK)
+            if value is not _MISSING_BENCHMARK:
+                return PatternEmbeddingEngine._benchmark_window_close_values(
+                    value,
+                    benchmark_close_slice,
+                )
+        return _MISSING_BENCHMARK
+
+    @staticmethod
+    def _benchmark_window_close_values(
+        close_values: np.ndarray | None,
+        benchmark_close_slice: tuple[int, int] | None,
+    ) -> np.ndarray | None:
+        if close_values is None:
+            return None
+        values = np.asarray(close_values, dtype=float)
+        if benchmark_close_slice is not None:
+            start, end = benchmark_close_slice
+            values = values[start : end + 1]
+        nan_mask = np.isnan(values)
+        return values[~nan_mask] if bool(np.any(nan_mask)) else values
+
+    @staticmethod
     def _first_benchmark(benchmark_frames: dict[str, pd.DataFrame], keys: tuple[str, ...]) -> pd.DataFrame | None:
-        lower_map = {key.lower(): value for key, value in benchmark_frames.items()}
         for key in keys:
             frame = benchmark_frames.get(key)
             if frame is not None:
                 return frame
+        lower_map = {key.lower(): value for key, value in benchmark_frames.items()}
+        for key in keys:
             frame = lower_map.get(key.lower())
             if frame is not None:
                 return frame
@@ -582,34 +969,74 @@ class PatternEmbeddingEngine:
 
     @staticmethod
     def _benchmark_return(window: pd.DataFrame, benchmark: pd.DataFrame | None) -> float:
-        if benchmark is None or benchmark.empty:
-            return 0.0
-        if not isinstance(window.index, pd.DatetimeIndex):
-            return 0.0
-        bench = benchmark.copy()
-        if not isinstance(bench.index, pd.DatetimeIndex):
-            return 0.0
-        bench = bench.sort_index()
-        aligned = bench.reindex(window.index, method="ffill")
-        aligned = aligned.dropna(subset=["close"])
-        if len(aligned) < 2:
-            return 0.0
-        return float(aligned["close"].iloc[-1] / max(float(aligned["close"].iloc[0]), 1e-9) - 1.0)
+        close_values = PatternEmbeddingEngine._benchmark_close_values(window, benchmark)
+        return PatternEmbeddingEngine._benchmark_return_from_close_values(close_values)
 
     @staticmethod
     def _benchmark_breadth_proxy(window: pd.DataFrame, benchmark: pd.DataFrame | None) -> float | None:
-        if benchmark is None or benchmark.empty or not isinstance(window.index, pd.DatetimeIndex):
+        close_values = PatternEmbeddingEngine._benchmark_close_values(window, benchmark)
+        return PatternEmbeddingEngine._benchmark_breadth_proxy_from_close_values(close_values)
+
+    @staticmethod
+    def _benchmark_close_values(window: pd.DataFrame, benchmark: pd.DataFrame | None) -> np.ndarray | None:
+        return PatternEmbeddingEngine._benchmark_close_values_for_index(window.index, benchmark)
+
+    @staticmethod
+    def _benchmark_close_values_for_index(
+        window_index: pd.Index,
+        benchmark: pd.DataFrame | None,
+    ) -> np.ndarray | None:
+        if benchmark is None or benchmark.empty:
+            return None
+        if not isinstance(window_index, pd.DatetimeIndex):
             return None
         if not isinstance(benchmark.index, pd.DatetimeIndex):
             return None
-        aligned = benchmark.sort_index().reindex(window.index, method="ffill").dropna(subset=["close"])
-        if len(aligned) < 5:
+        return PatternEmbeddingEngine._aligned_benchmark_close_values(window_index, benchmark)
+
+    @staticmethod
+    def _benchmark_return_from_close_values(close_values: np.ndarray | None) -> float:
+        if close_values is None or close_values.size < 2:
+            return 0.0
+        return float(close_values[-1] / max(float(close_values[0]), 1e-9) - 1.0)
+
+    @staticmethod
+    def _benchmark_breadth_proxy_from_close_values(close_values: np.ndarray | None) -> float | None:
+        if close_values is None or close_values.size < 5:
             return None
-        close = aligned["close"].astype(float)
-        sma = close.rolling(min(20, len(close)), min_periods=3).mean()
-        above_ma = float(close.iloc[-1] >= sma.iloc[-1])
-        positive_return = float(close.iloc[-1] >= close.iloc[0])
+        lookback = min(20, int(close_values.size))
+        sma = float(np.mean(close_values[-lookback:]))
+        above_ma = float(close_values[-1] >= sma)
+        positive_return = float(close_values[-1] >= close_values[0])
         return (above_ma + positive_return) / 2.0
+
+    @staticmethod
+    def _aligned_benchmark_close_values(
+        window_index: pd.DatetimeIndex,
+        benchmark: pd.DataFrame,
+    ) -> np.ndarray | None:
+        aligned = PatternEmbeddingEngine._aligned_benchmark_close_array(window_index, benchmark)
+        if aligned is None:
+            return None
+        return aligned[~np.isnan(aligned)]
+
+    @staticmethod
+    def _aligned_benchmark_close_array(
+        window_index: pd.DatetimeIndex,
+        benchmark: pd.DataFrame,
+    ) -> np.ndarray | None:
+        if "close" not in benchmark.columns or len(window_index) == 0:
+            return None
+        bench = benchmark if benchmark.index.is_monotonic_increasing else benchmark.sort_index()
+        positions = bench.index.searchsorted(window_index, side="right") - 1
+        positions = np.asarray(positions, dtype=int)
+        valid = positions >= 0
+        if not bool(np.any(valid)):
+            return None
+        aligned = np.full(len(window_index), np.nan, dtype=float)
+        closes = bench["close"].to_numpy(dtype=float, copy=False)
+        aligned[valid] = closes[positions[valid]]
+        return aligned
 
     @staticmethod
     def _corr(left: np.ndarray, right: np.ndarray) -> float:
@@ -617,11 +1044,15 @@ class PatternEmbeddingEngine:
         right = np.asarray(right, dtype=float)
         if len(left) != len(right) or len(left) < 2:
             return 0.0
+        with np.errstate(divide="ignore", invalid="ignore"):
+            corr = float(np.corrcoef(left, right)[0, 1])
+        if not np.isnan(corr):
+            return corr
         left_std = float(np.std(left))
         right_std = float(np.std(right))
         if left_std == 0.0 or right_std == 0.0:
             return 0.0
-        return float(np.corrcoef(left, right)[0, 1])
+        return corr
 
     @classmethod
     def _positive_corr(cls, left: np.ndarray, right: np.ndarray) -> float:
@@ -638,6 +1069,5 @@ class PatternEmbeddingEngine:
     @staticmethod
     def _winsorize(values: np.ndarray, low_q: float, high_q: float) -> np.ndarray:
         values = np.asarray(values, dtype=float)
-        lo = np.nanquantile(values, low_q)
-        hi = np.nanquantile(values, high_q)
+        lo, hi = np.nanquantile(values, (low_q, high_q))
         return np.clip(values, lo, hi)

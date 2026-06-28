@@ -2418,6 +2418,30 @@ def test_paper_submit_requires_du_account_on_custom_port(tmp_path) -> None:
     assert db.query(Trade).count() == 0
 
 
+def test_paper_submit_blocks_configured_blocked_account(tmp_path) -> None:
+    db = session_factory()
+    signal = add_signal(db, status=SignalStatus.PAPER_APPROVED)
+    settings = Settings(
+        trading_mode="paper",
+        ibkr_readonly=False,
+        ibkr_port=14002,
+        ibkr_account="DU123456",
+        ibkr_blocked_accounts="DU123456",
+        artifacts_dir=str(tmp_path),
+    )
+    fake_ib = PaperAccountFakeIB(account="DU123456")
+
+    with pytest.raises(IBKRSafetyError, match="TRADEO_IBKR_BLOCKED_ACCOUNTS"):
+        LivePreflightBrokerUnderTest(fake_ib=fake_ib, settings=settings).submit_signal_bracket(
+            db,
+            signal,
+        )
+
+    assert fake_ib.bracket_calls == 0
+    assert fake_ib.placed_orders == []
+    assert db.query(Trade).count() == 0
+
+
 def _fake_ib_trade(order_id: int, perm_id: int | None, status: str = "PendingSubmit"):
     return SimpleNamespace(
         order=SimpleNamespace(orderId=order_id, parentId=0),

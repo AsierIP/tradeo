@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+from threading import Lock
 from typing import Any
 
 import pandas as pd
@@ -14,6 +15,7 @@ from tradeo.core.config import Settings, get_settings
 from tradeo.services.data_provider import load_universe
 
 ALLOWED_US_EXCHANGES = {"NYSE", "NASDAQ", "AMEX", "ARCA", "NYSEARCA"}
+_SNAPSHOT_BUILD_LOCK = Lock()
 
 
 @dataclass(slots=True)
@@ -43,41 +45,46 @@ class UniverseSnapshotService:
         snapshot_date = _coerce_date(as_of)
         month_key = snapshot_date.strftime("%Y-%m")
         source_file = source_universe_file or settings.universe_file
-        raw = universe.copy() if universe is not None else load_universe(source_file)
-        filtered, rules = self._eligible(raw)
-        filtered = filtered.sort_values("symbol").drop_duplicates("symbol").reset_index(drop=True)
-        filtered["snapshot_month"] = month_key
-        filtered["snapshot_as_of"] = snapshot_date.isoformat()
-        filtered["point_in_time"] = bool(settings.universe_point_in_time_available)
-        filtered["survivorship_biased"] = not bool(settings.universe_point_in_time_available)
-
         path = settings.universe_snapshot_path / f"{month_key}.csv"
         metadata_path = path.with_suffix(".metadata.json")
-        self._atomic_write(path, filtered)
-        digest = _sha256_file(path)
-        metadata = {
-            "schema_version": 1,
-            "snapshot_month": month_key,
-            "snapshot_as_of": snapshot_date.isoformat(),
-            "source_universe_file": source_file,
-            "path": str(path),
-            "sha256": digest,
-            "row_count": int(len(filtered)),
-            "symbols": filtered["symbol"].tolist(),
-            "eligibility_rules": rules,
-            "point_in_time": bool(settings.universe_point_in_time_available),
-            "survivorship_biased": not bool(settings.universe_point_in_time_available),
-            "delisting_data_available": bool(settings.universe_delisting_data_available),
-            "content_hash": _content_hash(
-                month_key=month_key,
-                as_of=snapshot_date.isoformat(),
-                symbols=filtered["symbol"].tolist(),
-                rules=rules,
-            ),
-            "built_at": datetime.now(UTC).isoformat(),
-        }
-        self._write_json_atomic(metadata_path, metadata)
-        return metadata
+        with _SNAPSHOT_BUILD_LOCK:
+            cached = self._read_matching_metadata(metadata_path, source_file=source_file)
+            if cached is not None and path.exists():
+                return cached
+
+            raw = universe.copy() if universe is not None else load_universe(source_file)
+            filtered, rules = self._eligible(raw)
+            filtered = filtered.sort_values("symbol").drop_duplicates("symbol").reset_index(drop=True)
+            filtered["snapshot_month"] = month_key
+            filtered["snapshot_as_of"] = snapshot_date.isoformat()
+            filtered["point_in_time"] = bool(settings.universe_point_in_time_available)
+            filtered["survivorship_biased"] = not bool(settings.universe_point_in_time_available)
+
+            self._atomic_write(path, filtered)
+            digest = _sha256_file(path)
+            metadata = {
+                "schema_version": 1,
+                "snapshot_month": month_key,
+                "snapshot_as_of": snapshot_date.isoformat(),
+                "source_universe_file": source_file,
+                "path": str(path),
+                "sha256": digest,
+                "row_count": int(len(filtered)),
+                "symbols": filtered["symbol"].tolist(),
+                "eligibility_rules": rules,
+                "point_in_time": bool(settings.universe_point_in_time_available),
+                "survivorship_biased": not bool(settings.universe_point_in_time_available),
+                "delisting_data_available": bool(settings.universe_delisting_data_available),
+                "content_hash": _content_hash(
+                    month_key=month_key,
+                    as_of=snapshot_date.isoformat(),
+                    symbols=filtered["symbol"].tolist(),
+                    rules=rules,
+                ),
+                "built_at": datetime.now(UTC).isoformat(),
+            }
+            self._write_json_atomic(metadata_path, metadata)
+            return metadata
 
     def latest_snapshot(self) -> dict[str, Any] | None:
         settings = self.settings
@@ -102,6 +109,18 @@ class UniverseSnapshotService:
         if "symbol" not in df:
             return []
         return df["symbol"].astype(str).str.upper().tolist()
+
+    @staticmethod
+    def _read_matching_metadata(path: Path, *, source_file: str) -> dict[str, Any] | None:
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+        if not isinstance(payload, dict):
+            return None
+        if str(payload.get("source_universe_file") or "") != str(source_file):
+            return None
+        return payload
 
     def _eligible(self, universe: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, Any]]:
         settings = self.settings

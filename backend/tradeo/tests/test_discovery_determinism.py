@@ -147,9 +147,104 @@ def test_discovery_report_content_hash_is_stable_across_run_ids(tmp_path: Path) 
     assert first_path is not None and second_path is not None
     first_payload = json.loads(first_path.read_text(encoding="utf-8"))
     second_payload = json.loads(second_path.read_text(encoding="utf-8"))
+    assert "\n" not in first_path.read_text(encoding="utf-8")
+    assert list(first_path.parent.glob(f".{first_path.name}.*.tmp")) == []
     assert first_payload["determinism"]["algo"] == "sha256_canonical_json_v1"
     assert first_payload["determinism"]["content_hash"] == second_payload["determinism"]["content_hash"]
-    assert first_payload["determinism"]["excluded_keys"] == sorted(DEFAULT_VOLATILE_KEYS)
-    stripped_first = canonical_json({k: v for k, v in first_payload.items() if k != "determinism"})
-    stripped_second = canonical_json({k: v for k, v in second_payload.items() if k != "determinism"})
+    report_artifact_keys = frozenset({"report_artifacts", "report_artifact_mode"})
+    assert first_payload["determinism"]["excluded_keys"] == sorted(
+        DEFAULT_VOLATILE_KEYS | report_artifact_keys
+    )
+    stripped_first = canonical_json(
+        {k: v for k, v in first_payload.items() if k != "determinism"},
+        exclude_keys=DEFAULT_VOLATILE_KEYS | report_artifact_keys,
+    )
+    stripped_second = canonical_json(
+        {k: v for k, v in second_payload.items() if k != "determinism"},
+        exclude_keys=DEFAULT_VOLATILE_KEYS | report_artifact_keys,
+    )
     assert stripped_first == stripped_second
+
+
+def test_discovery_benchmark_json_only_mode_skips_markdown_without_changing_hash(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    agent = PatternDiscoveryLabAgent(provider=object(), settings=Settings(reports_dir=str(tmp_path)))
+    candidates = _engine().discover(_make_samples())
+    assert candidates
+    params = {"timeframe": "1d", "window_sizes": [20], "seed": 42}
+    summary = {
+        "windows_sampled": 48,
+        "clusters_evaluated": len(candidates),
+        "accepted_patterns": len(candidates),
+        "rejected_patterns": 0,
+    }
+
+    full_path = agent._write_report(1, params, dict(summary), candidates)
+    monkeypatch.setenv("TRADEO_DISCOVERY_BENCHMARK_REPORT_MODE", "json_only")
+    json_only_path = agent._write_report(2, params, dict(summary), candidates)
+
+    assert full_path is not None and json_only_path is not None
+    assert full_path.with_suffix(".md").exists()
+    assert not json_only_path.with_suffix(".md").exists()
+
+    full_payload = json.loads(full_path.read_text(encoding="utf-8"))
+    json_only_payload = json.loads(json_only_path.read_text(encoding="utf-8"))
+    assert full_payload["summary"]["report_artifacts"]["markdown_written"] is True
+    assert json_only_payload["summary"]["report_artifacts"]["markdown_written"] is False
+    assert json_only_payload["summary"]["report_artifacts"]["mode"] == "json_only"
+    assert (
+        full_payload["determinism"]["content_hash"]
+        == json_only_payload["determinism"]["content_hash"]
+    )
+
+
+def test_discovery_report_content_hash_excludes_phase_timings(tmp_path: Path) -> None:
+    agent = PatternDiscoveryLabAgent(provider=object(), settings=Settings(reports_dir=str(tmp_path)))
+    candidates = _engine().discover(_make_samples())
+    assert candidates
+    params = {"timeframe": "1d", "window_sizes": [20], "seed": 42}
+    summary = {
+        "windows_sampled": 48,
+        "clusters_evaluated": len(candidates),
+        "accepted_patterns": len(candidates),
+        "rejected_patterns": 0,
+    }
+
+    first_path = agent._write_report(
+        1,
+        params,
+        {
+            **summary,
+            "phase_timings": {"data_fetch_s": 1.0, "clustering_s": 2.0},
+            "phase_counts": {"symbols_fetched": 3},
+            "phase_diagnostics": {"clustering_profile": {"samples": 10}},
+        },
+        candidates,
+    )
+    second_path = agent._write_report(
+        2,
+        params,
+        {
+            **summary,
+            "phase_timings": {"data_fetch_s": 9.0, "clustering_s": 8.0},
+            "phase_counts": {"symbols_fetched": 7},
+            "phase_diagnostics": {"clustering_profile": {"samples": 20}},
+        },
+        candidates,
+    )
+    assert first_path is not None and second_path is not None
+
+    first_payload = json.loads(first_path.read_text(encoding="utf-8"))
+    second_payload = json.loads(second_path.read_text(encoding="utf-8"))
+
+    assert first_payload["summary"]["phase_timings"] != second_payload["summary"]["phase_timings"]
+    assert (
+        first_payload["summary"]["phase_diagnostics"]
+        != second_payload["summary"]["phase_diagnostics"]
+    )
+    assert first_payload["determinism"]["content_hash"] == second_payload["determinism"]["content_hash"]
+    assert "phase_timings" in first_payload["determinism"]["excluded_keys"]
+    assert "phase_counts" in first_payload["determinism"]["excluded_keys"]
+    assert "phase_diagnostics" in first_payload["determinism"]["excluded_keys"]

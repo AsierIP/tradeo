@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import shutil
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -49,7 +50,7 @@ class GlobalExperimentRegistry:
         payload = self.load()
         payload["schema_version"] = 2
         payload["hash_algorithm"] = self.hash_algorithm
-        previous_registry_hash = self.registry_hash(payload) if self.path.exists() else ""
+        previous_registry_hash = self._previous_registry_hash(payload) if self.path.exists() else ""
         now = datetime.now(timezone.utc).isoformat()
         payload["updated_at"] = now
         experiments = payload.setdefault("experiments", [])
@@ -163,9 +164,9 @@ class GlobalExperimentRegistry:
             "latest_run_manifest_hash": run_manifest["run_manifest_hash"],
         }
         payload["latest_run_manifest"] = run_manifest
-        payload["registry_hash"] = self.registry_hash(payload)
+        registry_hash, registry_bytes = self._finalize_payload(payload)
         backup_path = self._backup_existing()
-        self._atomic_write(payload)
+        self._atomic_write(registry_bytes)
         for (
             candidate,
             experiment_id,
@@ -188,7 +189,7 @@ class GlobalExperimentRegistry:
                 "edge_claim": "NO_DEMOSTRADO",
                 "hash_algorithm": self.hash_algorithm,
                 "previous_registry_hash": previous_registry_hash,
-                "registry_hash": payload["registry_hash"],
+                "registry_hash": registry_hash,
                 "run_manifest_hash": run_manifest["run_manifest_hash"],
                 "hash_chain_valid": True,
             }
@@ -200,7 +201,7 @@ class GlobalExperimentRegistry:
             "global_trial_count": global_trial_count,
             "hash_algorithm": self.hash_algorithm,
             "previous_registry_hash": previous_registry_hash,
-            "registry_hash": payload["registry_hash"],
+            "registry_hash": registry_hash,
             "run_manifest_hash": run_manifest["run_manifest_hash"],
             "backup_path": str(backup_path) if backup_path is not None else "",
         }
@@ -316,18 +317,73 @@ class GlobalExperimentRegistry:
         shutil.copy2(self.path, backup)
         return backup
 
-    def _atomic_write(self, payload: dict[str, Any]) -> None:
+    def _atomic_write(self, payload: bytes) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        temp_path = self.path.with_name(f".{self.path.name}.{os.getpid()}.tmp")
+        temp_path = self.path.with_name(f".{self.path.name}.{os.getpid()}.{time.time_ns()}.tmp")
         try:
-            temp_path.write_text(
-                json.dumps(self._json_clean(payload), indent=2, sort_keys=True),
-                encoding="utf-8",
-            )
+            temp_path.write_bytes(payload)
             os.replace(temp_path, self.path)
         finally:
             if temp_path.exists():
                 temp_path.unlink()
+
+    def _finalize_payload(self, payload: dict[str, Any]) -> tuple[str, bytes]:
+        clean = self._json_clean(payload)
+        if not isinstance(clean, dict):
+            raise TypeError("registry payload must serialize to a JSON object")
+        hash_items = self._top_level_items(
+            {key: value for key, value in clean.items() if key != "registry_hash"}
+        )
+        registry_hash = hashlib.sha256(
+            self._object_bytes([item for _, item in hash_items])
+        ).hexdigest()
+        clean["registry_hash"] = registry_hash
+        payload["registry_hash"] = registry_hash
+        registry_item = self._top_level_items({"registry_hash": registry_hash})[0]
+        raw = self._object_bytes(
+            [
+                item
+                for _, item in sorted(
+                    [*hash_items, registry_item],
+                    key=lambda entry: entry[0],
+                )
+            ]
+        )
+        return registry_hash, raw
+
+    def _previous_registry_hash(self, payload: dict[str, Any]) -> str:
+        stored = payload.get("registry_hash")
+        if (
+            isinstance(stored, str)
+            and len(stored) == 64
+            and all(ch in "0123456789abcdef" for ch in stored.lower())
+        ):
+            return stored
+        return self.registry_hash(payload)
+
+    @staticmethod
+    def _top_level_items(payload: dict[str, Any]) -> list[tuple[str, bytes]]:
+        return [
+            (
+                key,
+                (
+                    json.dumps(key, ensure_ascii=False, separators=(",", ":"))
+                    + ":"
+                    + json.dumps(
+                        value,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                        default=str,
+                    )
+                ).encode("utf-8"),
+            )
+            for key, value in sorted(payload.items(), key=lambda item: item[0])
+        ]
+
+    @staticmethod
+    def _object_bytes(items: list[bytes]) -> bytes:
+        return b"{" + b",".join(items) + b"}"
 
     def registry_hash(self, payload: dict[str, Any]) -> str:
         clean = self._json_clean(payload)

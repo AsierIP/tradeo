@@ -83,6 +83,25 @@ def test_account_readiness_preflight_blocks_unmanaged_account_and_symbol(
     assert symbol_check["missing_symbols"] == ["MSFT"]
 
 
+def test_account_readiness_preflight_blocks_explicitly_blocked_account(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_ib = FakeIB(["DU123456"])
+    broker = IBKRBroker(
+        settings=_live_settings(
+            ibkr_account="DU123456",
+            ibkr_blocked_accounts="U999999, du123456",
+        )
+    )
+    monkeypatch.setattr(broker, "_connect", lambda: fake_ib)
+
+    status = broker.account_readiness_preflight(symbols=["AAPL"])
+
+    assert status["ok"] is False
+    assert status["selected_account_blocked"] is True
+    assert "blocked_ibkr_account" in status["block_reasons"]
+
+
 def test_account_readiness_preflight_reports_static_live_blockers_without_order_api(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

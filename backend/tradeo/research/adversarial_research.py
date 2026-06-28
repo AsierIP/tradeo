@@ -26,13 +26,18 @@ class AdversarialResearchEngine:
         metrics: dict[str, Any],
         causal_invariance: dict[str, Any] | None = None,
         market_replay: dict[str, Any] | None = None,
+        observed_outcomes: np.ndarray | None = None,
+        baseline_outcomes: np.ndarray | None = None,
     ) -> dict[str, Any]:
         if not samples:
             return self._empty()
-        observed = np.asarray(
-            [RewardRiskAnalyzer._simulate_sample(sample, side, rr)[0] for sample in samples],
-            dtype=float,
-        )
+        if observed_outcomes is None or len(observed_outcomes) != len(samples):
+            observed = np.asarray(
+                [RewardRiskAnalyzer._simulate_sample(sample, side, rr)[0] for sample in samples],
+                dtype=float,
+            )
+        else:
+            observed = np.asarray(observed_outcomes, dtype=float)
         observed_expectancy = float(np.mean(observed)) if len(observed) else 0.0
         tests = {
             "leakage_probe": self._leakage_probe(samples, observed),
@@ -43,6 +48,7 @@ class AdversarialResearchEngine:
                 rr,
                 len(samples),
                 observed_expectancy,
+                baseline_outcomes=baseline_outcomes,
             ),
             "universe_shock": self._universe_shock(samples, observed),
             "date_shock": self._date_shock(samples, observed),
@@ -126,13 +132,18 @@ class AdversarialResearchEngine:
         rr: float,
         size: int,
         observed_expectancy: float,
+        *,
+        baseline_outcomes: np.ndarray | None = None,
     ) -> dict[str, Any]:
         if not baseline_samples or size <= 0:
             return self._test("shuffled_assignment_placebo", 0.55, warning="placebo baseline unavailable")
-        outcomes = np.asarray(
-            [RewardRiskAnalyzer._simulate_sample(sample, side, rr)[0] for sample in baseline_samples],
-            dtype=float,
-        )
+        if baseline_outcomes is None or len(baseline_outcomes) != len(baseline_samples):
+            outcomes = np.asarray(
+                [RewardRiskAnalyzer._simulate_sample(sample, side, rr)[0] for sample in baseline_samples],
+                dtype=float,
+            )
+        else:
+            outcomes = np.asarray(baseline_outcomes, dtype=float)
         if len(outcomes) == 0:
             return self._test("shuffled_assignment_placebo", 0.55, warning="placebo outcomes unavailable")
         start = self._seed_index(side, rr, size, len(outcomes))

@@ -28,6 +28,7 @@ class ValidationGate:
         metrics = candidate.metrics
         reasons: list[str] = []
         warnings: list[str] = []
+        thresholds = self._thresholds(candidate)
         self._sanitize_numeric_metrics(candidate, metrics, reasons)
         rr_metrics = metrics.get("rr_metrics", {})
         best_rr = float(metrics.get("best_rr", 0.0))
@@ -52,12 +53,12 @@ class ValidationGate:
         if not isinstance(quant, dict):
             quant = {}
         effective_samples = metrics.get("effective_sample_count")
-        if candidate.sample_count < s.discovery_min_samples:
-            reasons.append(f"muestras insuficientes: {candidate.sample_count} < {s.discovery_min_samples}")
-        if effective_samples is not None and float(effective_samples) < s.discovery_min_effective_samples:
+        if candidate.sample_count < thresholds["min_samples"]:
+            reasons.append(f"muestras insuficientes: {candidate.sample_count} < {thresholds['min_samples']}")
+        if effective_samples is not None and float(effective_samples) < thresholds["min_effective_samples"]:
             reasons.append(
                 "muestras efectivas insuficientes (solapamiento/pseudo-replicacion): "
-                f"n_eff={float(effective_samples):.1f} < {s.discovery_min_effective_samples:g}"
+                f"n_eff={float(effective_samples):.1f} < {thresholds['min_effective_samples']:g}"
             )
         if metrics.get("fdr_passed") is False:
             reasons.append(
@@ -65,12 +66,12 @@ class ValidationGate:
                 f"p={float(metrics.get('null_p_value', 1.0)):.4f}, "
                 f"tests={int(metrics.get('fdr_test_count', 0) or 0)})"
             )
-        if train_sample_count < s.discovery_min_samples:
-            reasons.append(f"muestras train insuficientes: {train_sample_count} < {s.discovery_min_samples}")
-        if candidate.symbol_count < s.discovery_min_symbols:
-            reasons.append(f"poca diversidad de símbolos: {candidate.symbol_count} < {s.discovery_min_symbols}")
-        if candidate.year_count < s.discovery_min_years:
-            reasons.append(f"poca diversidad temporal: {candidate.year_count} < {s.discovery_min_years}")
+        if train_sample_count < thresholds["min_samples"]:
+            reasons.append(f"muestras train insuficientes: {train_sample_count} < {thresholds['min_samples']}")
+        if candidate.symbol_count < thresholds["min_symbols"]:
+            reasons.append(f"poca diversidad de símbolos: {candidate.symbol_count} < {thresholds['min_symbols']}")
+        if candidate.year_count < thresholds["min_years"]:
+            reasons.append(f"poca diversidad temporal: {candidate.year_count} < {thresholds['min_years']}")
         concentration = metrics.get("concentration_checks")
         if isinstance(concentration, dict) and concentration.get("passed") is False:
             reasons.append(
@@ -358,6 +359,25 @@ class ValidationGate:
 
     def evaluate_many(self, candidates: list[ClusterCandidate]) -> list[ClusterCandidate]:
         return [self.evaluate(candidate) for candidate in candidates]
+
+    def _thresholds(self, candidate: ClusterCandidate) -> dict[str, float]:
+        s = self.settings
+        assert s is not None
+        timeframe = str(candidate.timeframe or "").strip().lower()
+        is_intraday = timeframe not in {"1d", "1day", "1 day", "daily", ""}
+        if not is_intraday:
+            return {
+                "min_samples": float(s.discovery_min_samples),
+                "min_effective_samples": float(s.discovery_min_effective_samples),
+                "min_symbols": float(s.discovery_min_symbols),
+                "min_years": float(s.discovery_min_years),
+            }
+        return {
+            "min_samples": float(s.intraday_research_min_samples),
+            "min_effective_samples": float(s.intraday_research_min_effective_samples),
+            "min_symbols": float(s.intraday_research_min_symbols),
+            "min_years": float(s.intraday_research_min_years),
+        }
 
     def _sanitize_numeric_metrics(
         self,

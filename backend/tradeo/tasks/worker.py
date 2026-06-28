@@ -1,6 +1,13 @@
 from __future__ import annotations
 
+import atexit
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures.process import BrokenProcessPool
 from dataclasses import dataclass
+import json
+import multiprocessing
+import os
+import sys
 from threading import Lock
 import time
 from datetime import datetime, timedelta, timezone
@@ -31,6 +38,7 @@ from tradeo.modules.shared.entry_scanner import (
 )
 from tradeo.services.director_review_gate import DirectorReviewGate
 from tradeo.services.data_provider import (
+    pick_symbols,
     universe_file_for_interval,
     universe_scope_for_interval,
 )
@@ -39,6 +47,7 @@ from tradeo.services.runtime_status import write_intraday_session_status, write_
 from tradeo.services.scanner import MarketScanner
 from tradeo.services.self_improvement import SelfImprovementEngine
 from tradeo.services.ops_alerts import record_internal_alert, record_job_failure
+from tradeo.services.provider_factory import get_market_data_provider
 from tradeo.services.watchdog import SystemWatchdog
 
 IntradayJobAction = Callable[[Settings], dict[str, Any]]
@@ -56,7 +65,31 @@ class IntradayJobSpec:
     day_of_week: str = "mon-fri"
 
 
+@dataclass(frozen=True, slots=True)
+class IntradayResearchProcessJob:
+    timeframe: str
+    chunk_index: int
+    chunk_count: int
+    symbols: tuple[str, ...] | None
+    pool_run_id: str
+    estimated_cost: int = 0
+    allow_recent_duplicates: bool = False
+
+
 _INTRADAY_JOB_LOCKS: dict[str, Lock] = {}
+_INTRADAY_RESEARCH_PROCESS_POOL: ProcessPoolExecutor | None = None
+_INTRADAY_RESEARCH_PROCESS_POOL_KEY: tuple[int, int, str | None] | None = None
+_INTRADAY_RESEARCH_PROCESS_POOL_LOCK = Lock()
+_INTRADAY_RESEARCH_PROCESS_WORKER_RUN_ID: str | None = None
+_INTRADAY_RESEARCH_PROCESS_START_METHOD_ENV = "TRADEO_INTRADAY_RESEARCH_PROCESS_START_METHOD"
+_INTRADAY_RESEARCH_ADAPTIVE_CHUNKS_ENV = "TRADEO_INTRADAY_RESEARCH_ADAPTIVE_CHUNKS"
+_NATIVE_THREAD_ENV_VARS = (
+    "OMP_NUM_THREADS",
+    "OPENBLAS_NUM_THREADS",
+    "MKL_NUM_THREADS",
+    "NUMEXPR_NUM_THREADS",
+    "VECLIB_MAXIMUM_THREADS",
+)
 
 
 def _record_job_failure(db, job_id: str, exc: BaseException) -> None:  # noqa: ANN001
@@ -130,9 +163,13 @@ def discovery_job() -> None:
             "window_sizes": settings.discovery_window_size_list,
             "forward_bars": settings.discovery_forward_bar_list,
         }
-        running = db.query(DiscoveryRun).filter(DiscoveryRun.status == "running").first()
-        if running:
-            logger.info("discovery job skipped: run {} already running", running.id)
+        running = db.query(DiscoveryRun).filter(DiscoveryRun.status == "running").all()
+        matching_running = next(
+            (run for run in running if _discovery_params_match(run.params_json or {}, params)),
+            None,
+        )
+        if matching_running:
+            logger.info("discovery job skipped: equivalent run {} already running", matching_running.id)
             return
         recent_cutoff = datetime.now(timezone.utc) - timedelta(
             minutes=max(1, settings.discovery_scan_minutes)
@@ -336,12 +373,7 @@ def intraday_data_sync_job() -> None:
     _run_intraday_job(
         "intraday_data_sync",
         "intraday_data_sync_enabled",
-        lambda settings: _intraday_placeholder(
-            settings,
-            component="data_sync",
-            reason="market_data_adapter_not_wired",
-            details={"timeframes": settings.intraday_timeframe_list},
-        ),
+        _run_intraday_data_sync,
     )
 
 
@@ -350,6 +382,36 @@ def intraday_research_job() -> None:
         "intraday_research",
         "intraday_research_enabled",
         _run_intraday_research,
+    )
+
+
+def intraday_research_process_pool_job() -> None:
+    _run_intraday_job(
+        "intraday_research_process_pool",
+        "intraday_research_enabled",
+        _run_intraday_research_process_pool,
+    )
+
+
+def intraday_research_timeframe_job(timeframe: str) -> None:
+    safe_timeframe = timeframe.replace("/", "_").replace(" ", "_")
+    _run_intraday_job(
+        f"intraday_research_{safe_timeframe}",
+        "intraday_research_enabled",
+        lambda settings: _run_intraday_research(settings, timeframes=[timeframe]),
+    )
+
+
+def intraday_research_timeframe_chunk_job(timeframe: str, chunk_index: int, chunk_count: int) -> None:
+    safe_timeframe = timeframe.replace("/", "_").replace(" ", "_")
+    _run_intraday_job(
+        f"intraday_research_{safe_timeframe}_chunk_{chunk_index + 1}_of_{chunk_count}",
+        "intraday_research_enabled",
+        lambda settings: _run_intraday_research(
+            settings,
+            timeframes=[timeframe],
+            symbol_chunk=(chunk_index, chunk_count),
+        ),
     )
 
 
@@ -419,6 +481,46 @@ def register_intraday_jobs(scheduler: BackgroundScheduler, settings: Settings) -
     registered: list[str] = []
     for spec in INTRADAY_JOB_SPECS:
         if not bool(getattr(settings, spec.enabled_attr)):
+            continue
+        if spec.job_id == "intraday_research" and settings.intraday_research_parallel_timeframes_enabled:
+            if settings.intraday_research_process_pool_enabled:
+                pool_spec = IntradayJobSpec(
+                    job_id="intraday_research_process_pool",
+                    func=intraday_research_process_pool_job,
+                    enabled_attr=spec.enabled_attr,
+                    trigger=spec.trigger,
+                    seconds_attr=spec.seconds_attr,
+                )
+                _add_intraday_job(scheduler, pool_spec, settings)
+                registered.append(pool_spec.job_id)
+                continue
+            chunk_count = _intraday_research_parallel_symbol_chunks(settings)
+            for timeframe in settings.intraday_timeframe_list:
+                if chunk_count <= 1:
+                    safe_timeframe = timeframe.replace("/", "_").replace(" ", "_")
+                    timeframe_spec = IntradayJobSpec(
+                        job_id=f"intraday_research_{safe_timeframe}",
+                        func=lambda tf=timeframe: intraday_research_timeframe_job(tf),
+                        enabled_attr=spec.enabled_attr,
+                        trigger=spec.trigger,
+                        seconds_attr=spec.seconds_attr,
+                    )
+                    _add_intraday_job(scheduler, timeframe_spec, settings)
+                    registered.append(timeframe_spec.job_id)
+                    continue
+                for chunk_index in range(chunk_count):
+                    safe_timeframe = timeframe.replace("/", "_").replace(" ", "_")
+                    chunk_spec = IntradayJobSpec(
+                        job_id=f"intraday_research_{safe_timeframe}_chunk_{chunk_index + 1}_of_{chunk_count}",
+                        func=lambda tf=timeframe, idx=chunk_index, count=chunk_count: (
+                            intraday_research_timeframe_chunk_job(tf, idx, count)
+                        ),
+                        enabled_attr=spec.enabled_attr,
+                        trigger=spec.trigger,
+                        seconds_attr=spec.seconds_attr,
+                    )
+                    _add_intraday_job(scheduler, chunk_spec, settings)
+                    registered.append(chunk_spec.job_id)
             continue
         _add_intraday_job(scheduler, spec, settings)
         registered.append(spec.job_id)
@@ -569,8 +671,70 @@ def _intraday_placeholder(
     }
 
 
-def _run_intraday_research(settings: Settings) -> dict[str, Any]:
+def _run_intraday_data_sync(settings: Settings) -> dict[str, Any]:
     timeframes = settings.intraday_timeframe_list
+    if not timeframes:
+        return {
+            "status": "noop",
+            "reason": "intraday_timeframes_empty",
+            "details": {"component": "data_sync"},
+        }
+
+    provider = get_market_data_provider(cache_refresh_enabled=True)
+    fetched = 0
+    failed: list[dict[str, str]] = []
+    symbols_by_timeframe: dict[str, int] = {}
+    for timeframe in timeframes:
+        symbols = pick_symbols(
+            limit=settings.intraday_research_limit_default,
+            interval=timeframe,
+            universe_file=universe_file_for_interval(settings, timeframe),
+        )
+        symbols_by_timeframe[timeframe] = len(symbols)
+        for symbol in symbols:
+            try:
+                provider.fetch_ohlcv(
+                    symbol,
+                    period=settings.intraday_research_period,
+                    interval=timeframe,
+                )
+                fetched += 1
+            except Exception as exc:  # noqa: BLE001 - keep warming the rest of the universe.
+                failed.append(
+                    {
+                        "symbol": symbol,
+                        "timeframe": timeframe,
+                        "error": f"{type(exc).__name__}: {exc}",
+                    }
+                )
+
+    status = "ok" if not failed else "degraded"
+    return {
+        "status": status,
+        "reason": "intraday_data_sync_completed",
+        "details": {
+            "component": "data_sync",
+            "safe_placeholder": False,
+            "timeframes": timeframes,
+            "symbols_by_timeframe": symbols_by_timeframe,
+            "fetched": fetched,
+            "failed": len(failed),
+            "failures": failed[:10],
+            "period": settings.intraday_research_period,
+        },
+    }
+
+
+def _run_intraday_research(
+    settings: Settings,
+    *,
+    timeframes: list[str] | None = None,
+    symbol_chunk: tuple[int, int] | None = None,
+    chunk_symbols: list[str] | tuple[str, ...] | None = None,
+    store_rejected: bool | None = None,
+    allow_recent_duplicates: bool = False,
+) -> dict[str, Any]:
+    timeframes = timeframes or settings.intraday_timeframe_list
     if not timeframes:
         return {
             "status": "noop",
@@ -594,22 +758,61 @@ def _run_intraday_research(settings: Settings) -> dict[str, Any]:
         )
 
         for timeframe in timeframes:
-            request = _intraday_research_request(settings, timeframe)
-            expected = _intraday_research_expected_params(settings, request)
-            if any(_discovery_params_match(run.params_json or {}, expected) for run in running):
-                skipped.append({"timeframe": timeframe, "reason": "run_already_running"})
+            resolved_chunk_symbols = None
+            if symbol_chunk is not None:
+                resolved_chunk_symbols = (
+                    list(chunk_symbols)
+                    if chunk_symbols is not None
+                    else _intraday_research_symbols_for_chunk(settings, timeframe, symbol_chunk)
+                )
+            if symbol_chunk is not None and not resolved_chunk_symbols:
+                skipped.append(
+                    {
+                        "timeframe": timeframe,
+                        "reason": "empty_symbol_chunk",
+                        "chunk": _intraday_chunk_details(symbol_chunk, []),
+                    }
+                )
                 continue
-            if any(
+            request = _intraday_research_request(
+                settings,
+                timeframe,
+                symbols=resolved_chunk_symbols,
+                store_rejected=store_rejected,
+            )
+            expected = _intraday_research_expected_params(settings, request)
+            if not allow_recent_duplicates and any(
+                _discovery_params_match(run.params_json or {}, expected) for run in running
+            ):
+                skipped.append(
+                    {
+                        "timeframe": timeframe,
+                        "reason": "run_already_running",
+                        "chunk": _intraday_chunk_details(symbol_chunk, resolved_chunk_symbols),
+                    }
+                )
+                continue
+            if not allow_recent_duplicates and any(
                 _discovery_params_match(run.params_json or {}, expected)
                 for run in recent_completed
             ):
-                skipped.append({"timeframe": timeframe, "reason": "recent_equivalent_run"})
+                skipped.append(
+                    {
+                        "timeframe": timeframe,
+                        "reason": "recent_equivalent_run",
+                        "chunk": _intraday_chunk_details(symbol_chunk, resolved_chunk_symbols),
+                    }
+                )
                 continue
 
-            result = PatternDiscoveryLabAgent(settings=settings).run(request, db)
+            provider = get_market_data_provider(
+                cache_refresh_enabled=settings.intraday_research_refresh_market_data_enabled
+            )
+            result = PatternDiscoveryLabAgent(settings=settings, provider=provider).run(request, db)
             runs.append(
                 {
                     "timeframe": timeframe,
+                    "chunk": _intraday_chunk_details(symbol_chunk, resolved_chunk_symbols),
                     "run_id": result.run_id,
                     "symbols_scanned": result.symbols_scanned,
                     "windows_sampled": result.windows_sampled,
@@ -629,18 +832,359 @@ def _run_intraday_research(settings: Settings) -> dict[str, Any]:
             "component": "research",
             "safe_placeholder": False,
             "timeframes": timeframes,
+            "symbol_chunk": _intraday_chunk_details(symbol_chunk, None),
             "runs": runs,
             "skipped": skipped,
             "period": settings.intraday_research_period,
             "limit": settings.intraday_research_limit_default,
             "interval_seconds": settings.intraday_research_interval_seconds,
+            "allow_recent_duplicates": allow_recent_duplicates,
         },
     }
 
 
-def _intraday_research_request(settings: Settings, timeframe: str) -> DiscoveryRunRequest:
+def _run_intraday_research_process_pool(
+    settings: Settings,
+    *,
+    allow_recent_duplicates: bool = False,
+) -> dict[str, Any]:
+    started = time.monotonic()
+    jobs = _intraday_research_process_jobs(
+        settings,
+        allow_recent_duplicates=allow_recent_duplicates,
+    )
+    if not jobs:
+        return {
+            "status": "noop",
+            "reason": "intraday_research_process_pool_empty",
+            "details": {"component": "research", "process_pool": True},
+        }
+
+    chunk_count = jobs[0].chunk_count
+    max_workers = min(max(1, int(settings.intraday_research_process_workers or 1)), len(jobs))
+    native_threads = max(1, int(settings.intraday_research_native_threads_per_process or 1))
+    start_method = _intraday_research_process_start_method()
+    runs: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+    errors: list[dict[str, str]] = []
+    worker_results: list[dict[str, Any]] = []
+    pool_broken = False
+
+    try:
+        executor = _intraday_research_process_executor(max_workers, native_threads)
+        futures = {
+            executor.submit(_run_intraday_research_process_worker, job): (submit_order, job)
+            for submit_order, job in enumerate(jobs)
+        }
+    except BrokenProcessPool:
+        _shutdown_intraday_research_process_pool()
+        executor = _intraday_research_process_executor(max_workers, native_threads)
+        futures = {
+            executor.submit(_run_intraday_research_process_worker, job): (submit_order, job)
+            for submit_order, job in enumerate(jobs)
+        }
+
+    for future in as_completed(futures):
+        submit_order, job = futures[future]
+        try:
+            result = future.result()
+        except Exception as exc:  # noqa: BLE001 - report the failed chunk and continue.
+            if isinstance(exc, BrokenProcessPool):
+                pool_broken = True
+            logger.exception(
+                "intraday research process chunk failed: {} chunk {}/{} {}",
+                job.timeframe,
+                job.chunk_index + 1,
+                job.chunk_count,
+                exc,
+            )
+            errors.append(
+                {
+                    "timeframe": job.timeframe,
+                    "chunk": f"{job.chunk_index + 1}_of_{job.chunk_count}",
+                    "error": f"{type(exc).__name__}: {exc}",
+                }
+            )
+            continue
+        details = dict(result.get("details") or {})
+        runs.extend(list(details.get("runs") or []))
+        skipped.extend(list(details.get("skipped") or []))
+        process_job = details.get("process_job")
+        if isinstance(process_job, dict):
+            process_job["submitted_order"] = submit_order
+            process_job["completed_order"] = len(worker_results)
+            worker_results.append(process_job)
+
+    if pool_broken:
+        _shutdown_intraday_research_process_pool()
+
+    status = "ok" if not errors else ("degraded" if runs or skipped else "error")
+    return {
+        "status": status,
+        "reason": "intraday_research_process_pool_completed",
+        "details": {
+            "component": "research",
+            "process_pool": True,
+            "process_workers": max_workers,
+            "jobs": len(jobs),
+            "chunks": chunk_count,
+            "configured_chunks": _intraday_research_parallel_symbol_chunks(settings),
+            "adaptive_chunks": _intraday_research_adaptive_chunks_enabled(),
+            "native_threads_per_process": native_threads,
+            "process_start_method": start_method or "default",
+            "allow_recent_duplicates": allow_recent_duplicates,
+            "runs": runs,
+            "skipped": skipped,
+            "errors": errors,
+            "worker_results": sorted(
+                worker_results,
+                key=lambda item: (
+                    str(item.get("timeframe") or ""),
+                    int(item.get("chunk_index") or 0),
+                ),
+            ),
+            "elapsed_seconds": round(time.monotonic() - started, 3),
+        },
+    }
+
+
+def _run_intraday_research_process_worker(
+    job: IntradayResearchProcessJob | tuple[str, int, int],
+) -> dict[str, Any]:
+    started = time.monotonic()
+    process_job = _coerce_intraday_research_process_job(job)
+    cache_clear = getattr(get_settings, "cache_clear", None)
+    if callable(cache_clear):
+        cache_clear()
+    settings = get_settings()
+    native_threads = max(1, int(settings.intraday_research_native_threads_per_process or 1))
+    _set_intraday_research_native_threads(native_threads)
+    _reset_intraday_research_process_worker_state(process_job.pool_run_id)
+
+    try:
+        from threadpoolctl import threadpool_limits
+    except ImportError:
+        result = _run_intraday_research(
+            settings,
+            timeframes=[process_job.timeframe],
+            symbol_chunk=(process_job.chunk_index, process_job.chunk_count),
+            chunk_symbols=process_job.symbols,
+            store_rejected=False,
+            allow_recent_duplicates=process_job.allow_recent_duplicates,
+        )
+        return _intraday_research_process_worker_result(result, process_job, started)
+
+    with threadpool_limits(limits=native_threads):
+        result = _run_intraday_research(
+            settings,
+            timeframes=[process_job.timeframe],
+            symbol_chunk=(process_job.chunk_index, process_job.chunk_count),
+            chunk_symbols=process_job.symbols,
+            store_rejected=False,
+            allow_recent_duplicates=process_job.allow_recent_duplicates,
+        )
+    return _intraday_research_process_worker_result(result, process_job, started)
+
+
+def _intraday_research_process_jobs(
+    settings: Settings,
+    *,
+    allow_recent_duplicates: bool = False,
+) -> list[IntradayResearchProcessJob]:
+    chunk_count = _intraday_research_process_chunk_count(settings)
+    pool_run_id = f"{os.getpid()}:{time.monotonic_ns()}"
+    jobs: list[IntradayResearchProcessJob] = []
+    timeframe_order = {
+        timeframe: index for index, timeframe in enumerate(settings.intraday_timeframe_list)
+    }
+    for timeframe in settings.intraday_timeframe_list:
+        symbol_chunks = _intraday_research_process_symbol_chunks(settings, timeframe, chunk_count)
+        for chunk_index, symbols, estimated_cost in symbol_chunks:
+            jobs.append(
+                IntradayResearchProcessJob(
+                    timeframe=timeframe,
+                    chunk_index=chunk_index,
+                    chunk_count=chunk_count,
+                    symbols=tuple(symbols or ()),
+                    pool_run_id=pool_run_id,
+                    estimated_cost=estimated_cost,
+                    allow_recent_duplicates=allow_recent_duplicates,
+                )
+            )
+    return _intraday_research_order_process_jobs(jobs, timeframe_order)
+
+
+def _intraday_research_order_process_jobs(
+    jobs: list[IntradayResearchProcessJob],
+    timeframe_order: dict[str, int],
+) -> list[IntradayResearchProcessJob]:
+    cost_aware = any(int(job.estimated_cost) > len(job.symbols or ()) for job in jobs)
+    return sorted(
+        jobs,
+        key=lambda job: (
+            -int(job.estimated_cost) if cost_aware else int(job.chunk_index),
+            int(job.chunk_index) if cost_aware else int(timeframe_order.get(job.timeframe, 0)),
+            int(timeframe_order.get(job.timeframe, 0)) if cost_aware else 0,
+        ),
+    )
+
+
+def _intraday_research_common_expected_params(settings: Settings) -> dict[str, Any]:
+    return {
+        "cadence": "intraday",
+        "limit": settings.intraday_research_limit_default,
+        "period": settings.intraday_research_period,
+        "window_sizes": settings.intraday_research_window_size_list,
+        "forward_bars": settings.intraday_research_forward_bar_list,
+        "stride": settings.intraday_research_stride,
+        "max_total_windows": settings.intraday_research_max_total_windows,
+        "max_windows_per_symbol": settings.intraday_research_max_windows_per_symbol,
+        "min_cluster_size": settings.intraday_research_min_cluster_size,
+        "max_clusters_per_window": settings.intraday_research_max_clusters_per_window,
+        "min_samples": settings.intraday_research_min_samples,
+        "min_effective_samples": settings.intraday_research_min_effective_samples,
+        "min_symbols": settings.intraday_research_min_symbols,
+        "min_years": settings.intraday_research_min_years,
+        "universe_file": settings.intraday_universe_file,
+    }
+
+
+def _coerce_intraday_research_process_job(
+    job: IntradayResearchProcessJob | tuple[str, int, int],
+) -> IntradayResearchProcessJob:
+    if isinstance(job, IntradayResearchProcessJob):
+        return job
+    timeframe, chunk_index, chunk_count = job
+    return IntradayResearchProcessJob(
+        timeframe=timeframe,
+        chunk_index=chunk_index,
+        chunk_count=chunk_count,
+        symbols=None,
+        pool_run_id="",
+        allow_recent_duplicates=False,
+    )
+
+
+def _intraday_research_process_executor(
+    max_workers: int,
+    native_threads: int,
+) -> ProcessPoolExecutor:
+    global _INTRADAY_RESEARCH_PROCESS_POOL, _INTRADAY_RESEARCH_PROCESS_POOL_KEY
+    start_method = _intraday_research_process_start_method()
+    key = (int(max_workers), int(native_threads), start_method)
+    with _INTRADAY_RESEARCH_PROCESS_POOL_LOCK:
+        if (
+            _INTRADAY_RESEARCH_PROCESS_POOL is not None
+            and _INTRADAY_RESEARCH_PROCESS_POOL_KEY == key
+        ):
+            return _INTRADAY_RESEARCH_PROCESS_POOL
+        if _INTRADAY_RESEARCH_PROCESS_POOL is not None:
+            _INTRADAY_RESEARCH_PROCESS_POOL.shutdown(wait=True, cancel_futures=False)
+        executor_kwargs: dict[str, Any] = {
+            "max_workers": max_workers,
+            "initializer": _intraday_research_process_initializer,
+            "initargs": (native_threads,),
+        }
+        if start_method is not None:
+            executor_kwargs["mp_context"] = multiprocessing.get_context(start_method)
+        _INTRADAY_RESEARCH_PROCESS_POOL = ProcessPoolExecutor(**executor_kwargs)
+        _INTRADAY_RESEARCH_PROCESS_POOL_KEY = key
+        return _INTRADAY_RESEARCH_PROCESS_POOL
+
+
+def _intraday_research_process_start_method() -> str | None:
+    requested = os.getenv(_INTRADAY_RESEARCH_PROCESS_START_METHOD_ENV, "auto").strip().lower()
+    available = multiprocessing.get_all_start_methods()
+    if requested in {"", "auto"}:
+        if sys.platform.startswith("linux") and "fork" in available:
+            return "fork"
+        return None
+    if requested in {"default", "none"}:
+        return None
+    if requested in available:
+        return requested
+    logger.warning(
+        "unsupported intraday research process start method {}; using Python default",
+        requested,
+    )
+    return None
+
+
+def _shutdown_intraday_research_process_pool() -> None:
+    global _INTRADAY_RESEARCH_PROCESS_POOL, _INTRADAY_RESEARCH_PROCESS_POOL_KEY
+    with _INTRADAY_RESEARCH_PROCESS_POOL_LOCK:
+        if _INTRADAY_RESEARCH_PROCESS_POOL is not None:
+            _INTRADAY_RESEARCH_PROCESS_POOL.shutdown(wait=False, cancel_futures=True)
+        _INTRADAY_RESEARCH_PROCESS_POOL = None
+        _INTRADAY_RESEARCH_PROCESS_POOL_KEY = None
+
+
+def _intraday_research_process_initializer(native_threads: int) -> None:
+    _set_intraday_research_native_threads(native_threads)
+    _reset_intraday_research_process_db_state()
+    cache_clear = getattr(get_settings, "cache_clear", None)
+    if callable(cache_clear):
+        cache_clear()
+
+
+def _set_intraday_research_native_threads(native_threads: int) -> None:
+    thread_count = str(max(1, int(native_threads)))
+    for env_var in _NATIVE_THREAD_ENV_VARS:
+        os.environ[env_var] = thread_count
+
+
+def _reset_intraday_research_process_worker_state(pool_run_id: str) -> None:
+    global _INTRADAY_RESEARCH_PROCESS_WORKER_RUN_ID
+    if not pool_run_id or _INTRADAY_RESEARCH_PROCESS_WORKER_RUN_ID == pool_run_id:
+        return
+    _reset_intraday_research_process_db_state()
+    _INTRADAY_RESEARCH_PROCESS_WORKER_RUN_ID = pool_run_id
+
+
+def _reset_intraday_research_process_db_state() -> None:
+    try:
+        from tradeo.db.session import engine
+
+        engine.dispose(close=False)
+    except Exception as exc:  # noqa: BLE001 - DB reconnect isolation is best effort.
+        logger.debug("intraday research process DB reset skipped: {}", exc)
+
+
+def _intraday_research_process_worker_result(
+    result: dict[str, Any],
+    job: IntradayResearchProcessJob,
+    started: float,
+) -> dict[str, Any]:
+    details = dict(result.get("details") or {})
+    details["process_job"] = {
+        "timeframe": job.timeframe,
+        "chunk_index": job.chunk_index,
+        "chunk_number": job.chunk_index + 1,
+        "chunk_count": job.chunk_count,
+        "symbols": len(job.symbols or ()),
+        "estimated_cost": int(job.estimated_cost),
+        "allow_recent_duplicates": job.allow_recent_duplicates,
+        "elapsed_seconds": round(time.monotonic() - started, 3),
+    }
+    return {
+        **result,
+        "details": details,
+    }
+
+
+atexit.register(_shutdown_intraday_research_process_pool)
+
+
+def _intraday_research_request(
+    settings: Settings,
+    timeframe: str,
+    *,
+    symbols: list[str] | None = None,
+    store_rejected: bool | None = None,
+) -> DiscoveryRunRequest:
     return DiscoveryRunRequest(
         limit=settings.intraday_research_limit_default,
+        symbols=symbols,
         period=settings.intraday_research_period,
         interval=timeframe,
         window_sizes=settings.intraday_research_window_size_list,
@@ -650,6 +1194,7 @@ def _intraday_research_request(settings: Settings, timeframe: str) -> DiscoveryR
         max_windows_per_symbol=settings.intraday_research_max_windows_per_symbol,
         min_cluster_size=settings.intraday_research_min_cluster_size,
         max_clusters_per_window=settings.intraday_research_max_clusters_per_window,
+        store_rejected=store_rejected,
     )
 
 
@@ -669,12 +1214,214 @@ def _intraday_research_expected_params(
         "max_windows_per_symbol": request.max_windows_per_symbol,
         "min_cluster_size": request.min_cluster_size,
         "max_clusters_per_window": request.max_clusters_per_window,
+        "min_samples": settings.intraday_research_min_samples,
+        "min_effective_samples": settings.intraday_research_min_effective_samples,
+        "min_symbols": settings.intraday_research_min_symbols,
+        "min_years": settings.intraday_research_min_years,
         "universe_file": settings.intraday_universe_file,
+        "symbols": request.symbols,
     }
 
 
 def _discovery_params_match(stored: dict[str, Any], expected: dict[str, Any]) -> bool:
     return all(stored.get(key) == value for key, value in expected.items())
+
+
+def _intraday_research_parallel_symbol_chunks(settings: Settings) -> int:
+    return max(1, int(settings.intraday_research_parallel_symbol_chunks or 1))
+
+
+def _intraday_research_process_chunk_count(settings: Settings) -> int:
+    configured = _intraday_research_parallel_symbol_chunks(settings)
+    if not bool(settings.intraday_research_process_pool_enabled):
+        return configured
+    if not _intraday_research_adaptive_chunks_enabled():
+        return configured
+    timeframe_count = len(settings.intraday_timeframe_list)
+    if timeframe_count <= 0:
+        return configured
+    process_workers = max(1, int(settings.intraday_research_process_workers or 1))
+    symbol_limit = int(settings.intraday_research_limit_default or 0)
+    if configured < 5 or process_workers <= 1 or symbol_limit <= configured:
+        return configured
+
+    candidate = configured + 1
+    current_jobs = configured * timeframe_count
+    candidate_jobs = candidate * timeframe_count
+    if current_jobs == process_workers and candidate_jobs > current_jobs:
+        return min(candidate, symbol_limit)
+    if current_jobs % process_workers != 0 and candidate_jobs % process_workers == 0:
+        return min(candidate, symbol_limit)
+    return configured
+
+
+def _intraday_research_adaptive_chunks_enabled() -> bool:
+    return _intraday_env_flag_enabled(_INTRADAY_RESEARCH_ADAPTIVE_CHUNKS_ENV)
+
+
+def _intraday_env_flag_enabled(name: str) -> bool:
+    return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _intraday_research_process_symbol_chunks(
+    settings: Settings,
+    timeframe: str,
+    chunk_count: int,
+) -> list[tuple[int, tuple[str, ...], int]]:
+    chunk_count = max(1, int(chunk_count))
+    symbols = pick_symbols(
+        limit=settings.intraday_research_limit_default,
+        interval=timeframe,
+        universe_file=universe_file_for_interval(settings, timeframe),
+    )
+    cost_estimates = _intraday_research_symbol_cost_estimates(settings, timeframe, symbols)
+    if len(cost_estimates) == len(symbols):
+        return _intraday_research_cost_balanced_symbol_chunks(
+            symbols,
+            cost_estimates,
+            chunk_count,
+        )
+    chunks: list[list[str]] = [[] for _ in range(chunk_count)]
+    for position, symbol in enumerate(symbols):
+        chunks[position % chunk_count].append(symbol)
+    return [
+        (chunk_index, tuple(chunk_symbols), len(chunk_symbols))
+        for chunk_index, chunk_symbols in enumerate(chunks)
+    ]
+
+
+def _intraday_research_cost_balanced_symbol_chunks(
+    symbols: list[str],
+    cost_estimates: dict[str, int],
+    chunk_count: int,
+) -> list[tuple[int, tuple[str, ...], int]]:
+    chunks: list[list[str]] = [[] for _ in range(chunk_count)]
+    chunk_costs = [0 for _ in range(chunk_count)]
+    ranked_symbols = sorted(
+        enumerate(symbols),
+        key=lambda item: (-int(cost_estimates[item[1].upper()]), item[0]),
+    )
+    for _, symbol in ranked_symbols:
+        target_index = min(
+            range(chunk_count),
+            key=lambda index: (chunk_costs[index], len(chunks[index]), index),
+        )
+        chunks[target_index].append(symbol)
+        chunk_costs[target_index] += int(cost_estimates[symbol.upper()])
+    return [
+        (chunk_index, tuple(chunk_symbols), int(chunk_costs[chunk_index]))
+        for chunk_index, chunk_symbols in enumerate(chunks)
+    ]
+
+
+def _intraday_research_symbol_cost_estimates(
+    settings: Settings,
+    timeframe: str,
+    symbols: list[str],
+) -> dict[str, int]:
+    if not symbols or not bool(settings.market_data_cache_enabled):
+        return {}
+    try:
+        cache_path = settings.market_data_cache_path
+    except OSError:
+        return {}
+
+    estimates: dict[str, int] = {}
+    period = str(settings.intraday_research_period)
+    for symbol in symbols:
+        metadata_path = cache_path / (
+            "_".join(
+                _intraday_market_data_cache_safe_part(part)
+                for part in (symbol.upper(), timeframe, period)
+            )
+            + ".metadata.json"
+        )
+        payload = _intraday_research_read_json(metadata_path)
+        if (
+            str(payload.get("symbol") or "").upper() != symbol.upper()
+            or str(payload.get("period") or "") != period
+            or str(payload.get("interval") or "") != str(timeframe)
+        ):
+            continue
+        try:
+            rows = int(payload.get("rows") or 0)
+        except (TypeError, ValueError):
+            continue
+        estimates[symbol.upper()] = _intraday_research_window_cost_estimate(settings, rows)
+    return estimates
+
+
+def _intraday_research_window_cost_estimate(settings: Settings, rows: int) -> int:
+    rows = max(0, int(rows))
+    window_sizes = sorted(
+        {int(size) for size in settings.intraday_research_window_size_list if int(size) >= 10}
+    )
+    forward_bars = sorted(
+        {int(forward) for forward in settings.intraday_research_forward_bar_list if int(forward) > 0}
+    )
+    max_windows_per_symbol = max(0, int(settings.intraday_research_max_windows_per_symbol or 0))
+    if not window_sizes or not forward_bars or max_windows_per_symbol == 0:
+        return 0
+    max_forward = max(forward_bars)
+    if rows < max(window_sizes) + max_forward + 5:
+        return 0
+
+    stride = max(1, int(settings.intraday_research_stride or 1))
+    base_quota = max_windows_per_symbol // len(window_sizes)
+    quota_remainder = max_windows_per_symbol - base_quota * len(window_sizes)
+    estimate = 0
+    for index, window_size in enumerate(window_sizes):
+        if rows < window_size + max_forward + 2:
+            continue
+        quota = base_quota + (1 if index < quota_remainder else 0)
+        positions = len(range(window_size - 1, rows - max_forward - 1, stride))
+        estimate += min(max(positions, 0), quota)
+    return min(max_windows_per_symbol, estimate)
+
+
+def _intraday_market_data_cache_safe_part(value: str) -> str:
+    return "".join(ch if ch.isalnum() or ch in {"-", "."} else "_" for ch in value).strip("._")
+
+
+def _intraday_research_read_json(path: Any) -> dict[str, Any]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _intraday_research_symbols_for_chunk(
+    settings: Settings,
+    timeframe: str,
+    symbol_chunk: tuple[int, int] | None,
+) -> list[str] | None:
+    if symbol_chunk is None:
+        return None
+    chunk_index, chunk_count = symbol_chunk
+    chunk_count = max(1, int(chunk_count))
+    chunk_index = max(0, min(int(chunk_index), chunk_count - 1))
+    symbols = pick_symbols(
+        limit=settings.intraday_research_limit_default,
+        interval=timeframe,
+        universe_file=universe_file_for_interval(settings, timeframe),
+    )
+    return [symbol for pos, symbol in enumerate(symbols) if pos % chunk_count == chunk_index]
+
+
+def _intraday_chunk_details(
+    symbol_chunk: tuple[int, int] | None,
+    symbols: list[str] | None,
+) -> dict[str, Any] | None:
+    if symbol_chunk is None:
+        return None
+    chunk_index, chunk_count = symbol_chunk
+    return {
+        "index": int(chunk_index),
+        "number": int(chunk_index) + 1,
+        "count": int(chunk_count),
+        "symbols": len(symbols) if symbols is not None else None,
+    }
 
 
 def _intraday_risk_heartbeat(settings: Settings) -> dict[str, Any]:

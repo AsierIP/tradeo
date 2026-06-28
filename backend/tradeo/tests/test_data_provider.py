@@ -139,6 +139,30 @@ def test_cached_market_data_provider_persists_manifest(tmp_path: Path) -> None:
     assert entry["what_to_show"] == "ADJUSTED_LAST"
 
 
+def test_data_manifest_can_target_exact_artifact_without_rehashing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _seed_cache(tmp_path, _frame_ending(1, periods=40), period="30d", interval="5m")
+    _seed_cache(tmp_path, _frame_ending(1, periods=40, base=20.0), period="2y", interval="1d")
+    provider = CachedMarketDataProvider(
+        upstream=_RecordingUpstream(_frame_ending(1, periods=40)),
+        cache_dir=tmp_path,
+        adjusted=True,
+        what_to_show="ADJUSTED_LAST",
+    )
+
+    def fail_hash(_path: Path) -> str:
+        raise AssertionError("manifest should reuse cached metadata sha256")
+
+    monkeypatch.setattr(data_provider_module, "_sha256_file", fail_hash)
+
+    manifest = provider.data_manifest(["AAA"], period="30d", interval="5m")
+
+    assert list(manifest["entries"]) == ["AAA_5m_30d"]
+    assert manifest["entries"]["AAA_5m_30d"]["sha256"]
+
+
 def _frame_ending(days_ago: int, *, periods: int, base: float = 10.0) -> pd.DataFrame:
     end = pd.Timestamp(datetime.now(timezone.utc).date()) - pd.Timedelta(days=days_ago)
     idx = pd.bdate_range(end=end, periods=periods)
@@ -163,6 +187,15 @@ class _RecordingUpstream:
     def fetch_ohlcv(self, symbol: str, period: str = "2y", interval: str = "1d") -> pd.DataFrame:
         self.calls.append((symbol, period, interval))
         return self.df.copy()
+
+
+class _FailingUpstream:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str, str]] = []
+
+    def fetch_ohlcv(self, symbol: str, period: str = "2y", interval: str = "1d") -> pd.DataFrame:
+        self.calls.append((symbol, period, interval))
+        raise RuntimeError("provider unavailable")
 
 
 def _seed_cache(
@@ -277,6 +310,45 @@ def test_incremental_refresh_disabled_keeps_cache_untouched(tmp_path: Path) -> N
     assert pd.Timestamp(cached.index[-1]) == pd.Timestamp(stale.index[-1])
 
 
+def test_cache_only_mode_fails_closed_on_missing_artifact(tmp_path: Path) -> None:
+    upstream = _RecordingUpstream(_frame_ending(1, periods=60))
+    provider = CachedMarketDataProvider(
+        upstream=upstream,
+        cache_dir=tmp_path,
+        adjusted=True,
+        what_to_show="ADJUSTED_LAST",
+        incremental_enabled=False,
+        cache_only=True,
+    )
+
+    with pytest.raises(FileNotFoundError, match="cache-only mode"):
+        provider.fetch_ohlcv("AAA", period="2y", interval="1d")
+
+    assert upstream.calls == []
+
+
+def test_cache_only_mode_skips_refresh_for_warm_artifact(tmp_path: Path) -> None:
+    stale = _intraday_frame_ending(60, periods=40)
+    _seed_cache(tmp_path, stale, period="30d", interval="5m")
+
+    upstream = _RecordingUpstream(_intraday_frame_ending(5, periods=80))
+    provider = CachedMarketDataProvider(
+        upstream=upstream,
+        cache_dir=tmp_path,
+        adjusted=True,
+        what_to_show="ADJUSTED_LAST",
+        incremental_enabled=True,
+        incremental_intraday_enabled=True,
+        incremental_intraday_min_gap_bars=2,
+        cache_only=True,
+    )
+
+    served = provider.fetch_ohlcv("AAA", period="30d", interval="5m")
+
+    assert upstream.calls == []
+    assert len(served) == len(stale)
+
+
 def test_incremental_refresh_skips_fresh_cache(tmp_path: Path) -> None:
     fresh = _frame_ending(1, periods=40)
     _seed_cache(tmp_path, fresh)
@@ -360,6 +432,28 @@ def test_intraday_incremental_refresh_appends_missing_tail(tmp_path: Path) -> No
     assert metadata["refresh_mode"] == "incremental_append"
     assert metadata["rows_appended"] == 12
     assert metadata["incremental_fetch_supported"] is True
+
+
+def test_intraday_incremental_refresh_uses_stale_cache_when_provider_fails(tmp_path: Path) -> None:
+    stale = _intraday_frame_ending(60, periods=40)
+    _seed_cache(tmp_path, stale, period="30d", interval="5m")
+
+    upstream = _FailingUpstream()
+    provider = CachedMarketDataProvider(
+        upstream=upstream,
+        cache_dir=tmp_path,
+        adjusted=True,
+        what_to_show="ADJUSTED_LAST",
+        incremental_enabled=True,
+        incremental_intraday_enabled=True,
+        incremental_intraday_min_gap_bars=2,
+    )
+    served = provider.fetch_ohlcv("AAA", period="30d", interval="5m")
+
+    assert upstream.calls
+    assert len(served) == len(stale)
+    metadata = json.loads((tmp_path / "AAA_5m_30d.metadata.json").read_text())
+    assert metadata["refresh_mode"] == "stale_cache_incremental_failed"
 
 
 def test_intraday_incremental_refresh_skips_fresh_cache(tmp_path: Path) -> None:

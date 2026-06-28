@@ -179,6 +179,57 @@ def test_cluster_split_metrics_do_not_count_skips_as_zero_r() -> None:
     assert metrics["win_rate"] == 0.5
 
 
+def test_cluster_engine_reuses_simulation_details_within_run_cache(monkeypatch) -> None:
+    sample = _sample([130.0], [99.0], [130.0])
+    engine = ClusterResearchEngine()
+    calls = 0
+    original = RewardRiskAnalyzer._simulate_sample_detail
+
+    def counted_detail(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(RewardRiskAnalyzer, "_simulate_sample_detail", staticmethod(counted_detail))
+
+    first = engine._simulate_sample(sample, "long", 3.0)
+    second = engine._simulate_sample(sample, "long", 3.0)
+
+    assert first == second
+    assert calls == 1
+
+    engine._simulation_detail_cache.clear()
+    assert engine._simulate_sample(sample, "long", 3.0) == first
+    assert calls == 2
+
+
+def test_cluster_reward_risk_analysis_uses_simulation_detail_cache(monkeypatch) -> None:
+    samples = [
+        _sample([151.0], [99.0], [151.0]),
+        _sample([104.0], [90.0], [90.0]),
+    ]
+    engine = ClusterResearchEngine(min_samples=1)
+    calls = 0
+    original = RewardRiskAnalyzer._simulate_sample_detail
+
+    def counted_detail(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(RewardRiskAnalyzer, "_simulate_sample_detail", staticmethod(counted_detail))
+
+    first = engine._analyze_reward_risk(samples, "long", [3.0, 4.0])
+    assert calls == 4
+
+    second = engine._analyze_reward_risk(samples, "long", [3.0, 4.0])
+    assert second == first
+    assert calls == 4
+
+    direct = RewardRiskAnalyzer([3.0, 4.0], min_samples=1).analyze(samples, "long")
+    assert first == direct
+
+
 def test_quant_validation_metrics_do_not_count_skips_as_unique_events() -> None:
     winner = _sample([130.0], [99.0], [130.0])
     loser = _sample([104.0], [90.0], [90.0])

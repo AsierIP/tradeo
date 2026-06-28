@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections import OrderedDict
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from hashlib import blake2b
 from itertools import combinations
 import math
@@ -32,6 +34,7 @@ from tradeo.research.reward_risk_analyzer import RewardRiskAnalyzer
 from tradeo.research.shape_verifier import (
     DEFAULT_SHAPE_CHANNELS,
     SHAPE_VERIFIER_METHOD,
+    bounded_dtw_distances_to_prototype,
     shape_distance,
     shape_matrix_from_chart,
 )
@@ -91,6 +94,49 @@ class ClusterFitResult:
     metadata: dict[str, object]
 
 
+_CONSENSUS_MISSING_LABEL = np.iinfo(np.int32).min
+
+
+@dataclass(slots=True)
+class _ConsensusLabels:
+    subset: np.ndarray
+    labels: np.ndarray
+    label_lookup: np.ndarray
+
+
+class _CachedRewardRiskAnalyzer(RewardRiskAnalyzer):
+    __slots__ = ("_detail_fn",)
+
+    def __init__(
+        self,
+        *,
+        rr_levels: list[float],
+        min_samples: int,
+        detail_fn: Callable[..., dict[str, object]],
+    ) -> None:
+        super().__init__(rr_levels=rr_levels, min_samples=min_samples)
+        self._detail_fn = detail_fn
+
+    def _simulate_sample_detail(
+        self,
+        sample: WindowSample,
+        side: Side,
+        rr: float,
+        *,
+        cost_multiplier: float = 1.0,
+    ) -> dict[str, object]:
+        return self._detail_fn(
+            sample,
+            side,
+            rr,
+            cost_multiplier=cost_multiplier,
+        )
+
+
+_HDBSCAN_FIT_CACHE_MAX = 64
+_HDBSCAN_FIT_CACHE: OrderedDict[tuple[object, ...], ClusterFitResult | None] = OrderedDict()
+
+
 @dataclass(slots=True)
 class ClusterResearchEngine:
     """Cluster unlabeled chart windows, then measure what happened next."""
@@ -127,14 +173,48 @@ class ClusterResearchEngine:
     conformal_alpha: float = 0.10
     prototype_medoid_count: int = 16
     prototype_knn_k: int = 3
+    _simulation_detail_cache: dict[tuple[int, Side, float, float], dict[str, object]] = field(
+        default_factory=dict,
+        init=False,
+        repr=False,
+    )
+    _stratum_cache: dict[int, tuple[object, ...]] = field(
+        default_factory=dict,
+        init=False,
+        repr=False,
+    )
+    _baseline_groups_cache: dict[
+        tuple[int, ...],
+        dict[tuple[object, ...], list[int]],
+    ] = field(default_factory=dict, init=False, repr=False)
+    _baseline_group_arrays_cache: dict[
+        tuple[int, ...],
+        dict[tuple[object, ...], np.ndarray],
+    ] = field(default_factory=dict, init=False, repr=False)
+    _cluster_strata_cache: dict[
+        tuple[int, ...],
+        dict[tuple[object, ...], int],
+    ] = field(default_factory=dict, init=False, repr=False)
 
     def discover(self, samples: list[WindowSample]) -> list[ClusterCandidate]:
         candidates: list[ClusterCandidate] = []
-        for window_size in sorted({sample.window_size for sample in samples}):
-            window_samples = [sample for sample in samples if sample.window_size == window_size]
-            candidates.extend(self._cluster_window_size(window_size, window_samples))
-        self._apply_novelty_diversity(candidates)
-        return sorted(candidates, key=lambda c: c.score, reverse=True)
+        try:
+            for window_size in sorted({sample.window_size for sample in samples}):
+                self._clear_run_caches()
+                window_samples = [sample for sample in samples if sample.window_size == window_size]
+                candidates.extend(self._cluster_window_size(window_size, window_samples))
+            self._clear_run_caches()
+            self._apply_novelty_diversity(candidates)
+            return sorted(candidates, key=lambda c: c.score, reverse=True)
+        finally:
+            self._clear_run_caches()
+
+    def _clear_run_caches(self) -> None:
+        self._simulation_detail_cache.clear()
+        self._stratum_cache.clear()
+        self._baseline_groups_cache.clear()
+        self._baseline_group_arrays_cache.clear()
+        self._cluster_strata_cache.clear()
 
     def _cluster_window_size(self, window_size: int, samples: list[WindowSample]) -> list[ClusterCandidate]:
         if len(samples) < max(self.min_cluster_size * 2, 20):
@@ -353,12 +433,21 @@ class ClusterResearchEngine:
                 "clusterer_method": fit.method,
                 "noise_rate_train": metrics["density_noise"]["train_noise_rate"],
             }
+            cluster_outcomes_for_side = np.asarray(
+                [self._simulate_sample(sample, side, best_rr)[0] for sample in cluster_samples],
+                dtype=float,
+            )
+            train_outcomes_for_side = np.asarray(
+                [self._simulate_sample(sample, side, best_rr)[0] for sample in train_samples],
+                dtype=float,
+            )
             metrics["foundation_teacher"] = FoundationChartTeacher().analyze(
                 cluster_samples,
                 side=side,
                 rr=best_rr,
                 centroid=centroid_scaled,
                 baseline_samples=train_samples,
+                outcomes=cluster_outcomes_for_side,
             )
             metrics["market_replay"] = MarketReplayEngine().analyze(
                 cluster_samples,
@@ -369,6 +458,7 @@ class ClusterResearchEngine:
                 cluster_samples,
                 side,
                 best_rr,
+                outcomes=cluster_outcomes_for_side,
             )
             metrics["adversarial_challenge"] = AdversarialResearchEngine().analyze(
                 cluster_samples,
@@ -378,6 +468,8 @@ class ClusterResearchEngine:
                 metrics=metrics,
                 causal_invariance=metrics["causal_invariance"],
                 market_replay=metrics["market_replay"],
+                observed_outcomes=cluster_outcomes_for_side,
+                baseline_outcomes=train_outcomes_for_side,
             )
             metrics["operational_trigger"] = self._operational_trigger_metrics(cluster_samples, side)
             metrics["event_ledger"] = self._event_ledger(
@@ -454,6 +546,54 @@ class ClusterResearchEngine:
             )
         return candidates
 
+    def _simulate_sample_detail(
+        self,
+        sample: WindowSample,
+        side: Side,
+        rr: float,
+        *,
+        cost_multiplier: float = 1.0,
+    ) -> dict[str, object]:
+        key = (id(sample), side, float(rr), float(cost_multiplier))
+        cached = self._simulation_detail_cache.get(key)
+        if cached is None:
+            cached = RewardRiskAnalyzer._simulate_sample_detail(
+                sample,
+                side,
+                rr,
+                cost_multiplier=cost_multiplier,
+            )
+            self._simulation_detail_cache[key] = cached
+        return cached
+
+    def _simulate_sample(
+        self,
+        sample: WindowSample,
+        side: Side,
+        rr: float,
+        *,
+        cost_multiplier: float = 1.0,
+    ) -> tuple[float, int | None, int | None]:
+        detail = self._simulate_sample_detail(
+            sample,
+            side,
+            rr,
+            cost_multiplier=cost_multiplier,
+        )
+        return RewardRiskAnalyzer._tuple_from_detail(detail)
+
+    def _analyze_reward_risk(
+        self,
+        samples: list[WindowSample],
+        side: Side,
+        rr_levels: list[float],
+    ) -> dict[str, object]:
+        return _CachedRewardRiskAnalyzer(
+            rr_levels=rr_levels,
+            min_samples=self.min_samples,
+            detail_fn=self._simulate_sample_detail,
+        ).analyze(samples, side)
+
     def _metrics_for_side(
         self,
         train_samples: list[WindowSample],
@@ -464,31 +604,28 @@ class ClusterResearchEngine:
         multiple_testing_trials: int,
     ) -> dict[str, object]:
         rr_levels = self.rr_levels or [1.5, 2.0, 2.5, 3.0, 4.0, 5.0]
-        rr_analysis = RewardRiskAnalyzer(
-            rr_levels=rr_levels,
-            min_samples=self.min_samples,
-        ).analyze(train_samples, side)
+        rr_analysis = self._analyze_reward_risk(train_samples, side, rr_levels)
         best_rr = float(rr_analysis.get("best_rr", self.target_r))
         rr_metrics = rr_analysis.get("rr_metrics", {})
         best_rr_metrics = rr_metrics.get(f"{best_rr:g}", {}) if isinstance(rr_metrics, dict) else {}
         outcomes = np.asarray(
-            [RewardRiskAnalyzer._simulate_sample(s, side, best_rr)[0] for s in all_samples],
+            [self._simulate_sample(s, side, best_rr)[0] for s in all_samples],
             dtype=float,
         )
         mfe = np.asarray([s.outcome.mfe_for(side) for s in all_samples], dtype=float)
         mae = np.asarray([s.outcome.mae_for(side) for s in all_samples], dtype=float)
         hits = np.asarray(
-            [RewardRiskAnalyzer._simulate_sample(s, side, 4.0)[0] >= 4.0 for s in all_samples],
+            [self._simulate_sample(s, side, 4.0)[0] >= 4.0 for s in all_samples],
             dtype=bool,
         )
         train_outcomes = np.asarray(
-            [RewardRiskAnalyzer._simulate_sample(s, side, best_rr)[0] for s in train_samples],
+            [self._simulate_sample(s, side, best_rr)[0] for s in train_samples],
             dtype=float,
         )
         train_mfe = np.asarray([s.outcome.mfe_for(side) for s in train_samples], dtype=float)
         train_mae = np.asarray([s.outcome.mae_for(side) for s in train_samples], dtype=float)
         train_hits = np.asarray(
-            [RewardRiskAnalyzer._simulate_sample(s, side, 4.0)[0] >= 4.0 for s in train_samples],
+            [self._simulate_sample(s, side, 4.0)[0] >= 4.0 for s in train_samples],
             dtype=bool,
         )
         wins = outcomes[outcomes > 0]
@@ -498,8 +635,18 @@ class ClusterResearchEngine:
         by_symbol = self._group_expectancy(all_samples, outcomes, key="symbol")
         train_by_year = self._group_expectancy(train_samples, train_outcomes, key="year")
         train_by_symbol = self._group_expectancy(train_samples, train_outcomes, key="symbol")
-        oos = self._split_metrics(holdout_samples, side, best_rr)
-        in_sample_metrics = self._split_metrics(train_samples, side, best_rr)
+        oos = self._split_metrics(
+            holdout_samples,
+            side,
+            best_rr,
+            detail_fn=self._simulate_sample_detail,
+        )
+        in_sample_metrics = best_rr_metrics or self._split_metrics(
+            train_samples,
+            side,
+            best_rr,
+            detail_fn=self._simulate_sample_detail,
+        )
         null_baseline = self._null_baseline(
             baseline_samples,
             cluster_samples=train_samples,
@@ -725,15 +872,21 @@ class ClusterResearchEngine:
     ) -> ClusterFitResult:
         requested = str(self.clusterer_method or "auto").lower().strip()
         if requested in {"auto", "hdbscan", "density"}:
-            density = self._fit_hdbscan_clusters(
+            density = self._fit_hdbscan_clusters_cached(
                 matrix_train_scaled,
                 matrix_all_scaled,
                 target_clusters=target_clusters,
                 requested_method=requested,
             )
             if density is not None and density.centroids:
-                return density
-            fallback_reason = "hdbscan_unavailable_or_no_dense_clusters"
+                if requested == "auto" and not self._has_candidate_sized_cluster(
+                    density.train_labels
+                ):
+                    fallback_reason = "hdbscan_no_candidate_sized_clusters"
+                else:
+                    return density
+            else:
+                fallback_reason = "hdbscan_unavailable_or_no_dense_clusters"
         else:
             fallback_reason = ""
         return self._fit_kmeans_clusters(
@@ -743,6 +896,85 @@ class ClusterResearchEngine:
             requested_method=requested,
             fallback_reason=fallback_reason,
         )
+
+    def _fit_hdbscan_clusters_cached(
+        self,
+        matrix_train_scaled: np.ndarray,
+        matrix_all_scaled: np.ndarray,
+        *,
+        target_clusters: int,
+        requested_method: str,
+    ) -> ClusterFitResult | None:
+        key = self._hdbscan_fit_cache_key(
+            matrix_train_scaled,
+            matrix_all_scaled,
+            target_clusters=target_clusters,
+            requested_method=requested_method,
+        )
+        if key in _HDBSCAN_FIT_CACHE:
+            cached = _HDBSCAN_FIT_CACHE.pop(key)
+            _HDBSCAN_FIT_CACHE[key] = cached
+            return self._copy_cluster_fit(cached)
+
+        fit = self._fit_hdbscan_clusters(
+            matrix_train_scaled,
+            matrix_all_scaled,
+            target_clusters=target_clusters,
+            requested_method=requested_method,
+        )
+        _HDBSCAN_FIT_CACHE[key] = self._copy_cluster_fit(fit)
+        while len(_HDBSCAN_FIT_CACHE) > _HDBSCAN_FIT_CACHE_MAX:
+            _HDBSCAN_FIT_CACHE.popitem(last=False)
+        return fit
+
+    def _hdbscan_fit_cache_key(
+        self,
+        matrix_train_scaled: np.ndarray,
+        matrix_all_scaled: np.ndarray,
+        *,
+        target_clusters: int,
+        requested_method: str,
+    ) -> tuple[object, ...]:
+        return (
+            "hdbscan_fit_v1",
+            id(HDBSCAN),
+            requested_method,
+            int(target_clusters),
+            int(self.min_cluster_size),
+            int(self.clusterer_min_samples or 0),
+            round(float(self.density_holdout_radius_multiplier), 12),
+            self._array_cache_digest(matrix_train_scaled),
+            self._array_cache_digest(matrix_all_scaled),
+        )
+
+    @staticmethod
+    def _array_cache_digest(matrix: np.ndarray) -> str:
+        contiguous = np.ascontiguousarray(matrix)
+        digest = blake2b(digest_size=16)
+        digest.update(str(contiguous.dtype).encode("ascii", errors="ignore"))
+        digest.update(np.asarray(contiguous.shape, dtype=np.int64).tobytes())
+        digest.update(memoryview(contiguous).cast("B"))
+        return digest.hexdigest()
+
+    @staticmethod
+    def _copy_cluster_fit(fit: ClusterFitResult | None) -> ClusterFitResult | None:
+        if fit is None:
+            return None
+        return ClusterFitResult(
+            method=fit.method,
+            requested_method=fit.requested_method,
+            train_labels=fit.train_labels.copy(),
+            all_labels=fit.all_labels.copy(),
+            centroids={int(label): centroid.copy() for label, centroid in fit.centroids.items()},
+            metadata=dict(fit.metadata),
+        )
+
+    def _has_candidate_sized_cluster(self, labels: np.ndarray) -> bool:
+        min_candidate_size = max(10, int(self.min_cluster_size) // 2)
+        for label in sorted({int(value) for value in labels.tolist() if int(value) >= 0}):
+            if int(np.sum(labels == label)) >= min_candidate_size:
+                return True
+        return False
 
     def _fit_hdbscan_clusters(
         self,
@@ -764,11 +996,9 @@ class ClusterResearchEngine:
         else:
             min_samples = max(2, min(min_cluster_size, int(math.sqrt(n_train))))
         try:
-            model = HDBSCAN(
+            model = self._hdbscan_model(
                 min_cluster_size=min_cluster_size,
                 min_samples=min_samples,
-                metric="euclidean",
-                copy=False,
             )
             train_labels = np.asarray(model.fit_predict(matrix_train_scaled), dtype=int)
         except Exception:  # noqa: BLE001
@@ -921,14 +1151,14 @@ class ClusterResearchEngine:
         *,
         target_clusters: int,
         method: str,
-    ) -> list[tuple[np.ndarray, np.ndarray]]:
+    ) -> list[_ConsensusLabels]:
         repeats = max(0, int(self.consensus_repeats))
         n_train = int(matrix_train_scaled.shape[0])
         if repeats == 0 or n_train < 4:
             return []
         size = int(math.ceil(n_train * float(self.consensus_subsample_pct)))
         size = min(n_train, max(2, size))
-        ensemble: list[tuple[np.ndarray, np.ndarray]] = []
+        ensemble: list[_ConsensusLabels] = []
         for repeat in range(repeats):
             rng = np.random.default_rng(self.random_state + 7919 * (repeat + 1))
             subset = np.sort(rng.choice(n_train, size=size, replace=False))
@@ -940,7 +1170,15 @@ class ClusterResearchEngine:
                 seed=self.random_state + 1543 * (repeat + 1),
             )
             if labels is not None and len(labels) == len(subset):
-                ensemble.append((subset, labels))
+                label_lookup = np.full(n_train, _CONSENSUS_MISSING_LABEL, dtype=int)
+                label_lookup[subset] = labels
+                ensemble.append(
+                    _ConsensusLabels(
+                        subset=subset,
+                        labels=labels,
+                        label_lookup=label_lookup,
+                    )
+                )
         return ensemble
 
     def _consensus_labels(
@@ -961,11 +1199,9 @@ class ClusterResearchEngine:
             )
             try:
                 return np.asarray(
-                    HDBSCAN(
+                    self._hdbscan_model(
                         min_cluster_size=min_cluster_size,
                         min_samples=min_samples,
-                        metric="euclidean",
-                        copy=False,
                     ).fit_predict(matrix),
                     dtype=int,
                 )
@@ -985,10 +1221,20 @@ class ClusterResearchEngine:
         except Exception:  # noqa: BLE001
             return None
 
+    @staticmethod
+    def _hdbscan_model(*, min_cluster_size: int, min_samples: int):
+        return HDBSCAN(
+            min_cluster_size=min_cluster_size,
+            min_samples=min_samples,
+            metric="euclidean",
+            n_jobs=1,
+            copy=False,
+        )
+
     def _coassignment_stability(
         self,
         train_idxs: np.ndarray,
-        ensemble: list[tuple[np.ndarray, np.ndarray]],
+        ensemble: list[_ConsensusLabels | tuple[np.ndarray, np.ndarray]],
     ) -> dict[str, object]:
         members = np.asarray(train_idxs, dtype=int)
         if len(members) > int(self.consensus_max_members):
@@ -1007,27 +1253,70 @@ class ClusterResearchEngine:
                 "stability_score": None,
                 "mean_noise_vote_rate": None,
             }
-        member_set = {int(idx) for idx in members.tolist()}
-        pairs = [(int(a), int(b)) for a, b in combinations(members.tolist(), 2)]
+        members_list = members.tolist()
+        member_set: set[int] | None = None
+        min_member = int(np.min(members))
+        max_member = int(np.max(members))
         pair_observations = 0
         coassigned = 0
         noise_rates: list[float] = []
-        for subset, labels in ensemble:
-            positions = {int(idx): pos for pos, idx in enumerate(subset.tolist()) if int(idx) in member_set}
-            present = [idx for idx in members.tolist() if int(idx) in positions]
-            if present:
-                present_labels = np.asarray([labels[positions[int(idx)]] for idx in present], dtype=int)
+        for vote in ensemble:
+            if (
+                isinstance(vote, _ConsensusLabels)
+                and min_member >= 0
+                and max_member < vote.label_lookup.size
+            ):
+                present_labels = vote.label_lookup[members]
+                present_labels = present_labels[present_labels != _CONSENSUS_MISSING_LABEL]
+            else:
+                if isinstance(vote, _ConsensusLabels):
+                    subset, labels = vote.subset, vote.labels
+                else:
+                    subset, labels = vote
+                labels_array = np.asarray(labels, dtype=int)
+                subset_array = np.asarray(subset, dtype=int)
+                if subset_array.size > 1 and bool(np.all(subset_array[1:] > subset_array[:-1])):
+                    positions = np.searchsorted(subset_array, members)
+                    valid = positions < subset_array.size
+                    if np.any(valid):
+                        valid_positions = positions[valid]
+                        valid_members = members[valid]
+                        valid = subset_array[valid_positions] == valid_members
+                        present_labels = labels_array[valid_positions[valid]]
+                    else:
+                        present_labels = np.asarray([], dtype=int)
+                elif subset_array.size == 1:
+                    if member_set is None:
+                        member_set = {int(idx) for idx in members_list}
+                    present_labels = (
+                        labels_array[:1]
+                        if int(subset_array[0]) in member_set
+                        else np.asarray([], dtype=int)
+                    )
+                else:
+                    if member_set is None:
+                        member_set = {int(idx) for idx in members_list}
+                    positions = {
+                        int(idx): pos
+                        for pos, idx in enumerate(subset_array.tolist())
+                        if int(idx) in member_set
+                    }
+                    present_labels = np.asarray(
+                        [
+                            labels_array[positions[int(idx)]]
+                            for idx in members_list
+                            if int(idx) in positions
+                        ],
+                        dtype=int,
+                    )
+            present_count = int(present_labels.size)
+            if present_count:
                 noise_rates.append(float(np.mean(present_labels == -1)))
-            for left, right in pairs:
-                left_pos = positions.get(left)
-                right_pos = positions.get(right)
-                if left_pos is None or right_pos is None:
-                    continue
-                pair_observations += 1
-                left_label = int(labels[left_pos])
-                right_label = int(labels[right_pos])
-                if left_label >= 0 and left_label == right_label:
-                    coassigned += 1
+                pair_observations += present_count * (present_count - 1) // 2
+                non_noise_labels = present_labels[present_labels >= 0]
+                if non_noise_labels.size:
+                    _, counts = np.unique(non_noise_labels, return_counts=True)
+                    coassigned += int(np.sum(counts * (counts - 1) // 2))
         if pair_observations == 0:
             status = "insufficient_pairs"
             rate = None
@@ -1080,19 +1369,23 @@ class ClusterResearchEngine:
             }
         stacked = np.stack(matrices)
         prototype = np.median(stacked, axis=0)
-        distances = np.asarray(
-            [
-                shape_distance(
-                    matrix,
-                    prototype,
-                    method=str(self.shape_dtw_method),
-                    band=band,
-                    gamma=float(self.shape_soft_dtw_gamma),
-                )
-                for matrix in matrices
-            ],
-            dtype=float,
-        )
+        shape_method = str(self.shape_dtw_method).lower().replace("-", "_")
+        if shape_method == "dtw":
+            distances = bounded_dtw_distances_to_prototype(stacked, prototype, band=band)
+        else:
+            distances = np.asarray(
+                [
+                    shape_distance(
+                        matrix,
+                        prototype,
+                        method=str(self.shape_dtw_method),
+                        band=band,
+                        gamma=float(self.shape_soft_dtw_gamma),
+                    )
+                    for matrix in matrices
+                ],
+                dtype=float,
+            )
         finite = distances[np.isfinite(distances)]
         if finite.size == 0:
             return {
@@ -1132,7 +1425,10 @@ class ClusterResearchEngine:
         observed_expectancy: float,
         multiple_testing_trials: int,
     ) -> dict[str, object]:
-        outcomes = np.asarray([RewardRiskAnalyzer._simulate_sample(s, side, rr)[0] for s in samples], dtype=float)
+        outcomes = np.asarray(
+            [self._simulate_sample(sample, side, rr)[0] for sample in samples],
+            dtype=float,
+        )
         if len(outcomes) == 0 or cluster_size <= 0:
             return {
                 "expectancy_r": 0.0,
@@ -1158,26 +1454,28 @@ class ClusterResearchEngine:
         draws = min(512, max(96, len(outcomes) * 2))
         seed = self._null_seed(side, rr, cluster_size, len(outcomes))
         rng = np.random.default_rng(seed)
-        stratified_groups = self._baseline_groups(samples)
+        stratified_groups = self._baseline_group_arrays(samples)
         cluster_strata = self._cluster_strata(cluster_samples)
+        draw_plan = self._stratified_draw_plan(stratified_groups, cluster_strata)
         draw_size = min(cluster_size, len(outcomes))
-        random_means = []
-        for _ in range(draws):
-            draw = self._stratified_draw(
-                rng,
-                outcomes=outcomes,
-                groups=stratified_groups,
-                cluster_strata=cluster_strata,
-                fallback_size=draw_size,
-            )
-            random_means.append(float(np.mean(draw)))
-        p_value = (1 + sum(1 for mean in random_means if mean >= observed_expectancy)) / (draws + 1)
+        all_indices = np.arange(len(outcomes))
+        random_means = self._stratified_draw_means_batched(
+            rng,
+            outcomes=outcomes,
+            fallback_size=draw_size,
+            all_indices=all_indices,
+            draw_plan=draw_plan,
+            draws=draws,
+        )
+        p_value = (1 + int(np.count_nonzero(random_means >= observed_expectancy))) / (draws + 1)
         trial_count = max(1, int(multiple_testing_trials))
         adjusted_p = min(1.0, p_value * trial_count)
         wrc_p = min(1.0, 1.0 - (1.0 - p_value) ** trial_count)
         spa_p = min(1.0, p_value * math.sqrt(trial_count))
         multiple_testing_penalty = min(1.0, math.sqrt(math.log1p(trial_count)) / 4.0)
-        null_expectancy = float(np.mean(random_means)) if random_means else float(baseline["expectancy_r"])
+        null_expectancy = (
+            float(np.mean(random_means)) if random_means.size else float(baseline["expectancy_r"])
+        )
         expectancy_lift = observed_expectancy - null_expectancy
         return {
             "expectancy_r": round(null_expectancy, 5),
@@ -1200,44 +1498,178 @@ class ClusterResearchEngine:
         }
 
     def _baseline_groups(self, samples: list[WindowSample]) -> dict[tuple[object, ...], list[int]]:
+        cache_key = self._samples_cache_key(samples)
+        cached = self._baseline_groups_cache.get(cache_key)
+        if cached is not None:
+            return cached
         groups: dict[tuple[object, ...], list[int]] = {}
         for idx, sample in enumerate(samples):
-            groups.setdefault(self._stratum(sample), []).append(idx)
+            groups.setdefault(self._stratum_for_sample(sample), []).append(idx)
+        self._baseline_groups_cache[cache_key] = groups
         return groups
 
+    def _baseline_group_arrays(self, samples: list[WindowSample]) -> dict[tuple[object, ...], np.ndarray]:
+        cache_key = self._samples_cache_key(samples)
+        cached = self._baseline_group_arrays_cache.get(cache_key)
+        if cached is not None:
+            return cached
+        arrays = {
+            stratum: np.asarray(indices, dtype=int)
+            for stratum, indices in self._baseline_groups(samples).items()
+        }
+        self._baseline_group_arrays_cache[cache_key] = arrays
+        return arrays
+
     def _cluster_strata(self, samples: list[WindowSample]) -> dict[tuple[object, ...], int]:
+        cache_key = self._samples_cache_key(samples)
+        cached = self._cluster_strata_cache.get(cache_key)
+        if cached is not None:
+            return cached
         strata: dict[tuple[object, ...], int] = {}
         for sample in samples:
-            key = self._stratum(sample)
+            key = self._stratum_for_sample(sample)
             strata[key] = strata.get(key, 0) + 1
+        self._cluster_strata_cache[cache_key] = strata
         return strata
+
+    @staticmethod
+    def _samples_cache_key(samples: list[WindowSample]) -> tuple[int, ...]:
+        return tuple(id(sample) for sample in samples)
+
+    def _stratum_for_sample(self, sample: WindowSample) -> tuple[object, ...]:
+        cache_key = id(sample)
+        cached = self._stratum_cache.get(cache_key)
+        if cached is None:
+            cached = self._stratum(sample)
+            self._stratum_cache[cache_key] = cached
+        return cached
 
     def _stratified_draw(
         self,
         rng: np.random.Generator,
         *,
         outcomes: np.ndarray,
-        groups: dict[tuple[object, ...], list[int]],
+        groups: dict[tuple[object, ...], np.ndarray],
         cluster_strata: dict[tuple[object, ...], int],
         fallback_size: int,
+        all_indices: np.ndarray,
+        draw_plan: tuple[tuple[np.ndarray, int], ...] | None = None,
     ) -> np.ndarray:
-        selected: list[float] = []
-        all_indices = np.arange(len(outcomes))
-        for stratum, count in cluster_strata.items():
-            group = groups.get(stratum)
-            if not group:
-                continue
-            size = min(count, len(group))
-            idxs = rng.choice(np.asarray(group), size=size, replace=False)
-            selected.extend(float(outcomes[int(idx)]) for idx in idxs)
-        missing = max(0, fallback_size - len(selected))
+        if draw_plan is None:
+            draw_plan = self._stratified_draw_plan(groups, cluster_strata)
+        selected_indices = self._stratified_draw_indices(
+            rng,
+            outcomes=outcomes,
+            fallback_size=fallback_size,
+            all_indices=all_indices,
+            draw_plan=draw_plan,
+        )
+        return outcomes[selected_indices].astype(float, copy=False)
+
+    @staticmethod
+    def _stratified_draw_indices(
+        rng: np.random.Generator,
+        *,
+        outcomes: np.ndarray,
+        fallback_size: int,
+        all_indices: np.ndarray,
+        draw_plan: tuple[tuple[np.ndarray, int], ...],
+    ) -> np.ndarray:
+        selected_capacity = sum(size for _, size in draw_plan)
+        missing = max(0, fallback_size - selected_capacity)
+        total_size = selected_capacity + (min(missing, len(outcomes)) if missing else 0)
+        if total_size <= 0:
+            return rng.choice(all_indices, size=min(fallback_size, len(outcomes)), replace=False)
+
+        selected = np.empty(total_size, dtype=int)
+        selected_count = 0
+        for group, size in draw_plan:
+            idxs = rng.choice(group, size=size, replace=False)
+            selected[selected_count : selected_count + size] = idxs
+            selected_count += size
         if missing:
             idxs = rng.choice(all_indices, size=min(missing, len(outcomes)), replace=False)
-            selected.extend(float(outcomes[int(idx)]) for idx in idxs)
-        if not selected:
-            idxs = rng.choice(all_indices, size=min(fallback_size, len(outcomes)), replace=False)
-            selected.extend(float(outcomes[int(idx)]) for idx in idxs)
-        return np.asarray(selected, dtype=float)
+            selected[selected_count : selected_count + len(idxs)] = idxs
+        return selected
+
+    @staticmethod
+    def _stratified_draw_mean(
+        rng: np.random.Generator,
+        *,
+        outcomes: np.ndarray,
+        fallback_size: int,
+        all_indices: np.ndarray,
+        draw_plan: tuple[tuple[np.ndarray, int], ...],
+    ) -> float:
+        selected_indices = ClusterResearchEngine._stratified_draw_indices(
+            rng,
+            outcomes=outcomes,
+            fallback_size=fallback_size,
+            all_indices=all_indices,
+            draw_plan=draw_plan,
+        )
+        return float(np.mean(outcomes[selected_indices].astype(float, copy=False)))
+
+    @staticmethod
+    def _stratified_draw_means_batched(
+        rng: np.random.Generator,
+        *,
+        outcomes: np.ndarray,
+        fallback_size: int,
+        all_indices: np.ndarray,
+        draw_plan: tuple[tuple[np.ndarray, int], ...],
+        draws: int,
+    ) -> np.ndarray:
+        draws = max(0, int(draws))
+        if draws <= 0:
+            return np.asarray([], dtype=float)
+        selected_capacity = sum(size for _, size in draw_plan)
+        missing = max(0, fallback_size - selected_capacity)
+        sums = np.zeros(draws, dtype=float)
+        counts = np.zeros(draws, dtype=float)
+        for group, size in draw_plan:
+            size = int(size)
+            if size <= 0:
+                continue
+            if size >= int(group.size):
+                sums += float(np.sum(outcomes[group], dtype=float))
+                counts += float(group.size)
+                continue
+            scores = rng.random((draws, int(group.size)))
+            selected_positions = np.argpartition(scores, size - 1, axis=1)[:, :size]
+            sums += np.sum(outcomes[group[selected_positions]], axis=1, dtype=float)
+            counts += float(size)
+        if missing:
+            size = min(missing, len(outcomes))
+            if size >= len(outcomes):
+                sums += float(np.sum(outcomes, dtype=float))
+                counts += float(len(outcomes))
+            elif size > 0:
+                scores = rng.random((draws, len(all_indices)))
+                selected_positions = np.argpartition(scores, size - 1, axis=1)[:, :size]
+                sums += np.sum(outcomes[all_indices[selected_positions]], axis=1, dtype=float)
+                counts += float(size)
+        empty = counts <= 0
+        if np.any(empty):
+            size = min(fallback_size, len(outcomes))
+            if size <= 0:
+                return np.zeros(draws, dtype=float)
+            for index in np.flatnonzero(empty):
+                idxs = rng.choice(all_indices, size=size, replace=False)
+                sums[index] = float(np.sum(outcomes[idxs], dtype=float))
+                counts[index] = float(size)
+        return sums / counts
+
+    @staticmethod
+    def _stratified_draw_plan(
+        groups: dict[tuple[object, ...], np.ndarray],
+        cluster_strata: dict[tuple[object, ...], int],
+    ) -> tuple[tuple[np.ndarray, int], ...]:
+        return tuple(
+            (group, min(count, int(group.size)))
+            for stratum, count in cluster_strata.items()
+            if (group := groups.get(stratum)) is not None and group.size > 0
+        )
 
     @staticmethod
     def _stratum(sample: WindowSample) -> tuple[object, ...]:
@@ -1290,7 +1722,7 @@ class ClusterResearchEngine:
 
     def _bootstrap_confidence(self, samples: list[WindowSample], side: Side, rr: float) -> dict[str, float | int]:
         outcomes = np.asarray(
-            [RewardRiskAnalyzer._simulate_sample(sample, side, rr)[0] for sample in samples],
+            [self._simulate_sample(sample, side, rr)[0] for sample in samples],
             dtype=float,
         )
         if len(outcomes) == 0:
@@ -1301,9 +1733,16 @@ class ClusterResearchEngine:
         profit_factors: list[float] = []
         for _ in range(draws):
             idxs = rng.choice(len(outcomes), size=len(outcomes), replace=True)
-            metrics = self._outcome_metrics(outcomes[idxs])
-            expectancies.append(float(metrics["expectancy_r"]))
-            profit_factors.append(float(metrics["profit_factor"]))
+            draw = outcomes[idxs]
+            wins = draw[draw > 0]
+            losses = draw[draw < 0]
+            profit_factor = (
+                float(wins.sum() / abs(losses.sum()))
+                if len(losses)
+                else float(wins.sum() or 0.0)
+            )
+            expectancies.append(round(float(np.mean(draw)), 5))
+            profit_factors.append(round(profit_factor, 5))
         return {
             "expectancy_ci_low": round(float(np.quantile(expectancies, 0.05)), 5),
             "expectancy_ci_high": round(float(np.quantile(expectancies, 0.95)), 5),
@@ -1464,13 +1903,24 @@ class ClusterResearchEngine:
             validation = ordered[validation_start:validation_end]
             if len(train) < 6 or len(validation) < 3:
                 continue
-            rr_analysis = RewardRiskAnalyzer(
-                rr_levels=self.rr_levels or [1.5, 2.0, 2.5, 3.0, 4.0, 5.0],
-                min_samples=self.min_samples,
-            ).analyze(train, side)
+            rr_analysis = self._analyze_reward_risk(
+                train,
+                side,
+                self.rr_levels or [1.5, 2.0, 2.5, 3.0, 4.0, 5.0],
+            )
             rr = float(rr_analysis.get("best_rr", self.target_r))
-            train_metrics = self._split_metrics(train, side, rr)
-            validation_metrics = self._split_metrics(validation, side, rr)
+            train_metrics = self._split_metrics(
+                train,
+                side,
+                rr,
+                detail_fn=self._simulate_sample_detail,
+            )
+            validation_metrics = self._split_metrics(
+                validation,
+                side,
+                rr,
+                detail_fn=self._simulate_sample_detail,
+            )
             validation_samples_all.extend(validation)
             folds.append(
                 {
@@ -1496,7 +1946,12 @@ class ClusterResearchEngine:
             return self._empty_walk_forward()
         validation_expectancies = [float(fold["validation_expectancy_r"]) for fold in folds]
         pooled_rr = float(folds[-1]["best_rr"])
-        pooled = self._split_metrics(validation_samples_all, side, pooled_rr)
+        pooled = self._split_metrics(
+            validation_samples_all,
+            side,
+            pooled_rr,
+            detail_fn=self._simulate_sample_detail,
+        )
         return {
             "folds": folds,
             "fold_count": len(folds),
@@ -1528,10 +1983,20 @@ class ClusterResearchEngine:
             validation = [ordered[idx] for idx in validation_indices]
             if len(train) < max(6, self.min_samples // 2) or len(validation) < 3:
                 continue
-            rr_analysis = RewardRiskAnalyzer(rr_levels=rr_levels, min_samples=self.min_samples).analyze(train, side)
+            rr_analysis = self._analyze_reward_risk(train, side, rr_levels)
             rr = float(rr_analysis.get("best_rr", self.target_r))
-            train_metrics = self._split_metrics(train, side, rr)
-            validation_metrics = self._split_metrics(validation, side, rr)
+            train_metrics = self._split_metrics(
+                train,
+                side,
+                rr,
+                detail_fn=self._simulate_sample_detail,
+            )
+            validation_metrics = self._split_metrics(
+                validation,
+                side,
+                rr,
+                detail_fn=self._simulate_sample_detail,
+            )
             cv_folds.append(
                 {
                     "fold": len(cv_folds) + 1,
@@ -1614,7 +2079,7 @@ class ClusterResearchEngine:
         if self.event_ledger_limit > 0:
             ordered_samples = ordered_samples[: self.event_ledger_limit]
         for sample in ordered_samples:
-            result_r, target_bar, stop_bar = RewardRiskAnalyzer._simulate_sample(sample, side, rr)
+            result_r, target_bar, stop_bar = self._simulate_sample(sample, side, rr)
             if id(sample) in train_ids:
                 split = "train"
             elif id(sample) in holdout_ids:
@@ -1673,7 +2138,13 @@ class ClusterResearchEngine:
     def _cost_stress_metrics(self, samples: list[WindowSample], side: Side, rr: float) -> dict[str, object]:
         stress: dict[str, object] = {}
         for multiplier in self.cost_stress_multipliers or [1.0, 2.0, 3.0]:
-            metrics = self._split_metrics(samples, side, rr, cost_multiplier=float(multiplier))
+            metrics = self._split_metrics(
+                samples,
+                side,
+                rr,
+                cost_multiplier=float(multiplier),
+                detail_fn=self._simulate_sample_detail,
+            )
             stress[f"{float(multiplier):g}x"] = {
                 "multiplier": float(multiplier),
                 "expectancy_r": metrics["expectancy_r"],
@@ -1701,12 +2172,14 @@ class ClusterResearchEngine:
         rr: float,
         *,
         cost_multiplier: float = 1.0,
+        detail_fn: Callable[..., dict[str, object]] | None = None,
     ) -> dict[str, float | int]:
         outcomes_list: list[float] = []
         skipped_count = 0
         skip_reason_counts: dict[str, int] = {}
+        simulate_detail = detail_fn or RewardRiskAnalyzer._simulate_sample_detail
         for sample in samples:
-            detail = RewardRiskAnalyzer._simulate_sample_detail(
+            detail = simulate_detail(
                 sample,
                 side,
                 rr,
@@ -1894,8 +2367,10 @@ class ClusterResearchEngine:
         if not samples:
             return {}
         summary: dict[str, object] = {}
-        for key in _numeric_feature_keys(samples):
+        for key in sorted({key for sample in samples for key in sample.features}):
             values = _numeric_feature_values(samples, key)
+            if len(values) != len(samples):
+                continue
             summary[key] = {
                 "mean": round(float(np.mean(values)), 6),
                 "median": round(float(np.median(values)), 6),
@@ -2110,7 +2585,7 @@ class ClusterResearchEngine:
         keys = regime_keys_for_dates(table, [sample.end for sample in samples])
         grouped: dict[str, list[float]] = {}
         for sample, key in zip(samples, keys, strict=True):
-            outcome_r = float(RewardRiskAnalyzer._simulate_sample(sample, side, rr)[0])
+            outcome_r = float(self._simulate_sample(sample, side, rr)[0])
             grouped.setdefault(key, []).append(outcome_r)
         buckets: dict[str, dict[str, float | int]] = {}
         labeled = 0
@@ -2393,7 +2868,7 @@ class ClusterResearchEngine:
         skipped_count = 0
         skip_reason_counts: dict[str, int] = {}
         for sample in samples:
-            detail = RewardRiskAnalyzer._simulate_sample_detail(sample, side, rr)
+            detail = self._simulate_sample_detail(sample, side, rr)
             if str(detail.get("status", "ok")) not in ("ok", "fallback"):
                 skipped_count += 1
                 reason = str(detail.get("reason") or "unknown")

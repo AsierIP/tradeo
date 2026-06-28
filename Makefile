@@ -27,7 +27,13 @@ test:
 
 test-safety:
 	cd backend && .venv/bin/python -m compileall -q tradeo
-	cd backend && TRADEO_DATABASE_URL='sqlite:///:memory:' .venv/bin/python -m pytest -q \
+	cd backend && TRADEO_DATABASE_URL='sqlite:///:memory:' \
+		TRADEO_INTRADAY_ENABLED=false \
+		TRADEO_INTRADAY_PAPER_ENABLED=false \
+		TRADEO_INTRADAY_LIVE_ENABLED=false \
+		TRADEO_IBKR_ACCOUNT= \
+		TRADEO_IBKR_BLOCKED_ACCOUNTS= \
+		.venv/bin/python -m pytest -q \
 		tradeo/tests/test_quant_validation.py \
 		tradeo/tests/test_reward_risk_analyzer.py \
 		tradeo/tests/test_conformal_matching.py \
@@ -58,6 +64,7 @@ test-safety:
 		tradeo/tests/test_intraday_lab_bridge.py \
 		tradeo/tests/test_intraday_research.py \
 		tradeo/tests/test_intraday_research_validation_stack.py \
+		tradeo/tests/test_intraday_work_queue.py \
 		tradeo/tests/test_intraday_worker_jobs.py
 
 scan:

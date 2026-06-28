@@ -53,9 +53,34 @@ class WindowSampler:
         if len(df) < max(window_sizes) + max_forward + 5:
             return []
 
-        atr_series = atr(df, 14).bfill().fillna(df["close"] * self.min_risk_pct)
+        atr_raw_series = atr(df, 14)
+        atr_series = atr_raw_series.bfill().fillna(df["close"] * self.min_risk_pct)
+        open_values = df["open"].to_numpy(dtype=float, copy=False)
+        high_values = df["high"].to_numpy(dtype=float, copy=False)
+        low_values = df["low"].to_numpy(dtype=float, copy=False)
+        close_values = df["close"].to_numpy(dtype=float, copy=False)
+        volume_values = df["volume"].to_numpy(dtype=float, copy=False)
+        atr_raw_values = atr_raw_series.to_numpy(dtype=float, copy=False)
+        atr_values = atr_series.to_numpy(dtype=float, copy=False)
+        index_values = df.index
+        dollar_volume = close_values * volume_values
+        bar_ranges = high_values - low_values
+        true_ranges = self._true_range_values(high_values, low_values, close_values)
+        rolling_dollar_volume: dict[int, np.ndarray] = {}
+        rolling_volume: dict[int, np.ndarray] = {}
+        rolling_range: dict[int, np.ndarray] = {}
         samples: list[WindowSample] = []
         window_quotas = self._window_size_quotas(window_sizes, max_windows_per_symbol)
+        embedding_benchmark_frames = self._benchmark_frames_for_embedding(benchmark_frames)
+        embedding_benchmark_close_values = self._benchmark_close_arrays_for_embedding(
+            index_values,
+            embedding_benchmark_frames,
+        )
+        embedding_week_codes = self._week_codes_for_embedding(index_values)
+        use_embedding_placeholder_index = (
+            embedding_week_codes is not None or not isinstance(index_values, pd.DatetimeIndex)
+        )
+        embedding_placeholder_indices: dict[int, pd.RangeIndex] = {}
         for window_size in window_sizes:
             if len(df) < window_size + max_forward + 2:
                 continue
@@ -67,35 +92,103 @@ class WindowSampler:
             # run continuously, while still covering overlapping market states.
             # The per-window quota prevents short windows from consuming the
             # whole symbol budget before W100/W200 get any research coverage.
-            for end_pos in range(window_size - 1, len(df) - max_forward - 1, stride):
-                window = df.iloc[end_pos - window_size + 1 : end_pos + 1]
-                future = df.iloc[end_pos + 1 : end_pos + 1 + max_forward]
-                if future.empty:
+            end_positions = self._sample_end_positions(
+                start=window_size - 1,
+                stop=len(df) - max_forward - 1,
+                stride=stride,
+                quota=window_quota,
+            )
+            execution_tail = min(20, window_size)
+            range_tail = min(14, window_size)
+            if execution_tail not in rolling_dollar_volume:
+                rolling_dollar_volume[execution_tail] = self._rolling_mean(
+                    dollar_volume,
+                    execution_tail,
+                )
+                rolling_volume[execution_tail] = self._rolling_mean(
+                    volume_values,
+                    execution_tail,
+                )
+            if range_tail not in rolling_range:
+                rolling_range[range_tail] = self._rolling_mean(bar_ranges, range_tail)
+            avg_dollar_volume_values = rolling_dollar_volume[execution_tail]
+            avg_volume_values = rolling_volume[execution_tail]
+            avg_range_values = rolling_range[range_tail]
+            embedding_index = (
+                embedding_placeholder_indices.setdefault(window_size, pd.RangeIndex(window_size))
+                if use_embedding_placeholder_index
+                else None
+            )
+            for end_pos in end_positions:
+                start_pos = end_pos - window_size + 1
+                future_start = end_pos + 1
+                future_stop = min(len(df), future_start + max_forward)
+                if future_start >= future_stop:
                     continue
-                entry = float(window["close"].iloc[-1])
+                entry = float(close_values[end_pos])
                 if entry <= 0:
                     continue
                 risk_proxy = max(
-                    float(atr_series.iloc[end_pos]) * self.atr_multiplier,
+                    float(atr_values[end_pos]) * self.atr_multiplier,
                     entry * self.min_risk_pct,
                     0.01,
                 )
-                execution_metrics = self._execution_cost_metrics(window, entry=entry, risk_proxy=risk_proxy)
+                execution_metrics = self._execution_cost_metrics_from_values(
+                    entry=entry,
+                    risk_proxy=risk_proxy,
+                    latest_open=float(open_values[end_pos]),
+                    latest_high=float(high_values[end_pos]),
+                    latest_low=float(low_values[end_pos]),
+                    previous_close=float(close_values[end_pos - 1]) if end_pos >= 1 else entry,
+                    avg_dollar_volume=float(avg_dollar_volume_values[end_pos]),
+                    adv_shares=float(avg_volume_values[end_pos]),
+                    avg_range=float(avg_range_values[end_pos]),
+                )
                 execution_cost_r = float(execution_metrics["execution_cost_r"])
-                outcome = self._forward_outcome(
+                outcome = self._forward_outcome_from_arrays(
                     entry,
                     risk_proxy,
-                    future,
-                    forward_bars,
-                    execution_cost_r,
-                    execution_metrics,
+                    future_end=index_values[future_stop - 1],
+                    highs=high_values[future_start:future_stop],
+                    lows=low_values[future_start:future_stop],
+                    closes=close_values[future_start:future_stop],
+                    opens=open_values[future_start:future_stop],
+                    forward_bars=forward_bars,
+                    execution_cost_r=execution_cost_r,
+                    execution_metrics=execution_metrics,
                 )
-                vector, features, chart = self.embedding_engine.embed(window, benchmark_frames=benchmark_frames)
-                features.update(self._data_lineage_features(window))
+                vector, features, chart = self.embedding_engine.embed_arrays(
+                    open_values=open_values[start_pos : end_pos + 1],
+                    high_values=high_values[start_pos : end_pos + 1],
+                    low_values=low_values[start_pos : end_pos + 1],
+                    close_values=close_values[start_pos : end_pos + 1],
+                    volume_values=volume_values[start_pos : end_pos + 1],
+                    index=(
+                        embedding_index
+                        if embedding_index is not None
+                        else index_values[start_pos : end_pos + 1]
+                    ),
+                    benchmark_frames=embedding_benchmark_frames,
+                    benchmark_close_values=embedding_benchmark_close_values,
+                    benchmark_close_slice=(start_pos, end_pos),
+                    week_codes=(
+                        embedding_week_codes[start_pos : end_pos + 1]
+                        if embedding_week_codes is not None
+                        else None
+                    ),
+                    atr_raw=self._embedding_atr_raw_for_window(
+                        full_atr_raw=atr_raw_values,
+                        true_ranges=true_ranges,
+                        bar_ranges=bar_ranges,
+                        start=start_pos,
+                        end=end_pos,
+                    ),
+                )
+                features.update(self._data_lineage_features_at(df, end_pos))
                 features.update({f"execution_{k}": float(v) for k, v in execution_metrics.items()})
                 features["sample_window_size_quota"] = int(window_quota)
-                start_idx = window.index[0]
-                end_idx = window.index[-1]
+                start_idx = index_values[start_pos]
+                end_idx = index_values[end_pos]
                 year = self._year(end_idx)
                 samples.append(
                     WindowSample(
@@ -115,6 +208,17 @@ class WindowSampler:
                 if len(samples) >= max_windows_per_symbol or window_count >= window_quota:
                     break
         return samples[:max_windows_per_symbol]
+
+    @staticmethod
+    def _sample_end_positions(*, start: int, stop: int, stride: int, quota: int) -> list[int]:
+        stride = max(1, int(stride))
+        position_count = len(range(start, stop, stride))
+        if position_count <= 0:
+            return []
+        if quota <= 0 or position_count <= quota:
+            return list(range(start, stop, stride))
+        selected = np.linspace(0, position_count - 1, num=quota, dtype=int)
+        return [start + int(index) * stride for index in selected]
 
     @staticmethod
     def _window_size_quotas(window_sizes: list[int], max_windows_per_symbol: int) -> dict[int, int]:
@@ -140,6 +244,86 @@ class WindowSampler:
             out = out.join(raw[lineage_columns].reindex(out.index), how="left")
         return out
 
+    @staticmethod
+    def _benchmark_frames_for_embedding(
+        benchmark_frames: dict[str, pd.DataFrame] | None,
+    ) -> dict[str, pd.DataFrame] | None:
+        if not benchmark_frames:
+            return benchmark_frames
+        normalized: dict[str, pd.DataFrame] = {}
+        changed = False
+        for key, frame in benchmark_frames.items():
+            if isinstance(frame.index, pd.DatetimeIndex) and not frame.index.is_monotonic_increasing:
+                normalized[key] = frame.sort_index()
+                changed = True
+            else:
+                normalized[key] = frame
+        return normalized if changed else benchmark_frames
+
+    @staticmethod
+    def _benchmark_close_arrays_for_embedding(
+        index: pd.Index,
+        benchmark_frames: dict[str, pd.DataFrame] | None,
+    ) -> tuple[np.ndarray | None, np.ndarray | None, np.ndarray | None, np.ndarray | None] | None:
+        if not benchmark_frames or not isinstance(index, pd.DatetimeIndex):
+            return None
+        aligned: list[np.ndarray | None] = []
+        for keys in PatternEmbeddingEngine.BENCHMARK_KEY_GROUPS:
+            frame = PatternEmbeddingEngine._first_benchmark(benchmark_frames, keys)
+            if frame is None or frame.empty or not isinstance(frame.index, pd.DatetimeIndex):
+                aligned.append(None)
+                continue
+            aligned.append(PatternEmbeddingEngine._aligned_benchmark_close_array(index, frame))
+        return (aligned[0], aligned[1], aligned[2], aligned[3])
+
+    @staticmethod
+    def _week_codes_for_embedding(index: pd.Index) -> np.ndarray | None:
+        if not isinstance(index, pd.DatetimeIndex):
+            return None
+        if index.hasnans or not index.is_monotonic_increasing:
+            return None
+        local_index = index.tz_localize(None) if index.tz is not None else index
+        return local_index.to_period("W-SUN").asi8
+
+    @staticmethod
+    def _true_range_values(
+        high_values: np.ndarray,
+        low_values: np.ndarray,
+        close_values: np.ndarray,
+    ) -> np.ndarray:
+        previous_close = np.empty(len(close_values), dtype=float)
+        previous_close[0] = np.nan
+        previous_close[1:] = close_values[:-1]
+        return np.nanmax(
+            np.vstack(
+                [
+                    np.abs(high_values - low_values),
+                    np.abs(high_values - previous_close),
+                    np.abs(low_values - previous_close),
+                ]
+            ),
+            axis=0,
+        )
+
+    @staticmethod
+    def _embedding_atr_raw_for_window(
+        *,
+        full_atr_raw: np.ndarray,
+        true_ranges: np.ndarray,
+        bar_ranges: np.ndarray,
+        start: int,
+        end: int,
+    ) -> np.ndarray:
+        window_length = end - start + 1
+        if window_length < 15:
+            return np.zeros(window_length, dtype=float)
+        atr_raw = np.empty(window_length, dtype=float)
+        atr_raw[:13] = np.nan
+        atr_raw[13] = (bar_ranges[start] + np.sum(true_ranges[start + 1 : start + 14])) / 14.0
+        if window_length > 14:
+            atr_raw[14:] = full_atr_raw[start + 14 : end + 1]
+        return atr_raw
+
     def _forward_outcome(
         self,
         entry: float,
@@ -153,15 +337,48 @@ class WindowSampler:
         highs = future["high"].astype(float).to_numpy()
         lows = future["low"].astype(float).to_numpy()
         opens = future["open"].astype(float).to_numpy() if "open" in future else closes
+        return self._forward_outcome_from_arrays(
+            entry,
+            risk_proxy,
+            future_end=future.index[-1],
+            highs=highs,
+            lows=lows,
+            closes=closes,
+            opens=opens,
+            forward_bars=forward_bars,
+            execution_cost_r=execution_cost_r,
+            execution_metrics=execution_metrics,
+        )
+
+    def _forward_outcome_from_arrays(
+        self,
+        entry: float,
+        risk_proxy: float,
+        *,
+        future_end: object,
+        highs: np.ndarray,
+        lows: np.ndarray,
+        closes: np.ndarray,
+        opens: np.ndarray,
+        forward_bars: list[int],
+        execution_cost_r: float = 0.0,
+        execution_metrics: dict[str, float] | None = None,
+    ) -> ForwardOutcome:
+        highs = np.asarray(highs, dtype=float)
+        lows = np.asarray(lows, dtype=float)
+        closes = np.asarray(closes, dtype=float)
+        opens = np.asarray(opens, dtype=float)
         forward_returns = {}
         for horizon in forward_bars:
             idx = min(horizon, len(closes)) - 1
             forward_returns[horizon] = float(closes[idx] / entry - 1.0)
 
-        long_mfe_r = float(np.max(highs - entry) / risk_proxy)
-        long_mae_r = float(max(0.0, np.max(entry - lows) / risk_proxy))
-        short_mfe_r = float(np.max(entry - lows) / risk_proxy)
-        short_mae_r = float(max(0.0, np.max(highs - entry) / risk_proxy))
+        high_delta = highs - entry
+        low_delta = entry - lows
+        long_mfe_r = float(np.max(high_delta) / risk_proxy)
+        long_mae_r = float(max(0.0, np.max(low_delta) / risk_proxy))
+        short_mfe_r = float(np.max(low_delta) / risk_proxy)
+        short_mae_r = float(max(0.0, np.max(high_delta) / risk_proxy))
         long_path = self._path_outcome_from_arrays(entry, risk_proxy, highs, lows, closes, side="long")
         short_path = self._path_outcome_from_arrays(entry, risk_proxy, highs, lows, closes, side="short")
         long_outcome_r, long_hit_4r, long_target_bar, long_stop_bar, long_label = long_path
@@ -169,10 +386,10 @@ class WindowSampler:
         first_open = float(opens[0]) if len(opens) else float(entry)
         long_gap_adverse_r = max(0.0, (entry - first_open) / max(risk_proxy, 1e-9))
         short_gap_adverse_r = max(0.0, (first_open - entry) / max(risk_proxy, 1e-9))
-        long_mfe_bar = int(np.argmax(highs - entry) + 1) if len(highs) else 0
-        long_mae_bar = int(np.argmax(entry - lows) + 1) if len(lows) else 0
-        short_mfe_bar = int(np.argmax(entry - lows) + 1) if len(lows) else 0
-        short_mae_bar = int(np.argmax(highs - entry) + 1) if len(highs) else 0
+        long_mfe_bar = int(np.argmax(high_delta) + 1) if len(highs) else 0
+        long_mae_bar = int(np.argmax(low_delta) + 1) if len(lows) else 0
+        short_mfe_bar = int(np.argmax(low_delta) + 1) if len(lows) else 0
+        short_mae_bar = int(np.argmax(high_delta) + 1) if len(highs) else 0
         strong_close_threshold = self.target_r * 0.75
         long_final_r = float((closes[-1] - entry) / risk_proxy) if len(closes) else 0.0
         short_final_r = float((entry - closes[-1]) / risk_proxy) if len(closes) else 0.0
@@ -180,7 +397,7 @@ class WindowSampler:
             forward_returns=forward_returns,
             entry_price=float(entry),
             risk_proxy=float(risk_proxy),
-            forward_end=self._date_str(future.index[-1]),
+            forward_end=self._date_str(future_end),
             long_mfe_r=round(long_mfe_r, 4),
             long_mae_r=round(long_mae_r, 4),
             long_outcome_r=round(long_outcome_r, 4),
@@ -189,10 +406,10 @@ class WindowSampler:
             short_mae_r=round(short_mae_r, 4),
             short_outcome_r=round(short_outcome_r, 4),
             short_hit_4r=short_hit_4r,
-            forward_highs=np.round(highs.astype(float), 6).tolist(),
-            forward_lows=np.round(lows.astype(float), 6).tolist(),
-            forward_closes=np.round(closes.astype(float), 6).tolist(),
-            forward_opens=np.round(opens.astype(float), 6).tolist(),
+            forward_highs=np.round(highs, 6).tolist(),
+            forward_lows=np.round(lows, 6).tolist(),
+            forward_closes=np.round(closes, 6).tolist(),
+            forward_opens=np.round(opens, 6).tolist(),
             execution_cost_r=round(float(execution_cost_r), 5),
             long_label=long_label,
             short_label=short_label,
@@ -220,20 +437,43 @@ class WindowSampler:
     def _execution_cost_metrics(window: pd.DataFrame, *, entry: float, risk_proxy: float) -> dict[str, float]:
         latest = window.iloc[-1]
         previous_close = float(window["close"].iloc[-2]) if len(window) >= 2 else float(latest["close"])
-        range_pct = float((latest["high"] - latest["low"]) / max(entry, 1e-9))
         avg_dollar_volume = float((window["close"] * window["volume"]).tail(20).mean())
         adv_shares = float(window["volume"].tail(20).mean())
-        atr_pct_proxy = max(
-            range_pct,
-            float((window["high"] - window["low"]).tail(14).mean() / max(entry, 1e-9)),
+        avg_range = float((window["high"] - window["low"]).tail(14).mean())
+        return WindowSampler._execution_cost_metrics_from_values(
+            entry=entry,
+            risk_proxy=risk_proxy,
+            latest_open=float(latest["open"]),
+            latest_high=float(latest["high"]),
+            latest_low=float(latest["low"]),
+            previous_close=previous_close,
+            avg_dollar_volume=avg_dollar_volume,
+            adv_shares=adv_shares,
+            avg_range=avg_range,
         )
+
+    @staticmethod
+    def _execution_cost_metrics_from_values(
+        *,
+        entry: float,
+        risk_proxy: float,
+        latest_open: float,
+        latest_high: float,
+        latest_low: float,
+        previous_close: float,
+        avg_dollar_volume: float,
+        adv_shares: float,
+        avg_range: float,
+    ) -> dict[str, float]:
+        range_pct = float((latest_high - latest_low) / max(entry, 1e-9))
+        atr_pct_proxy = max(range_pct, float(avg_range / max(entry, 1e-9)))
         liquidity_penalty_pct = 0.0015 if avg_dollar_volume < 5_000_000 else 0.0008
         price_penalty_pct = 0.0012 if entry < 5 else 0.0004 if entry < 15 else 0.00015
         liquidity_factor = 1.0 - min(avg_dollar_volume / 50_000_000, 1.0)
         spread_proxy_pct = min(0.025, max(0.0004, range_pct * (0.05 + 0.15 * liquidity_factor)))
         participation_rate = min(0.05, max(0.001, 250_000.0 / max(avg_dollar_volume, 1.0)))
         slippage_pct = min(0.03, atr_pct_proxy * (0.03 + np.sqrt(participation_rate) * 0.25))
-        entry_gap_pct = abs(float(latest["open"]) / max(previous_close, 1e-9) - 1.0)
+        entry_gap_pct = abs(float(latest_open) / max(previous_close, 1e-9) - 1.0)
         entry_gap_penalty_pct = min(0.02, entry_gap_pct * 0.35)
         short_borrow_proxy_pct = min(
             0.015,
@@ -266,6 +506,15 @@ class WindowSampler:
             "avg_dollar_volume": float(avg_dollar_volume),
             "participation_rate": float(participation_rate),
         }
+
+    @staticmethod
+    def _rolling_mean(values: np.ndarray, window: int) -> np.ndarray:
+        return (
+            pd.Series(values)
+            .rolling(max(1, int(window)), min_periods=1)
+            .mean()
+            .to_numpy(dtype=float, copy=False)
+        )
 
     def _path_outcome(
         self,
@@ -323,13 +572,20 @@ class WindowSampler:
 
     @staticmethod
     def _data_lineage_features(window: pd.DataFrame) -> dict[str, object]:
-        latest = window.iloc[-1]
+        return WindowSampler._data_lineage_features_at(window, -1)
+
+    @staticmethod
+    def _data_lineage_features_at(frame: pd.DataFrame, position: int) -> dict[str, object]:
         lineage: dict[str, object] = {}
-        if "adjusted" in window.columns:
+        latest: pd.Series | None = None
+        if "adjusted" in frame.columns:
+            latest = frame.iloc[position] if latest is None else latest
             lineage["data_adjusted"] = bool(latest["adjusted"])
-        if "what_to_show" in window.columns:
+        if "what_to_show" in frame.columns:
+            latest = frame.iloc[position] if latest is None else latest
             lineage["data_what_to_show"] = str(latest["what_to_show"])
-        if "bar_complete" in window.columns:
+        if "bar_complete" in frame.columns:
+            latest = frame.iloc[position] if latest is None else latest
             lineage["data_bar_complete"] = bool(latest["bar_complete"])
         return lineage
 

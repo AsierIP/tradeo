@@ -29,12 +29,13 @@ class FoundationChartTeacher:
         rr: float,
         centroid: list[float] | np.ndarray | None = None,
         baseline_samples: list[WindowSample] | None = None,
+        outcomes: np.ndarray | None = None,
     ) -> dict[str, Any]:
         if not samples:
             return self._empty()
         masked = self._masked_reconstruction(samples)
         contrastive = self._contrastive_diagnostics(samples, baseline_samples or [], centroid)
-        future_proxy = self._future_proxy_objectives(samples, side, rr)
+        future_proxy = self._future_proxy_objectives(samples, side, rr, outcomes=outcomes)
         quality = (
             float(masked["masked_window_reconstruction_score"]) * 0.35
             + float(contrastive["contrastive_score"]) * 0.35
@@ -150,11 +151,16 @@ class FoundationChartTeacher:
         samples: list[WindowSample],
         side: Side,
         rr: float,
+        *,
+        outcomes: np.ndarray | None = None,
     ) -> dict[str, Any]:
-        outcomes = np.asarray(
-            [RewardRiskAnalyzer._simulate_sample(sample, side, rr)[0] for sample in samples],
-            dtype=float,
-        )
+        if outcomes is None or len(outcomes) != len(samples):
+            outcomes = np.asarray(
+                [RewardRiskAnalyzer._simulate_sample(sample, side, rr)[0] for sample in samples],
+                dtype=float,
+            )
+        else:
+            outcomes = np.asarray(outcomes, dtype=float)
         if len(outcomes) < 3:
             return {
                 "future_proxy_alignment_score": 0.0,
