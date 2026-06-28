@@ -29,6 +29,9 @@ services:
     container_name: tradeo-backend
     restart: unless-stopped
     env_file: .env
+    environment:
+      TRADEO_MARKET_DATA_CACHE_DIR: ${TRADEO_MARKET_DATA_CACHE_DIR:-/app/artifacts/runtime/ohlcv_cache}
+      TRADEO_UNIVERSE_SNAPSHOT_DIR: ${TRADEO_UNIVERSE_SNAPSHOT_DIR:-/app/artifacts/runtime/universe_snapshots}
     ports:
       - "${TRADEO_BACKEND_BIND:-127.0.0.1}:8000:8000"
     depends_on:
@@ -57,6 +60,9 @@ services:
     restart: unless-stopped
     command: ["python", "-m", "tradeo.tasks.worker"]
     env_file: .env
+    environment:
+      TRADEO_MARKET_DATA_CACHE_DIR: ${TRADEO_MARKET_DATA_CACHE_DIR:-/app/artifacts/runtime/ohlcv_cache}
+      TRADEO_UNIVERSE_SNAPSHOT_DIR: ${TRADEO_UNIVERSE_SNAPSHOT_DIR:-/app/artifacts/runtime/universe_snapshots}
     depends_on:
       db:
         condition: service_healthy
