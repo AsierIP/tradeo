@@ -178,8 +178,6 @@ class PatternEmbeddingEngine:
             raise ValueError("atr_raw length must match OHLCV arrays")
 
         safe_close = np.maximum(close, 1e-9)
-        bar_range = high - low
-        safe_bar_range = np.maximum(bar_range, 1e-9)
         log_close = np.log(safe_close)
         returns = np.diff(log_close, prepend=log_close[0])
         returns = self._winsorize(returns, 0.01, 0.99)
@@ -188,9 +186,9 @@ class PatternEmbeddingEngine:
         price_norm = close / max(close[0], 1e-9) - 1.0
         volume_rel = volume / max(float(np.nanmedian(volume)), 1.0)
         volume_rel = np.clip(volume_rel, 0, 5) / 5.0
-        range_pct = np.clip(bar_range / safe_close, 0, 0.35) / 0.35
-        close_position = np.clip((close - low) / safe_bar_range, 0, 1)
-        body_pct = np.clip(np.abs(close - open_) / safe_bar_range, 0, 1)
+        range_pct = np.clip((high - low) / np.maximum(safe_close, 1e-9), 0, 0.35) / 0.35
+        close_position = np.clip((close - low) / np.maximum(high - low, 1e-9), 0, 1)
+        body_pct = np.clip(np.abs(close - open_) / np.maximum(high - low, 1e-9), 0, 1)
         rolling_vol = pd.Series(returns).rolling(5, min_periods=2).std().fillna(0).to_numpy()
         rolling_vol = np.clip(rolling_vol, 0, np.nanpercentile(rolling_vol, 95) + 1e-9)
         if rolling_vol.max() > 0:

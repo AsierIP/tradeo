@@ -373,12 +373,10 @@ class WindowSampler:
             idx = min(horizon, len(closes)) - 1
             forward_returns[horizon] = float(closes[idx] / entry - 1.0)
 
-        high_delta = highs - entry
-        low_delta = entry - lows
-        long_mfe_r = float(np.max(high_delta) / risk_proxy)
-        long_mae_r = float(max(0.0, np.max(low_delta) / risk_proxy))
-        short_mfe_r = float(np.max(low_delta) / risk_proxy)
-        short_mae_r = float(max(0.0, np.max(high_delta) / risk_proxy))
+        long_mfe_r = float(np.max(highs - entry) / risk_proxy)
+        long_mae_r = float(max(0.0, np.max(entry - lows) / risk_proxy))
+        short_mfe_r = float(np.max(entry - lows) / risk_proxy)
+        short_mae_r = float(max(0.0, np.max(highs - entry) / risk_proxy))
         long_path = self._path_outcome_from_arrays(entry, risk_proxy, highs, lows, closes, side="long")
         short_path = self._path_outcome_from_arrays(entry, risk_proxy, highs, lows, closes, side="short")
         long_outcome_r, long_hit_4r, long_target_bar, long_stop_bar, long_label = long_path
@@ -386,10 +384,10 @@ class WindowSampler:
         first_open = float(opens[0]) if len(opens) else float(entry)
         long_gap_adverse_r = max(0.0, (entry - first_open) / max(risk_proxy, 1e-9))
         short_gap_adverse_r = max(0.0, (first_open - entry) / max(risk_proxy, 1e-9))
-        long_mfe_bar = int(np.argmax(high_delta) + 1) if len(highs) else 0
-        long_mae_bar = int(np.argmax(low_delta) + 1) if len(lows) else 0
-        short_mfe_bar = int(np.argmax(low_delta) + 1) if len(lows) else 0
-        short_mae_bar = int(np.argmax(high_delta) + 1) if len(highs) else 0
+        long_mfe_bar = int(np.argmax(highs - entry) + 1) if len(highs) else 0
+        long_mae_bar = int(np.argmax(entry - lows) + 1) if len(lows) else 0
+        short_mfe_bar = int(np.argmax(entry - lows) + 1) if len(lows) else 0
+        short_mae_bar = int(np.argmax(highs - entry) + 1) if len(highs) else 0
         strong_close_threshold = self.target_r * 0.75
         long_final_r = float((closes[-1] - entry) / risk_proxy) if len(closes) else 0.0
         short_final_r = float((entry - closes[-1]) / risk_proxy) if len(closes) else 0.0
@@ -406,10 +404,10 @@ class WindowSampler:
             short_mae_r=round(short_mae_r, 4),
             short_outcome_r=round(short_outcome_r, 4),
             short_hit_4r=short_hit_4r,
-            forward_highs=np.round(highs, 6).tolist(),
-            forward_lows=np.round(lows, 6).tolist(),
-            forward_closes=np.round(closes, 6).tolist(),
-            forward_opens=np.round(opens, 6).tolist(),
+            forward_highs=np.round(highs.astype(float), 6).tolist(),
+            forward_lows=np.round(lows.astype(float), 6).tolist(),
+            forward_closes=np.round(closes.astype(float), 6).tolist(),
+            forward_opens=np.round(opens.astype(float), 6).tolist(),
             execution_cost_r=round(float(execution_cost_r), 5),
             long_label=long_label,
             short_label=short_label,
