@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from hashlib import blake2b
 import json
@@ -111,20 +111,20 @@ class IntradayUniverseBuilder:
         ]
         selected = self._select(scored, limit=limit, thresholds=thresholds)
         selected_keys = {row["symbol"] for row in selected}
+        selected_rank = {row["symbol"]: idx + 1 for idx, row in enumerate(selected)}
         for row in scored:
             row["selected"] = row["symbol"] in selected_keys
             row["status"] = "selected" if row["selected"] else row["status"]
-        selected_rank = {row["symbol"]: idx + 1 for idx, row in enumerate(selected)}
-        for row in scored:
             row["rank"] = selected_rank.get(row["symbol"], 0)
 
         output = Path(output_path)
         output.parent.mkdir(parents=True, exist_ok=True)
         metadata_path = output.with_suffix(".metadata.json")
-        columns = self._output_columns()
         pd.DataFrame(scored).sort_values(
-            ["selected", "rank", "score", "symbol"], ascending=[False, True, False, True]
-        )[columns].to_csv(output, index=False)
+            ["selected", "rank", "score", "symbol"],
+            ascending=[False, True, False, True],
+        )[self._output_columns()].to_csv(output, index=False)
+
         metadata = self._metadata(
             seed_files=seed_files,
             output_path=output,
@@ -159,10 +159,12 @@ class IntradayUniverseBuilder:
                 symbol = str(row.get("symbol") or "").upper().strip()
                 if not symbol:
                     continue
-                existing = by_symbol.get(symbol)
                 source = str(path)
+                existing = by_symbol.get(symbol)
                 if existing is not None:
-                    existing.source = ",".join(sorted(set(existing.source.split(",") + [source])))
+                    existing.source = ",".join(
+                        sorted({item for item in existing.source.split(",") if item} | {source})
+                    )
                     continue
                 by_symbol[symbol] = IntradayUniverseCandidate(
                     symbol=symbol,
@@ -204,22 +206,42 @@ class IntradayUniverseBuilder:
         try:
             df = normalize_ohlcv(provider.fetch_ohlcv(candidate.symbol, period=period, interval=interval))
         except Exception as exc:  # noqa: BLE001 - report per-symbol data failures, keep building.
-            return {**base, "reason_codes": f"data_unavailable:{type(exc).__name__}", "error": str(exc)[:240]}
+            return {
+                **base,
+                "reason_codes": f"data_unavailable:{type(exc).__name__}",
+                "error": str(exc)[:240],
+                **self._empty_metrics(),
+            }
         metrics = self._metrics(df)
         reasons = self._rejection_reasons(metrics, candidate, thresholds)
-        score = self._score(metrics, candidate, thresholds)
-        status = "eligible" if not reasons else "rejected"
         return {
             **base,
             **metrics,
-            "status": status,
+            "status": "eligible" if not reasons else "rejected",
             "reason_codes": ";".join(reasons),
-            "score": round(score, 6),
+            "score": round(self._score(metrics, candidate, thresholds), 6),
+        }
+
+    @staticmethod
+    def _empty_metrics() -> dict[str, Any]:
+        return {
+            "rows": 0,
+            "first_timestamp": "",
+            "last_timestamp": "",
+            "median_close": 0.0,
+            "median_dollar_volume": 0.0,
+            "avg_dollar_volume": 0.0,
+            "zero_volume_pct": 1.0,
+            "stale_close_run": 0,
+            "max_abs_bar_return_pct": 0.0,
+            "median_abs_bar_return_pct": 0.0,
+            "spread_proxy_bps": 0.0,
+            "p90_spread_proxy_bps": 0.0,
         }
 
     def _metrics(self, df: pd.DataFrame) -> dict[str, Any]:
         if df.empty:
-            return {"rows": 0}
+            return self._empty_metrics()
         close = df["close"].astype(float)
         volume = df["volume"].astype(float) if "volume" in df else pd.Series([0.0] * len(df), index=df.index)
         dollar_volume = close * volume
@@ -279,8 +301,12 @@ class IntradayUniverseBuilder:
         price_score = min(1.0, max(0.0, float(metrics.get("median_close") or 0.0) / 30.0))
         dv = max(float(metrics.get("median_dollar_volume") or 0.0), 1.0)
         dv_score = min(1.0, math.log10(dv) / 8.0)
-        spread_score = 1.0 - min(1.0, float(metrics.get("spread_proxy_bps") or 0.0) / max(thresholds.max_spread_proxy_bps, 1.0))
-        zero_score = 1.0 - min(1.0, float(metrics.get("zero_volume_pct") or 0.0) / max(thresholds.max_zero_volume_pct, 1e-6))
+        spread_score = 1.0 - min(
+            1.0, float(metrics.get("spread_proxy_bps") or 0.0) / max(thresholds.max_spread_proxy_bps, 1.0)
+        )
+        zero_score = 1.0 - min(
+            1.0, float(metrics.get("zero_volume_pct") or 0.0) / max(thresholds.max_zero_volume_pct, 1e-6)
+        )
         event_penalty = min(0.35, self._event_keyword_score(candidate) * 0.15)
         return max(
             0.0,
@@ -327,10 +353,7 @@ class IntradayUniverseBuilder:
                 break
         return selected
 
-    def _metadata(
-        self,
-        **kwargs: Any,
-    ) -> dict[str, Any]:
+    def _metadata(self, **kwargs: Any) -> dict[str, Any]:
         scored = kwargs.pop("scored")
         selected = kwargs.pop("selected")
         reason_counts: dict[str, int] = {}
@@ -342,11 +365,11 @@ class IntradayUniverseBuilder:
             "schema_version": 1,
             "generated_at": datetime.now(UTC).isoformat(),
             **{
-                key: (str(value) if isinstance(value, Path) else value)
+                key: ([str(item) for item in value] if key == "seed_files" else str(value) if isinstance(value, Path) else value)
                 for key, value in kwargs.items()
                 if key != "thresholds"
             },
-            "thresholds": kwargs["thresholds"].__dict__,
+            "thresholds": asdict(kwargs["thresholds"]),
             "total_candidates": len(scored),
             "selected_count": len(selected),
             "rejected_count": len(scored) - len(selected),
@@ -406,13 +429,11 @@ class IntradayUniverseBuilder:
 
     @staticmethod
     def _rotation_hash(symbol: str, salt: str) -> str:
-        digest = blake2b(f"{salt}|{symbol}".encode(), digest_size=4).hexdigest()
-        return digest
+        return blake2b(f"{salt}|{symbol}".encode(), digest_size=4).hexdigest()
 
     @staticmethod
     def _rotation_jitter(symbol: str) -> float:
-        digest = blake2b(symbol.encode(), digest_size=2).hexdigest()
-        return int(digest, 16) / 65535.0
+        return int(blake2b(symbol.encode(), digest_size=2).hexdigest(), 16) / 65535.0
 
     @staticmethod
     def _bucket(row: dict[str, Any]) -> str:
