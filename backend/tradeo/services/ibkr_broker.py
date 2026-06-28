@@ -266,6 +266,7 @@ class IBKRBroker:
         selected_account_managed = bool(
             selected_account and selected_account in set(managed_accounts)
         )
+        selected_account_blocked = self._account_is_blocked(selected_account)
         symbol_misses = [symbol for symbol in requested_symbols if symbol not in set(allowed_symbols)]
 
         add("ibkr_readonly", not self.settings.ibkr_readonly, "ibkr_readonly")
@@ -287,6 +288,11 @@ class IBKRBroker:
             if selected_account_configured
             else "missing_ibkr_account",
             managed_accounts_count=len(managed_accounts),
+        )
+        add(
+            "ibkr_account_not_blocked",
+            not selected_account_blocked,
+            "blocked_ibkr_account",
         )
         add(
             "ibkr_allowed_symbols",
@@ -323,6 +329,7 @@ class IBKRBroker:
             "selected_account_configured": selected_account_configured,
             "selected_account_present": selected_account is not None,
             "selected_account_managed": selected_account_managed,
+            "selected_account_blocked": selected_account_blocked,
             "allowed_symbol_count": len(allowed_symbols),
             "checked_symbol_count": len(requested_symbols),
             "require_live_port": require_live_port,
@@ -421,12 +428,22 @@ class IBKRBroker:
         accounts = managed_accounts()
         return accounts[0] if len(accounts) == 1 else None
 
+    def _account_is_blocked(self, account: str | None) -> bool:
+        if not account:
+            return False
+        return str(account).strip().upper() in self.settings.ibkr_blocked_account_set
+
+    def _validate_account_not_blocked(self, account: str | None) -> None:
+        if self._account_is_blocked(account):
+            raise IBKRSafetyError("selected IBKR account is blocked by TRADEO_IBKR_BLOCKED_ACCOUNTS")
+
     def _validate_paper_account_target(self, ib) -> None:  # noqa: ANN001
         if self.settings.trading_mode != "paper":
             return
         account = self._selected_account(ib)
         if not account:
             raise IBKRSafetyError("paper IBKR execution requires a selected paper account")
+        self._validate_account_not_blocked(account)
         if not str(account).upper().startswith("DU"):
             raise IBKRSafetyError(
                 "paper IBKR execution requires a DU paper account; "
@@ -1097,6 +1114,7 @@ class IBKRBroker:
             for order in bracket:
                 order.tif = "DAY"
                 account = self._selected_account(ib)
+                self._validate_account_not_blocked(account)
                 if account:
                     order.account = account
             if action == "SELL":

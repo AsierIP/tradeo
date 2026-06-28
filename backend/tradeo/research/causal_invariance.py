@@ -24,13 +24,23 @@ class CausalInvariantTester:
     min_bucket_samples: int = 8
     min_positive_bucket_rate: float = 0.45
 
-    def analyze(self, samples: list[WindowSample], side: Side, rr: float) -> dict[str, Any]:
+    def analyze(
+        self,
+        samples: list[WindowSample],
+        side: Side,
+        rr: float,
+        *,
+        outcomes: np.ndarray | None = None,
+    ) -> dict[str, Any]:
         if not samples:
             return self._empty()
-        outcomes = np.asarray(
-            [RewardRiskAnalyzer._simulate_sample(sample, side, rr)[0] for sample in samples],
-            dtype=float,
-        )
+        if outcomes is None or len(outcomes) != len(samples):
+            outcomes = np.asarray(
+                [RewardRiskAnalyzer._simulate_sample(sample, side, rr)[0] for sample in samples],
+                dtype=float,
+            )
+        else:
+            outcomes = np.asarray(outcomes, dtype=float)
         groupers: dict[str, BucketFn] = {
             "year": lambda s: str(s.year),
             "symbol": lambda s: s.symbol,

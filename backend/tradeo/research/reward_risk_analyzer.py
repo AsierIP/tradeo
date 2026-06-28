@@ -1,11 +1,28 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import NamedTuple
 
 import numpy as np
 
 from tradeo.research.quant_validation import triple_barrier_outcome
 from tradeo.research.types import Side, WindowSample
+
+
+class _SampleMetricInputs(NamedTuple):
+    mfe: float
+    mae: float
+    execution_cost_r: float
+    gap_adverse_r: float
+    mfe_before_mae: bool
+    strong_close_without_target: bool
+    fill_probability: float
+    max_size_usd: float
+    spread_proxy_pct: float
+    slippage_proxy_pct: float
+    entry_gap_penalty_pct: float
+    short_borrow_proxy_pct: float
+    horizon: int
 
 
 @dataclass(slots=True)
@@ -22,7 +39,16 @@ class RewardRiskAnalyzer:
     min_selectable_rr: float = 4.0
 
     def analyze(self, samples: list[WindowSample], side: Side) -> dict[str, object]:
-        metrics = {self._key(rr): self.metrics_for_rr(samples, side, rr) for rr in self.rr_levels}
+        sample_inputs = self._sample_metric_inputs(samples, side)
+        metrics = {
+            self._key(rr): self.metrics_for_rr(
+                samples,
+                side,
+                rr,
+                sample_inputs=sample_inputs,
+            )
+            for rr in self.rr_levels
+        }
         candidates = [
             m
             for m in metrics.values()
@@ -55,6 +81,7 @@ class RewardRiskAnalyzer:
         rr: float,
         *,
         cost_multiplier: float = 1.0,
+        sample_inputs: list[_SampleMetricInputs] | None = None,
     ) -> dict[str, float | int]:
         """Aggregate canonical triple-barrier outcomes for one target R level.
 
@@ -83,7 +110,9 @@ class RewardRiskAnalyzer:
         slippage_pct: list[float] = []
         entry_gap_penalty_pct: list[float] = []
         short_borrow_pct: list[float] = []
-        for sample in samples:
+        inputs = sample_inputs or self._sample_metric_inputs(samples, side)
+        cost_scale = max(0.0, float(cost_multiplier))
+        for sample, sample_input in zip(samples, inputs, strict=True):
             signal_count += 1
             detail = self._simulate_sample_detail(sample, side, rr, cost_multiplier=cost_multiplier)
             status = str(detail.get("status", "ok"))
@@ -99,28 +128,22 @@ class RewardRiskAnalyzer:
                 target_bars.append(target_bar)
             if stop_bar is not None:
                 stop_bars.append(stop_bar)
-            mfe.append(sample.outcome.mfe_for(side))
-            mae.append(sample.outcome.mae_for(side))
-            costs.append(self._execution_cost_for_sample(sample, side, cost_multiplier=cost_multiplier))
+            mfe.append(sample_input.mfe)
+            mae.append(sample_input.mae)
+            costs.append(sample_input.execution_cost_r * cost_scale)
             label = self._label_from_detail(detail, target_bar=target_bar, stop_bar=stop_bar)
             labels[label] = labels.get(label, 0) + 1
-            speed = self._speed_label(target_bar, stop_bar, len(sample.outcome.forward_closes))
+            speed = self._speed_label(target_bar, stop_bar, sample_input.horizon)
             speed_labels[speed] = speed_labels.get(speed, 0) + 1
-            if side == "long":
-                gap_adverse.append(sample.outcome.long_gap_adverse_r)
-                mfe_before_mae.append(sample.outcome.long_mfe_before_mae)
-                strong_close_without_target.append(sample.outcome.long_strong_close_without_target)
-            else:
-                gap_adverse.append(sample.outcome.short_gap_adverse_r)
-                mfe_before_mae.append(sample.outcome.short_mfe_before_mae)
-                strong_close_without_target.append(sample.outcome.short_strong_close_without_target)
-            execution = sample.outcome.execution or {}
-            fill_probabilities.append(float(execution.get("fill_probability", 0.0)))
-            max_sizes.append(float(execution.get("max_size_usd", 0.0)))
-            spread_pct.append(float(execution.get("spread_proxy_pct", 0.0)))
-            slippage_pct.append(float(execution.get("slippage_proxy_pct", 0.0)))
-            entry_gap_penalty_pct.append(float(execution.get("entry_gap_penalty_pct", 0.0)))
-            short_borrow_pct.append(float(execution.get("short_borrow_proxy_pct", 0.0)))
+            gap_adverse.append(sample_input.gap_adverse_r)
+            mfe_before_mae.append(sample_input.mfe_before_mae)
+            strong_close_without_target.append(sample_input.strong_close_without_target)
+            fill_probabilities.append(sample_input.fill_probability)
+            max_sizes.append(sample_input.max_size_usd)
+            spread_pct.append(sample_input.spread_proxy_pct)
+            slippage_pct.append(sample_input.slippage_proxy_pct)
+            entry_gap_penalty_pct.append(sample_input.entry_gap_penalty_pct)
+            short_borrow_pct.append(sample_input.short_borrow_proxy_pct)
 
         arr = np.asarray(results, dtype=float)
         wins = arr[arr > 0]
@@ -261,6 +284,42 @@ class RewardRiskAnalyzer:
             borrow_r = sample.outcome.entry_price * borrow_pct / max(sample.outcome.risk_proxy, 1e-9)
             cost_r += borrow_r
         return float(cost_r * max(0.0, float(cost_multiplier)))
+
+    @classmethod
+    def _sample_metric_inputs(
+        cls,
+        samples: list[WindowSample],
+        side: Side,
+    ) -> list[_SampleMetricInputs]:
+        inputs: list[_SampleMetricInputs] = []
+        for sample in samples:
+            execution = sample.outcome.execution or {}
+            if side == "long":
+                gap_adverse = float(sample.outcome.long_gap_adverse_r)
+                mfe_before_mae = bool(sample.outcome.long_mfe_before_mae)
+                strong_close_without_target = bool(sample.outcome.long_strong_close_without_target)
+            else:
+                gap_adverse = float(sample.outcome.short_gap_adverse_r)
+                mfe_before_mae = bool(sample.outcome.short_mfe_before_mae)
+                strong_close_without_target = bool(sample.outcome.short_strong_close_without_target)
+            inputs.append(
+                _SampleMetricInputs(
+                    mfe=float(sample.outcome.mfe_for(side)),
+                    mae=float(sample.outcome.mae_for(side)),
+                    execution_cost_r=cls._execution_cost_for_sample(sample, side),
+                    gap_adverse_r=gap_adverse,
+                    mfe_before_mae=mfe_before_mae,
+                    strong_close_without_target=strong_close_without_target,
+                    fill_probability=float(execution.get("fill_probability", 0.0)),
+                    max_size_usd=float(execution.get("max_size_usd", 0.0)),
+                    spread_proxy_pct=float(execution.get("spread_proxy_pct", 0.0)),
+                    slippage_proxy_pct=float(execution.get("slippage_proxy_pct", 0.0)),
+                    entry_gap_penalty_pct=float(execution.get("entry_gap_penalty_pct", 0.0)),
+                    short_borrow_proxy_pct=float(execution.get("short_borrow_proxy_pct", 0.0)),
+                    horizon=len(sample.outcome.forward_closes),
+                )
+            )
+        return inputs
 
     @staticmethod
     def _speed_label(target_bar: int | None, stop_bar: int | None, horizon: int) -> str:

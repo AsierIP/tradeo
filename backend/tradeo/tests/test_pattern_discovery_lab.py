@@ -9,11 +9,14 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from tradeo.agents.pattern_discovery_lab_agent import PatternDiscoveryLabAgent
 from tradeo.core.config import Settings
-from tradeo.research.cluster_research_engine import ClusterResearchEngine
+from tradeo.research import cluster_research_engine as cluster_module
+from tradeo.research.cluster_research_engine import ClusterFitResult, ClusterResearchEngine
 from tradeo.research.global_experiment_registry import GlobalExperimentRegistry
+from tradeo.research.pattern_embedding_engine import PatternEmbeddingEngine
 from tradeo.research.types import ClusterCandidate, ForwardOutcome, WindowSample
 from tradeo.research.validation_gate import ValidationGate
 from tradeo.research.window_sampler import WindowSampler
@@ -100,7 +103,13 @@ def test_window_sampler_generates_forward_labeled_samples() -> None:
     assert first.outcome.execution_cost_r > 0
     assert first.outcome.long_label in {"target", "stop", "timeout"}
     assert first.outcome.short_label in {"target", "stop", "timeout"}
-    assert first.outcome.long_speed_label in {"fast_target", "normal_target", "slow_target", "stopped", "timeout"}
+    assert first.outcome.long_speed_label in {
+        "fast_target",
+        "normal_target",
+        "slow_target",
+        "stopped",
+        "timeout",
+    }
     assert first.outcome.execution["fill_probability"] > 0
     assert 20 in first.outcome.forward_returns
     assert "close_norm" in first.chart
@@ -112,6 +121,115 @@ def test_window_sampler_generates_forward_labeled_samples() -> None:
     assert "execution_fill_probability" in first.features
     assert "weekly_return" in first.features
     assert "relative_strength_spy" in first.features
+
+
+def test_embedding_fast_benchmark_alignment_matches_pandas_ffill() -> None:
+    window_index = pd.date_range("2026-06-22 13:30", periods=30, freq="5min", tz="UTC")
+    window = pd.DataFrame(
+        {
+            "open": np.linspace(10.0, 11.0, len(window_index)),
+            "high": np.linspace(10.2, 11.2, len(window_index)),
+            "low": np.linspace(9.8, 10.8, len(window_index)),
+            "close": np.linspace(10.1, 11.1, len(window_index)),
+            "volume": np.full(len(window_index), 100_000),
+        },
+        index=window_index,
+    )
+    benchmark_index = pd.date_range("2026-06-22 13:25", periods=18, freq="10min", tz="UTC")
+    benchmark = pd.DataFrame(
+        {"close": np.linspace(100.0, 104.0, len(benchmark_index))},
+        index=benchmark_index,
+    ).sample(frac=1.0, random_state=7)
+
+    aligned = benchmark.sort_index().reindex(window.index, method="ffill").dropna(subset=["close"])
+    expected_return = float(
+        aligned["close"].iloc[-1] / max(float(aligned["close"].iloc[0]), 1e-9) - 1.0
+    )
+    close = aligned["close"].astype(float)
+    sma = close.rolling(min(20, len(close)), min_periods=3).mean()
+    expected_breadth = (float(close.iloc[-1] >= sma.iloc[-1]) + float(close.iloc[-1] >= close.iloc[0])) / 2.0
+
+    assert PatternEmbeddingEngine._benchmark_return(window, benchmark) == expected_return
+    assert PatternEmbeddingEngine._benchmark_breadth_proxy(window, benchmark) == expected_breadth
+
+
+def test_embedding_reuses_single_atr_series_for_atr_features(monkeypatch) -> None:
+    window_index = pd.date_range("2026-06-22 13:30", periods=30, freq="5min", tz="UTC")
+    window = pd.DataFrame(
+        {
+            "open": np.linspace(10.0, 11.0, len(window_index)),
+            "high": np.linspace(10.2, 11.2, len(window_index)),
+            "low": np.linspace(9.8, 10.8, len(window_index)),
+            "close": np.linspace(10.1, 11.1, len(window_index)),
+            "volume": np.full(len(window_index), 100_000),
+        },
+        index=window_index,
+    )
+    call_count = 0
+    atr_values = pd.Series(np.linspace(0.14, 0.42, len(window)), index=window.index)
+
+    def counted_atr(df: pd.DataFrame, window_size: int) -> pd.Series:
+        nonlocal call_count
+        call_count += 1
+        assert window_size == 14
+        return atr_values.reindex(df.index)
+
+    monkeypatch.setattr("tradeo.research.pattern_embedding_engine.atr", counted_atr)
+
+    _, features, _ = PatternEmbeddingEngine().embed(window)
+    expected_atr_pct = float(atr_values.iloc[-1] / window["close"].iloc[-1])
+    expected_median_atr_pct = float(
+        np.median(atr_values.tail(50) / np.maximum(window["close"].tail(50).astype(float), 1e-9))
+    )
+
+    assert call_count == 1
+    assert features["atr_pct"] == expected_atr_pct
+    assert features["volatility_regime"] == expected_atr_pct / expected_median_atr_pct
+
+
+def test_window_sampler_spreads_quota_across_intraday_range() -> None:
+    idx = pd.date_range("2026-05-13 09:30", periods=2_400, freq="5min", tz="America/New_York")
+    df = pd.DataFrame(
+        {
+            "open": np.linspace(10.0, 12.0, len(idx)),
+            "high": np.linspace(10.1, 12.1, len(idx)),
+            "low": np.linspace(9.9, 11.9, len(idx)),
+            "close": np.linspace(10.0, 12.0, len(idx)),
+            "volume": np.full(len(idx), 100_000),
+        },
+        index=idx,
+    )
+
+    samples = WindowSampler().sample(
+        symbol="LABX",
+        df=df,
+        timeframe="5m",
+        window_sizes=[20],
+        forward_bars=[3, 6, 12],
+        stride=1,
+        max_windows_per_symbol=30,
+    )
+
+    assert len(samples) == 30
+    assert pd.Timestamp(samples[0].end) < idx[100]
+    assert pd.Timestamp(samples[-1].end) > idx[-30]
+
+
+def test_window_sampler_end_position_quota_matches_materialized_range() -> None:
+    cases = [
+        {"start": 19, "stop": 187, "stride": 3, "quota": 12},
+        {"start": 99, "stop": 231, "stride": 7, "quota": 5},
+        {"start": 49, "stop": 90, "stride": 4, "quota": 200},
+    ]
+    for case in cases:
+        positions = list(range(case["start"], case["stop"], case["stride"]))
+        if case["quota"] > 0 and len(positions) > case["quota"]:
+            selected = np.linspace(0, len(positions) - 1, num=case["quota"], dtype=int)
+            expected = [positions[int(index)] for index in selected]
+        else:
+            expected = positions
+
+        assert WindowSampler._sample_end_positions(**case) == expected
 
 
 def test_forward_outcome_uses_array_path_and_keeps_conservative_intrabar_order(
@@ -267,7 +385,9 @@ def test_cluster_engine_returns_candidates_or_empty_without_crashing() -> None:
         assert "novelty_score" in candidate.metrics
         assert "expected_information_gain" in candidate.metrics
         assert candidate.metrics["feature_parity_contract"]["research_lab_shared_path"] is True
-        assert candidate.metrics["feature_parity_contract"]["contract_id"].startswith("tradeo.pattern_embedding")
+        assert candidate.metrics["feature_parity_contract"]["contract_id"].startswith(
+            "tradeo.pattern_embedding"
+        )
         assert "medoid" in candidate.metrics["cluster_signature"]
         assert "similarity_distribution" in candidate.metrics["cluster_signature"]
         assert "concentration_checks" in candidate.metrics
@@ -302,11 +422,441 @@ def test_cluster_engine_hdbscan_persists_noise_and_consensus_metadata() -> None:
     metrics = candidates[0].metrics
     assert metrics["clusterer_method"] == "hdbscan"
     assert metrics["clusterer"]["noise_count_train"] > 0
-    assert metrics["density_noise"]["train_noise_count"] == metrics["clusterer"]["noise_count_train"]
+    assert (
+        metrics["density_noise"]["train_noise_count"] == metrics["clusterer"]["noise_count_train"]
+    )
     consensus = metrics["cluster_stability"]["coassignment_consensus"]
     assert consensus["method"] == "subsample_coassignment_consensus_v1"
     assert consensus["pair_observations"] > 0
     assert consensus["coassignment_rate"] is not None
+
+
+def test_cluster_engine_hdbscan_uses_single_job_for_fit_and_consensus(
+    monkeypatch,
+) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeHDBSCAN:
+        def __init__(self, **kwargs: object) -> None:
+            calls.append(kwargs)
+
+        def fit_predict(self, matrix: np.ndarray) -> np.ndarray:
+            midpoint = len(matrix) // 2
+            return np.asarray([0] * midpoint + [1] * (len(matrix) - midpoint), dtype=int)
+
+    monkeypatch.setattr(cluster_module, "HDBSCAN", FakeHDBSCAN)
+    matrix = np.vstack([np.linspace(0.0, 1.0, 4) + i * 0.01 for i in range(12)])
+    engine = ClusterResearchEngine(
+        min_cluster_size=5,
+        clusterer_method="hdbscan",
+        clusterer_min_samples=2,
+    )
+
+    fit = engine._fit_hdbscan_clusters(
+        matrix,
+        matrix,
+        target_clusters=2,
+        requested_method="hdbscan",
+    )
+    consensus = engine._consensus_labels(
+        matrix,
+        target_clusters=2,
+        method="hdbscan",
+        seed=7,
+    )
+
+    assert fit is not None
+    assert fit.method == "hdbscan"
+    np.testing.assert_array_equal(consensus, fit.train_labels)
+    assert [call["n_jobs"] for call in calls] == [1, 1]
+    assert all(call["metric"] == "euclidean" for call in calls)
+
+
+def test_cluster_engine_hdbscan_single_job_matches_default_labels() -> None:
+    if cluster_module.HDBSCAN is None:
+        pytest.skip("scikit-learn HDBSCAN unavailable")
+    rng = np.random.default_rng(123)
+    matrix = np.vstack(
+        [
+            rng.normal(0.0, 0.04, size=(8, 5)),
+            rng.normal(4.0, 0.04, size=(8, 5)),
+            rng.normal(8.0, 0.04, size=(8, 5)),
+        ]
+    )
+    default_labels = np.asarray(
+        cluster_module.HDBSCAN(
+            min_cluster_size=5,
+            min_samples=2,
+            metric="euclidean",
+            copy=False,
+        ).fit_predict(matrix),
+        dtype=int,
+    )
+    single_job_labels = np.asarray(
+        ClusterResearchEngine._hdbscan_model(
+            min_cluster_size=5,
+            min_samples=2,
+        ).fit_predict(matrix),
+        dtype=int,
+    )
+
+    np.testing.assert_array_equal(single_job_labels, default_labels)
+
+
+def test_cluster_engine_coassignment_stability_counts_without_pair_materialization(
+    monkeypatch,
+) -> None:
+    def blocked_combinations(*_args, **_kwargs):  # noqa: ANN002, ANN003
+        raise AssertionError("_coassignment_stability should not materialize member pairs")
+
+    monkeypatch.setattr(cluster_module, "combinations", blocked_combinations)
+    engine = ClusterResearchEngine(
+        consensus_repeats=3,
+        consensus_subsample_pct=0.75,
+        consensus_max_members=10,
+    )
+    result = engine._coassignment_stability(
+        np.asarray([1, 2, 3, 4, 5], dtype=int),
+        [
+            (
+                np.asarray([1, 2, 3, 4], dtype=int),
+                np.asarray([0, 0, 1, -1], dtype=int),
+            ),
+            (
+                np.asarray([2, 3, 5], dtype=int),
+                np.asarray([2, 2, 2], dtype=int),
+            ),
+            (
+                np.asarray([9, 10], dtype=int),
+                np.asarray([0, 1], dtype=int),
+            ),
+        ],
+    )
+
+    assert result["status"] == "ok"
+    assert result["pair_observations"] == 9
+    assert result["coassigned_pairs"] == 4
+    assert result["coassignment_rate"] == round(4 / 9, 6)
+    assert result["stability_score"] == round(4 / 9, 6)
+    assert result["mean_noise_vote_rate"] == 0.125
+
+
+def test_cluster_engine_coassignment_stability_uses_indexed_consensus_lookup(
+    monkeypatch,
+) -> None:
+    def blocked_searchsorted(*_args: object, **_kwargs: object) -> np.ndarray:
+        raise AssertionError("_coassignment_stability should use the consensus label index")
+
+    monkeypatch.setattr(cluster_module.np, "searchsorted", blocked_searchsorted)
+
+    def indexed_vote(subset: np.ndarray, labels: np.ndarray) -> object:
+        lookup = np.full(8, cluster_module._CONSENSUS_MISSING_LABEL, dtype=int)
+        lookup[subset] = labels
+        return cluster_module._ConsensusLabels(
+            subset=subset,
+            labels=labels,
+            label_lookup=lookup,
+        )
+
+    engine = ClusterResearchEngine(
+        consensus_repeats=2,
+        consensus_subsample_pct=0.75,
+        consensus_max_members=10,
+    )
+    result = engine._coassignment_stability(
+        np.asarray([1, 2, 3, 4, 5], dtype=int),
+        [
+            indexed_vote(
+                np.asarray([1, 2, 3, 4], dtype=int),
+                np.asarray([0, 0, 1, -1], dtype=int),
+            ),
+            indexed_vote(
+                np.asarray([2, 3, 5], dtype=int),
+                np.asarray([2, 2, 2], dtype=int),
+            ),
+        ],
+    )
+
+    assert result["status"] == "ok"
+    assert result["pair_observations"] == 9
+    assert result["coassigned_pairs"] == 4
+    assert result["coassignment_rate"] == round(4 / 9, 6)
+    assert result["stability_score"] == round(4 / 9, 6)
+    assert result["mean_noise_vote_rate"] == 0.125
+
+
+def test_cluster_engine_feature_summary_scans_each_feature_once(monkeypatch) -> None:
+    samples = [
+        _research_sample(i, vector_value=0.1, highs=[101.0], lows=[99.0], closes=[100.0])
+        for i in range(3)
+    ]
+    for index, sample in enumerate(samples):
+        sample.features = {
+            "numeric_feature": float(index + 1),
+            "other_numeric": float(index + 2),
+            "text_feature": f"bucket-{index}",
+        }
+    original = cluster_module._numeric_feature_values
+    calls: list[str] = []
+
+    def counted_values(items: list[WindowSample], key: str) -> np.ndarray:
+        calls.append(key)
+        return original(items, key)
+
+    monkeypatch.setattr(cluster_module, "_numeric_feature_values", counted_values)
+
+    summary = ClusterResearchEngine._feature_summary(samples)
+
+    assert calls == ["numeric_feature", "other_numeric", "text_feature"]
+    assert set(summary) == {"numeric_feature", "other_numeric"}
+    assert summary["numeric_feature"]["mean"] == 2.0
+
+
+def test_cluster_engine_reuses_null_baseline_strata_within_run(monkeypatch) -> None:
+    samples = [
+        _research_sample(i, vector_value=0.1, highs=[101.0], lows=[99.0], closes=[100.0])
+        for i in range(6)
+    ]
+    original = ClusterResearchEngine._stratum
+    calls = 0
+
+    def counted_stratum(sample: WindowSample) -> tuple[object, ...]:
+        nonlocal calls
+        calls += 1
+        return original(sample)
+
+    monkeypatch.setattr(ClusterResearchEngine, "_stratum", staticmethod(counted_stratum))
+    engine = ClusterResearchEngine()
+
+    first_groups = engine._baseline_groups(samples)
+    second_groups = engine._baseline_groups(list(samples))
+    first_strata = engine._cluster_strata(samples[:3])
+    second_strata = engine._cluster_strata(list(samples[:3]))
+
+    assert first_groups == second_groups
+    assert first_strata == second_strata
+    assert calls == len(samples)
+
+
+def test_cluster_engine_null_baseline_preallocated_draws_match_list_reference() -> None:
+    samples = [
+        _research_sample(
+            i,
+            vector_value=0.1,
+            highs=[104.0 + (i % 3)],
+            lows=[98.0 - (i % 2)],
+            closes=[101.0 + (i % 4)],
+        )
+        for i in range(18)
+    ]
+    for index, sample in enumerate(samples):
+        sample.features = {
+            "volatility_regime": 0.7 if index % 2 else 1.4,
+            "trend_regime": -0.4 if index % 3 == 0 else 0.4,
+            "market_regime_score": 0.5 if index % 4 else -0.5,
+            "market_breadth_proxy": 0.8 if index % 5 else 0.2,
+            "sector_strength": 0.05 if index % 2 else -0.05,
+            "liquidity_score": 0.8 if index % 3 else 0.2,
+        }
+    cluster_samples = samples[::2]
+    engine = ClusterResearchEngine(random_state=11)
+    side = "long"
+    rr = 2.0
+    observed_expectancy = 0.35
+    trial_count = 7
+    outcomes = np.asarray([engine._simulate_sample(s, side, rr)[0] for s in samples], dtype=float)
+    draws = min(512, max(96, len(outcomes) * 2))
+    rng = np.random.default_rng(
+        engine._null_seed(side, rr, len(cluster_samples), len(outcomes))
+    )
+    groups = engine._baseline_group_arrays(samples)
+    strata = engine._cluster_strata(cluster_samples)
+    all_indices = np.arange(len(outcomes))
+    reference_means: list[float] = []
+    for _ in range(draws):
+        selected: list[float] = []
+        for stratum, count in strata.items():
+            group = groups.get(stratum)
+            if group is None or group.size == 0:
+                continue
+            idxs = rng.choice(group, size=min(count, int(group.size)), replace=False)
+            selected.extend(outcomes[idxs].astype(float).tolist())
+        missing = max(0, len(cluster_samples) - len(selected))
+        if missing:
+            idxs = rng.choice(all_indices, size=min(missing, len(outcomes)), replace=False)
+            selected.extend(outcomes[idxs].astype(float).tolist())
+        if not selected:
+            idxs = rng.choice(
+                all_indices,
+                size=min(len(cluster_samples), len(outcomes)),
+                replace=False,
+            )
+            selected.extend(outcomes[idxs].astype(float).tolist())
+        reference_means.append(float(np.mean(np.asarray(selected, dtype=float))))
+    reference_p = (
+        1 + sum(1 for mean in reference_means if mean >= observed_expectancy)
+    ) / (draws + 1)
+
+    baseline = engine._null_baseline(
+        samples,
+        cluster_samples=cluster_samples,
+        cluster_size=len(cluster_samples),
+        side=side,
+        rr=rr,
+        observed_expectancy=observed_expectancy,
+        multiple_testing_trials=trial_count,
+    )
+
+    assert baseline["expectancy_r"] == round(float(np.mean(reference_means)), 5)
+    assert baseline["p_value"] == round(float(reference_p), 5)
+    assert baseline["adjusted_p_value"] == round(min(1.0, reference_p * trial_count), 5)
+
+
+def test_cluster_engine_stratified_draw_matches_list_reference() -> None:
+    engine = ClusterResearchEngine()
+    outcomes = np.asarray([0.2, -1.0, 2.0, 0.5, -0.4, 1.1, 0.0], dtype=float)
+    groups = {
+        ("up",): np.asarray([0, 2, 4], dtype=int),
+        ("down",): np.asarray([1, 3], dtype=int),
+    }
+    strata = {("up",): 2, ("down",): 2, ("missing",): 1}
+    all_indices = np.arange(len(outcomes))
+
+    reference_rng = np.random.default_rng(123)
+    selected: list[float] = []
+    for stratum, count in strata.items():
+        group = groups.get(stratum)
+        if group is None or group.size == 0:
+            continue
+        idxs = reference_rng.choice(group, size=min(count, int(group.size)), replace=False)
+        selected.extend(outcomes[idxs].astype(float).tolist())
+    missing = max(0, 6 - len(selected))
+    if missing:
+        idxs = reference_rng.choice(all_indices, size=min(missing, len(outcomes)), replace=False)
+        selected.extend(outcomes[idxs].astype(float).tolist())
+
+    draw = engine._stratified_draw(
+        np.random.default_rng(123),
+        outcomes=outcomes,
+        groups=groups,
+        cluster_strata=strata,
+        fallback_size=6,
+        all_indices=all_indices,
+    )
+
+    np.testing.assert_array_equal(draw, np.asarray(selected, dtype=float))
+
+
+def test_cluster_engine_stratified_draw_plan_matches_list_reference() -> None:
+    engine = ClusterResearchEngine()
+    outcomes = np.asarray([0.2, -1.0, 2.0, 0.5, -0.4, 1.1, 0.0], dtype=float)
+    groups = {
+        ("up",): np.asarray([0, 2, 4], dtype=int),
+        ("down",): np.asarray([1, 3], dtype=int),
+    }
+    strata = {("up",): 2, ("down",): 2, ("missing",): 1}
+    all_indices = np.arange(len(outcomes))
+    draw_plan = engine._stratified_draw_plan(groups, strata)
+
+    reference_rng = np.random.default_rng(987)
+    selected: list[float] = []
+    for stratum, count in strata.items():
+        group = groups.get(stratum)
+        if group is None or group.size == 0:
+            continue
+        idxs = reference_rng.choice(group, size=min(count, int(group.size)), replace=False)
+        selected.extend(outcomes[idxs].astype(float).tolist())
+    missing = max(0, 6 - len(selected))
+    if missing:
+        idxs = reference_rng.choice(all_indices, size=min(missing, len(outcomes)), replace=False)
+        selected.extend(outcomes[idxs].astype(float).tolist())
+
+    draw = engine._stratified_draw(
+        np.random.default_rng(987),
+        outcomes=outcomes,
+        groups=groups,
+        cluster_strata=strata,
+        fallback_size=6,
+        all_indices=all_indices,
+        draw_plan=draw_plan,
+    )
+
+    np.testing.assert_array_equal(draw, np.asarray(selected, dtype=float))
+    assert engine._stratified_draw_mean(
+        np.random.default_rng(987),
+        outcomes=outcomes,
+        fallback_size=6,
+        all_indices=all_indices,
+        draw_plan=draw_plan,
+    ) == float(np.mean(draw))
+
+
+def test_cluster_engine_auto_falls_back_when_hdbscan_clusters_are_too_small(
+    monkeypatch,
+) -> None:
+    cluster_module._HDBSCAN_FIT_CACHE.clear()
+    engine = ClusterResearchEngine(min_cluster_size=40, clusterer_method="auto")
+    matrix_train = np.vstack(
+        [np.linspace(0.0, 1.0, 4) + i * 0.01 for i in range(60)]
+    )
+
+    def sparse_hdbscan(*_args, **_kwargs) -> ClusterFitResult:
+        train_labels = np.asarray(
+            [0] * 5 + [1] * 6 + [-1] * (len(matrix_train) - 11),
+            dtype=int,
+        )
+        return ClusterFitResult(
+            method="hdbscan",
+            requested_method="auto",
+            train_labels=train_labels,
+            all_labels=train_labels.copy(),
+            centroids={
+                0: np.mean(matrix_train[:5], axis=0),
+                1: np.mean(matrix_train[5:11], axis=0),
+            },
+            metadata={"method": "hdbscan"},
+        )
+
+    monkeypatch.setattr(ClusterResearchEngine, "_fit_hdbscan_clusters", sparse_hdbscan)
+
+    try:
+        fit = engine._fit_clusters(matrix_train, matrix_train, target_clusters=3)
+    finally:
+        cluster_module._HDBSCAN_FIT_CACHE.clear()
+
+    assert fit.method == "kmeans"
+    assert fit.metadata["fallback_reason"] == "hdbscan_no_candidate_sized_clusters"
+
+
+def test_cluster_engine_auto_reuses_hdbscan_fallback_for_identical_matrix(
+    monkeypatch,
+) -> None:
+    cluster_module._HDBSCAN_FIT_CACHE.clear()
+    engine = ClusterResearchEngine(min_cluster_size=40, clusterer_method="auto")
+    matrix_train = np.vstack(
+        [np.linspace(0.0, 1.0, 6) + i * 0.001 for i in range(90)]
+    )
+    hdbscan_calls = 0
+
+    def no_dense_hdbscan(*_args, **_kwargs) -> None:
+        nonlocal hdbscan_calls
+        hdbscan_calls += 1
+        return None
+
+    monkeypatch.setattr(ClusterResearchEngine, "_fit_hdbscan_clusters", no_dense_hdbscan)
+    try:
+        first = engine._fit_clusters(matrix_train, matrix_train, target_clusters=3)
+        second = engine._fit_clusters(matrix_train.copy(), matrix_train.copy(), target_clusters=3)
+    finally:
+        cluster_module._HDBSCAN_FIT_CACHE.clear()
+
+    assert hdbscan_calls == 1
+    assert first.method == "kmeans"
+    assert second.method == "kmeans"
+    assert first.metadata["fallback_reason"] == "hdbscan_unavailable_or_no_dense_clusters"
+    assert second.metadata["fallback_reason"] == "hdbscan_unavailable_or_no_dense_clusters"
+    np.testing.assert_array_equal(first.train_labels, second.train_labels)
+    np.testing.assert_array_equal(first.all_labels, second.all_labels)
 
 
 def test_cluster_engine_fits_scaler_on_train_only() -> None:
@@ -326,7 +876,10 @@ def test_cluster_engine_fits_scaler_on_train_only() -> None:
         min_samples=1,
     ).discover(samples)
     assert candidates
-    assert candidates[0].metrics["validation_method"] == "train_fit_forward_holdout_walk_forward_embargo"
+    assert (
+        candidates[0].metrics["validation_method"]
+        == "train_fit_forward_holdout_walk_forward_embargo"
+    )
     assert candidates[0].metrics["model_fit_sample_count"] == 24
     assert candidates[0].metrics["model_holdout_sample_count"] == 6
     assert "walk_forward_folds" in candidates[0].metrics
@@ -345,7 +898,11 @@ def test_cluster_engine_fits_scaler_on_train_only() -> None:
     assert "overfit_score" in candidates[0].metrics
     assert "selection_split" in candidates[0].metrics
     assert candidates[0].metrics["fit_scope"]["descriptive_all_feeds_scores"] is False
-    assert candidates[0].metrics["feature_parity_contract"]["research_path"].startswith("WindowSampler")
+    assert (
+        candidates[0]
+        .metrics["feature_parity_contract"]["research_path"]
+        .startswith("WindowSampler")
+    )
     assert candidates[0].metrics["cluster_stability"]["concentration_passed"] in {True, False}
     assert "train_metrics" in candidates[0].metrics
     assert "out_of_sample_metrics" in candidates[0].metrics
@@ -356,7 +913,9 @@ def test_cluster_engine_fits_scaler_on_train_only() -> None:
     mutated = dict(candidates[0].metrics)
     mutated["descriptive_all_expectancy_r"] = 999.0
     mutated["descriptive_all_profit_factor"] = 999.0
-    assert ClusterResearchEngine._candidate_score(mutated) == ClusterResearchEngine._candidate_score(candidates[0].metrics)
+    assert ClusterResearchEngine._candidate_score(
+        mutated
+    ) == ClusterResearchEngine._candidate_score(candidates[0].metrics)
     assert abs(float(candidates[0].metrics["scaler_mean"][0])) < 0.01
 
 
@@ -483,7 +1042,9 @@ def test_validation_gate_rejects_underpowered_candidate() -> None:
         stride=3,
         max_windows_per_symbol=90,
     )
-    candidates = ClusterResearchEngine(min_cluster_size=15, max_clusters_per_window=3).discover(samples)
+    candidates = ClusterResearchEngine(min_cluster_size=15, max_clusters_per_window=3).discover(
+        samples
+    )
     if candidates:
         candidate = ValidationGate().evaluate(candidates[0])
         assert candidate.validation_reasons
@@ -518,7 +1079,9 @@ def test_validation_gate_rejects_edge_below_4r() -> None:
             "walk_forward_positive_fold_rate": 1.0,
             "expectancy_ci_low": 0.01,
             "overfit_score": 0.1,
-            "rr_metrics": {"2.5": {"expectancy_r": 0.12, "profit_factor": 1.3, "sample_count": 120}},
+            "rr_metrics": {
+                "2.5": {"expectancy_r": 0.12, "profit_factor": 1.3, "sample_count": 120}
+            },
         },
         feature_summary={},
         examples=[],
@@ -562,7 +1125,9 @@ def test_validation_gate_rejects_nonfinite_core_metrics_fail_closed() -> None:
             "walk_forward_positive_fold_rate": 1.0,
             "expectancy_ci_low": 0.05,
             "overfit_score": 0.1,
-            "rr_metrics": {"3": {"expectancy_r": float("nan"), "profit_factor": 2.4, "sample_count": 120}},
+            "rr_metrics": {
+                "3": {"expectancy_r": float("nan"), "profit_factor": 2.4, "sample_count": 120}
+            },
         },
         feature_summary={},
         examples=[],
@@ -661,7 +1226,9 @@ def test_validation_gate_rejects_failed_reality_check_and_edge_decay() -> None:
     )
     evaluated = ValidationGate().evaluate(candidate)
     assert not evaluated.validation_passed
-    assert any("bootstrap reality proxy WRC-like" in reason for reason in evaluated.validation_reasons)
+    assert any(
+        "bootstrap reality proxy WRC-like" in reason for reason in evaluated.validation_reasons
+    )
     assert any("edge decae" in reason for reason in evaluated.validation_reasons)
 
 
@@ -864,7 +1431,9 @@ def test_lab_agent_persists_compressed_event_ledger(tmp_path: Path) -> None:
         feature_summary={},
         examples=[],
     )
-    agent = PatternDiscoveryLabAgent(provider=object(), settings=Settings(reports_dir=str(tmp_path)))
+    agent = PatternDiscoveryLabAgent(
+        provider=object(), settings=Settings(reports_dir=str(tmp_path))
+    )
 
     assert agent._write_event_ledgers(42, [candidate]) == 1
 
@@ -878,6 +1447,49 @@ def test_lab_agent_persists_compressed_event_ledger(tmp_path: Path) -> None:
     assert candidate.metrics["event_ledger_persisted"] is True
     assert "event_ledger" not in candidate.metrics
     assert len(candidate.metrics["event_ledger_preview"]) == 2
+    assert list(path.parent.glob(f".{path.name}.*.tmp")) == []
+
+
+def test_lab_agent_requests_run_scoped_data_manifest(tmp_path: Path) -> None:
+    class ManifestProvider:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, object]] = []
+
+        def data_manifest(
+            self,
+            symbols: list[str],
+            *,
+            period: str | None = None,
+            interval: str | None = None,
+        ) -> dict[str, object]:
+            self.calls.append({"symbols": symbols, "period": period, "interval": interval})
+            return {
+                "schema_version": 1,
+                "generated_at": "2026-06-28T00:00:00+00:00",
+                "entries": {},
+                "manifest_hash": "abc",
+                "artifact_format": "canonical_csv",
+            }
+
+    provider = ManifestProvider()
+    agent = PatternDiscoveryLabAgent(
+        provider=provider, settings=Settings(reports_dir=str(tmp_path))
+    )
+    warnings: list[str] = []
+
+    manifest = agent._data_manifest(
+        42,
+        ["AAA", "BBB"],
+        warnings,
+        params={"period": "30d", "interval": "5m"},
+    )
+
+    assert warnings == []
+    assert provider.calls == [{"symbols": ["AAA", "BBB"], "period": "30d", "interval": "5m"}]
+    assert manifest["path"].endswith("discovery_run_42_data_manifest.json")
+    path = Path(str(manifest["path"]))
+    assert "\n" not in path.read_text(encoding="utf-8")
+    assert list(path.parent.glob(f".{path.name}.*.tmp")) == []
 
 
 def test_lab_agent_routes_research_universe_by_timeframe(tmp_path: Path) -> None:
@@ -902,6 +1514,128 @@ def test_lab_agent_routes_research_universe_by_timeframe(tmp_path: Path) -> None
     intraday_params = agent._resolve_params(intraday_request)
     assert intraday_params["universe_scope"] == "intraday_smallcap"
     assert agent._resolve_symbols(intraday_request, intraday_params) == ["SML1", "SML2"]
+
+
+def test_lab_agent_skips_rejected_global_registry_when_rejected_storage_disabled(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from tradeo.agents import pattern_discovery_lab_agent as lab_module
+
+    class FailingRegistry:
+        def __init__(self, _path: Path) -> None:
+            pass
+
+        def register(self, *_args, **_kwargs):  # noqa: ANN002, ANN003
+            raise AssertionError("rejected-only process chunks should not register globally")
+
+    monkeypatch.setattr(lab_module, "GlobalExperimentRegistry", FailingRegistry)
+    settings = Settings(reports_dir=str(tmp_path / "reports"))
+    agent = PatternDiscoveryLabAgent(provider=object(), settings=settings)
+    rejected = ClusterCandidate(
+        pattern_key="rejected",
+        name="rejected",
+        side="long",
+        timeframe="5m",
+        window_size=20,
+        cluster_id=1,
+        centroid=[],
+        sample_count=10,
+        symbol_count=3,
+        year_count=1,
+        score=0.1,
+        validation_passed=False,
+        validation_reasons=[],
+        metrics={},
+        feature_summary={},
+        examples=[],
+    )
+
+    result = agent._register_global_experiments(
+        [rejected],
+        accepted=[],
+        run_id=1,
+        params={"store_rejected": False},
+    )
+
+    assert result["skipped_rejected_experiments"] == 1
+    assert result["store_rejected"] is False
+
+
+def test_lab_agent_still_registers_accepted_global_experiments_when_rejected_storage_disabled(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from tradeo.agents import pattern_discovery_lab_agent as lab_module
+
+    captured: list[ClusterCandidate] = []
+
+    class CapturingRegistry:
+        def __init__(self, path: Path) -> None:
+            self.path = path
+
+        def register(self, candidates, *, run_id, params=None):  # noqa: ANN001
+            captured.extend(candidates)
+            return {
+                "path": str(self.path),
+                "new_experiments": len(candidates),
+                "repeated_experiments": 0,
+                "experiment_count": len(candidates),
+                "global_trial_count": len(candidates),
+                "run_id": run_id,
+                "params": params or {},
+            }
+
+    monkeypatch.setattr(lab_module, "GlobalExperimentRegistry", CapturingRegistry)
+    settings = Settings(reports_dir=str(tmp_path / "reports"))
+    agent = PatternDiscoveryLabAgent(provider=object(), settings=settings)
+    accepted = ClusterCandidate(
+        pattern_key="accepted",
+        name="accepted",
+        side="long",
+        timeframe="5m",
+        window_size=20,
+        cluster_id=1,
+        centroid=[],
+        sample_count=10,
+        symbol_count=3,
+        year_count=1,
+        score=0.9,
+        validation_passed=True,
+        validation_reasons=[],
+        metrics={},
+        feature_summary={},
+        examples=[],
+    )
+    rejected = ClusterCandidate(
+        pattern_key="rejected",
+        name="rejected",
+        side="long",
+        timeframe="5m",
+        window_size=20,
+        cluster_id=2,
+        centroid=[],
+        sample_count=10,
+        symbol_count=3,
+        year_count=1,
+        score=0.1,
+        validation_passed=False,
+        validation_reasons=[],
+        metrics={},
+        feature_summary={},
+        examples=[],
+    )
+
+    result = agent._register_global_experiments(
+        [accepted, rejected],
+        accepted=[accepted],
+        run_id=1,
+        params={"store_rejected": False},
+    )
+
+    assert captured == [accepted]
+    assert result["new_experiments"] == 1
+    assert result["skipped_rejected_experiments"] == 1
 
 
 def test_global_experiment_registry_does_not_recount_repeated_experiments(tmp_path: Path) -> None:
@@ -991,6 +1725,13 @@ def test_global_experiment_registry_hash_chain_atomic_write_and_backup(tmp_path:
     assert second_payload["latest_run_manifest"]["previous_registry_hash"] == first["registry_hash"]
     assert second_payload["latest_run_manifest"]["run_manifest_hash"] == second["run_manifest_hash"]
     assert second_payload["registry_hash"] == registry.registry_hash(second_payload)
-    assert second_candidate.metrics["global_experiment_registry"]["registry_hash"] == second["registry_hash"]
-    assert list((tmp_path / ".backups").glob("global_experiment_registry.json.*.bak"))
+    assert (
+        second_candidate.metrics["global_experiment_registry"]["registry_hash"]
+        == second["registry_hash"]
+    )
+    backup_paths = list((tmp_path / ".backups").glob("global_experiment_registry.json.*.bak"))
+    assert backup_paths
+    backup_payload = json.loads(backup_paths[0].read_text(encoding="utf-8"))
+    assert backup_payload["registry_hash"] == first["registry_hash"]
+    assert "\n" not in registry.path.read_text(encoding="utf-8")
     assert list(tmp_path.glob(".global_experiment_registry.json.*.tmp")) == []

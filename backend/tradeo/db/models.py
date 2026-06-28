@@ -356,6 +356,64 @@ class IntradayFlattenAttempt(Base):
     source_signal: Mapped[Signal | None] = relationship()
 
 
+class IntradayWorkItem(Base):
+    """Distributed Research/Lab work item with hard dedupe and lease state."""
+
+    __tablename__ = "intraday_work_items"
+    __table_args__ = (
+        UniqueConstraint("work_fingerprint", name="uq_intraday_work_items_fingerprint"),
+        Index("ix_intraday_work_items_scope_status_priority", "scope", "status", "priority"),
+        Index("ix_intraday_work_items_lane_status", "lane", "status"),
+        Index("ix_intraday_work_items_session_symbol_status", "session_id", "symbol", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    scope: Mapped[str] = mapped_column(String(24), index=True)
+    lane: Mapped[str] = mapped_column(String(48), index=True)
+    symbol: Mapped[str] = mapped_column(String(24), default="", index=True)
+    session_id: Mapped[str] = mapped_column(String(40), default="", index=True)
+    timeframe: Mapped[str] = mapped_column(String(16), default="", index=True)
+    pattern_key: Mapped[str] = mapped_column(String(160), default="", index=True)
+    entry_variant_id: Mapped[str] = mapped_column(String(120), default="")
+    window_start: Mapped[str] = mapped_column(String(80), default="")
+    window_end: Mapped[str] = mapped_column(String(80), default="", index=True)
+    work_fingerprint: Mapped[str] = mapped_column(String(80), unique=True, index=True)
+    data_manifest_hash: Mapped[str] = mapped_column(String(80), default="")
+    params_hash: Mapped[str] = mapped_column(String(80), default="")
+    split_id: Mapped[str] = mapped_column(String(80), default="")
+    priority: Mapped[float] = mapped_column(Float, default=0.0, index=True)
+    status: Mapped[str] = mapped_column(String(40), default="pending", index=True)
+    lease_owner: Mapped[str] = mapped_column(String(120), default="", index=True)
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    attempt_count: Mapped[int] = mapped_column(Integer, default=0)
+    max_attempts: Mapped[int] = mapped_column(Integer, default=3)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    payload_json: Mapped[dict[str, Any]] = mapped_column(json_type(), default=dict)
+    result_json: Mapped[dict[str, Any]] = mapped_column(json_type(), default=dict)
+    reason_codes_json: Mapped[list[str]] = mapped_column(json_type(), default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class IntradayWorkerHeartbeat(Base):
+    __tablename__ = "intraday_worker_heartbeats"
+    __table_args__ = (
+        Index("ix_intraday_worker_heartbeats_scope_lane_status", "scope", "lane", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    worker_id: Mapped[str] = mapped_column(String(120), unique=True, index=True)
+    scope: Mapped[str] = mapped_column(String(24), default="", index=True)
+    lane: Mapped[str] = mapped_column(String(48), default="", index=True)
+    status: Mapped[str] = mapped_column(String(40), default="online", index=True)
+    capacity: Mapped[int] = mapped_column(Integer, default=1)
+    first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(json_type(), default=dict)
+
+
 class EquityPoint(Base):
     __tablename__ = "equity_points"
 

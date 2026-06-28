@@ -194,6 +194,46 @@ def test_validation_gate_rejects_low_n_eff_and_failed_fdr(tmp_path) -> None:
     assert any("BH-FDR" in r for r in failed_fdr.validation_reasons)
 
 
+def test_validation_gate_uses_intraday_sample_thresholds(tmp_path) -> None:
+    settings = Settings(
+        reports_dir=str(tmp_path / "reports"),
+        artifacts_dir=str(tmp_path / "artifacts"),
+        intraday_research_min_samples=50,
+        intraday_research_min_effective_samples=10.0,
+        intraday_research_min_symbols=6,
+        intraday_research_min_years=1,
+    )
+    gate = ValidationGate(settings)
+    candidate = _candidate("intraday", p_value=0.001, sharpe=0.6, n_eff=12.0)
+    candidate.timeframe = "5m"
+    candidate.sample_count = 75
+    candidate.symbol_count = 6
+    candidate.year_count = 1
+    candidate.metrics.update(
+        {
+            "fdr_passed": True,
+            "train_sample_count": 60,
+            "best_rr": 4.0,
+            "best_expectancy_r": 0.5,
+            "best_profit_factor": 2.2,
+            "best_max_drawdown_r": 4.0,
+            "expectancy_r": 0.5,
+            "profit_factor": 2.2,
+            "stability_score": 0.8,
+            "out_of_sample_expectancy_r": 0.3,
+            "out_of_sample_profit_factor": 1.9,
+            "rr_metrics": {"4": {"expectancy_r": 0.5, "profit_factor": 2.2}},
+            "dsr_family": 0.40,
+            "dsr_family_n_trials": 5000,
+        }
+    )
+
+    gate.evaluate(candidate)
+
+    assert not any("muestras efectivas insuficientes" in r for r in candidate.validation_reasons)
+    assert not any("poca diversidad temporal" in r for r in candidate.validation_reasons)
+
+
 def test_validation_gate_caps_lab_candidate_without_dsr(tmp_path) -> None:
     settings = Settings(
         reports_dir=str(tmp_path / "reports"), artifacts_dir=str(tmp_path / "artifacts")

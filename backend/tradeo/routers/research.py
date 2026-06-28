@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import not_
+from sqlalchemy import not_, or_
 from sqlalchemy.orm import Session, selectinload
 
 from tradeo.agents.pattern_discovery_lab_agent import PatternDiscoveryLabAgent
@@ -41,6 +41,7 @@ router = APIRouter(prefix="/research", tags=["research"])
 _DAILY_INTERVALS = {"1d", "1day", "daily", "day"}
 _INTRADAY_INTERVAL_SUFFIXES = ("m", "min", "mins", "minute", "minutes", "h", "hour", "hours")
 _GREEN_RESEARCH_STATUSES = {
+    DiscoveredPatternStatus.LAB_WATCHLIST,
     DiscoveredPatternStatus.LAB_CANDIDATE,
     DiscoveredPatternStatus.NEEDS_CONFIRMATION,
     DiscoveredPatternStatus.CONFIRMED_CANDIDATE,
@@ -263,8 +264,19 @@ def list_discovery_runs(
     query = db.query(DiscoveryRun).order_by(DiscoveryRun.started_at.desc())
     if normalized_cadence is None:
         return query.limit(limit).all()
-    candidates = query.limit(1000).all()
-    return [run for run in candidates if _research_cadence_from_run(run) == normalized_cadence][:limit]
+    cadence_value = DiscoveryRun.params_json["cadence"].as_string()
+    interval_value = DiscoveryRun.params_json["interval"].as_string()
+    daily_intervals = sorted(_DAILY_INTERVALS)
+    if normalized_cadence == "daily":
+        query = query.filter(or_(cadence_value == "daily", interval_value.in_(daily_intervals)))
+    else:
+        query = query.filter(
+            or_(
+                cadence_value == "intraday",
+                not_(interval_value.in_(daily_intervals)),
+            )
+        )
+    return query.limit(limit).all()
 
 
 @router.post("/director/run", response_model=ResearchDirectorResponse)

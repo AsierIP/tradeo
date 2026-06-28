@@ -40,8 +40,8 @@ def _create_signal_intraday_dedupe_index() -> None:
                     metadata_json -> 'intraday' ->> 'entry_variant',
                     metadata_json -> 'intraday' ->> 'entry_variant_id'
                 ),
-                metadata_json -> 'intraday' ->> 'window_end',
-                metadata_json -> 'intraday' ->> 'session_id'
+                ((metadata_json -> 'intraday' ->> 'window_end')),
+                ((metadata_json -> 'intraday' ->> 'session_id'))
             )
             WHERE metadata_json ? 'intraday'
               AND metadata_json -> 'intraday' ->> 'session_id' IS NOT NULL

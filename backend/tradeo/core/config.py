@@ -117,6 +117,7 @@ class Settings(BaseSettings):
     market_data_incremental_intraday_enabled: bool = True
     market_data_incremental_intraday_min_gap_bars: int = 2
     market_data_incremental_intraday_max_gap_days: int = 5
+    market_data_upstream_max_concurrency: int = 2
     universe_file: str = "/app/data/universe_us_mid_small.csv"
     daily_universe_file: str = "/app/data/universe_us_mid_caps.csv"
     intraday_universe_file: str = "/app/data/universe_us_small_caps.csv"
@@ -150,6 +151,12 @@ class Settings(BaseSettings):
     intraday_universe_enabled: bool = False
     intraday_data_sync_enabled: bool = False
     intraday_research_enabled: bool = False
+    intraday_research_parallel_timeframes_enabled: bool = False
+    intraday_research_parallel_symbol_chunks: int = 1
+    intraday_research_process_pool_enabled: bool = False
+    intraday_research_process_workers: int = 1
+    intraday_research_native_threads_per_process: int = 1
+    intraday_research_refresh_market_data_enabled: bool = True
     intraday_candidate_scan_enabled: bool = False
     intraday_observation_closer_enabled: bool = False
     intraday_risk_heartbeat_enabled: bool = True
@@ -185,6 +192,10 @@ class Settings(BaseSettings):
     intraday_research_max_windows_per_symbol: int = 300
     intraday_research_min_cluster_size: int = 40
     intraday_research_max_clusters_per_window: int = 8
+    intraday_research_min_samples: int = 50
+    intraday_research_min_effective_samples: float = 10.0
+    intraday_research_min_symbols: int = 6
+    intraday_research_min_years: int = 1
     intraday_candidate_scan_interval_seconds: int = 60
     intraday_observation_closer_interval_seconds: int = 60
     intraday_risk_heartbeat_interval_seconds: int = 60
@@ -415,6 +426,7 @@ class Settings(BaseSettings):
     ibkr_port: int = 7497
     ibkr_client_id: int = 17
     ibkr_account: str | None = None
+    ibkr_blocked_accounts: str = ""
     ibkr_readonly: bool = True
     ibkr_connect_timeout_seconds: float = 8.0
     ibkr_order_timeout_seconds: float = 20.0
@@ -445,6 +457,10 @@ class Settings(BaseSettings):
     @property
     def ibkr_allowed_symbol_set(self) -> set[str]:
         return {s.strip().upper() for s in self.ibkr_allowed_symbols.split(",") if s.strip()}
+
+    @property
+    def ibkr_blocked_account_set(self) -> set[str]:
+        return {s.strip().upper() for s in self.ibkr_blocked_accounts.split(",") if s.strip()}
 
     scheduler_enabled: bool = True
     scheduler_scan_minutes: int = 15
@@ -515,6 +531,7 @@ class Settings(BaseSettings):
         "intraday_max_spread_bps",
         "intraday_min_relative_volume",
         "intraday_min_reward_risk",
+        "intraday_research_min_effective_samples",
     )
     @classmethod
     def non_negative_intraday_thresholds(cls, value: float) -> float:
@@ -529,12 +546,17 @@ class Settings(BaseSettings):
         "intraday_pacing_budget_per_10min",
         "intraday_data_sync_interval_seconds",
         "intraday_research_interval_seconds",
+        "intraday_research_process_workers",
+        "intraday_research_native_threads_per_process",
         "intraday_research_limit_default",
         "intraday_research_stride",
         "intraday_research_max_total_windows",
         "intraday_research_max_windows_per_symbol",
         "intraday_research_min_cluster_size",
         "intraday_research_max_clusters_per_window",
+        "intraday_research_min_samples",
+        "intraday_research_min_symbols",
+        "intraday_research_min_years",
         "intraday_candidate_scan_interval_seconds",
         "intraday_observation_closer_interval_seconds",
         "intraday_risk_heartbeat_interval_seconds",

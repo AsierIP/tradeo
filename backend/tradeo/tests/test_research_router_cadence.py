@@ -23,6 +23,7 @@ def test_research_cadence_from_run_prefers_explicit_cadence() -> None:
 
 
 def test_green_research_statuses_include_confirmation_but_not_rejected() -> None:
+    assert DiscoveredPatternStatus.LAB_WATCHLIST in _GREEN_RESEARCH_STATUSES
     assert DiscoveredPatternStatus.NEEDS_CONFIRMATION in _GREEN_RESEARCH_STATUSES
     assert DiscoveredPatternStatus.REJECTED not in _GREEN_RESEARCH_STATUSES
     assert DiscoveredPatternStatus.FAILED_CONFIRMATION not in _GREEN_RESEARCH_STATUSES

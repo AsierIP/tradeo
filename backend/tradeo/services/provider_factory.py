@@ -5,7 +5,7 @@ from tradeo.services.data_provider import CachedMarketDataProvider, MarketDataPr
 from tradeo.services.ibkr_data_provider import IBKRHistoricalDataProvider
 
 
-def get_market_data_provider() -> MarketDataProvider:
+def get_market_data_provider(*, cache_refresh_enabled: bool | None = None) -> MarketDataProvider:
     settings = get_settings()
     if settings.allow_synthetic_market_data:
         raise RuntimeError("Synthetic market data is forbidden")
@@ -19,4 +19,7 @@ def get_market_data_provider() -> MarketDataProvider:
         cache_dir=settings.market_data_cache_path,
         adjusted=settings.market_data_adjusted,
         what_to_show=settings.market_data_what_to_show,
+        incremental_enabled=cache_refresh_enabled,
+        incremental_intraday_enabled=cache_refresh_enabled,
+        cache_only=cache_refresh_enabled is False,
     )

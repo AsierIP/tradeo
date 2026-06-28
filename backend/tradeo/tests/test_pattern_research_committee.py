@@ -182,7 +182,8 @@ def test_lab_agent_wires_committee_between_validation_gate_and_registry() -> Non
     source = inspect.getsource(PatternDiscoveryLabAgent.run)
 
     validation_index = source.index("ValidationGate(settings).evaluate_many")
-    committee_index = source.index("PatternResearchCommittee(settings=settings).review_candidates")
+    committee_index = source.index("PatternResearchCommittee(")
     registry_index = source.index("NovelPatternRegistry().store_candidates")
 
     assert validation_index < committee_index < registry_index
+    assert ").review_candidates(\n                        accepted," in source

@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+from threading import BoundedSemaphore, Lock
 from typing import Any, Protocol
 
 import pandas as pd
@@ -47,10 +48,35 @@ _INTRADAY_BAR_MINUTES = {
     "60 mins": 60,
     "1 hour": 60,
 }
+_CACHE_PATH_LOCKS_GUARD = Lock()
+_CACHE_PATH_LOCKS: dict[Path, Lock] = {}
+_UPSTREAM_FETCH_SEMAPHORE_GUARD = Lock()
+_UPSTREAM_FETCH_SEMAPHORE: BoundedSemaphore | None = None
+_UPSTREAM_FETCH_SEMAPHORE_LIMIT = 0
 
 
 def _normalized_interval_key(interval: str) -> str:
     return " ".join(str(interval).strip().lower().split())
+
+
+def _cache_path_lock(path: Path) -> Lock:
+    resolved = path.resolve()
+    with _CACHE_PATH_LOCKS_GUARD:
+        lock = _CACHE_PATH_LOCKS.get(resolved)
+        if lock is None:
+            lock = Lock()
+            _CACHE_PATH_LOCKS[resolved] = lock
+        return lock
+
+
+def _upstream_fetch_semaphore(limit: int) -> BoundedSemaphore:
+    global _UPSTREAM_FETCH_SEMAPHORE, _UPSTREAM_FETCH_SEMAPHORE_LIMIT
+    safe_limit = max(1, int(limit or 1))
+    with _UPSTREAM_FETCH_SEMAPHORE_GUARD:
+        if _UPSTREAM_FETCH_SEMAPHORE is None or _UPSTREAM_FETCH_SEMAPHORE_LIMIT != safe_limit:
+            _UPSTREAM_FETCH_SEMAPHORE = BoundedSemaphore(safe_limit)
+            _UPSTREAM_FETCH_SEMAPHORE_LIMIT = safe_limit
+        return _UPSTREAM_FETCH_SEMAPHORE
 
 
 def is_daily_interval(interval: str | None) -> bool:
@@ -115,6 +141,8 @@ class CachedMarketDataProvider:
     incremental_intraday_enabled: bool | None = None
     incremental_intraday_min_gap_bars: int | None = None
     incremental_intraday_max_gap_days: int | None = None
+    upstream_max_concurrency: int | None = None
+    cache_only: bool = False
 
     def __post_init__(self) -> None:
         if self.upstream is None:
@@ -141,18 +169,27 @@ class CachedMarketDataProvider:
             self.incremental_intraday_max_gap_days = (
                 settings.market_data_incremental_intraday_max_gap_days
             )
+        if self.upstream_max_concurrency is None:
+            self.upstream_max_concurrency = settings.market_data_upstream_max_concurrency
         self._cache: dict[tuple[str, str, str], pd.DataFrame] = {}
 
     def fetch_ohlcv(self, symbol: str, period: str = "2y", interval: str = "1d") -> pd.DataFrame:
         key = (symbol.upper(), period, interval)
         if key not in self._cache:
             csv_path = self._cache_path(*key)
-            if csv_path.exists():
-                df = self._read_csv(csv_path)
-                df = self._maybe_refresh(df, key=key, csv_path=csv_path)
-            else:
-                df = self._full_refetch(key, csv_path, refresh_mode="full_fetch")
-            self._cache[key] = self._complete_bars_only(df)
+            with _cache_path_lock(csv_path):
+                if key not in self._cache:
+                    if csv_path.exists():
+                        df = self._read_csv(csv_path)
+                        df = self._maybe_refresh(df, key=key, csv_path=csv_path)
+                    elif self.cache_only:
+                        raise FileNotFoundError(
+                            f"Market data cache miss in cache-only mode: {symbol.upper()} "
+                            f"{interval} {period}"
+                        )
+                    else:
+                        df = self._full_refetch(key, csv_path, refresh_mode="full_fetch")
+                    self._cache[key] = self._complete_bars_only(df)
         return self._cache[key].copy()
 
     def _full_refetch(
@@ -164,7 +201,8 @@ class CachedMarketDataProvider:
     ) -> pd.DataFrame:
         symbol, period, interval = key
         assert self.upstream is not None
-        df = self.upstream.fetch_ohlcv(symbol, period=period, interval=interval)
+        with _upstream_fetch_semaphore(int(self.upstream_max_concurrency or 1)):
+            df = self.upstream.fetch_ohlcv(symbol, period=period, interval=interval)
         df = self._annotate(df, symbol=symbol, period=period, interval=interval)
         df = self._complete_bars_only(df)
         self._atomic_write(csv_path, df, key=key, refresh_mode=refresh_mode)
@@ -189,7 +227,7 @@ class CachedMarketDataProvider:
         interval_lower = _normalized_interval_key(interval)
         is_daily = interval_lower in _DAILY_INTERVALS
         bar_minutes = _INTRADAY_BAR_MINUTES.get(interval_lower)
-        if not self.incremental_enabled or cached.empty:
+        if self.cache_only or not self.incremental_enabled or cached.empty:
             return cached
         if not is_daily and (bar_minutes is None or not self.incremental_intraday_enabled):
             return cached
@@ -213,13 +251,34 @@ class CachedMarketDataProvider:
             # +3 days keeps overlap bars in the tail across weekends/holidays.
             tail_days = int(gap.days) + 3
         if gap_too_large:
-            return self._full_refetch(key, csv_path, refresh_mode="full_refetch_gap_too_large")
+            try:
+                return self._full_refetch(key, csv_path, refresh_mode="full_refetch_gap_too_large")
+            except Exception:  # noqa: BLE001 - a warm cache is better than failing a research run.
+                self._atomic_write(
+                    csv_path, cached, key=key, refresh_mode="stale_cache_full_refetch_failed"
+                )
+                return cached
         assert self.upstream is not None
-        tail = self.upstream.fetch_ohlcv(symbol, period=f"{tail_days}d", interval=interval)
+        try:
+            with _upstream_fetch_semaphore(int(self.upstream_max_concurrency or 1)):
+                tail = self.upstream.fetch_ohlcv(symbol, period=f"{tail_days}d", interval=interval)
+        except Exception:  # noqa: BLE001 - keep serving the last verified cache during provider outages.
+            self._atomic_write(
+                csv_path, cached, key=key, refresh_mode="stale_cache_incremental_failed"
+            )
+            return cached
         tail = self._annotate(tail, symbol=symbol, period=period, interval=interval)
         tail = self._complete_bars_only(tail)
         if not self._overlap_matches(cached, tail, overlap_bars=overlap_bars):
-            return self._full_refetch(key, csv_path, refresh_mode="full_refetch_overlap_mismatch")
+            try:
+                return self._full_refetch(
+                    key, csv_path, refresh_mode="full_refetch_overlap_mismatch"
+                )
+            except Exception:  # noqa: BLE001 - retain cache if the repair fetch is unavailable.
+                self._atomic_write(
+                    csv_path, cached, key=key, refresh_mode="stale_cache_overlap_refetch_failed"
+                )
+                return cached
         new_rows = tail[pd.DatetimeIndex(tail.index) > last_ts]
         if new_rows.empty:
             return cached
@@ -256,18 +315,44 @@ class CachedMarketDataProvider:
                 return False
         return True
 
-    def data_manifest(self, symbols: list[str] | None = None) -> dict[str, Any]:
+    def data_manifest(
+        self,
+        symbols: list[str] | None = None,
+        *,
+        period: str | None = None,
+        interval: str | None = None,
+    ) -> dict[str, Any]:
         """Return a deterministic manifest over cached OHLCV artifacts."""
         assert self.cache_dir is not None
-        requested = {s.upper() for s in symbols} if symbols else None
+        requested = {s.upper().strip() for s in symbols if s.strip()} if symbols else None
         entries: dict[str, Any] = {}
-        for csv_path in sorted(self.cache_dir.glob("*.csv")):
+        if requested and period and interval:
+            csv_paths = [self._cache_path(symbol, period, interval) for symbol in sorted(requested)]
+        else:
+            csv_paths = sorted(self.cache_dir.glob("*.csv"))
+        for csv_path in csv_paths:
+            if not csv_path.exists():
+                continue
             meta_path = csv_path.with_suffix(".metadata.json")
             metadata = self._read_metadata(meta_path)
             symbol = str(metadata.get("symbol") or csv_path.stem.split("_", 1)[0]).upper()
             if requested is not None and symbol not in requested:
                 continue
-            digest = _sha256_file(csv_path)
+            metadata_period = metadata.get("period")
+            metadata_interval = metadata.get("interval")
+            if (
+                period is not None
+                and metadata_period is not None
+                and str(metadata_period) != str(period)
+            ):
+                continue
+            if (
+                interval is not None
+                and metadata_interval is not None
+                and str(metadata_interval) != str(interval)
+            ):
+                continue
+            digest = str(metadata.get("sha256") or "") or _sha256_file(csv_path)
             entries[csv_path.stem] = {
                 "symbol": symbol,
                 "interval": metadata.get("interval"),

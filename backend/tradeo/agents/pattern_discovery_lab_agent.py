@@ -3,10 +3,14 @@ from __future__ import annotations
 import gzip
 import hashlib
 import json
+import os
+import sys
 import time
+from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from threading import Event, Lock, Thread, get_ident
 from typing import Any
 
 import numpy as np
@@ -16,7 +20,9 @@ from sqlalchemy.orm import Session
 from tradeo.core.config import Settings, get_settings
 from tradeo.db.models import AuditLog, DiscoveryRun
 from tradeo.research.cluster_research_engine import ClusterResearchEngine
-from tradeo.research.autonomous_research_director import ResearchDirector as PersistentResearchDirector
+from tradeo.research.autonomous_research_director import (
+    ResearchDirector as PersistentResearchDirector,
+)
 from tradeo.research.determinism import CONTENT_HASH_ALGO, DEFAULT_VOLATILE_KEYS, content_hash
 from tradeo.research.global_experiment_registry import GlobalExperimentRegistry
 from tradeo.research.novel_pattern_registry import NovelPatternRegistry
@@ -42,6 +48,256 @@ from tradeo.services.market_regime import MarketRegimeService
 from tradeo.services.provider_factory import get_market_data_provider
 from tradeo.services.universe_snapshot import UniverseSnapshotService
 
+_BENCHMARK_CONTEXT_LOCK = Lock()
+_BENCHMARK_FRAMES_CACHE: dict[tuple[str, str], dict[str, Any]] = {}
+_BENCHMARK_REGIME_CACHE: dict[str, Any] = {}
+_BENCHMARK_REPORT_MODE_ENV = "TRADEO_DISCOVERY_BENCHMARK_REPORT_MODE"
+_BENCHMARK_JSON_ONLY_REPORT_VALUES = frozenset({"1", "true", "yes", "json", "json_only"})
+_CLUSTER_PROFILE_ENV = "TRADEO_DISCOVERY_CLUSTER_PROFILE"
+_CLUSTER_PROFILE_INTERVAL_MS_ENV = "TRADEO_DISCOVERY_CLUSTER_PROFILE_INTERVAL_MS"
+_CLUSTER_PROFILE_TOP_N_ENV = "TRADEO_DISCOVERY_CLUSTER_PROFILE_TOP_N"
+_CLUSTER_PROFILE_ENABLED_VALUES = frozenset({"1", "true", "yes", "on", "sample", "sampling"})
+_PHASE_TIMING_VOLATILE_KEYS = frozenset(
+    {"phase_timings", "phase_counts", "phase_diagnostics"}
+)
+_REPORT_ARTIFACT_VOLATILE_KEYS = frozenset({"report_artifacts", "report_artifact_mode"})
+_CLUSTER_ENGINE_FILENAME = "cluster_research_engine.py"
+
+
+class _PhaseTimer:
+    __slots__ = ("_elapsed", "counts", "started")
+
+    def __init__(self) -> None:
+        self.started = time.perf_counter()
+        self._elapsed: dict[str, float] = {}
+        self.counts: dict[str, int] = {}
+
+    @staticmethod
+    def mark() -> float:
+        return time.perf_counter()
+
+    def add(self, phase: str, started_at: float) -> None:
+        self._elapsed[phase] = self._elapsed.get(phase, 0.0) + (
+            time.perf_counter() - started_at
+        )
+
+    def increment(self, name: str, amount: int = 1) -> None:
+        self.counts[name] = self.counts.get(name, 0) + int(amount)
+
+    def timings_snapshot(self, total_duration: float) -> dict[str, float]:
+        timings = {phase: round(seconds, 6) for phase, seconds in self._elapsed.items()}
+        accounted = sum(self._elapsed.values())
+        timings["total_run_s"] = round(total_duration, 3)
+        timings["unaccounted_s"] = round(max(total_duration - accounted, 0.0), 6)
+        return timings
+
+    def counts_snapshot(self) -> dict[str, int]:
+        return dict(self.counts)
+
+
+class _ClusterStackSampler:
+    __slots__ = (
+        "_details",
+        "_frame_counts",
+        "_interval_s",
+        "_profiled_s",
+        "_started_at",
+        "_stop",
+        "_target_ident",
+        "_thread",
+        "_top_n",
+    )
+
+    def __init__(self, *, interval_s: float, top_n: int) -> None:
+        self._interval_s = max(0.001, float(interval_s))
+        self._top_n = max(1, int(top_n))
+        self._target_ident = get_ident()
+        self._stop = Event()
+        self._thread: Thread | None = None
+        self._frame_counts: Counter[str] = Counter()
+        self._details: dict[str, dict[str, object]] = {}
+        self._started_at: float | None = None
+        self._profiled_s = 0.0
+
+    def __enter__(self) -> "_ClusterStackSampler":
+        self._started_at = time.perf_counter()
+        self._thread = Thread(
+            target=self._run,
+            name="tradeo-cluster-stack-sampler",
+            daemon=True,
+        )
+        self._thread.start()
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        self._profiled_s = (
+            time.perf_counter() - self._started_at if self._started_at is not None else 0.0
+        )
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=max(0.1, self._interval_s * 2.0))
+
+    def _run(self) -> None:
+        while not self._stop.wait(self._interval_s):
+            frame = sys._current_frames().get(self._target_ident)
+            if frame is None:
+                continue
+            sample = _cluster_stack_sample(frame)
+            key = str(sample["key"])
+            self._frame_counts[key] += 1
+            if key not in self._details:
+                self._details[key] = {
+                    name: value for name, value in sample.items() if name != "key"
+                }
+
+    def snapshot(self) -> dict[str, object]:
+        total = sum(self._frame_counts.values())
+        top_frames: list[dict[str, object]] = []
+        buckets: Counter[str] = Counter()
+        top_keys: set[str] = set()
+        for key, count in self._frame_counts.most_common(self._top_n):
+            top_keys.add(key)
+            detail = dict(self._details.get(key, {}))
+            bucket = str(detail.get("bucket") or "unknown")
+            buckets[bucket] += int(count)
+            top_frames.append(
+                {
+                    **detail,
+                    "samples": int(count),
+                    "sample_pct": round((float(count) / max(total, 1)) * 100.0, 3),
+                }
+            )
+        for key, count in self._frame_counts.items():
+            if key in top_keys:
+                continue
+            detail = self._details.get(key, {})
+            buckets[str(detail.get("bucket") or "unknown")] += int(count)
+        return {
+            "method": "thread_stack_sampler_v1",
+            "enabled": True,
+            "interval_ms": round(self._interval_s * 1000.0, 3),
+            "profiled_s": round(float(self._profiled_s), 3),
+            "samples": int(total),
+            "buckets": [
+                {
+                    "bucket": bucket,
+                    "samples": int(count),
+                    "sample_pct": round((float(count) / max(total, 1)) * 100.0, 3),
+                }
+                for bucket, count in buckets.most_common()
+            ],
+            "top_frames": top_frames,
+        }
+
+
+def _cluster_stack_sampler_from_env() -> _ClusterStackSampler | None:
+    enabled = os.getenv(_CLUSTER_PROFILE_ENV, "").strip().lower()
+    if enabled not in _CLUSTER_PROFILE_ENABLED_VALUES:
+        return None
+    return _ClusterStackSampler(
+        interval_s=_cluster_profile_interval_s(),
+        top_n=_cluster_profile_top_n(),
+    )
+
+
+def _cluster_profile_interval_s() -> float:
+    raw = os.getenv(_CLUSTER_PROFILE_INTERVAL_MS_ENV, "25").strip()
+    try:
+        interval_ms = float(raw)
+    except ValueError:
+        interval_ms = 25.0
+    return max(1.0, interval_ms) / 1000.0
+
+
+def _cluster_profile_top_n() -> int:
+    raw = os.getenv(_CLUSTER_PROFILE_TOP_N_ENV, "12").strip()
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return 12
+
+
+def _cluster_stack_sample(frame: Any) -> dict[str, object]:
+    selected = None
+    cursor = frame
+    while cursor is not None:
+        if cursor.f_code.co_filename.rsplit(os.sep, 1)[-1] == _CLUSTER_ENGINE_FILENAME:
+            selected = cursor
+            break
+        cursor = cursor.f_back
+
+    if selected is None:
+        selected = frame
+    filename = selected.f_code.co_filename.rsplit(os.sep, 1)[-1]
+    function = selected.f_code.co_name
+    line = int(selected.f_lineno)
+    return {
+        "key": f"{filename}:{function}:{line}",
+        "filename": filename,
+        "function": function,
+        "line": line,
+        "bucket": _cluster_profile_bucket(function),
+    }
+
+
+def _cluster_profile_bucket(function: str) -> str:
+    if function in {
+        "_fit_clusters",
+        "_fit_hdbscan_clusters_cached",
+        "_fit_hdbscan_clusters",
+        "_fit_kmeans_clusters",
+        "_assign_density_holdout_labels",
+        "_array_cache_digest",
+        "_hdbscan_fit_cache_key",
+    }:
+        return "cluster_fit"
+    if function in {
+        "_cluster_consensus_ensemble",
+        "_consensus_labels",
+        "_coassignment_stability",
+    }:
+        return "consensus_stability"
+    if function in {
+        "_metrics_for_side",
+        "_analyze_reward_risk",
+        "_simulate_sample",
+        "_simulate_sample_detail",
+        "_null_baseline",
+        "_stratified_draw",
+        "_bootstrap_confidence",
+        "_split_metrics",
+        "_cost_stress_metrics",
+        "_outcome_metrics",
+        "_group_expectancy",
+        "_sharpe_diagnostics",
+        "_edge_decay_metrics",
+    }:
+        return "reward_risk_metrics"
+    if function in {
+        "_walk_forward_metrics",
+        "_purged_combinatorial_cv",
+        "_quant_validation_metrics",
+    }:
+        return "validation_metrics"
+    if function in {
+        "_false_match_metrics",
+        "_match_tau_similarity",
+        "_match_conformal_threshold",
+        "_prototype_match_contract",
+        "_shape_match_contract",
+        "_cluster_signature",
+    }:
+        return "match_contract"
+    if function in {"_regime_profile", "_benchmark_regime_outcomes"}:
+        return "regime_diagnostics"
+    if function in {"_feature_summary", "_human_rule", "_examples"}:
+        return "candidate_output"
+    if function == "_apply_novelty_diversity":
+        return "novelty_diversity"
+    if function in {"discover", "_cluster_window_size"}:
+        return "orchestration"
+    return "other_cluster_engine"
+
 
 @dataclass(slots=True)
 class PatternDiscoveryLabAgent:
@@ -62,41 +318,83 @@ class PatternDiscoveryLabAgent:
     def run(self, request: DiscoveryRunRequest, db: Session) -> DiscoveryRunResponse:
         settings = self.settings
         assert settings is not None
-        started = time.perf_counter()
+        timer = _PhaseTimer()
+        started = timer.started
         warnings: list[str] = []
+        clustering_diagnostics: dict[str, object] | None = None
+        phase_started = timer.mark()
         params = self._resolve_params(request)
+        timer.add("resolve_params_s", phase_started)
         run = DiscoveryRun(status="running", params_json=params)
+        phase_started = timer.mark()
         db.add(run)
         db.commit()
         db.refresh(run)
+        timer.add("db_run_create_s", phase_started)
         logger.info("pattern discovery run {} started with params {}", run.id, params)
 
         try:
+            phase_started = timer.mark()
             symbols = self._resolve_symbols(request, params)
+            timer.add("resolve_symbols_s", phase_started)
+            timer.increment("symbols_resolved", len(symbols))
+            phase_started = timer.mark()
             universe_snapshot = self._build_universe_snapshot(
                 warnings,
                 universe_file=params["universe_file"],
             )
+            timer.add("universe_snapshot_s", phase_started)
             samples = []
             sampler = WindowSampler(target_r=settings.discovery_min_reward_risk)
+            frame_cache_key = (str(params.get("period") or ""), str(params.get("interval") or ""))
+            frame_cache_hit = frame_cache_key in _BENCHMARK_FRAMES_CACHE
+            phase_started = timer.mark()
             benchmark_frames = self._benchmark_frames(params, warnings)
+            timer.add("benchmark_frames_s", phase_started)
+            timer.increment(
+                "benchmark_frames_cache_hits" if frame_cache_hit else "benchmark_frames_cache_misses"
+            )
+            timer.increment("benchmark_frames_returned", len(benchmark_frames))
+            regime_cache_key = str(params.get("period") or "")
+            regime_cache_hit = regime_cache_key in _BENCHMARK_REGIME_CACHE
+            phase_started = timer.mark()
             benchmark_regime_table = self._benchmark_regime_table(params, warnings)
+            timer.add("benchmark_regime_s", phase_started)
+            timer.increment(
+                "benchmark_regime_cache_hits"
+                if regime_cache_hit
+                else "benchmark_regime_cache_misses"
+            )
+            if benchmark_regime_table is not None:
+                timer.increment("benchmark_regime_tables_returned")
             for symbol in symbols:
                 if len(samples) >= params["max_total_windows"]:
                     break
                 try:
-                    df = self.provider.fetch_ohlcv(symbol, period=params["period"], interval=params["interval"])
+                    timer.increment("symbols_attempted")
+                    phase_started = timer.mark()
+                    try:
+                        df = self.provider.fetch_ohlcv(
+                            symbol, period=params["period"], interval=params["interval"]
+                        )
+                    finally:
+                        timer.add("data_fetch_s", phase_started)
+                    timer.increment("symbols_fetched")
                     if settings.data_quality_filter_enabled:
+                        phase_started = timer.mark()
                         quality = assess_ohlcv_quality_from_settings(
                             df,
                             symbol,
                             params["interval"],
                             settings,
                         )
+                        timer.add("data_quality_s", phase_started)
                         if not quality.research_grade:
+                            timer.increment("symbols_quality_rejected")
                             msg = f"{symbol}: OHLCV not research grade ({','.join(quality.issues)})"
                             logger.warning("discovery data quality reject: {}", msg)
                             warnings.append(msg)
+                            phase_started = timer.mark()
                             db.add(
                                 AuditLog(
                                     actor="PatternDiscoveryLabAgent",
@@ -107,20 +405,28 @@ class PatternDiscoveryLabAgent:
                                 )
                             )
                             db.commit()
+                            timer.add("data_quality_audit_commit_s", phase_started)
                             continue
-                    symbol_samples = sampler.sample(
-                        symbol=symbol,
-                        df=df,
-                        timeframe=params["interval"],
-                        window_sizes=params["window_sizes"],
-                        forward_bars=params["forward_bars"],
-                        stride=params["stride"],
-                        max_windows_per_symbol=params["max_windows_per_symbol"],
-                        benchmark_frames=benchmark_frames,
-                    )
+                    phase_started = timer.mark()
+                    try:
+                        symbol_samples = sampler.sample(
+                            symbol=symbol,
+                            df=df,
+                            timeframe=params["interval"],
+                            window_sizes=params["window_sizes"],
+                            forward_bars=params["forward_bars"],
+                            stride=params["stride"],
+                            max_windows_per_symbol=params["max_windows_per_symbol"],
+                            benchmark_frames=benchmark_frames,
+                        )
+                    finally:
+                        timer.add("sampling_embedding_s", phase_started)
                     remaining = params["max_total_windows"] - len(samples)
-                    samples.extend(symbol_samples[:remaining])
+                    selected_samples = symbol_samples[:remaining]
+                    samples.extend(selected_samples)
+                    timer.increment("windows_sampled", len(selected_samples))
                 except Exception as exc:  # noqa: BLE001
+                    timer.increment("symbol_failures")
                     msg = f"{symbol}: {exc}"
                     logger.warning("discovery symbol failed: {}", msg)
                     warnings.append(msg)
@@ -132,7 +438,7 @@ class PatternDiscoveryLabAgent:
                 target_r=settings.discovery_min_reward_risk,
                 out_of_sample_pct=settings.discovery_out_of_sample_pct,
                 rr_levels=params["rr_levels"],
-                min_samples=settings.discovery_min_samples,
+                min_samples=self._min_samples_for_params(params),
                 walk_forward_folds=settings.discovery_walk_forward_folds,
                 walk_forward_embargo_samples=settings.discovery_walk_forward_embargo_samples,
                 cost_stress_multipliers=settings.discovery_cost_stress_multiplier_list,
@@ -156,8 +462,24 @@ class PatternDiscoveryLabAgent:
                 prototype_medoid_count=settings.discovery_match_prototype_medoids,
                 prototype_knn_k=settings.discovery_match_knn_k,
             )
-            raw_candidates = engine.discover(samples)
-            data_manifest = self._data_manifest(run.id, symbols, warnings)
+            phase_started = timer.mark()
+            clustering_sampler = _cluster_stack_sampler_from_env()
+            try:
+                if clustering_sampler is None:
+                    raw_candidates = engine.discover(samples)
+                else:
+                    with clustering_sampler:
+                        raw_candidates = engine.discover(samples)
+            finally:
+                timer.add("clustering_s", phase_started)
+                if clustering_sampler is not None:
+                    clustering_diagnostics = clustering_sampler.snapshot()
+            timer.increment("raw_candidates", len(raw_candidates))
+            phase_started = timer.mark()
+            try:
+                data_manifest = self._data_manifest(run.id, symbols, warnings, params=params)
+            finally:
+                timer.add("data_manifest_s", phase_started)
             for candidate in raw_candidates:
                 candidate.metrics["data_manifest"] = {
                     "path": data_manifest.get("path"),
@@ -167,22 +489,54 @@ class PatternDiscoveryLabAgent:
                 }
                 candidate.metrics["universe_snapshot"] = universe_snapshot
                 candidate.metrics["universe_point_in_time"] = bool(
-                    universe_snapshot.get("point_in_time", settings.universe_point_in_time_available)
+                    universe_snapshot.get(
+                        "point_in_time", settings.universe_point_in_time_available
+                    )
                 )
-                candidate.metrics["survivorship_biased"] = not bool(candidate.metrics["universe_point_in_time"])
-            self._apply_run_level_inference(raw_candidates)
-            candidates = ValidationGate(settings).evaluate_many(raw_candidates)
-            ledger_artifacts = self._write_event_ledgers(run.id, candidates)
-            global_registry = GlobalExperimentRegistry(
-                settings.reports_path / "research" / "global_experiment_registry.json"
-            ).register(candidates, run_id=run.id, params=params)
+                candidate.metrics["survivorship_biased"] = not bool(
+                    candidate.metrics["universe_point_in_time"]
+                )
+            phase_started = timer.mark()
+            try:
+                self._apply_run_level_inference(raw_candidates)
+            finally:
+                timer.add("run_level_inference_s", phase_started)
+            phase_started = timer.mark()
+            try:
+                candidates = ValidationGate(settings).evaluate_many(raw_candidates)
+            finally:
+                timer.add("validation_s", phase_started)
+            timer.increment("validated_candidates", len(candidates))
+            accepted = [c for c in candidates if c.validation_passed]
+            rejected = [c for c in candidates if not c.validation_passed]
+            timer.increment("accepted_candidates", len(accepted))
+            timer.increment("rejected_candidates", len(rejected))
+            phase_started = timer.mark()
+            try:
+                ledger_artifacts = self._write_event_ledgers(run.id, candidates)
+            finally:
+                timer.add("event_ledgers_s", phase_started)
+            timer.increment("event_ledgers_written", ledger_artifacts)
+            phase_started = timer.mark()
+            try:
+                global_registry = self._register_global_experiments(
+                    candidates,
+                    accepted=accepted,
+                    run_id=run.id,
+                    params=params,
+                )
+            finally:
+                timer.add("global_registry_s", phase_started)
             candidate_director_summary: dict[str, Any] = {}
-            if settings.research_director_enabled:
+            if settings.research_director_enabled and accepted:
+                phase_started = timer.mark()
                 try:
-                    logger.info("Research Director: enriqueciendo candidatos antes del registry")
+                    logger.info(
+                        "Research Director: enriqueciendo candidatos aceptados antes del registry"
+                    )
                     candidate_director_summary = CandidateResearchDirector(settings=settings).run(
                         run_id=run.id,
-                        candidates=candidates,
+                        candidates=accepted,
                         samples=samples,
                         params=params,
                     )
@@ -190,24 +544,38 @@ class PatternDiscoveryLabAgent:
                     msg = f"CandidateResearchDirector failed: {exc}"
                     logger.exception(msg)
                     warnings.append(msg)
+                finally:
+                    timer.add("candidate_director_s", phase_started)
             committee_summary: dict[str, Any] = {}
-            if settings.research_committee_enabled:
-                logger.info("PatternResearchCommittee: revisando candidatos antes del registry")
-                committee_summary = PatternResearchCommittee(settings=settings).review_candidates(
+            if settings.research_committee_enabled and accepted:
+                phase_started = timer.mark()
+                try:
+                    logger.info(
+                        "PatternResearchCommittee: revisando candidatos aceptados antes del registry"
+                    )
+                    committee_summary = PatternResearchCommittee(
+                        settings=settings
+                    ).review_candidates(
+                        accepted,
+                        run_id=run.id,
+                        params=params,
+                    )
+                finally:
+                    timer.add("research_committee_s", phase_started)
+            phase_started = timer.mark()
+            try:
+                stored = NovelPatternRegistry().store_candidates(
+                    db,
                     candidates,
                     run_id=run.id,
-                    params=params,
+                    store_rejected=params["store_rejected"],
                 )
-            accepted = [c for c in candidates if c.validation_passed]
-            rejected = [c for c in candidates if not c.validation_passed]
-            stored = NovelPatternRegistry().store_candidates(
-                db,
-                candidates,
-                run_id=run.id,
-                store_rejected=params["store_rejected"],
-            )
+            finally:
+                timer.add("novel_registry_s", phase_started)
+            timer.increment("stored_patterns", len(stored))
             director_result: dict[str, Any] | None = None
-            if settings.research_director_enabled:
+            if settings.research_director_enabled and accepted:
+                phase_started = timer.mark()
                 try:
                     director_result = PersistentResearchDirector(settings).run(
                         db,
@@ -218,7 +586,9 @@ class PatternDiscoveryLabAgent:
                     msg = f"ResearchDirector failed: {exc}"
                     logger.exception(msg)
                     warnings.append(msg)
-            duration = round(time.perf_counter() - started, 3)
+                finally:
+                    timer.add("db_director_s", phase_started)
+            phase_started = timer.mark()
             summary = self._summary(candidates, samples, warnings)
             summary["data_manifest"] = {
                 "path": data_manifest.get("path"),
@@ -232,6 +602,10 @@ class PatternDiscoveryLabAgent:
                 "candidate_completion": candidate_director_summary,
             }
             summary["research_committee"] = committee_summary
+            if clustering_diagnostics is not None:
+                summary["phase_diagnostics"] = {
+                    "clustering_profile": clustering_diagnostics,
+                }
             if director_result is not None:
                 summary["research_director"]["db_director"] = {
                     "patterns_reviewed": director_result.get("patterns_reviewed", 0),
@@ -239,7 +613,18 @@ class PatternDiscoveryLabAgent:
                     "director_state": director_result.get("director_state", {}),
                     "artifacts": director_result.get("artifacts", {}),
                 }
-            report_path = self._write_report(run.id, params, summary, candidates)
+            timer.add("summary_build_s", phase_started)
+            duration = round(time.perf_counter() - started, 3)
+            summary["phase_timings"] = timer.timings_snapshot(duration)
+            summary["phase_counts"] = timer.counts_snapshot()
+            phase_started = timer.mark()
+            try:
+                report_path = self._write_report(run.id, params, summary, candidates)
+            finally:
+                timer.add("report_write_s", phase_started)
+            duration = round(time.perf_counter() - started, 3)
+            summary["phase_timings"] = timer.timings_snapshot(duration)
+            summary["phase_counts"] = timer.counts_snapshot()
             run.status = "completed"
             run.finished_at = datetime.now(timezone.utc)
             run.symbols_scanned = len(symbols)
@@ -268,6 +653,8 @@ class PatternDiscoveryLabAgent:
                         "event_ledgers": ledger_artifacts,
                         "data_manifest": summary.get("data_manifest", {}),
                         "universe_snapshot": universe_snapshot,
+                        "phase_timings": summary.get("phase_timings", {}),
+                        "phase_counts": summary.get("phase_counts", {}),
                         "report_path": str(report_path) if report_path else None,
                     },
                 )
@@ -289,10 +676,20 @@ class PatternDiscoveryLabAgent:
             )
         except Exception as exc:  # noqa: BLE001
             duration = round(time.perf_counter() - started, 3)
+            failure_summary = {
+                "error": str(exc),
+                "warnings": warnings,
+                "phase_timings": timer.timings_snapshot(duration),
+                "phase_counts": timer.counts_snapshot(),
+            }
+            if clustering_diagnostics is not None:
+                failure_summary["phase_diagnostics"] = {
+                    "clustering_profile": clustering_diagnostics,
+                }
             run.status = "failed"
             run.finished_at = datetime.now(timezone.utc)
             run.duration_seconds = duration
-            run.summary_json = {"error": str(exc), "warnings": warnings}
+            run.summary_json = failure_summary
             db.add(run)
             db.add(
                 AuditLog(
@@ -300,11 +697,56 @@ class PatternDiscoveryLabAgent:
                     action="discovery_run_failed",
                     entity_type="discovery_run",
                     entity_id=str(run.id),
-                    details_json={"error": str(exc), "warnings": warnings[:50]},
+                    details_json={
+                        "error": str(exc),
+                        "warnings": warnings[:50],
+                        "phase_timings": failure_summary["phase_timings"],
+                        "phase_counts": failure_summary["phase_counts"],
+                    },
                 )
             )
             db.commit()
             raise
+
+    def _min_samples_for_params(self, params: dict[str, Any]) -> int:
+        settings = self.settings
+        assert settings is not None
+        if str(params.get("cadence") or "").lower() == "intraday":
+            return int(params.get("min_samples") or settings.intraday_research_min_samples)
+        return int(settings.discovery_min_samples)
+
+    def _register_global_experiments(
+        self,
+        candidates: list[Any],
+        *,
+        accepted: list[Any],
+        run_id: int,
+        params: dict[str, Any],
+    ) -> dict[str, Any]:
+        settings = self.settings
+        assert settings is not None
+        path = settings.reports_path / "research" / "global_experiment_registry.json"
+        registry_candidates = candidates if bool(params.get("store_rejected", True)) else accepted
+        skipped_rejected = max(0, len(candidates) - len(registry_candidates))
+        if not registry_candidates:
+            return {
+                "path": str(path),
+                "new_experiments": 0,
+                "repeated_experiments": 0,
+                "experiment_count": 0,
+                "global_trial_count": 0,
+                "skipped_rejected_experiments": skipped_rejected,
+                "store_rejected": bool(params.get("store_rejected", True)),
+            }
+        result = GlobalExperimentRegistry(path).register(
+            registry_candidates,
+            run_id=run_id,
+            params=params,
+        )
+        if skipped_rejected:
+            result["skipped_rejected_experiments"] = skipped_rejected
+            result["store_rejected"] = False
+        return result
 
     def _apply_run_level_inference(self, candidates: list[Any]) -> None:
         """Run-level selective inference: BH-FDR + family-deflated Sharpe.
@@ -362,7 +804,9 @@ class PatternDiscoveryLabAgent:
             if not isinstance(quant, dict):
                 quant = {}
             n_eff = float(quant.get("n_eff", 0.0) or 0.0)
-            sr = float(quant.get("sharpe_per_trade", candidate.metrics.get("trade_sharpe", 0.0)) or 0.0)
+            sr = float(
+                quant.get("sharpe_per_trade", candidate.metrics.get("trade_sharpe", 0.0)) or 0.0
+            )
             skew = float(quant.get("skew", 0.0) or 0.0)
             kurt = float(quant.get("kurtosis", 3.0) or 3.0)
             if n_eff > 1 and sr_std > 0 and n_trials_total > 1:
@@ -384,24 +828,34 @@ class PatternDiscoveryLabAgent:
         assert s is not None
         max_total_windows = min(request.max_total_windows or s.discovery_max_total_windows, 80_000)
         universe_scope = universe_scope_for_interval(request.interval or s.discovery_interval)
+        is_intraday = universe_scope != "daily_midcap"
         return {
             "limit": request.limit or s.discovery_limit_default,
             "period": request.period or s.discovery_period,
             "interval": request.interval or s.discovery_interval,
-            "cadence": "daily" if universe_scope == "daily_midcap" else "intraday",
+            "cadence": "intraday" if is_intraday else "daily",
             "universe_scope": universe_scope,
             "universe_file": universe_file_for_interval(
                 s,
                 request.interval or s.discovery_interval,
             ),
+            "symbols": [symbol.upper().strip() for symbol in request.symbols if symbol.strip()]
+            if request.symbols
+            else None,
             "window_sizes": request.window_sizes or s.discovery_window_size_list,
             "forward_bars": request.forward_bars or s.discovery_forward_bar_list,
             "stride": max(1, request.stride or s.discovery_stride),
             "max_total_windows": max(100, max_total_windows),
-            "max_windows_per_symbol": max(50, request.max_windows_per_symbol or s.discovery_max_windows_per_symbol),
+            "max_windows_per_symbol": max(
+                50, request.max_windows_per_symbol or s.discovery_max_windows_per_symbol
+            ),
             "min_cluster_size": max(20, request.min_cluster_size or s.discovery_min_cluster_size),
-            "max_clusters_per_window": max(2, min(request.max_clusters_per_window or s.discovery_max_clusters_per_window, 40)),
-            "store_rejected": s.discovery_store_rejected if request.store_rejected is None else request.store_rejected,
+            "max_clusters_per_window": max(
+                2, min(request.max_clusters_per_window or s.discovery_max_clusters_per_window, 40)
+            ),
+            "store_rejected": s.discovery_store_rejected
+            if request.store_rejected is None
+            else request.store_rejected,
             "rr_levels": s.discovery_rr_level_list,
             "min_reward_risk": s.discovery_min_reward_risk,
             "candidate_reward_risk": s.discovery_candidate_reward_risk,
@@ -411,6 +865,18 @@ class PatternDiscoveryLabAgent:
             "walk_forward_embargo_samples": s.discovery_walk_forward_embargo_samples,
             "cost_stress_multipliers": s.discovery_cost_stress_multiplier_list,
             "required_cost_stress_multiplier": s.discovery_required_cost_stress_multiplier,
+            "min_samples": s.intraday_research_min_samples
+            if is_intraday
+            else s.discovery_min_samples,
+            "min_effective_samples": (
+                s.intraday_research_min_effective_samples
+                if is_intraday
+                else s.discovery_min_effective_samples
+            ),
+            "min_symbols": s.intraday_research_min_symbols
+            if is_intraday
+            else s.discovery_min_symbols,
+            "min_years": s.intraday_research_min_years if is_intraday else s.discovery_min_years,
         }
 
     def _resolve_symbols(self, request: DiscoveryRunRequest, params: dict[str, Any]) -> list[str]:
@@ -422,7 +888,9 @@ class PatternDiscoveryLabAgent:
             universe_file=params["universe_file"],
         )
 
-    def _build_universe_snapshot(self, warnings: list[str], *, universe_file: str) -> dict[str, Any]:
+    def _build_universe_snapshot(
+        self, warnings: list[str], *, universe_file: str
+    ) -> dict[str, Any]:
         settings = self.settings
         assert settings is not None
         if not settings.universe_snapshot_monthly:
@@ -449,7 +917,14 @@ class PatternDiscoveryLabAgent:
                 "survivorship_biased": not settings.universe_point_in_time_available,
             }
 
-    def _data_manifest(self, run_id: int, symbols: list[str], warnings: list[str]) -> dict[str, Any]:
+    def _data_manifest(
+        self,
+        run_id: int,
+        symbols: list[str],
+        warnings: list[str],
+        *,
+        params: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         provider_manifest = getattr(self.provider, "data_manifest", None)
         if not callable(provider_manifest):
             return self._write_data_manifest(
@@ -464,7 +939,11 @@ class PatternDiscoveryLabAgent:
                 },
             )
         try:
-            payload = provider_manifest(symbols)
+            payload = provider_manifest(
+                symbols,
+                period=(params or {}).get("period"),
+                interval=(params or {}).get("interval"),
+            )
         except Exception as exc:  # noqa: BLE001
             warnings.append(f"data_manifest failed: {exc}")
             payload = {
@@ -483,43 +962,68 @@ class PatternDiscoveryLabAgent:
         manifest_dir = settings.reports_path / "research" / "data_manifests"
         manifest_dir.mkdir(parents=True, exist_ok=True)
         path = manifest_dir / f"discovery_run_{run_id}_data_manifest.json"
-        path.write_text(json.dumps(payload, indent=2, sort_keys=True, default=str), encoding="utf-8")
+        self._atomic_write_bytes(path, self._json_bytes(payload, sort_keys=True))
         payload = dict(payload)
         payload["path"] = str(path)
         return payload
 
     def _benchmark_frames(self, params: dict[str, Any], warnings: list[str]) -> dict[str, Any]:
-        frames: dict[str, Any] = {}
-        assert self.provider is not None
-        for symbol in ("SPY", "QQQ"):
-            try:
-                frames[symbol] = self.provider.fetch_ohlcv(
-                    symbol,
-                    period=params["period"],
-                    interval=params["interval"],
-                )
-            except Exception as exc:  # noqa: BLE001
-                warnings.append(f"{symbol} benchmark unavailable: {exc}")
-        return frames
+        key = (str(params.get("period") or ""), str(params.get("interval") or ""))
+        with _BENCHMARK_CONTEXT_LOCK:
+            cached = _BENCHMARK_FRAMES_CACHE.get(key)
+            if cached is not None:
+                return {symbol: frame.copy() for symbol, frame in cached.items()}
+
+            frames: dict[str, Any] = {}
+            assert self.provider is not None
+            for symbol in ("SPY", "QQQ"):
+                try:
+                    frames[symbol] = self.provider.fetch_ohlcv(
+                        symbol,
+                        period=params["period"],
+                        interval=params["interval"],
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    warnings.append(f"{symbol} benchmark unavailable: {exc}")
+            _BENCHMARK_FRAMES_CACHE[key] = {
+                symbol: frame.copy() for symbol, frame in frames.items()
+            }
+            return frames
 
     def _benchmark_regime_table(self, params: dict[str, Any], warnings: list[str]) -> Any:
-        assert self.provider is not None
-        try:
-            return MarketRegimeService(provider=self.provider, settings=self.settings).history_table(
-                period=str(params.get("period") or "")
-            )
-        except Exception as exc:  # noqa: BLE001
-            warnings.append(f"benchmark regime table unavailable: {exc}")
-            return None
+        key = str(params.get("period") or "")
+        with _BENCHMARK_CONTEXT_LOCK:
+            cached = _BENCHMARK_REGIME_CACHE.get(key)
+            if cached is not None:
+                return cached.copy() if hasattr(cached, "copy") else cached
 
-    def _summary(self, candidates: list[Any], samples: list[Any], warnings: list[str]) -> dict[str, Any]:
+            assert self.provider is not None
+            try:
+                table = MarketRegimeService(
+                    provider=self.provider, settings=self.settings
+                ).history_table(period=str(params.get("period") or ""))
+                _BENCHMARK_REGIME_CACHE[key] = table.copy() if hasattr(table, "copy") else table
+                return table
+            except Exception as exc:  # noqa: BLE001
+                warnings.append(f"benchmark regime table unavailable: {exc}")
+                return None
+
+    def _summary(
+        self, candidates: list[Any], samples: list[Any], warnings: list[str]
+    ) -> dict[str, Any]:
         accepted = [c for c in candidates if c.validation_passed]
         confirmation = [c for c in candidates if c.metrics.get("confirmation_recommended")]
         status_counts: dict[str, int] = {}
         for candidate in candidates:
-            status = str(candidate.metrics.get("promotion_status", "lab" if candidate.validation_passed else "rejected"))
+            status = str(
+                candidate.metrics.get(
+                    "promotion_status", "lab" if candidate.validation_passed else "rejected"
+                )
+            )
             status_counts[status] = status_counts.get(status, 0) + 1
-        top = sorted(candidates, key=lambda c: c.score, reverse=True)[: self.settings.discovery_report_top_n]  # type: ignore[union-attr]
+        top = sorted(candidates, key=lambda c: c.score, reverse=True)[
+            : self.settings.discovery_report_top_n
+        ]  # type: ignore[union-attr]
         confirmation_top = sorted(
             confirmation,
             key=lambda c: float(c.metrics.get("confirmation_priority_score", 0.0)),
@@ -555,7 +1059,9 @@ class PatternDiscoveryLabAgent:
         return {
             "name": candidate.name,
             "pattern_key": candidate.pattern_key,
-            "status": metrics.get("promotion_status", "lab" if candidate.validation_passed else "rejected"),
+            "status": metrics.get(
+                "promotion_status", "lab" if candidate.validation_passed else "rejected"
+            ),
             "side": candidate.side,
             "window_size": candidate.window_size,
             "sample_count": candidate.sample_count,
@@ -574,7 +1080,9 @@ class PatternDiscoveryLabAgent:
             "descriptive_all_expectancy_r": metrics.get("descriptive_all_expectancy_r"),
             "descriptive_all_profit_factor": metrics.get("descriptive_all_profit_factor"),
             "descriptive_all_win_rate": metrics.get("descriptive_all_win_rate"),
-            "descriptive_all_reward_risk_estimate": metrics.get("descriptive_all_reward_risk_estimate"),
+            "descriptive_all_reward_risk_estimate": metrics.get(
+                "descriptive_all_reward_risk_estimate"
+            ),
             "expectancy_r": metrics.get("expectancy_r"),
             "profit_factor": metrics.get("profit_factor"),
             "win_rate": metrics.get("win_rate"),
@@ -726,7 +1234,8 @@ class PatternDiscoveryLabAgent:
             ledger = candidate.metrics.get("event_ledger")
             if not isinstance(ledger, list):
                 continue
-            ledger_dir.mkdir(parents=True, exist_ok=True)
+            if written == 0:
+                ledger_dir.mkdir(parents=True, exist_ok=True)
             payload = {
                 "run_id": run_id,
                 "pattern_key": candidate.pattern_key,
@@ -738,11 +1247,11 @@ class PatternDiscoveryLabAgent:
                 "event_count": len(ledger),
                 "events": ledger,
             }
-            raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")
+            raw = self._json_bytes(payload, sort_keys=True)
             digest = hashlib.sha256(raw).hexdigest()
-            compressed = gzip.compress(raw, compresslevel=9, mtime=0)
+            compressed = gzip.compress(raw, compresslevel=1, mtime=0)
             path = ledger_dir / f"{self._safe_artifact_stem(candidate.pattern_key)}.json.gz"
-            path.write_bytes(compressed)
+            self._atomic_write_bytes(path, compressed)
             candidate.metrics["event_ledger_path"] = str(path)
             candidate.metrics["event_ledger_sha256"] = digest
             candidate.metrics["event_ledger_count"] = len(ledger)
@@ -773,33 +1282,79 @@ class PatternDiscoveryLabAgent:
         ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
         json_path = reports_dir / f"discovery_run_{run_id}_{ts}.json"
         md_path = reports_dir / f"discovery_run_{run_id}_{ts}.md"
+        report_artifact_mode = self._report_artifact_mode()
+        write_markdown = report_artifact_mode != "json_only"
+        summary["report_artifacts"] = {
+            "mode": report_artifact_mode,
+            "json_path": str(json_path),
+            "markdown_path": str(md_path) if write_markdown else None,
+            "markdown_written": write_markdown,
+        }
+        patterns = [self._candidate_digest(c) for c in candidates]
         payload = {
             "run_id": run_id,
             "params": params,
             "summary": summary,
-            "patterns": [self._candidate_digest(c) for c in candidates],
+            "patterns": patterns,
             "top_by_expectancy": sorted(
-                [self._candidate_digest(c) for c in candidates],
+                patterns,
                 key=lambda p: float(p.get("best_expectancy_r") or 0.0),
                 reverse=True,
             )[:10],
             "top_by_stability": sorted(
-                [self._candidate_digest(c) for c in candidates],
+                patterns,
                 key=lambda p: float(p.get("stability_score") or 0.0),
                 reverse=True,
             )[:10],
         }
+        volatile_keys = DEFAULT_VOLATILE_KEYS
+        if isinstance(summary.get("phase_timings"), dict) or isinstance(
+            summary.get("phase_counts"), dict
+        ):
+            volatile_keys = DEFAULT_VOLATILE_KEYS | _PHASE_TIMING_VOLATILE_KEYS
+        volatile_keys = volatile_keys | _REPORT_ARTIFACT_VOLATILE_KEYS
         payload["determinism"] = {
             "algo": CONTENT_HASH_ALGO,
-            "content_hash": content_hash(payload),
-            "excluded_keys": sorted(DEFAULT_VOLATILE_KEYS),
+            "content_hash": content_hash(payload, exclude_keys=volatile_keys),
+            "excluded_keys": sorted(volatile_keys),
             "generated_at": datetime.now(timezone.utc).isoformat(),
         }
-        json_path.write_text(
-            json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True, default=str), encoding="utf-8"
-        )
-        md_path.write_text(self._markdown_report(run_id, params, summary), encoding="utf-8")
+        self._atomic_write_bytes(json_path, self._json_bytes(payload, sort_keys=True))
+        if write_markdown:
+            self._atomic_write_text(md_path, self._markdown_report(run_id, params, summary))
         return json_path
+
+    @staticmethod
+    def _report_artifact_mode() -> str:
+        value = os.getenv(_BENCHMARK_REPORT_MODE_ENV, "").strip().lower().replace("-", "_")
+        if value in _BENCHMARK_JSON_ONLY_REPORT_VALUES:
+            return "json_only"
+        return "full"
+
+    @staticmethod
+    def _json_bytes(payload: Any, *, sort_keys: bool = False) -> bytes:
+        return json.dumps(
+            payload,
+            ensure_ascii=False,
+            sort_keys=sort_keys,
+            separators=(",", ":"),
+            default=str,
+        ).encode("utf-8")
+
+    @staticmethod
+    def _atomic_write_text(path: Path, text: str) -> None:
+        PatternDiscoveryLabAgent._atomic_write_bytes(path, text.encode("utf-8"))
+
+    @staticmethod
+    def _atomic_write_bytes(path: Path, data: bytes) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temp_path = path.with_name(f".{path.name}.{os.getpid()}.{time.time_ns()}.tmp")
+        try:
+            temp_path.write_bytes(data)
+            os.replace(temp_path, path)
+        finally:
+            if temp_path.exists():
+                temp_path.unlink()
 
     @staticmethod
     def _markdown_report(run_id: int, params: dict[str, Any], summary: dict[str, Any]) -> str:
@@ -816,12 +1371,28 @@ class PatternDiscoveryLabAgent:
             f"- R:R evaluados: {summary.get('rr_levels', [])}",
             f"- Seguridad: {summary.get('safety', {})}",
             "",
+            "## Timings",
+            "```json",
+            json.dumps(
+                {
+                    "phase_timings": summary.get("phase_timings", {}),
+                    "phase_counts": summary.get("phase_counts", {}),
+                    "phase_diagnostics": summary.get("phase_diagnostics", {}),
+                },
+                indent=2,
+                ensure_ascii=False,
+                default=str,
+            ),
+            "```",
+            "",
             "## Política de tokens",
             "El laboratorio no envía ventanas OHLCV crudas a ningún LLM. Solo exporta este digest compacto para revisión.",
             "",
             "## Research Director",
             "```json",
-            json.dumps(summary.get("research_director", {}), indent=2, ensure_ascii=False, default=str),
+            json.dumps(
+                summary.get("research_director", {}), indent=2, ensure_ascii=False, default=str
+            ),
             "```",
             "",
             "## Parámetros",
@@ -833,11 +1404,7 @@ class PatternDiscoveryLabAgent:
         ]
         for pattern in summary.get("top_patterns", []):
             human_rule = pattern.get("human_rule")
-            human_rule_text = (
-                human_rule.get("rule")
-                if isinstance(human_rule, dict)
-                else human_rule
-            )
+            human_rule_text = human_rule.get("rule") if isinstance(human_rule, dict) else human_rule
             lines.extend(
                 [
                     f"### {pattern['name']}",
