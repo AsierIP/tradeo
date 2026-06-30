@@ -103,7 +103,19 @@ def load_universe(path: str | None = None) -> pd.DataFrame:
         raise ValueError("Universe CSV must include a 'symbol' column")
     df["symbol"] = df["symbol"].astype(str).str.upper().str.strip()
     df = df[df["symbol"].str.len() > 0].drop_duplicates("symbol")
+    if "selected" in df.columns:
+        selected = df["selected"].map(_truthy_universe_selected)
+        df = df[selected].copy()
     return df
+
+
+def _truthy_universe_selected(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    text = str(value).strip().lower()
+    return text in {"1", "true", "t", "yes", "y", "on", "selected"}
 
 
 def pick_symbols(
@@ -494,7 +506,7 @@ class CachedMarketDataProvider:
                     leftover.unlink()
 
     @staticmethod
-    def _read_metadata(path: Path) -> dict[str, Any]:
+    def _read_metadata(path: Any) -> dict[str, Any]:
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
@@ -521,8 +533,8 @@ def _safe_part(value: str) -> str:
 
 
 def _sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+    h = hashlib.sha256()
+    with path.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
