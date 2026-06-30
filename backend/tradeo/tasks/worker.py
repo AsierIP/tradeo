@@ -74,6 +74,7 @@ class IntradayResearchProcessJob:
     pool_run_id: str
     estimated_cost: int = 0
     allow_recent_duplicates: bool = False
+    store_rejected: bool | None = False
 
 
 _INTRADAY_JOB_LOCKS: dict[str, Lock] = {}
@@ -847,11 +848,13 @@ def _run_intraday_research_process_pool(
     settings: Settings,
     *,
     allow_recent_duplicates: bool = False,
+    store_rejected: bool | None = False,
 ) -> dict[str, Any]:
     started = time.monotonic()
     jobs = _intraday_research_process_jobs(
         settings,
         allow_recent_duplicates=allow_recent_duplicates,
+        store_rejected=store_rejected,
     )
     if not jobs:
         return {
@@ -933,6 +936,7 @@ def _run_intraday_research_process_pool(
             "native_threads_per_process": native_threads,
             "process_start_method": start_method or "default",
             "allow_recent_duplicates": allow_recent_duplicates,
+            "store_rejected": store_rejected,
             "runs": runs,
             "skipped": skipped,
             "errors": errors,
@@ -969,7 +973,7 @@ def _run_intraday_research_process_worker(
             timeframes=[process_job.timeframe],
             symbol_chunk=(process_job.chunk_index, process_job.chunk_count),
             chunk_symbols=process_job.symbols,
-            store_rejected=False,
+            store_rejected=process_job.store_rejected,
             allow_recent_duplicates=process_job.allow_recent_duplicates,
         )
         return _intraday_research_process_worker_result(result, process_job, started)
@@ -980,7 +984,7 @@ def _run_intraday_research_process_worker(
             timeframes=[process_job.timeframe],
             symbol_chunk=(process_job.chunk_index, process_job.chunk_count),
             chunk_symbols=process_job.symbols,
-            store_rejected=False,
+            store_rejected=process_job.store_rejected,
             allow_recent_duplicates=process_job.allow_recent_duplicates,
         )
     return _intraday_research_process_worker_result(result, process_job, started)
@@ -990,6 +994,7 @@ def _intraday_research_process_jobs(
     settings: Settings,
     *,
     allow_recent_duplicates: bool = False,
+    store_rejected: bool | None = False,
 ) -> list[IntradayResearchProcessJob]:
     chunk_count = _intraday_research_process_chunk_count(settings)
     pool_run_id = f"{os.getpid()}:{time.monotonic_ns()}"
@@ -1009,6 +1014,7 @@ def _intraday_research_process_jobs(
                     pool_run_id=pool_run_id,
                     estimated_cost=estimated_cost,
                     allow_recent_duplicates=allow_recent_duplicates,
+                    store_rejected=store_rejected,
                 )
             )
     return _intraday_research_order_process_jobs(jobs, timeframe_order)
@@ -1062,6 +1068,7 @@ def _coerce_intraday_research_process_job(
         symbols=None,
         pool_run_id="",
         allow_recent_duplicates=False,
+        store_rejected=False,
     )
 
 
@@ -1164,6 +1171,7 @@ def _intraday_research_process_worker_result(
         "symbols": len(job.symbols or ()),
         "estimated_cost": int(job.estimated_cost),
         "allow_recent_duplicates": job.allow_recent_duplicates,
+        "store_rejected": job.store_rejected,
         "elapsed_seconds": round(time.monotonic() - started, 3),
     }
     return {

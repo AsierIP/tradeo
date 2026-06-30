@@ -513,6 +513,26 @@ def test_intraday_research_process_jobs_can_mark_benchmark_duplicate_bypass(monk
     assert all(job.allow_recent_duplicates is True for job in jobs)
 
 
+def test_intraday_research_process_jobs_can_mark_rejected_storage(monkeypatch) -> None:
+    settings = Settings(
+        intraday_timeframes="15m",
+        intraday_research_parallel_symbol_chunks=2,
+        intraday_research_limit_default=2,
+        intraday_universe_file="/tmp/small.csv",
+    )
+
+    monkeypatch.setattr(
+        worker,
+        "pick_symbols",
+        lambda *, limit, interval, universe_file: [f"S{idx}" for idx in range(limit)],
+    )
+
+    jobs = worker._intraday_research_process_jobs(settings, store_rejected=True)
+
+    assert jobs
+    assert all(job.store_rejected is True for job in jobs)
+
+
 def test_intraday_research_process_worker_forwards_benchmark_duplicate_bypass(monkeypatch) -> None:
     calls: list[bool | None] = []
     settings = Settings(intraday_research_native_threads_per_process=1)
@@ -530,6 +550,32 @@ def test_intraday_research_process_worker_forwards_benchmark_duplicate_bypass(mo
 
     def fake_run(_settings, **kwargs):  # noqa: ANN001
         calls.append(kwargs.get("allow_recent_duplicates"))
+        return {"status": "ok", "reason": "done", "details": {"runs": [], "skipped": []}}
+
+    monkeypatch.setattr(worker, "_run_intraday_research", fake_run)
+
+    worker._run_intraday_research_process_worker(job)
+
+    assert calls == [True]
+
+
+def test_intraday_research_process_worker_forwards_rejected_storage(monkeypatch) -> None:
+    calls: list[bool | None] = []
+    settings = Settings(intraday_research_native_threads_per_process=1)
+    job = worker.IntradayResearchProcessJob(
+        timeframe="5m",
+        chunk_index=0,
+        chunk_count=1,
+        symbols=("AAA",),
+        pool_run_id="test-run",
+        store_rejected=True,
+    )
+
+    monkeypatch.setattr(worker, "get_settings", lambda: settings)
+    monkeypatch.setattr(worker, "_reset_intraday_research_process_worker_state", lambda _run_id: None)
+
+    def fake_run(_settings, **kwargs):  # noqa: ANN001
+        calls.append(kwargs.get("store_rejected"))
         return {"status": "ok", "reason": "done", "details": {"runs": [], "skipped": []}}
 
     monkeypatch.setattr(worker, "_run_intraday_research", fake_run)

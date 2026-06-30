@@ -21,6 +21,12 @@ def main() -> int:
     )
     parser.add_argument("--execute", action="store_true", help="Actually run scouting after readiness passes.")
     parser.add_argument("--allow-recent-duplicates", action="store_true")
+    parser.add_argument(
+        "--store-rejected",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Persist rejected/near-miss candidates during --execute diagnostic scouting. Default: true.",
+    )
     parser.add_argument("--universe-file", default=None)
     parser.add_argument("--period", default=None)
     parser.add_argument("--timeframes", default=None)
@@ -68,6 +74,7 @@ def main() -> int:
         result = worker._run_intraday_research_process_pool(
             settings,
             allow_recent_duplicates=bool(args.allow_recent_duplicates),
+            store_rejected=bool(args.store_rejected),
         )
         wave_result["research_result"] = result
         wave_result["elapsed_wall_s"] = round(time.monotonic() - started, 3)
@@ -92,6 +99,7 @@ def main() -> int:
         "total": readiness.total,
         "execute": bool(args.execute),
         "research_status": (wave_result.get("research_result") or {}).get("status"),
+        "store_rejected": bool(args.store_rejected) if args.execute else None,
     }
     if not args.json_only:
         print(
