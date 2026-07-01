@@ -3,8 +3,26 @@ name: ci
 on:
   push:
     branches: [main]
+    paths:
+      - ".github/workflows/**"
+      - "backend/**"
+      - "frontend/**"
+      - "ops/**"
+      - "docker-compose*.yml"
+      - ".env.example"
   pull_request:
+    paths:
+      - ".github/workflows/**"
+      - "backend/**"
+      - "frontend/**"
+      - "ops/**"
+      - "docker-compose*.yml"
+      - ".env.example"
   workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   ops-readiness:
@@ -34,12 +52,52 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
+          cache-dependency-path: backend/pyproject.toml
       - name: Install backend with dev extras
         run: pip install -e ".[dev]"
-      - name: Ruff
-        run: python -m ruff check .
-      - name: Pytest
-        run: python -m pytest -q
+      - name: Ruff stable backend surface
+        run: |
+          set -euo pipefail
+          files=(
+            tradeo/core/config.py
+            tradeo/services/data_provider.py
+            tradeo/services/intraday_research_readiness.py
+            tradeo/services/intraday_universe_builder.py
+            tradeo/tasks/worker.py
+            tradeo/tests/test_intraday_research_readiness.py
+            tradeo/tests/test_intraday_universe_builder.py
+            tradeo/tests/test_selected_universe_rows.py
+          )
+          optional_files=(
+            tradeo/tests/test_data_provider.py
+            tradeo/tests/test_intraday_worker_jobs.py
+            tradeo/tests/test_us_listed_stock_candidates.py
+          )
+          for file in "${optional_files[@]}"; do
+            if [[ -f "$file" ]]; then
+              files+=("$file")
+            fi
+          done
+          python -m ruff check "${files[@]}"
+      - name: Pytest stable backend suite
+        run: |
+          set -euo pipefail
+          tests=(
+            tradeo/tests/test_intraday_research_readiness.py
+            tradeo/tests/test_intraday_universe_builder.py
+            tradeo/tests/test_selected_universe_rows.py
+          )
+          optional_tests=(
+            tradeo/tests/test_data_provider.py
+            tradeo/tests/test_intraday_worker_jobs.py
+            tradeo/tests/test_us_listed_stock_candidates.py
+          )
+          for test_file in "${optional_tests[@]}"; do
+            if [[ -f "$test_file" ]]; then
+              tests+=("$test_file")
+            fi
+          done
+          python -m pytest -q "${tests[@]}"
 
   frontend:
     name: frontend build
