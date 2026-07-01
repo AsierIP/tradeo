@@ -50,11 +50,27 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--hours", type=float, default=72.0, help="Recent horizon to inspect; 0 disables time filtering.")
     parser.add_argument("--limit-runs", type=int, default=80, help="Maximum discovery runs to inspect.")
+    parser.add_argument(
+        "--run-ids",
+        default="",
+        help="Comma-separated DiscoveryRun IDs to diagnose exactly; disables --hours filtering.",
+    )
+    parser.add_argument(
+        "--wave-manifest",
+        default="",
+        help="Path to an intraday_research_wave_*.json manifest; extracts research_result.details.runs[].run_id.",
+    )
     parser.add_argument("--top", type=int, default=20, help="Near-miss candidates to include.")
     parser.add_argument("--json-only", action="store_true", help="Only print machine-readable JSON.")
     args = parser.parse_args()
 
-    report = build_report(hours=args.hours, limit_runs=args.limit_runs, top=args.top)
+    report = build_report(
+        hours=args.hours,
+        limit_runs=args.limit_runs,
+        top=args.top,
+        run_ids_arg=args.run_ids,
+        wave_manifest=args.wave_manifest,
+    )
     if args.json_only:
         print(json.dumps(report, indent=2, sort_keys=True))
         return 0
@@ -64,18 +80,42 @@ def main() -> int:
     return 0
 
 
-def build_report(*, hours: float, limit_runs: int, top: int) -> dict[str, Any]:
+def build_report(
+    *,
+    hours: float,
+    limit_runs: int,
+    top: int,
+    run_ids_arg: str = "",
+    wave_manifest: str = "",
+) -> dict[str, Any]:
     settings = get_settings()
+    explicit_run_ids = _resolve_explicit_run_ids(run_ids_arg=run_ids_arg, wave_manifest=wave_manifest)
+    scope_mode = "recent"
+    if run_ids_arg.strip() and wave_manifest.strip():
+        scope_mode = "run_ids+wave_manifest"
+    elif run_ids_arg.strip():
+        scope_mode = "run_ids"
+    elif wave_manifest.strip():
+        scope_mode = "wave_manifest"
+
     cutoff = None
-    if hours and hours > 0:
+    if not explicit_run_ids and hours and hours > 0:
         cutoff = datetime.now(timezone.utc) - timedelta(hours=float(hours))
 
     db = SessionLocal()
     try:
-        query = db.query(DiscoveryRun).order_by(DiscoveryRun.id.desc())
-        if cutoff is not None:
-            query = query.filter(DiscoveryRun.started_at >= cutoff)
-        runs = list(query.limit(max(1, int(limit_runs))).all())
+        if explicit_run_ids:
+            query = (
+                db.query(DiscoveryRun)
+                .filter(DiscoveryRun.id.in_(explicit_run_ids))
+                .order_by(DiscoveryRun.id.desc())
+            )
+            runs = list(query.all())
+        else:
+            query = db.query(DiscoveryRun).order_by(DiscoveryRun.id.desc())
+            if cutoff is not None:
+                query = query.filter(DiscoveryRun.started_at >= cutoff)
+            runs = list(query.limit(max(1, int(limit_runs))).all())
         run_ids = [int(run.id) for run in runs]
         persisted = []
         if run_ids:
@@ -123,7 +163,15 @@ def build_report(*, hours: float, limit_runs: int, top: int) -> dict[str, Any]:
     )
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
-        "scope": {"hours": hours, "limit_runs": limit_runs, "run_ids": run_ids},
+        "scope": {
+            "mode": scope_mode,
+            "hours": hours if not explicit_run_ids else None,
+            "limit_runs": limit_runs if not explicit_run_ids else None,
+            "requested_run_ids": explicit_run_ids,
+            "missing_run_ids": sorted(set(explicit_run_ids) - set(run_ids)),
+            "wave_manifest": wave_manifest or None,
+            "run_ids": run_ids,
+        },
         "run_totals": run_totals,
         "candidate_visibility": {
             "persisted_candidates": len(persisted_candidates),
@@ -141,6 +189,69 @@ def build_report(*, hours: float, limit_runs: int, top: int) -> dict[str, Any]:
         "recommended_actions": _recommended_actions(blocker_counts, diagnostic_flags),
         "diagnostic_flags": diagnostic_flags,
     }
+
+
+def _resolve_explicit_run_ids(*, run_ids_arg: str, wave_manifest: str) -> list[int]:
+    run_ids: list[int] = []
+    run_ids.extend(_parse_run_ids(run_ids_arg))
+    if wave_manifest.strip():
+        run_ids.extend(_run_ids_from_wave_manifest(wave_manifest.strip()))
+    return _dedupe_ints(run_ids)
+
+
+def _parse_run_ids(value: str) -> list[int]:
+    if not value.strip():
+        return []
+    run_ids: list[int] = []
+    for item in value.replace(";", ",").split(","):
+        text = item.strip()
+        if not text:
+            continue
+        try:
+            run_id = int(text)
+        except ValueError as exc:
+            raise SystemExit(f"Invalid --run-ids value {text!r}; expected comma-separated integers.") from exc
+        if run_id <= 0:
+            raise SystemExit(f"Invalid --run-ids value {text!r}; IDs must be positive integers.")
+        run_ids.append(run_id)
+    return run_ids
+
+
+def _run_ids_from_wave_manifest(path: str) -> list[int]:
+    try:
+        with open(path, encoding="utf-8") as handle:
+            manifest = json.load(handle)
+    except OSError as exc:
+        raise SystemExit(f"Could not read --wave-manifest {path!r}: {exc}") from exc
+    except json.JSONDecodeError as exc:
+        raise SystemExit(f"Could not parse --wave-manifest {path!r} as JSON: {exc}") from exc
+
+    runs = (
+        manifest.get("research_result", {})
+        .get("details", {})
+        .get("runs", [])
+    )
+    if not isinstance(runs, list):
+        raise SystemExit(f"Invalid --wave-manifest {path!r}: research_result.details.runs is not a list.")
+
+    run_ids: list[int] = []
+    for row in runs:
+        if not isinstance(row, dict):
+            continue
+        run_id = _to_int(row.get("run_id"))
+        if run_id > 0:
+            run_ids.append(run_id)
+    if not run_ids:
+        raise SystemExit(f"Invalid --wave-manifest {path!r}: no run IDs found in research_result.details.runs.")
+    return run_ids
+
+
+def _dedupe_ints(values: Iterable[int]) -> list[int]:
+    output: list[int] = []
+    for value in values:
+        if value not in output:
+            output.append(value)
+    return output
 
 
 def _summary_candidates(run: DiscoveryRun, *, settings: Any) -> list[CandidateView]:
