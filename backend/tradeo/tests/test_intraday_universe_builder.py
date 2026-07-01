@@ -254,6 +254,49 @@ def test_stock_only_product_policy_rejects_etf_and_leveraged_candidates(tmp_path
     assert result.metadata["reason_counts"]["product_policy:stock_only_excludes_leveraged_etf"] == 1
 
 
+def test_stock_only_rejects_known_product_symbols_without_metadata(tmp_path: Path) -> None:
+    seed = tmp_path / "seed.csv"
+    seed.write_text(
+        "symbol,name,cap_segment,sector,note\n"
+        "MSFT,,,,\n"
+        "QQQM,,,,\n"
+        "QLD,,,,\n"
+        "ETHA,,,,\n"
+        "MUU,,,,\n"
+        "MUD,,,,\n"
+        "SNXX,,,,\n",
+        encoding="utf-8",
+    )
+    frames = {
+        symbol: _frame(100.0, 1_000_000)
+        for symbol in ["MSFT", "QQQM", "QLD", "ETHA", "MUU", "MUD", "SNXX"]
+    }
+
+    result = _builder(tmp_path, frames).build(
+        seed_files=[seed],
+        output_path=tmp_path / "universe.csv",
+        limit=10,
+        thresholds=_liquid_thresholds(),
+        product_policy="stock_only",
+        rotation_salt="test",
+    )
+
+    output = pd.read_csv(result.output_path).set_index("symbol")
+    assert result.selected_symbols == ["MSFT"]
+    assert output.loc["QQQM", "product_class"] == "etf"
+    assert output.loc["ETHA", "product_class"] == "crypto_etp"
+    assert output.loc["QLD", "product_class"] == "leveraged_etf"
+    assert output.loc["MUU", "product_class"] == "leveraged_etf"
+    assert output.loc["SNXX", "product_class"] == "leveraged_etf"
+    assert output.loc["MUD", "product_class"] == "inverse_etf"
+    assert output.loc["QQQM", "reason_codes"] == "product_policy:stock_only_excludes_etf"
+    assert output.loc["ETHA", "reason_codes"] == "product_policy:stock_only_excludes_crypto_etp"
+    assert output.loc["QLD", "reason_codes"] == "product_policy:stock_only_excludes_leveraged_etf"
+    assert output.loc["MUU", "reason_codes"] == "product_policy:stock_only_excludes_leveraged_etf"
+    assert output.loc["SNXX", "reason_codes"] == "product_policy:stock_only_excludes_leveraged_etf"
+    assert output.loc["MUD", "reason_codes"] == "product_policy:stock_only_excludes_inverse_etf"
+
+
 @pytest.mark.parametrize("product_policy", ["all", "include_funds"])
 def test_product_policy_that_includes_funds_does_not_reject_etf_by_class(
     tmp_path: Path,
