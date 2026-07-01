@@ -48,6 +48,9 @@ _INTRADAY_BAR_MINUTES = {
     "60 mins": 60,
     "1 hour": 60,
 }
+UNIVERSE_POLICY_STOCK_ONLY = "stock_only"
+UNIVERSE_POLICY_ETF_MACRO = "etf_macro"
+UNIVERSE_POLICY_CHOICES = (UNIVERSE_POLICY_STOCK_ONLY, UNIVERSE_POLICY_ETF_MACRO)
 _CACHE_PATH_LOCKS_GUARD = Lock()
 _CACHE_PATH_LOCKS: dict[Path, Lock] = {}
 _UPSTREAM_FETCH_SEMAPHORE_GUARD = Lock()
@@ -83,11 +86,30 @@ def is_daily_interval(interval: str | None) -> bool:
     return _normalized_interval_key(interval or "1d") in _DAILY_INTERVALS
 
 
-def universe_scope_for_interval(interval: str | None) -> str:
-    return "daily_midcap" if is_daily_interval(interval) else "intraday_smallcap"
+def normalize_universe_policy(value: str | None) -> str:
+    policy = str(value or UNIVERSE_POLICY_STOCK_ONLY).strip().lower()
+    if policy not in UNIVERSE_POLICY_CHOICES:
+        raise ValueError(
+            f"unknown universe policy: {value!r}; expected one of {','.join(UNIVERSE_POLICY_CHOICES)}"
+        )
+    return policy
 
 
-def universe_file_for_interval(settings: Any, interval: str | None) -> str:
+def universe_scope_for_interval(interval: str | None, universe_policy: str | None = None) -> str:
+    scope = "daily_midcap" if is_daily_interval(interval) else "intraday_smallcap"
+    policy = normalize_universe_policy(universe_policy)
+    return scope if policy == UNIVERSE_POLICY_STOCK_ONLY else f"{scope}_{policy}"
+
+
+def universe_file_for_interval(
+    settings: Any,
+    interval: str | None,
+    universe_policy: str | None = None,
+) -> str:
+    normalize_universe_policy(
+        universe_policy
+        or getattr(settings, "intraday_universe_policy", UNIVERSE_POLICY_STOCK_ONLY)
+    )
     if is_daily_interval(interval):
         return str(getattr(settings, "daily_universe_file", settings.universe_file))
     return str(getattr(settings, "intraday_universe_file", settings.universe_file))
@@ -124,19 +146,25 @@ def pick_symbols(
     *,
     interval: str | None = None,
     universe_file: str | None = None,
+    universe_policy: str | None = None,
 ) -> list[str]:
     if force_symbols:
         return [s.upper().strip() for s in force_symbols if s.strip()]
     settings = get_settings()
+    selected_policy = normalize_universe_policy(
+        universe_policy
+        or getattr(settings, "intraday_universe_policy", UNIVERSE_POLICY_STOCK_ONLY)
+    )
     selected_universe = universe_file or universe_file_for_interval(
         settings,
         interval or settings.scan_interval,
+        universe_policy=selected_policy,
     )
     df = load_universe(selected_universe)
     if limit is not None and int(limit) <= 0:
         return df["symbol"].tolist()
     n = limit or settings.scan_limit_default
-    return df["symbol"].head(n).tolist()
+    return df["symbol"].head(int(n)).tolist()
 
 
 @dataclass

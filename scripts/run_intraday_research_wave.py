@@ -3,11 +3,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 import time
 from typing import Any
 
 from tradeo.core.config import get_settings
+from tradeo.services.data_provider import UNIVERSE_POLICY_CHOICES, normalize_universe_policy
 from tradeo.services.intraday_research_readiness import (
     IntradayResearchReadinessGate,
     IntradayResearchWaveSpec,
@@ -28,6 +30,14 @@ def main() -> int:
         help="Persist rejected/near-miss candidates during --execute diagnostic scouting. Default: true.",
     )
     parser.add_argument("--universe-file", default=None)
+    parser.add_argument(
+        "--product-policy",
+        "--universe-policy",
+        dest="product_policy",
+        choices=UNIVERSE_POLICY_CHOICES,
+        default=None,
+        help="Universe product policy label. Defaults to settings.",
+    )
     parser.add_argument("--period", default=None)
     parser.add_argument("--timeframes", default=None)
     parser.add_argument("--limit", type=int, default=None)
@@ -41,10 +51,15 @@ def main() -> int:
     parser.add_argument("--json-only", action="store_true")
     args = parser.parse_args()
 
+    _apply_settings_env_overrides(args)
     settings = get_settings()
+    product_policy = normalize_universe_policy(
+        args.product_policy or getattr(settings, "intraday_universe_policy", "stock_only")
+    )
     spec = IntradayResearchWaveSpec.from_settings(
         settings,
         universe_file=args.universe_file,
+        universe_policy=product_policy,
         period=args.period,
         timeframes=tuple(_csv_str(args.timeframes)) if args.timeframes else None,
         limit=args.limit,
@@ -98,6 +113,7 @@ def main() -> int:
         "ok": readiness.ok,
         "total": readiness.total,
         "execute": bool(args.execute),
+        "product_policy": product_policy,
         "research_status": (wave_result.get("research_result") or {}).get("status"),
         "store_rejected": bool(args.store_rejected) if args.execute else None,
     }
@@ -118,6 +134,15 @@ def _csv_str(raw: str) -> list[str]:
 
 def _csv_int(raw: str) -> list[int]:
     return [int(item.strip()) for item in str(raw).split(",") if item.strip()]
+
+
+def _apply_settings_env_overrides(args: argparse.Namespace) -> None:
+    if args.universe_file:
+        os.environ["TRADEO_INTRADAY_UNIVERSE_FILE"] = str(args.universe_file)
+    if args.product_policy:
+        os.environ["TRADEO_INTRADAY_UNIVERSE_POLICY"] = str(args.product_policy)
+    if args.universe_file or args.product_policy:
+        get_settings.cache_clear()
 
 
 if __name__ == "__main__":

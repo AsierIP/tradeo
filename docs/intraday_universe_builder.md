@@ -25,11 +25,38 @@ Scoring:
 - penalizacion/rechazo por keywords event-driven;
 - filtro de saltos extremos tipo evento;
 - seleccion con cap por bucket sector/cap_segment para no volver a concentrarse en una sola familia.
+- clasificacion auditable de producto: `common_stock`, `adr`, `etf`, `leveraged_etf`,
+  `inverse_etf`, `crypto_etp`, `commodity_etp`, `country_etf`, `unknown`.
+- politica de producto por defecto `stock_only`, que solo deja seleccionar acciones/ADR.
 
 Output:
 
 - CSV con todos los candidatos, seleccionados y rechazados, razones y metricas.
+- Columnas de producto: `product_class`, `product_flags`, `product_rejection_reason`.
 - Metadata JSON con thresholds, fuentes, conteos y simbolos seleccionados.
+- `reason_counts` incluye rechazos por politica de producto.
+
+## Politica de producto
+
+El modo recomendado para Research de patrones intradia de acciones es `stock_only`.
+En este modo no se mezclan ETFs, ETPs crypto/commodity/country ni productos leveraged/inverse con acciones comunes en el mismo universo seleccionado. Esos productos quedan en el CSV con `selected=false` y una razon `product_policy:*` para auditoria.
+
+Para una investigacion macro de ETFs, construir un universo separado con `--product-policy etf_macro`.
+No mezclarlo con acciones: los ETFs y ETPs suelen compartir drivers, rebalanceos, derivados y exposiciones cruzadas. Por eso `symbol_count` no equivale a independencia estadistica cuando varios simbolos son productos correlacionados sobre el mismo subyacente o familia.
+
+Si se necesita reproducir un universo permisivo o auditar liquidez de fondos junto a acciones:
+
+```bash
+... build_intraday_universe.py ... --product-policy all
+```
+
+o el alias explicito:
+
+```bash
+... build_intraday_universe.py ... --include-funds
+```
+
+No confirmar patrones intradia de acciones hasta tener al menos `>=100` seleccionados `stock_only` liquidos y con cache completa.
 
 ## Uso recomendado
 
@@ -38,15 +65,17 @@ Output:
 ```bash
 docker compose run --rm -T backend \
   python /app/scripts/fetch_ibkr_intraday_candidates.py \
+    --product-policy stock_only \
     --scan-codes HOT_BY_VOLUME,MOST_ACTIVE,TOP_PERC_GAIN,TOP_PERC_LOSE \
     --output /app/artifacts/runtime/ibkr_intraday_scanner_candidates.csv
 ```
 
 Nota: el scanner de IBKR devuelve contratos, no liquidez. La liquidez se valida despues con OHLCV.
+Para candidatos macro ETF usar `--product-policy etf_macro`, que cambia el default de scanner a `ETF.US.MAJOR`; si la instalacion IBKR usa otro location code, pasarlo explicitamente con `--location-code`.
 
 ### 2. Calentar cache para candidatos
 
-Usar `warm_intraday_cache_resilient.py` sobre los seed CSVs que se vayan a puntuar. Si se usa scanner, pasar su output como `TRADEO_INTRADAY_UNIVERSE_FILE` durante warmup o usarlo como seed del builder.
+Usar `warm_intraday_cache_resilient.py` sobre los seed CSVs que se vayan a puntuar. Si se usa scanner, pasar su output como `TRADEO_INTRADAY_UNIVERSE_FILE` durante warmup o usarlo como seed del builder. El warmup acepta `--universe-file` y `--product-policy stock_only|etf_macro` para dejar el mismo contrato en el resumen JSON que luego revisa readiness.
 
 ### 3. Construir universo liquido
 
@@ -61,6 +90,7 @@ docker compose run --rm -T \
     --period 60d \
     --interval 30m \
     --limit 200 \
+    --product-policy stock_only \
     --output /app/artifacts/runtime/universe_intraday_liquid.csv
 ```
 
@@ -75,6 +105,7 @@ Si falta cache y se acepta refrescar datos durante el scoring:
 ```bash
 docker compose run --rm -T \
   -e TRADEO_INTRADAY_UNIVERSE_FILE=/app/artifacts/runtime/universe_intraday_liquid.csv \
+  -e TRADEO_INTRADAY_UNIVERSE_POLICY=stock_only \
   -e TRADEO_MARKET_DATA_CACHE_DIR=/app/artifacts/runtime/ohlcv_cache \
   -e TRADEO_UNIVERSE_SNAPSHOT_DIR=/app/artifacts/runtime/universe_snapshots \
   -e TRADEO_INTRADAY_RESEARCH_REFRESH_MARKET_DATA_ENABLED=false \

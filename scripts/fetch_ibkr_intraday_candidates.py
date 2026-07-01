@@ -17,6 +17,7 @@ from typing import Any
 import pandas as pd
 
 from tradeo.core.config import get_settings
+from tradeo.services.data_provider import UNIVERSE_POLICY_CHOICES, normalize_universe_policy
 from tradeo.services.ibkr_data_provider import _connect_ibkr
 
 DEFAULT_SCAN_CODES = "HOT_BY_VOLUME,MOST_ACTIVE,TOP_PERC_GAIN,TOP_PERC_LOSE"
@@ -25,14 +26,27 @@ DEFAULT_SCAN_CODES = "HOT_BY_VOLUME,MOST_ACTIVE,TOP_PERC_GAIN,TOP_PERC_LOSE"
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--scan-codes", default=DEFAULT_SCAN_CODES)
-    parser.add_argument("--location-code", default="STK.US.MAJOR")
-    parser.add_argument("--instrument", default="STK")
+    parser.add_argument(
+        "--product-policy",
+        "--universe-policy",
+        dest="product_policy",
+        choices=UNIVERSE_POLICY_CHOICES,
+        default="stock_only",
+        help="Candidate product policy. stock_only scans stocks; etf_macro defaults to ETF scanner location.",
+    )
+    parser.add_argument("--location-code", default=None)
+    parser.add_argument("--instrument", default=None)
     parser.add_argument("--rows-per-scan", type=int, default=50)
     parser.add_argument("--output", default="/app/artifacts/runtime/ibkr_intraday_scanner_candidates.csv")
     parser.add_argument("--json-only", action="store_true")
     args = parser.parse_args()
 
     settings = get_settings()
+    product_policy = normalize_universe_policy(args.product_policy)
+    instrument = args.instrument or "STK"
+    location_code = args.location_code or (
+        "ETF.US.MAJOR" if product_policy == "etf_macro" else "STK.US.MAJOR"
+    )
     scan_codes = [item.strip().upper() for item in args.scan_codes.split(",") if item.strip()]
     rows: list[dict[str, Any]] = []
     ib = None
@@ -43,8 +57,8 @@ def main() -> int:
                 fetch_scan(
                     ib,
                     scan_code=scan_code,
-                    instrument=args.instrument,
-                    location_code=args.location_code,
+                    instrument=instrument,
+                    location_code=location_code,
                     rows_per_scan=args.rows_per_scan,
                 )
             )
@@ -66,8 +80,9 @@ def main() -> int:
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "client_id": client_id if "client_id" in locals() else None,
         "scan_codes": scan_codes,
-        "instrument": args.instrument,
-        "location_code": args.location_code,
+        "product_policy": product_policy,
+        "instrument": instrument,
+        "location_code": location_code,
         "rows_per_scan": args.rows_per_scan,
         "output": str(output),
         "candidates": int(len(df)),

@@ -27,6 +27,19 @@ def main() -> int:
     parser.add_argument("--limit", type=int, default=200)
     parser.add_argument("--refresh", action="store_true", help="Allow provider refresh/miss-fill while scoring.")
     parser.add_argument("--rotation-salt", default=None)
+    parser.add_argument(
+        "--product-policy",
+        "--universe-policy",
+        dest="product_policy",
+        choices=("stock_only", "all"),
+        default="stock_only",
+        help="Product policy for selected rows. Default stock_only excludes funds/ETPs from research universes.",
+    )
+    parser.add_argument(
+        "--include-funds",
+        action="store_true",
+        help="Alias for --product-policy all; keeps funds eligible when quality/liquidity pass.",
+    )
     parser.add_argument("--min-price", type=float, default=3.0)
     parser.add_argument("--min-median-dollar-volume", type=float, default=5_000_000.0)
     parser.add_argument("--min-rows", type=int, default=120)
@@ -62,6 +75,7 @@ def main() -> int:
         thresholds=thresholds,
         cache_refresh_enabled=args.refresh,
         rotation_salt=args.rotation_salt,
+        product_policy="all" if args.include_funds else args.product_policy,
     )
     payload = {
         "output_path": str(result.output_path),
@@ -71,6 +85,7 @@ def main() -> int:
         "total_candidates": result.total_candidates,
         "selected_preview": result.selected_symbols[:25],
         "thresholds": asdict(thresholds),
+        "product_policy": result.metadata["product_policy"],
     }
     if not args.json_only:
         print(

@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pandas as pd
+import pytest
 
 from tradeo.core.config import Settings
 from tradeo.services.intraday_universe_builder import (
@@ -36,6 +37,22 @@ def _frame(price: float, volume: float, *, rows: int = 160, spike: bool = False)
     )
 
 
+def _builder(tmp_path: Path, frames: dict[str, pd.DataFrame]) -> IntradayUniverseBuilder:
+    return IntradayUniverseBuilder(
+        settings=Settings(market_data_cache_dir=str(tmp_path / "cache")),
+        provider_factory=lambda *, cache_refresh_enabled: FakeProvider(frames),
+    )
+
+
+def _liquid_thresholds() -> IntradayUniverseThresholds:
+    return IntradayUniverseThresholds(
+        min_price=3.0,
+        min_median_dollar_volume=1_000_000,
+        min_rows=120,
+        max_event_bar_return_pct=0.35,
+    )
+
+
 def test_intraday_universe_builder_scores_and_rejects_bad_candidates(tmp_path: Path) -> None:
     seed = tmp_path / "seed.csv"
     seed.write_text(
@@ -52,10 +69,7 @@ def test_intraday_universe_builder_scores_and_rejects_bad_candidates(tmp_path: P
         "LOWP": _frame(1.5, 2_000_000),
         "BIOX": _frame(30.0, 300_000, spike=True),
     }
-    builder = IntradayUniverseBuilder(
-        settings=Settings(market_data_cache_dir=str(tmp_path / "cache")),
-        provider_factory=lambda *, cache_refresh_enabled: FakeProvider(frames),
-    )
+    builder = _builder(tmp_path, frames)
 
     result = builder.build(
         seed_files=[seed],
@@ -87,17 +101,14 @@ def test_intraday_universe_builder_uses_bucket_cap_before_backfill(tmp_path: Pat
     seed = tmp_path / "seed.csv"
     seed.write_text(
         "symbol,name,cap_segment,sector,note\n"
-        "T1,Tech 1,midcap,tech,ordinary\n"
-        "T2,Tech 2,midcap,tech,ordinary\n"
-        "T3,Tech 3,midcap,tech,ordinary\n"
-        "F1,Finance 1,midcap,finance,ordinary\n",
+        "TECA,Tech A,midcap,tech,ordinary\n"
+        "TECB,Tech B,midcap,tech,ordinary\n"
+        "TECC,Tech C,midcap,tech,ordinary\n"
+        "FINA,Finance A,midcap,finance,ordinary\n",
         encoding="utf-8",
     )
-    frames = {symbol: _frame(30.0 + idx, 300_000) for idx, symbol in enumerate(["T1", "T2", "T3", "F1"])}
-    builder = IntradayUniverseBuilder(
-        settings=Settings(market_data_cache_dir=str(tmp_path / "cache")),
-        provider_factory=lambda *, cache_refresh_enabled: FakeProvider(frames),
-    )
+    frames = {symbol: _frame(30.0 + idx, 300_000) for idx, symbol in enumerate(["TECA", "TECB", "TECC", "FINA"])}
+    builder = _builder(tmp_path, frames)
 
     result = builder.build(
         seed_files=[seed],
@@ -111,5 +122,162 @@ def test_intraday_universe_builder_uses_bucket_cap_before_backfill(tmp_path: Pat
         rotation_salt="test",
     )
 
-    assert "F1" in result.selected_symbols
+    assert "FINA" in result.selected_symbols
     assert len(result.selected_symbols) == 3
+
+
+def test_stock_only_rejects_leveraged_etf_but_keeps_common_stock(tmp_path: Path) -> None:
+    seed = tmp_path / "seed.csv"
+    seed.write_text(
+        "symbol,name,cap_segment,sector,note\n"
+        "MSFT,Microsoft Corporation Common Stock,megacap,technology,common stock\n"
+        "TQQQ,ProShares UltraPro QQQ ETF,etf,macro,3x leveraged bull fund\n",
+        encoding="utf-8",
+    )
+    frames = {
+        "MSFT": _frame(420.0, 500_000),
+        "TQQQ": _frame(80.0, 1_000_000),
+    }
+    builder = _builder(tmp_path, frames)
+
+    result = builder.build(
+        seed_files=[seed],
+        output_path=tmp_path / "universe.csv",
+        limit=10,
+        thresholds=IntradayUniverseThresholds(min_median_dollar_volume=1_000_000),
+        rotation_salt="test",
+    )
+
+    output = pd.read_csv(result.output_path)
+    assert result.selected_symbols == ["MSFT"]
+    tqqq = output.loc[output["symbol"] == "TQQQ"].iloc[0]
+    msft = output.loc[output["symbol"] == "MSFT"].iloc[0]
+    assert tqqq["product_class"] == "leveraged_etf"
+    assert "leveraged" in tqqq["product_flags"]
+    assert tqqq["product_rejection_reason"] == "product_policy:stock_only_excludes_leveraged_etf"
+    assert tqqq["reason_codes"] == "product_policy:stock_only_excludes_leveraged_etf"
+    assert int(tqqq["rows"]) > 0
+    assert bool(tqqq["selected"]) is False
+    assert msft["product_class"] == "common_stock"
+    assert bool(msft["selected"]) is True
+    assert result.metadata["product_policy"] == "stock_only"
+    assert result.metadata["reason_counts"]["product_policy:stock_only_excludes_leveraged_etf"] == 1
+
+
+def test_product_policy_all_keeps_etf_eligible_when_quality_passes(tmp_path: Path) -> None:
+    seed = tmp_path / "seed.csv"
+    seed.write_text(
+        "symbol,name,cap_segment,sector,note\n"
+        "TQQQ,ProShares UltraPro QQQ ETF,etf,macro,3x leveraged bull fund\n",
+        encoding="utf-8",
+    )
+    frames = {"TQQQ": _frame(80.0, 1_000_000)}
+    builder = IntradayUniverseBuilder(
+        settings=Settings(market_data_cache_dir=str(tmp_path / "cache")),
+        provider_factory=lambda *, cache_refresh_enabled: FakeProvider(frames),
+    )
+
+    result = builder.build(
+        seed_files=[seed],
+        output_path=tmp_path / "universe.csv",
+        limit=10,
+        thresholds=IntradayUniverseThresholds(min_median_dollar_volume=1_000_000),
+        rotation_salt="test",
+        product_policy="all",
+    )
+
+    output = pd.read_csv(result.output_path)
+    tqqq = output.loc[output["symbol"] == "TQQQ"].iloc[0]
+    assert result.selected_symbols == ["TQQQ"]
+    assert tqqq["product_class"] == "leveraged_etf"
+    assert pd.isna(tqqq["product_rejection_reason"])
+    assert not any(reason.startswith("product_policy:") for reason in result.metadata["reason_counts"])
+
+
+def test_builder_reads_legacy_seed_csv_without_selected_column(tmp_path: Path) -> None:
+    seed = tmp_path / "legacy.csv"
+    seed.write_text("symbol,name\nMSFT,Microsoft Corporation Common Stock\n", encoding="utf-8")
+    frames = {"MSFT": _frame(420.0, 500_000)}
+    builder = IntradayUniverseBuilder(
+        settings=Settings(market_data_cache_dir=str(tmp_path / "cache")),
+        provider_factory=lambda *, cache_refresh_enabled: FakeProvider(frames),
+    )
+
+    result = builder.build(
+        seed_files=[seed],
+        output_path=tmp_path / "universe.csv",
+        limit=10,
+        thresholds=IntradayUniverseThresholds(min_median_dollar_volume=1_000_000),
+        rotation_salt="test",
+    )
+
+    output = pd.read_csv(result.output_path)
+    assert result.selected_symbols == ["MSFT"]
+    assert {"product_class", "product_flags", "product_rejection_reason"}.issubset(output.columns)
+
+
+def test_stock_only_product_policy_rejects_etf_and_leveraged_candidates(tmp_path: Path) -> None:
+    seed = tmp_path / "seed.csv"
+    seed.write_text(
+        "symbol,name,cap_segment,sector,note,product_class,security_type,leveraged\n"
+        "ACME,Acme Software,midcap,technology,common stock,common_stock,stock,false\n"
+        "SPY,SPDR S&P 500 ETF,largecap,funds,index ETF,etf,etf,false\n"
+        "TQQQ,ProShares UltraPro QQQ,largecap,funds,3x leveraged ETF,etf,etf,true\n",
+        encoding="utf-8",
+    )
+    frames = {
+        "ACME": _frame(40.0, 300_000),
+        "SPY": _frame(500.0, 2_000_000),
+        "TQQQ": _frame(80.0, 1_000_000),
+    }
+
+    result = _builder(tmp_path, frames).build(
+        seed_files=[seed],
+        output_path=tmp_path / "universe.csv",
+        limit=10,
+        thresholds=_liquid_thresholds(),
+        product_policy="stock_only",
+        rotation_salt="test",
+    )
+
+    output = pd.read_csv(result.output_path)
+    rows = output.set_index("symbol")
+    assert result.selected_symbols == ["ACME"]
+    assert rows.loc["ACME", "status"] == "selected"
+    assert rows.loc["SPY", "status"] == "rejected"
+    assert rows.loc["TQQQ", "status"] == "rejected"
+    assert rows.loc["SPY", "reason_codes"] == "product_policy:stock_only_excludes_etf"
+    assert rows.loc["TQQQ", "reason_codes"] == "product_policy:stock_only_excludes_leveraged_etf"
+    assert rows.loc["SPY", "product_rejection_reason"] == "product_policy:stock_only_excludes_etf"
+    assert rows.loc["TQQQ", "product_rejection_reason"] == "product_policy:stock_only_excludes_leveraged_etf"
+    assert result.metadata["reason_counts"]["product_policy:stock_only_excludes_etf"] == 1
+    assert result.metadata["reason_counts"]["product_policy:stock_only_excludes_leveraged_etf"] == 1
+
+
+@pytest.mark.parametrize("product_policy", ["all", "include_funds"])
+def test_product_policy_that_includes_funds_does_not_reject_etf_by_class(
+    tmp_path: Path,
+    product_policy: str,
+) -> None:
+    seed = tmp_path / f"{product_policy}.csv"
+    seed.write_text(
+        "symbol,name,cap_segment,sector,note,product_class,security_type,leveraged\n"
+        "ETF1,Broad Market ETF,largecap,funds,index ETF,etf,etf,false\n",
+        encoding="utf-8",
+    )
+    frames = {"ETF1": _frame(100.0, 400_000)}
+
+    result = _builder(tmp_path, frames).build(
+        seed_files=[seed],
+        output_path=tmp_path / f"{product_policy}_universe.csv",
+        limit=10,
+        thresholds=_liquid_thresholds(),
+        product_policy=product_policy,
+        rotation_salt="test",
+    )
+
+    output = pd.read_csv(result.output_path)
+    row = output.set_index("symbol").loc["ETF1"]
+    assert result.selected_symbols == ["ETF1"]
+    assert row["status"] == "selected"
+    assert "product_policy" not in str(row["reason_codes"])

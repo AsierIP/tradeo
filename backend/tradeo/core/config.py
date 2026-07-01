@@ -121,6 +121,7 @@ class Settings(BaseSettings):
     universe_file: str = "/app/data/universe_us_mid_small.csv"
     daily_universe_file: str = "/app/data/universe_us_mid_caps.csv"
     intraday_universe_file: str = "/app/data/universe_us_small_caps.csv"
+    intraday_universe_policy: str = "stock_only"
     universe_snapshot_monthly: bool = True
     universe_snapshot_dir: str = "/app/data/universe_snapshots"
     universe_point_in_time_available: bool = False
@@ -574,6 +575,14 @@ class Settings(BaseSettings):
         if value < 0:
             raise ValueError("intraday integer settings must be non-negative")
         return value
+
+    @field_validator("intraday_universe_policy")
+    @classmethod
+    def known_intraday_universe_policy(cls, value: str) -> str:
+        policy = str(value or "stock_only").strip().lower()
+        if policy not in {"stock_only", "etf_macro"}:
+            raise ValueError("intraday universe policy must be stock_only or etf_macro")
+        return policy
 
     @model_validator(mode="after")
     def intraday_live_fails_closed(self) -> "Settings":

@@ -23,7 +23,12 @@ import time
 from typing import Any
 
 from tradeo.core.config import get_settings
-from tradeo.services.data_provider import pick_symbols, universe_file_for_interval
+from tradeo.services.data_provider import (
+    UNIVERSE_POLICY_CHOICES,
+    normalize_universe_policy,
+    pick_symbols,
+    universe_file_for_interval,
+)
 from tradeo.services.provider_factory import get_market_data_provider
 
 
@@ -50,6 +55,15 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--period", default=None, help="Override intraday research period, e.g. 30d or 60d.")
     parser.add_argument("--limit", type=int, default=None, help="Override symbol limit.")
+    parser.add_argument("--universe-file", default=None, help="Override universe CSV for all timeframes.")
+    parser.add_argument(
+        "--product-policy",
+        "--universe-policy",
+        dest="product_policy",
+        choices=UNIVERSE_POLICY_CHOICES,
+        default=None,
+        help="Universe product policy label for cache/readiness manifests. Defaults to settings.",
+    )
     parser.add_argument("--timeframes", default=None, help="Comma-separated timeframes; defaults to settings.")
     parser.add_argument("--timeout-s", type=float, default=45.0, help="Hard timeout for one symbol/timeframe fetch.")
     parser.add_argument("--retries", type=int, default=2, help="Retries per task after the first attempt.")
@@ -65,6 +79,9 @@ def main() -> int:
     settings = get_settings()
     period = str(args.period or settings.intraday_research_period)
     limit = int(args.limit or settings.intraday_research_limit_default)
+    product_policy = normalize_universe_policy(
+        args.product_policy or getattr(settings, "intraday_universe_policy", "stock_only")
+    )
     timeframes = [
         item.strip()
         for item in str(args.timeframes or ",".join(settings.intraday_timeframe_list)).split(",")
@@ -76,7 +93,14 @@ def main() -> int:
     )
     progress_path.parent.mkdir(parents=True, exist_ok=True)
 
-    tasks = _build_tasks(settings=settings, period=period, limit=limit, timeframes=timeframes)
+    tasks = _build_tasks(
+        settings=settings,
+        period=period,
+        limit=limit,
+        timeframes=timeframes,
+        universe_file=args.universe_file,
+        product_policy=product_policy,
+    )
     if args.max_tasks and args.max_tasks > 0:
         tasks = tasks[: int(args.max_tasks)]
     done = _read_done(progress_path) if args.resume else set()
@@ -89,7 +113,8 @@ def main() -> int:
         print(
             "warmup start "
             f"period={period} limit={limit} timeframes={','.join(timeframes)} "
-            f"tasks={len(tasks)} pending={len(pending)} cache={settings.market_data_cache_path}"
+            f"product_policy={product_policy} tasks={len(tasks)} pending={len(pending)} "
+            f"cache={settings.market_data_cache_path}"
         )
 
     for task in pending:
@@ -118,6 +143,8 @@ def main() -> int:
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "period": period,
         "limit": limit,
+        "product_policy": product_policy,
+        "universe_file": args.universe_file,
         "timeframes": timeframes,
         "cache_dir": str(settings.market_data_cache_path),
         "progress_file": str(progress_path),
@@ -135,13 +162,23 @@ def main() -> int:
     return 0 if summary["failed"] == 0 else 2
 
 
-def _build_tasks(*, settings: Any, period: str, limit: int, timeframes: list[str]) -> list[WarmupTask]:
+def _build_tasks(
+    *,
+    settings: Any,
+    period: str,
+    limit: int,
+    timeframes: list[str],
+    universe_file: str | None = None,
+    product_policy: str = "stock_only",
+) -> list[WarmupTask]:
     tasks: list[WarmupTask] = []
     for timeframe in timeframes:
         symbols = pick_symbols(
             limit=limit,
             interval=timeframe,
-            universe_file=universe_file_for_interval(settings, timeframe),
+            universe_file=universe_file
+            or universe_file_for_interval(settings, timeframe, universe_policy=product_policy),
+            universe_policy=product_policy,
         )
         for symbol in symbols:
             tasks.append(WarmupTask(symbol=str(symbol).upper(), timeframe=timeframe, period=period))

@@ -6,13 +6,15 @@ from hashlib import blake2b
 import json
 import math
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 import pandas as pd
 
 from tradeo.core.config import Settings, get_settings
-from tradeo.services.data_provider import MarketDataProvider, load_universe, normalize_ohlcv
+from tradeo.services.data_provider import MarketDataProvider, normalize_ohlcv
 from tradeo.services.provider_factory import get_market_data_provider
+
+ProductPolicy = Literal["stock_only", "all", "etf_macro"]
 
 _EVENT_RISK_KEYWORDS = (
     "biopharma",
@@ -26,6 +28,366 @@ _EVENT_RISK_KEYWORDS = (
     "spac",
     "warrant",
 )
+
+_PRODUCT_FLAG_ORDER = ("etf", "fund", "leveraged", "inverse", "crypto", "commodity", "country", "adr")
+_PRODUCT_POLICY_BLOCKED_FLAGS = (
+    "leveraged",
+    "inverse",
+    "crypto",
+    "commodity",
+    "country",
+    "etf",
+    " fund ",
+)
+_PRODUCT_CLASS_FIELDS = (
+    "product_class",
+    "asset_class",
+    "asset_type",
+    "instrument",
+    "instrument_type",
+    "security_type",
+    "sec_type",
+    "sectype",
+    "quote_type",
+    "quotetype",
+    "type",
+)
+_PRODUCT_FLAG_FIELDS = (
+    "product_flags",
+    "asset_flags",
+    "instrument_flags",
+    "tags",
+    "leveraged",
+    "inverse",
+)
+_STOCK_PRODUCT_VALUES = {
+    "adr",
+    "ads",
+    "common stock",
+    "common_stock",
+    "equity",
+    "ordinary share",
+    "ordinary_share",
+    "share",
+    "stock",
+    "stk",
+}
+_PRODUCT_VALUE_FLAGS = {
+    "closed end fund": ("fund",),
+    "closed_end_fund": ("fund",),
+    "commodity": ("commodity",),
+    "commodity etf": ("etf", "commodity"),
+    "commodity_etf": ("etf", "commodity"),
+    "country": ("country",),
+    "country etf": ("etf", "country"),
+    "country_etf": ("etf", "country"),
+    "crypto": ("crypto",),
+    "crypto etf": ("etf", "crypto"),
+    "crypto_etf": ("etf", "crypto"),
+    "etf": ("etf",),
+    "etn": ("etf",),
+    "etp": ("etf",),
+    "exchange traded fund": ("etf",),
+    "exchange traded note": ("etf",),
+    "exchange traded product": ("etf",),
+    "exchange_traded_fund": ("etf",),
+    "exchange_traded_note": ("etf",),
+    "exchange_traded_product": ("etf",),
+    "fund": ("fund",),
+    "inverse": ("inverse",),
+    "inverse etf": ("etf", "inverse"),
+    "inverse_etf": ("etf", "inverse"),
+    "leveraged": ("leveraged",),
+    "leveraged etf": ("etf", "leveraged"),
+    "leveraged_etf": ("etf", "leveraged"),
+    "mutual fund": ("fund",),
+    "mutual_fund": ("fund",),
+}
+
+_LEVERAGED_INVERSE_SYMBOLS = {
+    "AGQ",
+    "AAPD",
+    "AAPU",
+    "AMDD",
+    "AMDL",
+    "AMZD",
+    "AMZU",
+    "ARKD",
+    "ARKU",
+    "BERZ",
+    "BITX",
+    "BOIL",
+    "BULZ",
+    "CONL",
+    "CURE",
+    "DPST",
+    "DRIP",
+    "DRN",
+    "DRV",
+    "DUST",
+    "ERX",
+    "ERY",
+    "FAS",
+    "FAZ",
+    "FNGD",
+    "FNGU",
+    "GDXD",
+    "GDXU",
+    "GGLL",
+    "GGLS",
+    "HIBL",
+    "HIBS",
+    "KOLD",
+    "KORU",
+    "LABD",
+    "LABU",
+    "METD",
+    "METU",
+    "MSFD",
+    "MSFU",
+    "MSTU",
+    "MSTZ",
+    "NUGT",
+    "NVDD",
+    "NVDL",
+    "NVDQ",
+    "QID",
+    "RETL",
+    "SDS",
+    "SH",
+    "SNDQ",
+    "SOXL",
+    "SOXS",
+    "SPUU",
+    "SPXL",
+    "SPXS",
+    "SPXU",
+    "SQQQ",
+    "SSO",
+    "TBT",
+    "TECL",
+    "TECS",
+    "TNA",
+    "TQQQ",
+    "TSLL",
+    "TSLQ",
+    "TSLS",
+    "TZA",
+    "UPRO",
+    "UVXY",
+    "WEBL",
+    "WEBS",
+    "YANG",
+    "YINN",
+    "ZSL",
+}
+_INVERSE_SYMBOLS = {
+    "AAPD",
+    "AMDD",
+    "AMZD",
+    "ARKD",
+    "BERZ",
+    "BITI",
+    "DOG",
+    "DRIP",
+    "DRV",
+    "DUST",
+    "ERY",
+    "FAZ",
+    "FNGD",
+    "GDXD",
+    "GGLS",
+    "KOLD",
+    "LABD",
+    "METD",
+    "MSFD",
+    "MSTZ",
+    "NVDD",
+    "NVDQ",
+    "PSQ",
+    "QID",
+    "SARK",
+    "SDS",
+    "SH",
+    "SNDQ",
+    "SOXS",
+    "SPXS",
+    "SPXU",
+    "SQQQ",
+    "TBT",
+    "TECS",
+    "TSLQ",
+    "TSLS",
+    "TZA",
+    "WEBS",
+    "YANG",
+    "ZSL",
+}
+_CRYPTO_ETP_SYMBOLS = {
+    "ARKB",
+    "BITB",
+    "BITI",
+    "BITO",
+    "BITS",
+    "BITW",
+    "BITX",
+    "BLOK",
+    "BRRR",
+    "BTF",
+    "BTCO",
+    "BTCW",
+    "DEFI",
+    "ETHE",
+    "EZBC",
+    "FBTC",
+    "GBTC",
+    "HODL",
+    "IBIT",
+    "WGMI",
+    "XBTF",
+}
+_COMMODITY_ETP_SYMBOLS = {
+    "AGQ",
+    "BNO",
+    "BOIL",
+    "CANE",
+    "COMT",
+    "CORN",
+    "CPER",
+    "DBA",
+    "DBC",
+    "GLD",
+    "GSG",
+    "IAU",
+    "KOLD",
+    "OILK",
+    "PDBC",
+    "SGOL",
+    "SIVR",
+    "SLV",
+    "SOYB",
+    "UGA",
+    "UNG",
+    "USL",
+    "USO",
+    "WEAT",
+    "ZSL",
+}
+_COUNTRY_ETF_SYMBOLS = {
+    "ASHR",
+    "ECH",
+    "EIDO",
+    "EIS",
+    "ENZL",
+    "EPHE",
+    "EPI",
+    "EPOL",
+    "EPU",
+    "EWA",
+    "EWC",
+    "EWG",
+    "EWH",
+    "EWI",
+    "EWJ",
+    "EWK",
+    "EWL",
+    "EWM",
+    "EWN",
+    "EWP",
+    "EWQ",
+    "EWS",
+    "EWT",
+    "EWU",
+    "EWW",
+    "EWY",
+    "EWZ",
+    "EZA",
+    "FXI",
+    "GREK",
+    "INDA",
+    "KORU",
+    "KWEB",
+    "MCHI",
+    "TUR",
+    "VNM",
+}
+_ETF_SYMBOLS = (
+    {
+        "AGG",
+        "ARKK",
+        "BIL",
+        "DIA",
+        "DRAM",
+        "EEM",
+        "EFA",
+        "GDX",
+        "GDXJ",
+        "HYG",
+        "IEF",
+        "IVV",
+        "IWM",
+        "JNK",
+        "JPME",
+        "LQD",
+        "QQQ",
+        "SGOV",
+        "SHV",
+        "SHY",
+        "SMH",
+        "SOXX",
+        "SPCX",
+        "SPY",
+        "TLT",
+        "VTI",
+        "VOO",
+        "XBI",
+        "XLB",
+        "XLC",
+        "XLE",
+        "XLF",
+        "XLI",
+        "XLK",
+        "XLP",
+        "XLU",
+        "XLV",
+        "XLY",
+    }
+    | _LEVERAGED_INVERSE_SYMBOLS
+    | _CRYPTO_ETP_SYMBOLS
+    | _COMMODITY_ETP_SYMBOLS
+    | _COUNTRY_ETF_SYMBOLS
+)
+_ADR_HINTS = (" adr", "american depositary", "depositary receipt", "sponsored adr")
+_FUND_HINTS = (
+    "direxion",
+    "etf",
+    "etn",
+    "etp",
+    "exchange traded fund",
+    "exchange-traded fund",
+    "exchange traded note",
+    "exchange traded product",
+    "first trust",
+    "fund",
+    "global x",
+    "graniteshares",
+    "invesco",
+    "ishares",
+    "proshares",
+    "rex shares",
+    "roundhill",
+    "spdr",
+    "tradr",
+    "vaneck",
+    "vanguard",
+    "wisdomtree",
+    "yieldmax",
+)
+_LEVERAGED_HINTS = ("2x", "3x", "bull", "daily leveraged", "ultra", "leveraged")
+_INVERSE_HINTS = ("bear", "inverse", "short")
+_CRYPTO_HINTS = ("bitcoin", "bitwise", "btc", "crypto", "ethereum", "ether")
+_COMMODITY_HINTS = ("gold", "silver", "oil", "commodity", "natural gas", "crude")
+_COUNTRY_HINTS = ("brazil", "china", "korea", "mexico", "country", "emerging markets")
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,9 +455,12 @@ class IntradayUniverseBuilder:
         thresholds: IntradayUniverseThresholds | None = None,
         cache_refresh_enabled: bool = False,
         rotation_salt: str | None = None,
+        product_policy: str = "stock_only",
+        include_funds: bool = False,
     ) -> IntradayUniverseBuildResult:
         thresholds = thresholds or IntradayUniverseThresholds()
         rotation_salt = rotation_salt or datetime.now(UTC).strftime("%Y-%m-%d")
+        product_policy = self._normalize_product_policy(product_policy, include_funds=include_funds)
         candidates = self._load_candidates(seed_files)
         provider = self.provider_factory(cache_refresh_enabled=cache_refresh_enabled)
         scored = [
@@ -106,6 +471,7 @@ class IntradayUniverseBuilder:
                 interval=interval,
                 thresholds=thresholds,
                 rotation_salt=rotation_salt,
+                product_policy=product_policy,
             )
             for candidate in candidates
         ]
@@ -134,6 +500,7 @@ class IntradayUniverseBuilder:
             thresholds=thresholds,
             cache_refresh_enabled=cache_refresh_enabled,
             rotation_salt=rotation_salt,
+            product_policy=product_policy,
             scored=scored,
             selected=selected,
         )
@@ -154,7 +521,11 @@ class IntradayUniverseBuilder:
             path = Path(raw_path)
             if not path.exists():
                 continue
-            df = load_universe(str(path))
+            df = pd.read_csv(path)
+            if "symbol" not in df.columns:
+                raise ValueError(f"Universe CSV must include a 'symbol' column: {path}")
+            df["symbol"] = df["symbol"].astype(str).str.upper().str.strip()
+            df = df[df["symbol"].str.len() > 0].drop_duplicates("symbol")
             for row in df.to_dict(orient="records"):
                 symbol = str(row.get("symbol") or "").upper().strip()
                 if not symbol:
@@ -186,7 +557,13 @@ class IntradayUniverseBuilder:
         interval: str,
         thresholds: IntradayUniverseThresholds,
         rotation_salt: str,
+        product_policy: ProductPolicy,
     ) -> dict[str, Any]:
+        product = self._classify_product(candidate)
+        product_rejection_reason = self._product_rejection_reason(
+            product["product_class"],
+            product_policy,
+        )
         base = {
             "symbol": candidate.symbol,
             "name": candidate.name,
@@ -194,6 +571,9 @@ class IntradayUniverseBuilder:
             "sector": candidate.sector,
             "note": candidate.note,
             "source": candidate.source,
+            "product_class": product["product_class"],
+            "product_flags": ";".join(product["product_flags"]),
+            "product_rejection_reason": product_rejection_reason,
             "period": period,
             "interval": interval,
             "selected": False,
@@ -206,14 +586,19 @@ class IntradayUniverseBuilder:
         try:
             df = normalize_ohlcv(provider.fetch_ohlcv(candidate.symbol, period=period, interval=interval))
         except Exception as exc:  # noqa: BLE001 - report per-symbol data failures, keep building.
+            reason_codes = [f"data_unavailable:{type(exc).__name__}"]
+            if product_rejection_reason:
+                reason_codes.append(product_rejection_reason)
             return {
                 **base,
-                "reason_codes": f"data_unavailable:{type(exc).__name__}",
+                "reason_codes": ";".join(reason_codes),
                 "error": str(exc)[:240],
                 **self._empty_metrics(),
             }
         metrics = self._metrics(df)
         reasons = self._rejection_reasons(metrics, candidate, thresholds)
+        if product_rejection_reason:
+            reasons.append(product_rejection_reason)
         return {
             **base,
             **metrics,
@@ -370,6 +755,7 @@ class IntradayUniverseBuilder:
                 if key != "thresholds"
             },
             "thresholds": asdict(kwargs["thresholds"]),
+            "product_policy": kwargs["product_policy"],
             "total_candidates": len(scored),
             "selected_count": len(selected),
             "rejected_count": len(scored) - len(selected),
@@ -385,6 +771,9 @@ class IntradayUniverseBuilder:
             "cap_segment",
             "sector",
             "source",
+            "product_class",
+            "product_flags",
+            "product_rejection_reason",
             "selected",
             "rank",
             "status",
@@ -438,3 +827,158 @@ class IntradayUniverseBuilder:
     @staticmethod
     def _bucket(row: dict[str, Any]) -> str:
         return str(row.get("sector") or row.get("cap_segment") or "unknown").strip().lower() or "unknown"
+
+    @staticmethod
+    def _normalize_product_policy(policy: str, *, include_funds: bool = False) -> ProductPolicy:
+        if include_funds:
+            return "all"
+        normalized = str(policy or "stock_only").strip().lower().replace("-", "_")
+        if normalized in {"stock", "stocks", "common_stock", "stock_only"}:
+            return "stock_only"
+        if normalized in {"all", "include_funds"}:
+            return "all"
+        raise ValueError(f"Unsupported product_policy: {policy}")
+
+    @classmethod
+    def _classify_product(cls, candidate: IntradayUniverseCandidate) -> dict[str, Any]:
+        symbol = candidate.symbol.upper().strip()
+        text = cls._candidate_product_text(candidate)
+        flags: set[str] = set()
+        for value in cls._raw_text_values(candidate.raw, _PRODUCT_CLASS_FIELDS):
+            cls._add_product_value_flags(flags, value)
+        for value in cls._raw_text_values(candidate.raw, _PRODUCT_FLAG_FIELDS):
+            cls._add_product_value_flags(flags, value)
+
+        if symbol in _ETF_SYMBOLS:
+            flags.add("etf")
+        if symbol in _LEVERAGED_INVERSE_SYMBOLS:
+            flags.update({"etf", "leveraged"})
+        if symbol in _INVERSE_SYMBOLS:
+            flags.update({"etf", "inverse"})
+        if symbol in _CRYPTO_ETP_SYMBOLS:
+            flags.update({"etf", "crypto"})
+        if symbol in _COMMODITY_ETP_SYMBOLS:
+            flags.update({"etf", "commodity"})
+        if symbol in _COUNTRY_ETF_SYMBOLS:
+            flags.update({"etf", "country"})
+
+        if cls._contains_any(text, _FUND_HINTS):
+            flags.add("etf")
+        product_context = bool(flags.intersection({"etf", "fund"})) or " trust " in text
+        if cls._contains_any(text, _LEVERAGED_HINTS):
+            flags.add("leveraged")
+            if product_context:
+                flags.add("etf")
+        if product_context and cls._contains_any(text, _INVERSE_HINTS):
+            flags.update({"etf", "inverse"})
+        if product_context and cls._contains_any(text, _CRYPTO_HINTS):
+            flags.update({"etf", "crypto"})
+        if product_context and cls._contains_any(text, _COMMODITY_HINTS):
+            flags.update({"etf", "commodity"})
+        if product_context and cls._contains_any(text, _COUNTRY_HINTS):
+            flags.update({"etf", "country"})
+        if cls._contains_any(text, _ADR_HINTS):
+            flags.add("adr")
+
+        ordered_flags = [flag for flag in _PRODUCT_FLAG_ORDER if flag in flags]
+        if "etf" in flags and "inverse" in flags:
+            product_class = "inverse_etf"
+        elif "etf" in flags and "leveraged" in flags:
+            product_class = "leveraged_etf"
+        elif "etf" in flags and "crypto" in flags:
+            product_class = "crypto_etp"
+        elif "etf" in flags and "commodity" in flags:
+            product_class = "commodity_etp"
+        elif "etf" in flags and "country" in flags:
+            product_class = "country_etf"
+        elif "etf" in flags:
+            product_class = "etf"
+        elif "fund" in flags:
+            product_class = "fund"
+        elif "adr" in flags:
+            product_class = "adr"
+        else:
+            product_class = "common_stock"
+        return {"product_class": product_class, "product_flags": ordered_flags}
+
+    @staticmethod
+    def _product_rejection_reason(product_class: str, product_policy: ProductPolicy) -> str:
+        if product_policy == "all":
+            return ""
+        stock_classes = {"common_stock", "adr"}
+        fund_classes = {"etf", "leveraged_etf", "inverse_etf", "crypto_etp", "commodity_etp", "country_etf"}
+        if product_policy == "stock_only" and product_class not in stock_classes:
+            return f"product_policy:stock_only_excludes_{product_class}"
+        if product_policy == "etf_macro" and product_class not in fund_classes:
+            return f"product_policy:etf_macro_excludes_{product_class}"
+        return ""
+
+    @staticmethod
+    def _candidate_product_text(candidate: IntradayUniverseCandidate) -> str:
+        values = [
+            candidate.name,
+            candidate.note,
+            candidate.cap_segment,
+            candidate.sector,
+            *IntradayUniverseBuilder._raw_text_values(candidate.raw, _PRODUCT_CLASS_FIELDS),
+            *IntradayUniverseBuilder._raw_text_values(candidate.raw, _PRODUCT_FLAG_FIELDS),
+        ]
+        return f" {' '.join(' '.join(_clean_text(value).lower().replace('_', ' ').split()) for value in values)} "
+
+    @staticmethod
+    def _raw_text_values(raw: dict[str, Any], names: tuple[str, ...]) -> list[str]:
+        columns = {str(name).lower(): name for name in raw}
+        values: list[str] = []
+        for name in names:
+            column = columns.get(name)
+            if column is None:
+                continue
+            text = _clean_text(raw.get(column))
+            if text:
+                values.append(text)
+        return values
+
+    @staticmethod
+    def _add_product_value_flags(flags: set[str], value: str) -> None:
+        normalized = _normalize_product_value(value)
+        if not normalized or normalized in _STOCK_PRODUCT_VALUES:
+            return
+        mapped = _PRODUCT_VALUE_FLAGS.get(normalized)
+        if mapped:
+            flags.update(mapped)
+            return
+        for part in _split_product_flags(normalized):
+            mapped = _PRODUCT_VALUE_FLAGS.get(part)
+            if mapped:
+                flags.update(mapped)
+                continue
+            for marker, marker_flags in _PRODUCT_VALUE_FLAGS.items():
+                if marker in part:
+                    flags.update(marker_flags)
+                    break
+
+    @staticmethod
+    def _contains_any(text: str, needles: tuple[str, ...]) -> bool:
+        return any(needle in text for needle in needles)
+
+
+def _clean_text(value: Any) -> str:
+    if value is None:
+        return ""
+    try:
+        if pd.isna(value):
+            return ""
+    except (TypeError, ValueError):
+        pass
+    text = str(value).strip()
+    return "" if text.lower() in {"", "<na>", "nan", "none", "null"} else text
+
+
+def _normalize_product_value(value: str) -> str:
+    text = _clean_text(value).lower().strip()
+    return " ".join(text.replace("-", " ").replace("_", " ").split())
+
+
+def _split_product_flags(value: str) -> list[str]:
+    normalized = value.replace("|", ";").replace(",", ";").replace("/", ";")
+    return [" ".join(part.split()) for part in normalized.split(";") if part.strip()]

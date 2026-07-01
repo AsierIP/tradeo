@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from tradeo.core.config import Settings, get_settings
-from tradeo.services.data_provider import pick_symbols
+from tradeo.services.data_provider import normalize_universe_policy, pick_symbols
 
 ReadinessStatus = Literal["DATA_READY", "DATA_MISSING"]
 
@@ -25,6 +25,7 @@ class IntradayResearchWaveSpec:
     max_windows_per_symbol: int
     min_cache_coverage: float = 0.90
     min_rows_per_symbol: int = 1
+    universe_policy: str = "stock_only"
 
     @classmethod
     def from_settings(
@@ -32,6 +33,7 @@ class IntradayResearchWaveSpec:
         settings: Settings | None = None,
         *,
         universe_file: str | None = None,
+        universe_policy: str | None = None,
         period: str | None = None,
         timeframes: tuple[str, ...] | None = None,
         limit: int | None = None,
@@ -45,6 +47,9 @@ class IntradayResearchWaveSpec:
         s = settings or get_settings()
         return cls(
             universe_file=str(universe_file or s.intraday_universe_file),
+            universe_policy=normalize_universe_policy(
+                universe_policy or getattr(s, "intraday_universe_policy", "stock_only")
+            ),
             period=str(period or s.intraday_research_period),
             timeframes=tuple(timeframes or tuple(s.intraday_timeframe_list)),
             limit=int(limit or s.intraday_research_limit_default),
@@ -101,6 +106,7 @@ class IntradayResearchReadinessGate:
                 limit=spec.limit,
                 interval=timeframe,
                 universe_file=spec.universe_file,
+                universe_policy=spec.universe_policy,
             )
             symbols_by_timeframe[timeframe] = symbols
             for symbol in symbols:
