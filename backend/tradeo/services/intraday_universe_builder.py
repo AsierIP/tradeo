@@ -837,6 +837,8 @@ class IntradayUniverseBuilder:
             return "stock_only"
         if normalized in {"all", "include_funds"}:
             return "all"
+        if normalized in {"etf", "funds", "etf_macro"}:
+            return "etf_macro"
         raise ValueError(f"Unsupported product_policy: {policy}")
 
     @classmethod
@@ -894,9 +896,11 @@ class IntradayUniverseBuilder:
         elif "etf" in flags:
             product_class = "etf"
         elif "fund" in flags:
-            product_class = "fund"
+            product_class = "etf"
         elif "adr" in flags:
             product_class = "adr"
+        elif not symbol.isalpha() or len(symbol) > 5:
+            product_class = "unknown"
         else:
             product_class = "common_stock"
         return {"product_class": product_class, "product_flags": ordered_flags}

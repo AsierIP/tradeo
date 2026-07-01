@@ -281,3 +281,42 @@ def test_product_policy_that_includes_funds_does_not_reject_etf_by_class(
     assert result.selected_symbols == ["ETF1"]
     assert row["status"] == "selected"
     assert "product_policy" not in str(row["reason_codes"])
+
+
+def test_etf_macro_rejects_common_stock_and_keeps_etf_eligible(tmp_path: Path) -> None:
+    seed = tmp_path / "etf_macro.csv"
+    seed.write_text(
+        "symbol,name,cap_segment,sector,note,product_class,security_type\n"
+        "ACME,Acme Software,midcap,technology,common stock,common_stock,stock\n"
+        "ETF1,Broad Market ETF,largecap,funds,index ETF,etf,etf\n",
+        encoding="utf-8",
+    )
+    frames = {
+        "ACME": _frame(40.0, 300_000),
+        "ETF1": _frame(100.0, 400_000),
+    }
+
+    result = _builder(tmp_path, frames).build(
+        seed_files=[seed],
+        output_path=tmp_path / "etf_macro_universe.csv",
+        limit=10,
+        thresholds=_liquid_thresholds(),
+        product_policy="etf_macro",
+        rotation_salt="test",
+    )
+
+    output = pd.read_csv(result.output_path)
+    rows = output.set_index("symbol")
+    assert result.selected_symbols == ["ETF1"]
+    assert rows.loc["ETF1", "status"] == "selected"
+    assert rows.loc["ETF1", "product_class"] == "etf"
+    assert "product_policy" not in str(rows.loc["ETF1", "reason_codes"])
+    assert rows.loc["ACME", "status"] == "rejected"
+    assert rows.loc["ACME", "product_class"] == "common_stock"
+    assert rows.loc["ACME", "reason_codes"] == "product_policy:etf_macro_excludes_common_stock"
+    assert (
+        rows.loc["ACME", "product_rejection_reason"]
+        == "product_policy:etf_macro_excludes_common_stock"
+    )
+    assert result.metadata["product_policy"] == "etf_macro"
+    assert result.metadata["reason_counts"]["product_policy:etf_macro_excludes_common_stock"] == 1

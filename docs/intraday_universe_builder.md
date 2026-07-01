@@ -39,10 +39,15 @@ Output:
 ## Politica de producto
 
 El modo recomendado para Research de patrones intradia de acciones es `stock_only`.
-En este modo no se mezclan ETFs, ETPs crypto/commodity/country ni productos leveraged/inverse con acciones comunes en el mismo universo seleccionado. Esos productos quedan en el CSV con `selected=false` y una razon `product_policy:*` para auditoria.
+En este modo solo acciones comunes y ADR pueden quedar `selected=true`; ETFs, ETPs crypto/commodity/country y productos leveraged/inverse quedan en el CSV con `selected=false` y una razon `product_policy:*` para auditoria.
 
-Para una investigacion macro de ETFs, construir un universo separado con `--product-policy etf_macro`.
-No mezclarlo con acciones: los ETFs y ETPs suelen compartir drivers, rebalanceos, derivados y exposiciones cruzadas. Por eso `symbol_count` no equivale a independencia estadistica cuando varios simbolos son productos correlacionados sobre el mismo subyacente o familia.
+Politicas disponibles:
+
+- `stock_only`: universo de acciones/ADR para Research intradia de acciones.
+- `all`: permite todo explicitamente para debugging, auditoria o investigacion separada.
+- `etf_macro`: universo separado para ETFs/ETPs/macro; las acciones comunes quedan rechazadas por politica.
+
+No mezclar `etf_macro` con `stock_only`: los ETFs y ETPs suelen compartir drivers, rebalanceos, derivados y exposiciones cruzadas. Por eso `symbol_count` no equivale a independencia estadistica cuando varios simbolos son productos correlacionados sobre el mismo subyacente o familia.
 
 Si se necesita reproducir un universo permisivo o auditar liquidez de fondos junto a acciones:
 

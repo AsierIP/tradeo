@@ -31,7 +31,7 @@ def main() -> int:
         "--product-policy",
         "--universe-policy",
         dest="product_policy",
-        choices=("stock_only", "all"),
+        choices=("stock_only", "all", "etf_macro"),
         default="stock_only",
         help="Product policy for selected rows. Default stock_only excludes funds/ETPs from research universes.",
     )
