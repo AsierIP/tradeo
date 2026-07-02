@@ -1,0 +1,392 @@
+from __future__ import annotations
+
+import importlib.util
+import json
+import os
+from pathlib import Path
+import sys
+from types import SimpleNamespace
+
+
+_OVERRIDE_ENV_KEYS = [
+    "TRADEO_INTRADAY_UNIVERSE_FILE",
+    "TRADEO_INTRADAY_UNIVERSE_POLICY",
+    "TRADEO_INTRADAY_RESEARCH_PERIOD",
+    "TRADEO_INTRADAY_TIMEFRAMES",
+    "TRADEO_INTRADAY_RESEARCH_LIMIT_DEFAULT",
+    "TRADEO_INTRADAY_RESEARCH_WINDOW_SIZES",
+    "TRADEO_INTRADAY_RESEARCH_FORWARD_BARS",
+    "TRADEO_INTRADAY_RESEARCH_MAX_TOTAL_WINDOWS",
+    "TRADEO_INTRADAY_RESEARCH_MAX_WINDOWS_PER_SYMBOL",
+]
+
+
+def _load_runner_module():
+    repo_root = Path(__file__).resolve().parents[3]
+    script_path = repo_root / "scripts" / "run_intraday_research_wave.py"
+    spec = importlib.util.spec_from_file_location("run_intraday_research_wave", script_path)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+class _FakeSettings:
+    def __init__(
+        self,
+        *,
+        artifacts_path: Path,
+        universe_file: str = "/tmp/universe.csv",
+        product_policy: str = "stock_only",
+        period: str = "60d",
+        timeframes: str = "30m",
+        limit: int = 117,
+        window_sizes: str = "100",
+        forward_bars: str = "8,13,21",
+        max_total_windows: int = 120000,
+        max_windows_per_symbol: int = 1200,
+    ) -> None:
+        self.artifacts_path = artifacts_path
+        self.intraday_universe_file = universe_file
+        self.intraday_universe_policy = product_policy
+        self.intraday_research_period = period
+        self.intraday_timeframes = timeframes
+        self.intraday_research_limit_default = limit
+        self.intraday_research_window_sizes = window_sizes
+        self.intraday_research_forward_bars = forward_bars
+        self.intraday_research_max_total_windows = max_total_windows
+        self.intraday_research_max_windows_per_symbol = max_windows_per_symbol
+
+    @property
+    def intraday_timeframe_list(self) -> list[str]:
+        return [item.strip() for item in self.intraday_timeframes.split(",") if item.strip()]
+
+    @property
+    def intraday_research_window_size_list(self) -> list[int]:
+        return [int(item.strip()) for item in self.intraday_research_window_sizes.split(",") if item.strip()]
+
+    @property
+    def intraday_research_forward_bar_list(self) -> list[int]:
+        return [int(item.strip()) for item in self.intraday_research_forward_bars.split(",") if item.strip()]
+
+
+class _FakeReadinessGate:
+    def __init__(self, settings) -> None:
+        self.settings = settings
+
+    def evaluate(self, spec):
+        return SimpleNamespace(
+            ready=True,
+            coverage=1.0,
+            ok=117,
+            total=117,
+            manifest={"status": "DATA_READY", "ready": True, "spec": runner_asdict(spec)},
+            manifest_hash="readiness-hash",
+        )
+
+
+def runner_asdict(spec) -> dict:
+    return {
+        "universe_file": spec.universe_file,
+        "universe_policy": spec.universe_policy,
+        "period": spec.period,
+        "timeframes": list(spec.timeframes),
+        "limit": spec.limit,
+        "window_sizes": list(spec.window_sizes),
+        "forward_bars": list(spec.forward_bars),
+        "max_total_windows": spec.max_total_windows,
+        "max_windows_per_symbol": spec.max_windows_per_symbol,
+        "min_cache_coverage": spec.min_cache_coverage,
+        "min_rows_per_symbol": spec.min_rows_per_symbol,
+    }
+
+
+def _run_main(monkeypatch, runner, argv: list[str]) -> int:
+    monkeypatch.setattr(sys, "argv", ["run_intraday_research_wave.py", *argv])
+    previous_env = {key: os.environ.get(key) for key in _OVERRIDE_ENV_KEYS}
+    try:
+        return int(runner.main())
+    finally:
+        for key, value in previous_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+
+def test_cli_arguments_apply_exact_env_before_settings_and_worker(monkeypatch, tmp_path: Path) -> None:
+    runner = _load_runner_module()
+    touched_env: dict[str, str | None] = {}
+    for key in _OVERRIDE_ENV_KEYS:
+        touched_env[key] = os.environ.pop(key, None)
+
+    def fake_get_settings():
+        assert os.environ["TRADEO_INTRADAY_UNIVERSE_FILE"] == "/tmp/universe.csv"
+        assert os.environ["TRADEO_INTRADAY_UNIVERSE_POLICY"] == "stock_only"
+        assert os.environ["TRADEO_INTRADAY_RESEARCH_PERIOD"] == "60d"
+        assert os.environ["TRADEO_INTRADAY_TIMEFRAMES"] == "30m"
+        assert os.environ["TRADEO_INTRADAY_RESEARCH_LIMIT_DEFAULT"] == "117"
+        assert os.environ["TRADEO_INTRADAY_RESEARCH_WINDOW_SIZES"] == "100"
+        assert os.environ["TRADEO_INTRADAY_RESEARCH_FORWARD_BARS"] == "8,13,21"
+        assert os.environ["TRADEO_INTRADAY_RESEARCH_MAX_TOTAL_WINDOWS"] == "120000"
+        assert os.environ["TRADEO_INTRADAY_RESEARCH_MAX_WINDOWS_PER_SYMBOL"] == "1200"
+        return _FakeSettings(artifacts_path=tmp_path / "artifacts")
+
+    worker_calls: list[dict] = []
+
+    def fake_worker(settings, *, allow_recent_duplicates, store_rejected):
+        worker_calls.append(
+            {
+                "settings": settings,
+                "allow_recent_duplicates": allow_recent_duplicates,
+                "store_rejected": store_rejected,
+            }
+        )
+        return {"status": "ok"}
+
+    monkeypatch.setattr(runner, "get_settings", fake_get_settings)
+    monkeypatch.setattr(runner, "IntradayResearchReadinessGate", _FakeReadinessGate)
+    monkeypatch.setattr(runner.worker, "_run_intraday_research_process_pool", fake_worker)
+
+    try:
+        code = _run_main(
+            monkeypatch,
+            runner,
+            [
+                "--execute",
+                "--universe-file",
+                "/tmp/universe.csv",
+                "--product-policy",
+                "stock_only",
+                "--period",
+                "60d",
+                "--timeframes",
+                "30m",
+                "--limit",
+                "117",
+                "--window-sizes",
+                "100",
+                "--forward-bars",
+                "8,13,21",
+                "--max-total-windows",
+                "120000",
+                "--max-windows-per-symbol",
+                "1200",
+                "--manifest-path",
+                str(tmp_path / "manifest.json"),
+                "--json-only",
+            ],
+        )
+    finally:
+        for key, value in touched_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+    assert code == 0
+    assert len(worker_calls) == 1
+    assert worker_calls[0]["store_rejected"] is True
+
+
+def test_summary_and_manifest_include_execution_spec_and_matching_hashes(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
+    runner = _load_runner_module()
+    manifest_path = tmp_path / "dry_run.json"
+    monkeypatch.setattr(
+        runner,
+        "get_settings",
+        lambda: _FakeSettings(artifacts_path=tmp_path / "artifacts"),
+    )
+    monkeypatch.setattr(runner, "IntradayResearchReadinessGate", _FakeReadinessGate)
+
+    code = _run_main(
+        monkeypatch,
+        runner,
+        [
+            "--universe-file",
+            "/tmp/universe.csv",
+            "--product-policy",
+            "stock_only",
+            "--period",
+            "60d",
+            "--timeframes",
+            "30m",
+            "--limit",
+            "117",
+            "--window-sizes",
+            "100",
+            "--forward-bars",
+            "8,13,21",
+            "--max-total-windows",
+            "120000",
+            "--max-windows-per-symbol",
+            "1200",
+            "--store-rejected",
+            "--manifest-path",
+            str(manifest_path),
+            "--json-only",
+        ],
+    )
+
+    summary = json.loads(capsys.readouterr().out)
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert code == 0
+    assert summary["decision"] == "ready_dry_run"
+    assert summary["specs_match"] is True
+    assert summary["execution_spec"]["limit"] == 117
+    assert summary["execution_spec"]["store_rejected"] is True
+    assert manifest["execution_spec"] == summary["execution_spec"]
+    assert manifest["readiness_spec_hash"] == manifest["execution_spec_hash"]
+    assert manifest["specs_match"] is True
+
+
+def test_execute_blocks_mismatch_and_does_not_call_worker(monkeypatch, tmp_path: Path) -> None:
+    runner = _load_runner_module()
+    manifest_path = tmp_path / "mismatch.json"
+    worker_calls: list[bool] = []
+    monkeypatch.setattr(
+        runner,
+        "get_settings",
+        lambda: _FakeSettings(artifacts_path=tmp_path / "artifacts"),
+    )
+    monkeypatch.setattr(runner, "IntradayResearchReadinessGate", _FakeReadinessGate)
+    monkeypatch.setattr(
+        runner,
+        "_execution_spec_from_settings",
+        lambda settings, *, store_rejected: {
+            "universe_file": "/tmp/universe.csv",
+            "product_policy": "stock_only",
+            "period": "60d",
+            "timeframes": ["30m"],
+            "limit": 25,
+            "window_sizes": [100],
+            "forward_bars": [8, 13, 21],
+            "max_total_windows": 120000,
+            "max_windows_per_symbol": 1200,
+            "store_rejected": store_rejected,
+        },
+    )
+    monkeypatch.setattr(
+        runner.worker,
+        "_run_intraday_research_process_pool",
+        lambda *args, **kwargs: worker_calls.append(True),
+    )
+
+    code = _run_main(
+        monkeypatch,
+        runner,
+        [
+            "--execute",
+            "--universe-file",
+            "/tmp/universe.csv",
+            "--product-policy",
+            "stock_only",
+            "--period",
+            "60d",
+            "--timeframes",
+            "30m",
+            "--limit",
+            "117",
+            "--window-sizes",
+            "100",
+            "--forward-bars",
+            "8,13,21",
+            "--max-total-windows",
+            "120000",
+            "--max-windows-per-symbol",
+            "1200",
+            "--manifest-path",
+            str(manifest_path),
+            "--json-only",
+        ],
+    )
+
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert code == 3
+    assert worker_calls == []
+    assert manifest["decision"] == "blocked_spec_mismatch"
+    assert manifest["specs_match"] is False
+    assert manifest["spec_mismatch"]["execution_spec"]["limit"] == 25
+
+
+def test_store_rejected_false_is_reflected_in_execution_spec(monkeypatch, tmp_path: Path, capsys) -> None:
+    runner = _load_runner_module()
+    monkeypatch.setattr(
+        runner,
+        "get_settings",
+        lambda: _FakeSettings(artifacts_path=tmp_path / "artifacts"),
+    )
+    monkeypatch.setattr(runner, "IntradayResearchReadinessGate", _FakeReadinessGate)
+
+    code = _run_main(
+        monkeypatch,
+        runner,
+        [
+            "--no-store-rejected",
+            "--universe-file",
+            "/tmp/universe.csv",
+            "--product-policy",
+            "stock_only",
+            "--period",
+            "60d",
+            "--timeframes",
+            "30m",
+            "--limit",
+            "117",
+            "--window-sizes",
+            "100",
+            "--forward-bars",
+            "8,13,21",
+            "--max-total-windows",
+            "120000",
+            "--max-windows-per-symbol",
+            "1200",
+            "--manifest-path",
+            str(tmp_path / "manifest.json"),
+            "--json-only",
+        ],
+    )
+
+    summary = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert summary["execution_spec"]["store_rejected"] is False
+
+
+def test_env_overrides_do_not_enable_live_paper_orders_or_gates(monkeypatch) -> None:
+    runner = _load_runner_module()
+    protected_keys = {
+        "TRADEO_LIVE_TRADING_ENABLED",
+        "TRADEO_INTRADAY_PAPER_ENABLED",
+        "TRADEO_INTRADAY_LIVE_ENABLED",
+        "TRADEO_LABORATORY_AUTO_SUBMIT_PAPER_ORDERS",
+        "TRADEO_FOX_HUNTER_AUTO_SUBMIT_LIVE_ORDERS",
+        "TRADEO_IBKR_ALLOW_MARKET_ORDERS",
+    }
+    before = {key: os.environ.get(key) for key in protected_keys}
+    previous_env = {key: os.environ.get(key) for key in _OVERRIDE_ENV_KEYS}
+    args = SimpleNamespace(
+        universe_file="/tmp/universe.csv",
+        product_policy="stock_only",
+        period="60d",
+        timeframes="30m",
+        limit=117,
+        window_sizes="100",
+        forward_bars="8,13,21",
+        max_total_windows=120000,
+        max_windows_per_symbol=1200,
+    )
+
+    try:
+        runner._apply_settings_env_overrides(args)
+    finally:
+        for key, value in previous_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+    assert {key: os.environ.get(key) for key in protected_keys} == before
