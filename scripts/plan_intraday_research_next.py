@@ -4,13 +4,13 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
-from typing import Any
 
 from tradeo.research.intraday_research_planner import (
     IntradayResearchPlanner,
     PlannerInput,
     load_planner_input,
     render_markdown,
+    resolve_selected_count,
 )
 
 
@@ -18,6 +18,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Plan the next intraday research experiments from a failed wave.")
     parser.add_argument("--diagnostic-json", default=None, help="Path to a diagnostic JSON payload, if available.")
     parser.add_argument("--selected-count", type=int, default=None)
+    parser.add_argument("--universe-metadata", default=None, help="Universe metadata JSON with selected_count.")
     parser.add_argument("--readiness-ready", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--readiness-coverage", type=float, default=1.0)
     parser.add_argument("--universe-file", default="/app/artifacts/runtime/universe_intraday_stock_only_v3.csv")
@@ -46,12 +47,25 @@ def main() -> int:
     args = parser.parse_args()
 
     if args.diagnostic_json:
-        planner_input = load_planner_input(args.diagnostic_json)
-    else:
-        if args.selected_count is None:
-            raise SystemExit("--selected-count is required unless --diagnostic-json is supplied")
-        planner_input = PlannerInput(
+        planner_input = load_planner_input(
+            args.diagnostic_json,
             selected_count=args.selected_count,
+            universe_metadata=args.universe_metadata,
+            universe_file=args.universe_file,
+        )
+    else:
+        selected = resolve_selected_count(
+            explicit_selected_count=args.selected_count,
+            universe_metadata=args.universe_metadata,
+            universe_file=args.universe_file,
+            payload={},
+        )
+        if selected["selected_count_effective"] == 0 and args.selected_count is None and args.universe_metadata is None:
+            raise SystemExit("--selected-count is required unless --diagnostic-json or --universe-metadata is supplied")
+        planner_input = PlannerInput(
+            selected_count=selected["selected_count_effective"],
+            selected_count_source=selected["selected_count_source"],
+            selected_count_diagnostic_value=selected["selected_count_diagnostic_value"],
             readiness_ready=bool(args.readiness_ready),
             readiness_coverage=float(args.readiness_coverage),
             universe_file=args.universe_file,

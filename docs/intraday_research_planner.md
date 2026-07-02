@@ -8,7 +8,29 @@ It exists because broad waves over the clean `stock_only` universe have produced
 
 ## Inputs
 
-The planner can use either a diagnostic JSON payload or explicit CLI summary flags. Important fields are selected count, readiness coverage, windows, clusters, accepted/rejected counts, persisted candidates, blockers, exact rejection reasons and near-miss candidate metrics.
+The planner can use either a diagnostic JSON payload or explicit CLI summary
+flags. Important fields are selected count, readiness coverage, windows,
+clusters, accepted/rejected counts, persisted candidates, blockers, exact
+rejection reasons and near-miss candidate metrics.
+
+Selected count is resolved with fail-closed provenance. Priority:
+
+1. `--selected-count`
+2. `--universe-metadata`
+3. `--universe-file`
+4. `diagnostic_json.selected_count`
+5. `diagnostic_json.scope.selected_count`
+6. `0` only when no source is available
+
+The output records:
+
+- `selected_count_diagnostic_value`
+- `selected_count_effective`
+- `selected_count_source`
+- `recommended_limit`
+- `limit_source`
+
+Do not run readiness or waves without explicit `--limit <selected_count_effective>`.
 
 ## Decisions
 
@@ -24,15 +46,30 @@ The planner emits one of:
 
 Every plan records that paper, live, order-code changes and gate relaxation are not allowed. It also requires rejected candidate persistence and exact-scope diagnostics.
 
+## Prohibited Repeats
+
+Diagnostics can include `prohibited_repeats`, for example:
+
+- `30m W20 4,8,13`
+- `30m W50 4,8,13`
+- `30m W50 8,13,21`
+- `1h W20 2,4,6`
+- `1h W50 2,4,6`
+
+The planner compares proposed wave signatures by timeframe, window size and
+forward bars. Matching waves are removed from `allowed_waves` and emitted in
+`blocked_waves` with `reason=prohibited_repeat`. Director-visible wave
+recommendations must come from `allowed_waves`, never from blocked repeats.
+
 ## Current search philosophy
 
 When costs dominate, the planner prioritizes higher timeframe and slower exits. When OOS, drawdown or robustness failures dominate, it proposes larger pattern windows and regime probes.
 
 The first proposed families are usually:
 
-- `1h_W50_cost_aware`, forward bars `2,4,6`.
 - `30m_W100_slow_exit`, forward bars `8,13,21`.
 - `30m_W100_standard_regime_probe`, forward bars `4,8,13`.
+- `1h_W50_cost_aware`, forward bars `2,4,6`, only when it is not prohibited.
 
 These are research experiments, not trading recommendations.
 
@@ -40,7 +77,9 @@ These are research experiments, not trading recommendations.
 
 ```bash
 python3 /app/scripts/plan_intraday_research_next.py \
-  --selected-count 117 \
+  --diagnostic-json artifacts/runtime/research_forensics/_forensics.json \
+  --universe-metadata artifacts/runtime/universe_intraday_stock_only_v3.metadata.json \
+  --universe-file artifacts/runtime/universe_intraday_stock_only_v3.csv \
   --windows 85436 \
   --clusters 48 \
   --accepted 0 \

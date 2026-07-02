@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
+import csv
 import json
 from pathlib import Path
 from typing import Any, Iterable, Literal
@@ -45,6 +46,18 @@ class ResearchWaveSpec:
             "TRADEO_INTRADAY_RESEARCH_MAX_WINDOWS_PER_SYMBOL": str(self.max_windows_per_symbol),
         }
 
+    @property
+    def signatures(self) -> tuple[str, ...]:
+        return tuple(f"{self.timeframe} W{window_size} {_csv(self.forward_bars)}" for window_size in self.window_sizes)
+
+
+@dataclass(frozen=True, slots=True)
+class BlockedWave:
+    name: str
+    reason: str
+    signature: str
+    wave: ResearchWaveSpec
+
 
 @dataclass(frozen=True, slots=True)
 class CandidateSignal:
@@ -83,6 +96,8 @@ class CandidateSignal:
 @dataclass(frozen=True, slots=True)
 class PlannerInput:
     selected_count: int
+    selected_count_source: str = "diagnostic_json"
+    selected_count_diagnostic_value: int | None = None
     readiness_ready: bool = True
     readiness_coverage: float = 1.0
     universe_file: str = _DEFAULT_UNIVERSE
@@ -96,6 +111,7 @@ class PlannerInput:
     blockers: dict[str, int] = field(default_factory=dict)
     exact_rejection_reasons: dict[str, int] = field(default_factory=dict)
     candidates: tuple[CandidateSignal, ...] = ()
+    prohibited_repeats: tuple[str, ...] = ()
     source: str = "manual"
 
 
@@ -106,6 +122,10 @@ class PlannerOutput:
     rationale: tuple[str, ...]
     candidate_for_confirmation: tuple[CandidateSignal, ...]
     waves: tuple[ResearchWaveSpec, ...]
+    allowed_waves: tuple[ResearchWaveSpec, ...]
+    blocked_waves: tuple[BlockedWave, ...]
+    recommended_limit: int
+    limit_source: str
     actions: tuple[str, ...]
     safety: dict[str, Any]
     input_summary: dict[str, Any]
@@ -117,6 +137,18 @@ class PlannerOutput:
             "rationale": list(self.rationale),
             "candidate_for_confirmation": [asdict(candidate) for candidate in self.candidate_for_confirmation],
             "waves": [asdict(wave) for wave in self.waves],
+            "allowed_waves": [asdict(wave) for wave in self.allowed_waves],
+            "blocked_waves": [
+                {
+                    "name": blocked.name,
+                    "reason": blocked.reason,
+                    "signature": blocked.signature,
+                    "wave": asdict(blocked.wave),
+                }
+                for blocked in self.blocked_waves
+            ],
+            "recommended_limit": self.recommended_limit,
+            "limit_source": self.limit_source,
             "actions": list(self.actions),
             "safety": self.safety,
             "input_summary": self.input_summary,
@@ -159,8 +191,20 @@ class IntradayResearchPlanner:
         else:
             decision = "change_search_space"
             rationale.extend(self._rationale_from_blockers(data))
-            waves.extend(self._waves_from_blockers(data))
+            proposed_waves = self._waves_from_blockers(data)
+            allowed_waves, blocked_waves = filter_prohibited_waves(proposed_waves, data.prohibited_repeats)
+            waves.extend(allowed_waves)
+            if blocked_waves:
+                rationale.append("Prohibited repeat configurations were removed from the recommended waves.")
+            if proposed_waves and not allowed_waves:
+                rationale.append("All generated wave candidates were prohibited repeats; Director must approve a new search family.")
             actions.extend(self._actions_from_blockers(data))
+            if data.selected_count >= 100:
+                actions.append(f"Run future readiness/waves with explicit --limit {data.selected_count}; never rely on defaults.")
+
+        if decision != "change_search_space":
+            allowed_waves, blocked_waves = filter_prohibited_waves(waves, data.prohibited_repeats)
+            waves = list(allowed_waves)
 
         return PlannerOutput(
             generated_at=datetime.now(UTC).isoformat(),
@@ -168,6 +212,10 @@ class IntradayResearchPlanner:
             rationale=tuple(rationale),
             candidate_for_confirmation=confirmation,
             waves=tuple(waves),
+            allowed_waves=tuple(allowed_waves),
+            blocked_waves=tuple(blocked_waves),
+            recommended_limit=max(0, int(data.selected_count)),
+            limit_source="selected_count_effective",
             actions=tuple(actions),
             safety={
                 "paper_allowed": False,
@@ -179,6 +227,9 @@ class IntradayResearchPlanner:
             },
             input_summary={
                 "selected_count": data.selected_count,
+                "selected_count_effective": data.selected_count,
+                "selected_count_source": data.selected_count_source,
+                "selected_count_diagnostic_value": data.selected_count_diagnostic_value,
                 "readiness_ready": data.readiness_ready,
                 "readiness_coverage": data.readiness_coverage,
                 "universe_file": data.universe_file,
@@ -191,6 +242,7 @@ class IntradayResearchPlanner:
                 "persisted_candidates": data.persisted_candidates,
                 "top_blockers": dict(_top_items(data.blockers, limit=12)),
                 "top_exact_rejection_reasons": dict(_top_items(data.exact_rejection_reasons, limit=12)),
+                "prohibited_repeats": list(data.prohibited_repeats),
                 "source": data.source,
             },
         )
@@ -283,16 +335,43 @@ class IntradayResearchPlanner:
         return actions
 
 
-def load_planner_input(path: str | Path) -> PlannerInput:
+def load_planner_input(
+    path: str | Path,
+    *,
+    selected_count: int | None = None,
+    universe_metadata: str | Path | None = None,
+    universe_file: str | Path | None = None,
+) -> PlannerInput:
     payload = json.loads(Path(path).read_text(encoding="utf-8"))
-    return planner_input_from_payload(payload, source=str(path))
+    return planner_input_from_payload(
+        payload,
+        source=str(path),
+        selected_count=selected_count,
+        universe_metadata=universe_metadata,
+        universe_file=universe_file,
+    )
 
 
-def planner_input_from_payload(payload: dict[str, Any], *, source: str = "payload") -> PlannerInput:
+def planner_input_from_payload(
+    payload: dict[str, Any],
+    *,
+    source: str = "payload",
+    selected_count: int | None = None,
+    universe_metadata: str | Path | None = None,
+    universe_file: str | Path | None = None,
+) -> PlannerInput:
     if "input_summary" in payload:
         summary = payload.get("input_summary") or {}
+        resolved = resolve_selected_count(
+            explicit_selected_count=selected_count,
+            universe_metadata=universe_metadata,
+            universe_file=universe_file,
+            payload=payload,
+        )
         return PlannerInput(
-            selected_count=int(summary.get("selected_count") or 0),
+            selected_count=resolved["selected_count_effective"],
+            selected_count_source=resolved["selected_count_source"],
+            selected_count_diagnostic_value=resolved["selected_count_diagnostic_value"],
             readiness_ready=bool(summary.get("readiness_ready", True)),
             readiness_coverage=float(summary.get("readiness_coverage") or 0.0),
             universe_file=str(summary.get("universe_file") or _DEFAULT_UNIVERSE),
@@ -305,6 +384,7 @@ def planner_input_from_payload(payload: dict[str, Any], *, source: str = "payloa
             persisted_candidates=int(summary.get("persisted_candidates") or 0),
             blockers=dict(summary.get("top_blockers") or {}),
             exact_rejection_reasons=dict(summary.get("top_exact_rejection_reasons") or {}),
+            prohibited_repeats=tuple(str(item) for item in payload.get("prohibited_repeats") or ()),
             source=source,
         )
 
@@ -314,8 +394,16 @@ def planner_input_from_payload(payload: dict[str, Any], *, source: str = "payloa
     blockers = payload.get("top_blockers") or payload.get("blockers") or {}
     exact = payload.get("top_exact_rejection_reasons") or payload.get("exact_rejection_reasons") or {}
     candidates = tuple(_candidate_from_payload(row) for row in payload.get("near_misses", [])[:25])
+    resolved = resolve_selected_count(
+        explicit_selected_count=selected_count,
+        universe_metadata=universe_metadata,
+        universe_file=universe_file,
+        payload=payload,
+    )
     return PlannerInput(
-        selected_count=int(payload.get("selected_count") or scope.get("selected_count") or 0),
+        selected_count=resolved["selected_count_effective"],
+        selected_count_source=resolved["selected_count_source"],
+        selected_count_diagnostic_value=resolved["selected_count_diagnostic_value"],
         readiness_ready=bool(payload.get("readiness_ready", True)),
         readiness_coverage=float(payload.get("readiness_coverage") or 1.0),
         universe_file=str(payload.get("universe_file") or scope.get("universe_file") or _DEFAULT_UNIVERSE),
@@ -329,6 +417,7 @@ def planner_input_from_payload(payload: dict[str, Any], *, source: str = "payloa
         blockers=dict(blockers),
         exact_rejection_reasons=dict(exact),
         candidates=candidates,
+        prohibited_repeats=tuple(str(item) for item in payload.get("prohibited_repeats") or ()),
         source=source,
     )
 
@@ -348,6 +437,13 @@ def render_markdown(plan: PlannerOutput) -> str:
     for key, value in plan.safety.items():
         lines.append(f"- {key}: `{value}`")
     lines.append("")
+    lines.append("## Scope Controls")
+    lines.append(f"- selected_count_effective: `{plan.input_summary['selected_count_effective']}`")
+    lines.append(f"- selected_count_source: `{plan.input_summary['selected_count_source']}`")
+    lines.append(f"- recommended_limit: `{plan.recommended_limit}`")
+    lines.append("- Do not run readiness or waves without explicit `--limit "
+                 f"{plan.recommended_limit}`.")
+    lines.append("")
     lines.append("## Recommended waves")
     if not plan.waves:
         lines.append("No new waves recommended before the listed actions are completed.")
@@ -361,10 +457,17 @@ def render_markdown(plan: PlannerOutput) -> str:
                 f"- max_total_windows: `{wave.max_total_windows}`",
                 f"- max_windows_per_symbol: `{wave.max_windows_per_symbol}`",
                 f"- requires_cache_warmup: `{wave.requires_cache_warmup}`",
+                f"- signatures: `{', '.join(wave.signatures)}`",
+                f"- recommended_limit: `{plan.recommended_limit}`",
                 f"- hypothesis: {wave.hypothesis}",
                 "",
             ]
         )
+    if plan.blocked_waves:
+        lines.append("## Blocked waves")
+        for blocked in plan.blocked_waves:
+            lines.append(f"- {blocked.name}: `{blocked.reason}` `{blocked.signature}`")
+        lines.append("")
     lines.append("## Actions")
     lines.extend(f"- {item}" for item in plan.actions)
     return "\n".join(lines).rstrip() + "\n"
@@ -385,6 +488,63 @@ def _candidate_from_payload(row: dict[str, Any]) -> CandidateSignal:
     )
 
 
+def resolve_selected_count(
+    *,
+    explicit_selected_count: int | None = None,
+    universe_metadata: str | Path | None = None,
+    universe_file: str | Path | None = None,
+    payload: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    payload = payload or {}
+    diagnostic_value = _diagnostic_selected_count(payload)
+    if explicit_selected_count is not None:
+        return _selected_count_result(explicit_selected_count, "explicit", diagnostic_value)
+    if universe_metadata:
+        metadata_count = _selected_count_from_universe_metadata(universe_metadata)
+        if metadata_count is not None:
+            return _selected_count_result(metadata_count, "universe_metadata", diagnostic_value)
+    if universe_file:
+        file_count = _selected_count_from_universe_file(universe_file)
+        if file_count is not None:
+            return _selected_count_result(file_count, "universe_file", diagnostic_value)
+    if diagnostic_value is not None:
+        return _selected_count_result(diagnostic_value, "diagnostic_json", diagnostic_value)
+    scope = payload.get("scope") if isinstance(payload.get("scope"), dict) else {}
+    scope_value = _optional_int(scope.get("selected_count"))
+    if scope_value is not None:
+        return _selected_count_result(scope_value, "diagnostic_scope", diagnostic_value)
+    return _selected_count_result(0, "not_available", diagnostic_value)
+
+
+def filter_prohibited_waves(
+    waves: Iterable[ResearchWaveSpec], prohibited_repeats: Iterable[str]
+) -> tuple[tuple[ResearchWaveSpec, ...], tuple[BlockedWave, ...]]:
+    prohibited = {normalize_wave_signature(item) for item in prohibited_repeats if str(item).strip()}
+    allowed: list[ResearchWaveSpec] = []
+    blocked: list[BlockedWave] = []
+    for wave in waves:
+        blocked_signature = next(
+            (signature for signature in wave.signatures if normalize_wave_signature(signature) in prohibited),
+            None,
+        )
+        if blocked_signature is None:
+            allowed.append(wave)
+        else:
+            blocked.append(
+                BlockedWave(
+                    name=wave.name,
+                    reason="prohibited_repeat",
+                    signature=blocked_signature,
+                    wave=wave,
+                )
+            )
+    return tuple(allowed), tuple(blocked)
+
+
+def normalize_wave_signature(value: str) -> str:
+    return " ".join(str(value).replace(",", ",").split()).lower()
+
+
 def _optional_int(value: Any) -> int | None:
     try:
         return int(value)
@@ -394,6 +554,50 @@ def _optional_int(value: Any) -> int | None:
 
 def _csv(values: Iterable[int]) -> str:
     return ",".join(str(value) for value in values)
+
+
+def _diagnostic_selected_count(payload: dict[str, Any]) -> int | None:
+    if "input_summary" in payload and isinstance(payload.get("input_summary"), dict):
+        parsed = _optional_int(payload["input_summary"].get("selected_count"))
+        if parsed is not None:
+            return parsed
+    parsed = _optional_int(payload.get("selected_count"))
+    if parsed is not None:
+        return parsed
+    scope = payload.get("scope") if isinstance(payload.get("scope"), dict) else {}
+    return _optional_int(scope.get("selected_count"))
+
+
+def _selected_count_result(value: int, source: str, diagnostic_value: int | None) -> dict[str, Any]:
+    return {
+        "selected_count_effective": max(0, int(value)),
+        "selected_count_source": source,
+        "selected_count_diagnostic_value": diagnostic_value,
+    }
+
+
+def _selected_count_from_universe_metadata(path: str | Path) -> int | None:
+    try:
+        payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return _optional_int(payload.get("selected_count"))
+
+
+def _selected_count_from_universe_file(path: str | Path) -> int | None:
+    try:
+        with Path(path).open(newline="", encoding="utf-8") as handle:
+            rows = list(csv.DictReader(handle))
+    except OSError:
+        return None
+    if not rows:
+        return 0
+    columns = rows[0].keys()
+    if "selected" in columns:
+        return sum(1 for row in rows if str(row.get("selected", "")).strip().lower() in {"true", "1", "yes", "y"})
+    if "status" in columns:
+        return sum(1 for row in rows if str(row.get("status", "")).strip().lower() == "selected")
+    return len(rows)
 
 
 def _top_items(values: dict[str, int], *, limit: int) -> list[tuple[str, int]]:
