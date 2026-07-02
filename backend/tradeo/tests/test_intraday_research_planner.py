@@ -150,3 +150,57 @@ def test_filter_helper_blocks_exact_signature() -> None:
     assert len(blocked) == 1
     assert blocked[0].signature == "30m W100 8,13,21"
     assert all("30m W100 8,13,21" not in wave.signatures for wave in allowed)
+
+
+def test_planner_uses_vwap_summary_json_when_changing_search_space() -> None:
+    result = IntradayResearchPlanner().plan(
+        PlannerInput(
+            selected_count=117,
+            blockers={"oos_unstable": 1},
+            vwap_summary=_vwap_summary(),
+        )
+    )
+
+    names = [wave.name for wave in result.allowed_waves]
+    assert result.decision == "change_search_space"
+    assert names[0] == "30m_W100_vwap_reclaim_slow"
+    assert "30m_W100_vwap_reject_slow" in names
+    assert "30m_W100_vwap_reclaim_slow" in result.vwap_context["recommended_waves"]
+    assert result.vwap_context["available"] is True
+    assert result.vwap_context["symbols_analyzed"] == 117
+
+
+def test_planner_keeps_previous_behavior_without_vwap_summary_json() -> None:
+    result = IntradayResearchPlanner().plan(PlannerInput(selected_count=117, blockers={"oos_unstable": 1}))
+
+    names = [wave.name for wave in result.allowed_waves]
+    assert "30m_W100_standard_regime_probe" in names
+    assert "30m_W100_vwap_reclaim_slow" not in names
+    assert result.vwap_context["available"] is False
+
+
+def _vwap_summary() -> dict[str, object]:
+    return {
+        "schema_version": "tradeo.intraday_vwap_research.v1",
+        "status": "OK",
+        "universe": {"symbols_analyzed": 117},
+        "vwap_summary": {"bars_analyzed": 9000},
+        "recommended_next_waves": [
+            {
+                "name": "30m_W100_vwap_reclaim_slow",
+                "timeframe": "30m",
+                "window_size": 100,
+                "forward_bars": [8, 13, 21],
+                "reason": "synthetic VWAP structure supports reclaim search",
+                "signature": "30m W100 8,13,21",
+            },
+            {
+                "name": "30m_W100_vwap_reject_slow",
+                "timeframe": "30m",
+                "window_size": 100,
+                "forward_bars": [8, 13, 21],
+                "reason": "synthetic VWAP structure supports reject search",
+                "signature": "30m W100 8,13,21",
+            }
+        ],
+    }
