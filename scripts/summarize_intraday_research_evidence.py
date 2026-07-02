@@ -15,6 +15,7 @@ from tradeo.research.intraday_research_evidence import (  # noqa: E402
     render_markdown,
     resolve_run_ids,
 )
+from tradeo.research.intraday_research_forensics import ScopeViolationError, validate_scope_integrity  # noqa: E402
 
 
 def main() -> int:
@@ -31,6 +32,7 @@ def main() -> int:
     parser.add_argument("--json-out", default="artifacts/runtime/research_evidence/_summary.json")
     parser.add_argument("--md-out", default="artifacts/runtime/research_evidence/_summary.md")
     parser.add_argument("--json-only", action="store_true")
+    parser.add_argument("--allow-scope-violation", action="store_true")
     args = parser.parse_args()
 
     run_ids = resolve_run_ids(wave_manifests=args.wave_manifest, run_ids=args.run_ids)
@@ -50,6 +52,12 @@ def main() -> int:
         db.close()
 
     summary_payload = {key: value for key, value in report.items() if key != "samples_by_candidate"}
+    status_code = 0
+    try:
+        validate_scope_integrity(summary_payload)
+    except ScopeViolationError:
+        if not args.allow_scope_violation:
+            status_code = 5
     markdown = render_markdown(summary_payload)
     if args.json_out and not args.json_only:
         json_out = Path(args.json_out)
@@ -66,7 +74,7 @@ def main() -> int:
         print(markdown)
         print("JSON:")
         print(json.dumps(summary_payload, indent=2, sort_keys=True))
-    return 0
+    return status_code
 
 
 if __name__ == "__main__":

@@ -27,6 +27,10 @@ PROHIBITED_REPEATS = (
 )
 
 
+class ScopeViolationError(RuntimeError):
+    """Raised when an exact-scope research artifact includes out-of-scope run IDs."""
+
+
 @dataclass(frozen=True, slots=True)
 class CandidateForensics:
     pattern_key: str
@@ -201,11 +205,59 @@ def build_forensics_report(
             "read_only": True,
         },
     }
+    report["scope_integrity"] = scope_integrity_report(
+        scope_run_ids=exact_run_ids,
+        observed_run_ids=observed_run_ids_from_payload(
+            {
+                "candidate_forensics": report["candidate_forensics"],
+                "near_misses": report["near_misses"],
+            }
+        ),
+    )
+    report["status"] = "OK" if report["scope_integrity"]["passed"] else "scope_violation"
     report["determinism"] = {
         "algo": CONTENT_HASH_ALGO,
         "content_hash": content_hash(report),
     }
     return report
+
+
+def scope_integrity_report(*, scope_run_ids: Sequence[int], observed_run_ids: Iterable[int | None]) -> dict[str, Any]:
+    scope = sorted({int(run_id) for run_id in scope_run_ids})
+    observed = sorted({int(run_id) for run_id in observed_run_ids if run_id is not None})
+    out_of_scope = [run_id for run_id in observed if run_id not in scope]
+    return {
+        "exact_scope": True,
+        "scope_run_ids": scope,
+        "observed_run_ids": observed,
+        "out_of_scope_run_ids": out_of_scope,
+        "passed": not out_of_scope,
+    }
+
+
+def observed_run_ids_from_payload(payload: Any) -> list[int]:
+    observed: list[int] = []
+    if isinstance(payload, dict):
+        for key, value in payload.items():
+            if key == "run_id":
+                parsed = _optional_int(value)
+                if parsed is not None:
+                    observed.append(parsed)
+            else:
+                observed.extend(observed_run_ids_from_payload(value))
+    elif isinstance(payload, list):
+        for item in payload:
+            observed.extend(observed_run_ids_from_payload(item))
+    return _dedupe_ints(observed)
+
+
+def validate_scope_integrity(report: dict[str, Any]) -> None:
+    integrity = report.get("scope_integrity") or {}
+    if integrity.get("exact_scope") is True and not integrity.get("passed", False):
+        raise ScopeViolationError(
+            "exact-scope report includes out-of-scope run IDs: "
+            f"{integrity.get('out_of_scope_run_ids')}"
+        )
 
 
 def candidate_forensics(
