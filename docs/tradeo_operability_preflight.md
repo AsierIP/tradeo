@@ -54,6 +54,13 @@ fail-closed.
 - `TRADEO_IBKR_READONLY=false`
 - `TRADEO_ALLOW_SYNTHETIC_MARKET_DATA=true`
 - `TRADEO_INTRADAY_PAPER_ENABLED=true` without `--allow-paper-enabled`
+- `TRADEO_LABORATORY_AUTO_SUBMIT_PAPER_ORDERS=true`
+- `TRADEO_FOX_HUNTER_AUTO_SUBMIT_LIVE_ORDERS=true`
+- `TRADEO_IBKR_ALLOW_MARKET_ORDERS=true`
+- `TRADEO_RECONCILIATION_AUTO_REPAIR_PAPER_EXITS=true`
+- `TRADEO_INTRADAY_EOD_EMERGENCY_MARKET_ALLOWED=true`
+- `TRADEO_ALLOW_OPTIONS=true`
+- `TRADEO_ALLOW_MARGIN=true`
 
 `NOT_READY` means no dangerous flag was found, but the preflight could not
 complete operability checks because the repo is invalid, a critical file is

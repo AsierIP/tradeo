@@ -57,6 +57,7 @@ Always include:
 - paper_trades=0 or not_checked
 - ib_fills=0 or not_checked
 - kill_switch state if available
+- execution_automation_flags_all_false=true
 
 ## F. Research Metrics
 

@@ -4,6 +4,8 @@ import importlib.util
 import sys
 from pathlib import Path
 
+import pytest
+
 
 def load_preflight_module():
     repo_root = Path(__file__).resolve().parents[3]
@@ -43,6 +45,13 @@ def write_minimal_repo(root: Path, env_lines: list[str] | None = None) -> None:
                 "TRADEO_ALLOW_SYNTHETIC_MARKET_DATA=false",
                 "TRADEO_KILL_SWITCH_ENABLED=true",
                 "TRADEO_SECRET_KEY=do-not-print",
+                "TRADEO_LABORATORY_AUTO_SUBMIT_PAPER_ORDERS=false",
+                "TRADEO_FOX_HUNTER_AUTO_SUBMIT_LIVE_ORDERS=false",
+                "TRADEO_IBKR_ALLOW_MARKET_ORDERS=false",
+                "TRADEO_RECONCILIATION_AUTO_REPAIR_PAPER_EXITS=false",
+                "TRADEO_INTRADAY_EOD_EMERGENCY_MARKET_ALLOWED=false",
+                "TRADEO_ALLOW_OPTIONS=false",
+                "TRADEO_ALLOW_MARGIN=false",
             ]
         ),
         encoding="utf-8",
@@ -88,6 +97,7 @@ def test_safe_env_is_operable_read_only(tmp_path, monkeypatch):
     assert report["safety"]["orders_allowed"] is False
     assert report["safety"]["ibkr_readonly"] is True
     assert report["safety"]["kill_switch_enabled"] is True
+    assert report["safety"]["execution_automation_flags_all_false"] is True
 
 
 def test_live_trading_mode_blocks(tmp_path, monkeypatch):
@@ -215,6 +225,37 @@ def test_synthetic_market_data_blocks(tmp_path, monkeypatch):
 
     assert report["status"] == "BLOCKED"
     assert "TRADEO_ALLOW_SYNTHETIC_MARKET_DATA=true" in report["decision_reasons"]
+
+
+@pytest.mark.parametrize(
+    "flag_name",
+    [
+        "TRADEO_LABORATORY_AUTO_SUBMIT_PAPER_ORDERS",
+        "TRADEO_FOX_HUNTER_AUTO_SUBMIT_LIVE_ORDERS",
+        "TRADEO_IBKR_ALLOW_MARKET_ORDERS",
+        "TRADEO_RECONCILIATION_AUTO_REPAIR_PAPER_EXITS",
+        "TRADEO_INTRADAY_EOD_EMERGENCY_MARKET_ALLOWED",
+        "TRADEO_ALLOW_OPTIONS",
+        "TRADEO_ALLOW_MARGIN",
+    ],
+)
+def test_execution_automation_flags_block_when_true(tmp_path, monkeypatch, flag_name):
+    env_lines = [
+        "TRADEO_TRADING_MODE=paper",
+        "TRADEO_LIVE_TRADING_ENABLED=false",
+        "TRADEO_INTRADAY_PAPER_ENABLED=false",
+        "TRADEO_INTRADAY_LIVE_ENABLED=false",
+        "TRADEO_IBKR_READONLY=true",
+        "TRADEO_ALLOW_SYNTHETIC_MARKET_DATA=false",
+    ]
+    env_lines.extend(f"{flag}=false" for flag in load_preflight_module().AUTOMATION_BLOCK_FLAGS)
+    env_lines.append(f"{flag_name}=true")
+
+    _module, report = build_report(tmp_path, monkeypatch, env_lines=env_lines)
+
+    assert report["status"] == "BLOCKED"
+    assert f"{flag_name}=true" in report["decision_reasons"]
+    assert report["safety"]["execution_automation_flags_all_false"] is False
 
 
 def test_secrets_are_redacted(tmp_path, monkeypatch):

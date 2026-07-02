@@ -22,6 +22,23 @@ SAFETY_FLAGS = (
     "TRADEO_IBKR_READONLY",
     "TRADEO_ALLOW_SYNTHETIC_MARKET_DATA",
     "TRADEO_KILL_SWITCH_ENABLED",
+    "TRADEO_LABORATORY_AUTO_SUBMIT_PAPER_ORDERS",
+    "TRADEO_FOX_HUNTER_AUTO_SUBMIT_LIVE_ORDERS",
+    "TRADEO_IBKR_ALLOW_MARKET_ORDERS",
+    "TRADEO_RECONCILIATION_AUTO_REPAIR_PAPER_EXITS",
+    "TRADEO_INTRADAY_EOD_EMERGENCY_MARKET_ALLOWED",
+    "TRADEO_ALLOW_OPTIONS",
+    "TRADEO_ALLOW_MARGIN",
+)
+
+AUTOMATION_BLOCK_FLAGS = (
+    "TRADEO_LABORATORY_AUTO_SUBMIT_PAPER_ORDERS",
+    "TRADEO_FOX_HUNTER_AUTO_SUBMIT_LIVE_ORDERS",
+    "TRADEO_IBKR_ALLOW_MARKET_ORDERS",
+    "TRADEO_RECONCILIATION_AUTO_REPAIR_PAPER_EXITS",
+    "TRADEO_INTRADAY_EOD_EMERGENCY_MARKET_ALLOWED",
+    "TRADEO_ALLOW_OPTIONS",
+    "TRADEO_ALLOW_MARGIN",
 )
 
 CRITICAL_FILES = (
@@ -210,6 +227,9 @@ def safety_summary(env: dict[str, str], allow_paper_enabled: bool = False) -> tu
         reasons.append("TRADEO_ALLOW_SYNTHETIC_MARKET_DATA=true")
     if paper_enabled and not allow_paper_enabled:
         reasons.append("TRADEO_INTRADAY_PAPER_ENABLED=true without --allow-paper-enabled")
+    for key in AUTOMATION_BLOCK_FLAGS:
+        if is_truthy(env.get(key)):
+            reasons.append(f"{key}=true")
 
     return (
         {
@@ -223,6 +243,9 @@ def safety_summary(env: dict[str, str], allow_paper_enabled: bool = False) -> tu
             "paper_trades": "not_checked",
             "ib_fills": "not_checked",
             "kill_switch_enabled": is_truthy(env.get("TRADEO_KILL_SWITCH_ENABLED")),
+            "execution_automation_flags_all_false": not any(
+                is_truthy(env.get(key)) for key in AUTOMATION_BLOCK_FLAGS
+            ),
         },
         reasons,
     )
@@ -349,6 +372,8 @@ def render_markdown(report: dict[str, Any]) -> str:
             f"- ibkr_readonly: {report['safety']['ibkr_readonly']}",
             f"- synthetic_market_data_allowed: {report['safety']['synthetic_market_data_allowed']}",
             f"- kill_switch_enabled: {report['safety']['kill_switch_enabled']}",
+            "- execution_automation_flags_all_false: "
+            f"{report['safety']['execution_automation_flags_all_false']}",
         ]
     )
     lines.extend(["", "## Docker Compose", ""])
