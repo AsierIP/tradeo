@@ -13,6 +13,17 @@ flags. Important fields are selected count, readiness coverage, windows,
 clusters, accepted/rejected counts, persisted candidates, blockers, exact
 rejection reasons and near-miss candidate metrics.
 
+It can also consume an optional VWAP research summary:
+
+```bash
+--vwap-summary-json artifacts/runtime/research_vwap/vwap_research_summary.json
+```
+
+When the summary is present and valid, it is used only if the planner decision
+is already `change_search_space`. In that case, permitted VWAP-aware proposals
+are prioritized ahead of generic blocker-derived waves. If the summary is
+missing, unreadable or `NOT_AVAILABLE`, planner behavior is unchanged.
+
 Selected count is resolved with fail-closed provenance. Priority:
 
 1. `--selected-count`
@@ -69,6 +80,11 @@ The planner emits one of:
 ## Safety rules
 
 Every plan records that paper, live, order-code changes and gate relaxation are not allowed. It also requires rejected candidate persistence and exact-scope diagnostics.
+
+The optional `vwap_context` output records whether VWAP context was available,
+how many symbols/bars were analyzed and which permitted VWAP-aware waves were
+included in `allowed_waves`. It is planning context only: no waves are executed
+by the planner.
 
 ## Prohibited Repeats
 

@@ -112,6 +112,7 @@ class PlannerInput:
     exact_rejection_reasons: dict[str, int] = field(default_factory=dict)
     candidates: tuple[CandidateSignal, ...] = ()
     prohibited_repeats: tuple[str, ...] = ()
+    vwap_summary: dict[str, Any] | None = None
     source: str = "manual"
 
 
@@ -126,6 +127,7 @@ class PlannerOutput:
     blocked_waves: tuple[BlockedWave, ...]
     recommended_limit: int
     limit_source: str
+    vwap_context: dict[str, Any]
     actions: tuple[str, ...]
     safety: dict[str, Any]
     input_summary: dict[str, Any]
@@ -149,6 +151,7 @@ class PlannerOutput:
             ],
             "recommended_limit": self.recommended_limit,
             "limit_source": self.limit_source,
+            "vwap_context": self.vwap_context,
             "actions": list(self.actions),
             "safety": self.safety,
             "input_summary": self.input_summary,
@@ -192,6 +195,10 @@ class IntradayResearchPlanner:
             decision = "change_search_space"
             rationale.extend(self._rationale_from_blockers(data))
             proposed_waves = self._waves_from_blockers(data)
+            vwap_waves = _waves_from_vwap_summary(data.vwap_summary)
+            if vwap_waves:
+                proposed_waves = vwap_waves + proposed_waves
+                rationale.append("VWAP summary is available; prioritize permitted VWAP-aware waves first.")
             allowed_waves, blocked_waves = filter_prohibited_waves(proposed_waves, data.prohibited_repeats)
             waves.extend(allowed_waves)
             if blocked_waves:
@@ -216,6 +223,7 @@ class IntradayResearchPlanner:
             blocked_waves=tuple(blocked_waves),
             recommended_limit=max(0, int(data.selected_count)),
             limit_source="selected_count_effective",
+            vwap_context=_vwap_context(data.vwap_summary, allowed_waves),
             actions=tuple(actions),
             safety={
                 "paper_allowed": False,
@@ -468,6 +476,12 @@ def render_markdown(plan: PlannerOutput) -> str:
         for blocked in plan.blocked_waves:
             lines.append(f"- {blocked.name}: `{blocked.reason}` `{blocked.signature}`")
         lines.append("")
+    if plan.vwap_context.get("available"):
+        lines.append("## VWAP context")
+        lines.append(f"- symbols_analyzed: `{plan.vwap_context.get('symbols_analyzed')}`")
+        lines.append(f"- bars_analyzed: `{plan.vwap_context.get('bars_analyzed')}`")
+        lines.append(f"- recommended_waves: `{', '.join(plan.vwap_context.get('recommended_waves') or [])}`")
+        lines.append("")
     lines.append("## Actions")
     lines.extend(f"- {item}" for item in plan.actions)
     return "\n".join(lines).rstrip() + "\n"
@@ -543,6 +557,63 @@ def filter_prohibited_waves(
 
 def normalize_wave_signature(value: str) -> str:
     return " ".join(str(value).replace(",", ",").split()).lower()
+
+
+def load_vwap_summary(path: str | Path | None) -> dict[str, Any] | None:
+    if not path:
+        return None
+    try:
+        payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if payload.get("schema_version") != "tradeo.intraday_vwap_research.v1":
+        return None
+    if payload.get("status") != "OK":
+        return None
+    return payload
+
+
+def _waves_from_vwap_summary(summary: dict[str, Any] | None) -> list[ResearchWaveSpec]:
+    if not summary:
+        return []
+    waves: list[ResearchWaveSpec] = []
+    for index, row in enumerate(summary.get("recommended_next_waves") or (), start=1):
+        try:
+            timeframe = str(row["timeframe"])
+            window_size = int(row["window_size"])
+            forward_bars = tuple(int(item) for item in row["forward_bars"])
+            name = str(row["name"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        waves.append(
+            ResearchWaveSpec(
+                name=name,
+                timeframe=timeframe,
+                window_sizes=(window_size,),
+                forward_bars=forward_bars,
+                max_total_windows=120_000 if timeframe != "1h" else 80_000,
+                max_windows_per_symbol=1_200 if timeframe != "1h" else 800,
+                hypothesis=str(row.get("reason") or row.get("vwap_condition") or "VWAP-aware search-space proposal."),
+                priority=index,
+                requires_cache_warmup=timeframe != "30m",
+            )
+        )
+    return waves
+
+
+def _vwap_context(summary: dict[str, Any] | None, allowed_waves: Iterable[ResearchWaveSpec]) -> dict[str, Any]:
+    if not summary:
+        return {"available": False, "symbols_analyzed": 0, "bars_analyzed": 0, "recommended_waves": []}
+    universe = summary.get("universe") or {}
+    vwap_summary = summary.get("vwap_summary") or {}
+    vwap_names = {str(row.get("name")) for row in summary.get("recommended_next_waves") or []}
+    recommended = [wave.name for wave in allowed_waves if wave.name in vwap_names]
+    return {
+        "available": True,
+        "symbols_analyzed": int(universe.get("symbols_analyzed") or 0),
+        "bars_analyzed": int(vwap_summary.get("bars_analyzed") or 0),
+        "recommended_waves": recommended,
+    }
 
 
 def _optional_int(value: Any) -> int | None:

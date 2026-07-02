@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import replace
 import json
 from pathlib import Path
 
@@ -9,6 +10,7 @@ from tradeo.research.intraday_research_planner import (
     IntradayResearchPlanner,
     PlannerInput,
     load_planner_input,
+    load_vwap_summary,
     render_markdown,
     resolve_selected_count,
 )
@@ -43,6 +45,7 @@ def main() -> int:
     )
     parser.add_argument("--json-out", default=None)
     parser.add_argument("--md-out", default=None)
+    parser.add_argument("--vwap-summary-json", default=None)
     parser.add_argument("--json-only", action="store_true")
     args = parser.parse_args()
 
@@ -80,6 +83,9 @@ def main() -> int:
             exact_rejection_reasons=_pairs(args.exact_reason),
             source="cli",
         )
+    vwap_summary = load_vwap_summary(args.vwap_summary_json)
+    if vwap_summary:
+        planner_input = replace(planner_input, vwap_summary=vwap_summary)
 
     plan = IntradayResearchPlanner().plan(planner_input)
     payload = plan.to_dict()
