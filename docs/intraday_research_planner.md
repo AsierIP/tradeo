@@ -32,6 +32,30 @@ The output records:
 
 Do not run readiness or waves without explicit `--limit <selected_count_effective>`.
 
+## Exact Wave Execution Contract
+
+Before a terminal wave can be authorized, `scripts/run_intraday_research_wave.py`
+must prove that `--execute` would run the exact same configuration that passed
+readiness. CLI arguments are copied into the settings environment before
+`get_settings()` and before the worker is called:
+
+- `--universe-file`
+- `--product-policy`
+- `--period`
+- `--timeframes`
+- `--limit`
+- `--window-sizes`
+- `--forward-bars`
+- `--max-total-windows`
+- `--max-windows-per-symbol`
+
+The wave manifest and CLI summary include `execution_spec`,
+`readiness_spec_hash`, `execution_spec_hash` and `specs_match`. If `--execute`
+is active and the hashes differ, the runner blocks with
+`decision=blocked_spec_mismatch` and does not call the worker. Dry runs also
+emit the execution contract so Director can audit the next authorized wave
+without executing it.
+
 ## Decisions
 
 The planner emits one of:
