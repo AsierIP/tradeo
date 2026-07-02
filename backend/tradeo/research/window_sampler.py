@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import math
 from typing import Iterable
 
@@ -8,6 +8,12 @@ import numpy as np
 import pandas as pd
 
 from tradeo.research.pattern_embedding_engine import PatternEmbeddingEngine
+from tradeo.research.intraday_vwap_conditions import (
+    build_vwap_condition_frame,
+    normalize_vwap_condition_spec,
+    vwap_condition_passes,
+    vwap_features_at,
+)
 from tradeo.research.types import ForwardOutcome, WindowSample
 from tradeo.services.technical_indicators import atr, normalize_ohlcv
 
@@ -23,6 +29,7 @@ class WindowSampler:
     stop_r: float = 1.0
     min_risk_pct: float = 0.015
     atr_multiplier: float = 1.5
+    last_diagnostics: dict[str, int | str] = field(default_factory=dict, init=False)
 
     def __post_init__(self) -> None:
         self.embedding_engine = self.embedding_engine or PatternEmbeddingEngine()
@@ -37,7 +44,23 @@ class WindowSampler:
         stride: int = 3,
         max_windows_per_symbol: int = 450,
         benchmark_frames: dict[str, pd.DataFrame] | None = None,
+        vwap_condition: str | None = None,
+        vwap_side_bias: str | None = None,
+        vwap_max_distance_bps: float | None = None,
+        vwap_min_slope_bps: float | None = None,
     ) -> list[WindowSample]:
+        vwap_spec = normalize_vwap_condition_spec(
+            condition=vwap_condition,
+            side_bias=vwap_side_bias,
+            max_distance_bps=vwap_max_distance_bps,
+            min_slope_bps=vwap_min_slope_bps,
+        )
+        self.last_diagnostics = {
+            "vwap_condition": vwap_spec.condition,
+            "vwap_condition_applied": int(vwap_spec.enabled),
+            "windows_vwap_rejected": 0,
+            "windows_vwap_selected": 0,
+        }
         window_sizes = sorted({int(size) for size in window_sizes if int(size) >= 10})
         if not window_sizes:
             return []
@@ -49,6 +72,7 @@ class WindowSampler:
             return []
         stride = max(1, int(stride))
         df = self._normalize_with_lineage(df).dropna(subset=["open", "high", "low", "close", "volume"])
+        vwap_frame = build_vwap_condition_frame(df) if vwap_spec.enabled else None
         max_forward = max(forward_bars)
         if len(df) < max(window_sizes) + max_forward + 5:
             return []
@@ -120,6 +144,11 @@ class WindowSampler:
                 else None
             )
             for end_pos in end_positions:
+                if vwap_frame is not None and not vwap_condition_passes(vwap_frame, end_pos, vwap_spec):
+                    self.last_diagnostics["windows_vwap_rejected"] = (
+                        int(self.last_diagnostics["windows_vwap_rejected"]) + 1
+                    )
+                    continue
                 start_pos = end_pos - window_size + 1
                 future_start = end_pos + 1
                 future_stop = min(len(df), future_start + max_forward)
@@ -185,6 +214,8 @@ class WindowSampler:
                     ),
                 )
                 features.update(self._data_lineage_features_at(df, end_pos))
+                if vwap_frame is not None:
+                    features.update(vwap_features_at(vwap_frame, end_pos, vwap_spec))
                 features.update({f"execution_{k}": float(v) for k, v in execution_metrics.items()})
                 features["sample_window_size_quota"] = int(window_quota)
                 start_idx = index_values[start_pos]
@@ -204,6 +235,10 @@ class WindowSampler:
                         features=features,
                     )
                 )
+                if vwap_frame is not None:
+                    self.last_diagnostics["windows_vwap_selected"] = (
+                        int(self.last_diagnostics["windows_vwap_selected"]) + 1
+                    )
                 window_count += 1
                 if len(samples) >= max_windows_per_symbol or window_count >= window_quota:
                     break

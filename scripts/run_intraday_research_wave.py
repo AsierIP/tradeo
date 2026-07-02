@@ -22,6 +22,7 @@ from tradeo.services.intraday_research_readiness import (  # noqa: E402
     IntradayResearchReadinessGate,
     IntradayResearchWaveSpec,
 )
+from tradeo.research.intraday_vwap_conditions import VWAP_CONDITION_CHOICES  # noqa: E402
 from tradeo.tasks import worker  # noqa: E402
 
 
@@ -53,6 +54,10 @@ def main() -> int:
     parser.add_argument("--forward-bars", default=None)
     parser.add_argument("--max-total-windows", type=int, default=None)
     parser.add_argument("--max-windows-per-symbol", type=int, default=None)
+    parser.add_argument("--vwap-condition", choices=sorted(VWAP_CONDITION_CHOICES), default=None)
+    parser.add_argument("--vwap-side-bias", default=None)
+    parser.add_argument("--vwap-max-distance-bps", type=float, default=None)
+    parser.add_argument("--vwap-min-slope-bps", type=float, default=None)
     parser.add_argument("--min-cache-coverage", type=float, default=0.90)
     parser.add_argument("--min-rows-per-symbol", type=int, default=1)
     parser.add_argument("--manifest-path", default=None)
@@ -193,6 +198,18 @@ def _apply_settings_env_overrides(args: argparse.Namespace) -> None:
     if args.max_windows_per_symbol is not None:
         os.environ["TRADEO_INTRADAY_RESEARCH_MAX_WINDOWS_PER_SYMBOL"] = str(args.max_windows_per_symbol)
         changed = True
+    if args.vwap_condition is not None:
+        os.environ["TRADEO_INTRADAY_RESEARCH_VWAP_CONDITION"] = str(args.vwap_condition)
+        changed = True
+    if args.vwap_side_bias is not None:
+        os.environ["TRADEO_INTRADAY_RESEARCH_VWAP_SIDE_BIAS"] = str(args.vwap_side_bias)
+        changed = True
+    if args.vwap_max_distance_bps is not None:
+        os.environ["TRADEO_INTRADAY_RESEARCH_VWAP_MAX_DISTANCE_BPS"] = str(args.vwap_max_distance_bps)
+        changed = True
+    if args.vwap_min_slope_bps is not None:
+        os.environ["TRADEO_INTRADAY_RESEARCH_VWAP_MIN_SLOPE_BPS"] = str(args.vwap_min_slope_bps)
+        changed = True
     if changed:
         _clear_settings_cache()
 
@@ -218,6 +235,7 @@ def _execution_spec_from_wave_spec(
             "forward_bars": raw["forward_bars"],
             "max_total_windows": raw["max_total_windows"],
             "max_windows_per_symbol": raw["max_windows_per_symbol"],
+            **_vwap_execution_spec_from_env(),
             "store_rejected": store_rejected,
         }
     )
@@ -237,6 +255,7 @@ def _execution_spec_from_settings(settings: Any, *, store_rejected: bool) -> dic
             "forward_bars": tuple(settings.intraday_research_forward_bar_list),
             "max_total_windows": int(settings.intraday_research_max_total_windows),
             "max_windows_per_symbol": int(settings.intraday_research_max_windows_per_symbol),
+            **_vwap_execution_spec_from_env(),
             "store_rejected": store_rejected,
         }
     )
@@ -253,8 +272,34 @@ def _normalize_execution_spec(spec: dict[str, Any]) -> dict[str, Any]:
         "forward_bars": [int(item) for item in spec["forward_bars"]],
         "max_total_windows": int(spec["max_total_windows"]),
         "max_windows_per_symbol": int(spec["max_windows_per_symbol"]),
+        "vwap_condition": str(spec.get("vwap_condition") or "none").strip().lower() or "none",
+        "vwap_side_bias": _optional_str(spec.get("vwap_side_bias")),
+        "vwap_max_distance_bps": _optional_float(spec.get("vwap_max_distance_bps")),
+        "vwap_min_slope_bps": _optional_float(spec.get("vwap_min_slope_bps")),
         "store_rejected": bool(spec["store_rejected"]),
     }
+
+
+def _vwap_execution_spec_from_env() -> dict[str, Any]:
+    return {
+        "vwap_condition": os.environ.get("TRADEO_INTRADAY_RESEARCH_VWAP_CONDITION") or "none",
+        "vwap_side_bias": os.environ.get("TRADEO_INTRADAY_RESEARCH_VWAP_SIDE_BIAS"),
+        "vwap_max_distance_bps": os.environ.get("TRADEO_INTRADAY_RESEARCH_VWAP_MAX_DISTANCE_BPS"),
+        "vwap_min_slope_bps": os.environ.get("TRADEO_INTRADAY_RESEARCH_VWAP_MIN_SLOPE_BPS"),
+    }
+
+
+def _optional_str(value: Any) -> str | None:
+    if value is None:
+        return None
+    normalized = str(value).strip().lower()
+    return normalized or None
+
+
+def _optional_float(value: Any) -> float | None:
+    if value is None or str(value).strip() == "":
+        return None
+    return float(value)
 
 
 def _stable_spec_hash(spec: dict[str, Any]) -> str:

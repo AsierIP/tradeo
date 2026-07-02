@@ -18,6 +18,10 @@ _OVERRIDE_ENV_KEYS = [
     "TRADEO_INTRADAY_RESEARCH_FORWARD_BARS",
     "TRADEO_INTRADAY_RESEARCH_MAX_TOTAL_WINDOWS",
     "TRADEO_INTRADAY_RESEARCH_MAX_WINDOWS_PER_SYMBOL",
+    "TRADEO_INTRADAY_RESEARCH_VWAP_CONDITION",
+    "TRADEO_INTRADAY_RESEARCH_VWAP_SIDE_BIAS",
+    "TRADEO_INTRADAY_RESEARCH_VWAP_MAX_DISTANCE_BPS",
+    "TRADEO_INTRADAY_RESEARCH_VWAP_MIN_SLOPE_BPS",
 ]
 
 
@@ -132,6 +136,10 @@ def test_cli_arguments_apply_exact_env_before_settings_and_worker(monkeypatch, t
         assert os.environ["TRADEO_INTRADAY_RESEARCH_FORWARD_BARS"] == "8,13,21"
         assert os.environ["TRADEO_INTRADAY_RESEARCH_MAX_TOTAL_WINDOWS"] == "120000"
         assert os.environ["TRADEO_INTRADAY_RESEARCH_MAX_WINDOWS_PER_SYMBOL"] == "1200"
+        assert os.environ["TRADEO_INTRADAY_RESEARCH_VWAP_CONDITION"] == "vwap_reclaim_long"
+        assert os.environ["TRADEO_INTRADAY_RESEARCH_VWAP_SIDE_BIAS"] == "long"
+        assert os.environ["TRADEO_INTRADAY_RESEARCH_VWAP_MAX_DISTANCE_BPS"] == "150.0"
+        assert os.environ["TRADEO_INTRADAY_RESEARCH_VWAP_MIN_SLOPE_BPS"] == "0.0"
         return _FakeSettings(artifacts_path=tmp_path / "artifacts")
 
     worker_calls: list[dict] = []
@@ -174,6 +182,14 @@ def test_cli_arguments_apply_exact_env_before_settings_and_worker(monkeypatch, t
                 "120000",
                 "--max-windows-per-symbol",
                 "1200",
+                "--vwap-condition",
+                "vwap_reclaim_long",
+                "--vwap-side-bias",
+                "long",
+                "--vwap-max-distance-bps",
+                "150",
+                "--vwap-min-slope-bps",
+                "0",
                 "--manifest-path",
                 str(tmp_path / "manifest.json"),
                 "--json-only",
@@ -239,6 +255,7 @@ def test_summary_and_manifest_include_execution_spec_and_matching_hashes(
     assert summary["specs_match"] is True
     assert summary["execution_spec"]["limit"] == 117
     assert summary["execution_spec"]["store_rejected"] is True
+    assert summary["execution_spec"]["vwap_condition"] == "none"
     assert manifest["execution_spec"] == summary["execution_spec"]
     assert manifest["readiness_spec_hash"] == manifest["execution_spec_hash"]
     assert manifest["specs_match"] is True
@@ -267,6 +284,10 @@ def test_execute_blocks_mismatch_and_does_not_call_worker(monkeypatch, tmp_path:
             "forward_bars": [8, 13, 21],
             "max_total_windows": 120000,
             "max_windows_per_symbol": 1200,
+            "vwap_condition": "none",
+            "vwap_side_bias": None,
+            "vwap_max_distance_bps": None,
+            "vwap_min_slope_bps": None,
             "store_rejected": store_rejected,
         },
     )
@@ -311,6 +332,110 @@ def test_execute_blocks_mismatch_and_does_not_call_worker(monkeypatch, tmp_path:
     assert manifest["decision"] == "blocked_spec_mismatch"
     assert manifest["specs_match"] is False
     assert manifest["spec_mismatch"]["execution_spec"]["limit"] == 25
+
+
+def test_execute_blocks_vwap_spec_mismatch_and_does_not_call_worker(monkeypatch, tmp_path: Path) -> None:
+    runner = _load_runner_module()
+    manifest_path = tmp_path / "vwap_mismatch.json"
+    worker_calls: list[bool] = []
+    monkeypatch.setattr(
+        runner,
+        "get_settings",
+        lambda: _FakeSettings(artifacts_path=tmp_path / "artifacts"),
+    )
+    monkeypatch.setattr(runner, "IntradayResearchReadinessGate", _FakeReadinessGate)
+    monkeypatch.setattr(
+        runner,
+        "_execution_spec_from_settings",
+        lambda settings, *, store_rejected: {
+            "universe_file": "/tmp/universe.csv",
+            "product_policy": "stock_only",
+            "period": "60d",
+            "timeframes": ["30m"],
+            "limit": 117,
+            "window_sizes": [100],
+            "forward_bars": [8, 13, 21],
+            "max_total_windows": 120000,
+            "max_windows_per_symbol": 1200,
+            "vwap_condition": "vwap_reject_short",
+            "vwap_side_bias": "short",
+            "vwap_max_distance_bps": 150.0,
+            "vwap_min_slope_bps": 0.0,
+            "store_rejected": store_rejected,
+        },
+    )
+    monkeypatch.setattr(
+        runner.worker,
+        "_run_intraday_research_process_pool",
+        lambda *args, **kwargs: worker_calls.append(True),
+    )
+
+    code = _run_main(
+        monkeypatch,
+        runner,
+        [
+            "--execute",
+            "--universe-file",
+            "/tmp/universe.csv",
+            "--product-policy",
+            "stock_only",
+            "--period",
+            "60d",
+            "--timeframes",
+            "30m",
+            "--limit",
+            "117",
+            "--window-sizes",
+            "100",
+            "--forward-bars",
+            "8,13,21",
+            "--max-total-windows",
+            "120000",
+            "--max-windows-per-symbol",
+            "1200",
+            "--vwap-condition",
+            "vwap_reclaim_long",
+            "--vwap-side-bias",
+            "long",
+            "--vwap-max-distance-bps",
+            "150",
+            "--vwap-min-slope-bps",
+            "0",
+            "--manifest-path",
+            str(manifest_path),
+            "--json-only",
+        ],
+    )
+
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert code == 3
+    assert worker_calls == []
+    assert manifest["decision"] == "blocked_spec_mismatch"
+    assert manifest["spec_mismatch"]["readiness_spec"]["vwap_condition"] == "vwap_reclaim_long"
+    assert manifest["spec_mismatch"]["execution_spec"]["vwap_condition"] == "vwap_reject_short"
+
+
+def test_spec_hash_changes_when_vwap_condition_changes() -> None:
+    runner = _load_runner_module()
+    base = {
+        "universe_file": "/tmp/universe.csv",
+        "product_policy": "stock_only",
+        "period": "60d",
+        "timeframes": ["30m"],
+        "limit": 117,
+        "window_sizes": [100],
+        "forward_bars": [8, 13, 21],
+        "max_total_windows": 120000,
+        "max_windows_per_symbol": 1200,
+        "vwap_condition": "none",
+        "vwap_side_bias": None,
+        "vwap_max_distance_bps": None,
+        "vwap_min_slope_bps": None,
+        "store_rejected": True,
+    }
+    conditioned = base | {"vwap_condition": "vwap_reclaim_long", "vwap_side_bias": "long"}
+
+    assert runner._stable_spec_hash(base) != runner._stable_spec_hash(conditioned)
 
 
 def test_store_rejected_false_is_reflected_in_execution_spec(monkeypatch, tmp_path: Path, capsys) -> None:
@@ -378,6 +503,10 @@ def test_env_overrides_do_not_enable_live_paper_orders_or_gates(monkeypatch) -> 
         forward_bars="8,13,21",
         max_total_windows=120000,
         max_windows_per_symbol=1200,
+        vwap_condition="vwap_reclaim_long",
+        vwap_side_bias="long",
+        vwap_max_distance_bps=150.0,
+        vwap_min_slope_bps=0.0,
     )
 
     try:

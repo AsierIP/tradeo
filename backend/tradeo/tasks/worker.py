@@ -1047,6 +1047,10 @@ def _intraday_research_common_expected_params(settings: Settings) -> dict[str, A
         "max_windows_per_symbol": settings.intraday_research_max_windows_per_symbol,
         "min_cluster_size": settings.intraday_research_min_cluster_size,
         "max_clusters_per_window": settings.intraday_research_max_clusters_per_window,
+        "vwap_condition": _intraday_research_vwap_condition(),
+        "vwap_side_bias": _optional_env("TRADEO_INTRADAY_RESEARCH_VWAP_SIDE_BIAS"),
+        "vwap_max_distance_bps": _optional_float_env("TRADEO_INTRADAY_RESEARCH_VWAP_MAX_DISTANCE_BPS"),
+        "vwap_min_slope_bps": _optional_float_env("TRADEO_INTRADAY_RESEARCH_VWAP_MIN_SLOPE_BPS"),
         "min_samples": settings.intraday_research_min_samples,
         "min_effective_samples": settings.intraday_research_min_effective_samples,
         "min_symbols": settings.intraday_research_min_symbols,
@@ -1203,6 +1207,10 @@ def _intraday_research_request(
         min_cluster_size=settings.intraday_research_min_cluster_size,
         max_clusters_per_window=settings.intraday_research_max_clusters_per_window,
         store_rejected=store_rejected,
+        vwap_condition=_intraday_research_vwap_condition(),
+        vwap_side_bias=_optional_env("TRADEO_INTRADAY_RESEARCH_VWAP_SIDE_BIAS"),
+        vwap_max_distance_bps=_optional_float_env("TRADEO_INTRADAY_RESEARCH_VWAP_MAX_DISTANCE_BPS"),
+        vwap_min_slope_bps=_optional_float_env("TRADEO_INTRADAY_RESEARCH_VWAP_MIN_SLOPE_BPS"),
     )
 
 
@@ -1222,6 +1230,10 @@ def _intraday_research_expected_params(
         "max_windows_per_symbol": request.max_windows_per_symbol,
         "min_cluster_size": request.min_cluster_size,
         "max_clusters_per_window": request.max_clusters_per_window,
+        "vwap_condition": request.vwap_condition or "none",
+        "vwap_side_bias": request.vwap_side_bias,
+        "vwap_max_distance_bps": request.vwap_max_distance_bps,
+        "vwap_min_slope_bps": request.vwap_min_slope_bps,
         "min_samples": settings.intraday_research_min_samples,
         "min_effective_samples": settings.intraday_research_min_effective_samples,
         "min_symbols": settings.intraday_research_min_symbols,
@@ -1233,6 +1245,22 @@ def _intraday_research_expected_params(
 
 def _discovery_params_match(stored: dict[str, Any], expected: dict[str, Any]) -> bool:
     return all(stored.get(key) == value for key, value in expected.items())
+
+
+def _intraday_research_vwap_condition() -> str:
+    return (os.environ.get("TRADEO_INTRADAY_RESEARCH_VWAP_CONDITION") or "none").strip().lower() or "none"
+
+
+def _optional_env(key: str) -> str | None:
+    value = os.environ.get(key)
+    return value.strip().lower() if value and value.strip() else None
+
+
+def _optional_float_env(key: str) -> float | None:
+    value = os.environ.get(key)
+    if value is None or not value.strip():
+        return None
+    return float(value)
 
 
 def _intraday_research_parallel_symbol_chunks(settings: Settings) -> int:

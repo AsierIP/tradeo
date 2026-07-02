@@ -106,6 +106,35 @@ The first event contract emits:
 - `vwap_extension_down`
 - `vwap_mean_reversion_candidate`
 
+## Executable VWAP Conditions
+
+Research sampling supports an opt-in VWAP conditioning contract. Default is
+`vwap_condition=none`, which preserves legacy sampling exactly. Any non-`none`
+condition is evaluated only on the closed bar at each window `end_pos`; future
+bars are used only for the existing forward outcome labels after the window has
+already passed or failed the VWAP filter.
+
+Supported conditions:
+
+- `vwap_reclaim_long`: close is above VWAP after a current/recent reclaim from below, with VWAP slope flat or rising by default.
+- `vwap_reject_short`: close is below VWAP and the closed bar confirms a VWAP rejection/loss.
+- `vwap_pullback_long`: price remains above VWAP, pulls back near VWAP and holds it.
+- `vwap_pullback_short`: price remains below VWAP, tests near VWAP and rejects it.
+- `vwap_above_rising`: close is above VWAP and VWAP slope is flat/rising.
+- `vwap_below_falling`: close is below VWAP and VWAP slope is flat/falling.
+- `vwap_mean_reversion_long`: price is extended below VWAP by the configured distance threshold.
+- `vwap_mean_reversion_short`: price is extended above VWAP by the configured distance threshold.
+
+Optional knobs:
+
+- `vwap_side_bias`: `long`, `short` or empty; inferred from the condition when omitted.
+- `vwap_max_distance_bps`: caps near-VWAP distance for pullback/regime filters and sets extension distance for mean reversion.
+- `vwap_min_slope_bps`: minimum slope for rising/falling conditions.
+
+Conditioned windows record VWAP fields in `WindowSample.features`. Discovery
+summaries record `windows_vwap_selected`, `windows_vwap_rejected` and
+`vwap_condition_applied`.
+
 ## Validation Metrics
 
 VWAP-aware families must still pass normal research validation:
@@ -146,3 +175,12 @@ Future VWAP-aware search families may include:
 - `1h_W100_vwap_regime_filter`
 
 They must still be checked against `prohibited_repeats` before execution.
+
+VWAP-conditioned signatures include the executable condition, for example:
+
+- `30m W100 8,13,21 vwap_reclaim_long`
+- `30m W100 8,13,21 vwap_reject_short`
+
+A legacy prohibited repeat such as `30m W100 8,13,21` is marked
+`legacy_overlap=true` but is not blocked when an explicit VWAP condition is
+present, because the conditioned sample universe is a distinct hypothesis.
