@@ -3,7 +3,9 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+from tradeo.research.intraday_vwap_conditions import normalize_vwap_condition_spec
 
 
 class PatternFeatures(BaseModel):
@@ -198,6 +200,25 @@ class DiscoveryRunRequest(BaseModel):
     min_cluster_size: int | None = None
     max_clusters_per_window: int | None = None
     store_rejected: bool | None = None
+    vwap_condition: str | None = None
+    vwap_side_bias: str | None = None
+    vwap_max_distance_bps: float | None = None
+    vwap_min_slope_bps: float | None = None
+
+    @field_validator("vwap_condition")
+    @classmethod
+    def known_vwap_condition(cls, value: str | None) -> str | None:
+        normalize_vwap_condition_spec(condition=value)
+        return value
+
+    @field_validator("vwap_side_bias")
+    @classmethod
+    def known_vwap_side_bias(cls, value: str | None) -> str | None:
+        if value in (None, ""):
+            return value
+        if str(value).strip().lower() not in {"long", "short"}:
+            raise ValueError("vwap_side_bias must be long, short or empty")
+        return value
 
 
 class DiscoveryRunResponse(BaseModel):

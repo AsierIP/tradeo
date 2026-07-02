@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, datetime
 import csv
 import json
@@ -18,6 +18,22 @@ PlannerDecision = Literal[
 _DEFAULT_UNIVERSE = "/app/artifacts/runtime/universe_intraday_stock_only_v3.csv"
 _DEFAULT_POLICY = "stock_only"
 _DEFAULT_PERIOD = "60d"
+_RESEARCH_VWAP_CONDITIONS = {
+    "vwap_reclaim_long",
+    "vwap_reject_short",
+    "vwap_pullback_long",
+    "vwap_pullback_short",
+    "vwap_above_rising",
+    "vwap_below_falling",
+    "vwap_mean_reversion_long",
+    "vwap_mean_reversion_short",
+}
+_VWAP_CONDITION_BY_WAVE_NAME = {
+    "30m_W100_vwap_reclaim_slow": "vwap_reclaim_long",
+    "30m_W100_vwap_reject_slow": "vwap_reject_short",
+    "15m_W50_vwap_pullback_fast": "vwap_pullback_long",
+    "1h_W100_vwap_regime_filter": "vwap_above_rising",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,9 +47,11 @@ class ResearchWaveSpec:
     hypothesis: str
     priority: int
     requires_cache_warmup: bool = False
+    vwap_condition: str | None = None
+    legacy_overlap: bool = False
 
     def env(self, *, universe_file: str, product_policy: str, period: str, store_rejected: bool) -> dict[str, str]:
-        return {
+        env = {
             "TRADEO_INTRADAY_UNIVERSE_FILE": universe_file,
             "TRADEO_INTRADAY_UNIVERSE_POLICY": product_policy,
             "TRADEO_INTRADAY_RESEARCH_REFRESH_MARKET_DATA_ENABLED": "false",
@@ -45,10 +63,17 @@ class ResearchWaveSpec:
             "TRADEO_INTRADAY_RESEARCH_MAX_TOTAL_WINDOWS": str(self.max_total_windows),
             "TRADEO_INTRADAY_RESEARCH_MAX_WINDOWS_PER_SYMBOL": str(self.max_windows_per_symbol),
         }
+        if self.vwap_condition:
+            env["TRADEO_INTRADAY_RESEARCH_VWAP_CONDITION"] = self.vwap_condition
+        return env
 
     @property
     def signatures(self) -> tuple[str, ...]:
-        return tuple(f"{self.timeframe} W{window_size} {_csv(self.forward_bars)}" for window_size in self.window_sizes)
+        suffix = f" {self.vwap_condition}" if self.vwap_condition else ""
+        return tuple(
+            f"{self.timeframe} W{window_size} {_csv(self.forward_bars)}{suffix}"
+            for window_size in self.window_sizes
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -542,7 +567,14 @@ def filter_prohibited_waves(
             None,
         )
         if blocked_signature is None:
-            allowed.append(wave)
+            legacy_overlap = bool(
+                wave.vwap_condition
+                and any(
+                    normalize_wave_signature(signature) in prohibited
+                    for signature in _legacy_wave_signatures(wave)
+                )
+            )
+            allowed.append(replace(wave, legacy_overlap=legacy_overlap) if legacy_overlap else wave)
         else:
             blocked.append(
                 BlockedWave(
@@ -553,6 +585,13 @@ def filter_prohibited_waves(
                 )
             )
     return tuple(allowed), tuple(blocked)
+
+
+def _legacy_wave_signatures(wave: ResearchWaveSpec) -> tuple[str, ...]:
+    return tuple(
+        f"{wave.timeframe} W{window_size} {_csv(wave.forward_bars)}"
+        for window_size in wave.window_sizes
+    )
 
 
 def normalize_wave_signature(value: str) -> str:
@@ -596,9 +635,21 @@ def _waves_from_vwap_summary(summary: dict[str, Any] | None) -> list[ResearchWav
                 hypothesis=str(row.get("reason") or row.get("vwap_condition") or "VWAP-aware search-space proposal."),
                 priority=index,
                 requires_cache_warmup=timeframe != "30m",
+                vwap_condition=_vwap_condition_from_summary_row(row),
+                legacy_overlap=bool(row.get("legacy_overlap")),
             )
         )
     return waves
+
+
+def _vwap_condition_from_summary_row(row: dict[str, Any]) -> str | None:
+    explicit = str(row.get("research_vwap_condition") or "").strip()
+    if explicit:
+        return explicit
+    raw = str(row.get("vwap_condition") or "").strip()
+    if raw in _RESEARCH_VWAP_CONDITIONS:
+        return raw
+    return _VWAP_CONDITION_BY_WAVE_NAME.get(str(row.get("name") or ""))
 
 
 def _vwap_context(summary: dict[str, Any] | None, allowed_waves: Iterable[ResearchWaveSpec]) -> dict[str, Any]:

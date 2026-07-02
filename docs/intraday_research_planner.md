@@ -101,6 +101,12 @@ forward bars. Matching waves are removed from `allowed_waves` and emitted in
 `blocked_waves` with `reason=prohibited_repeat`. Director-visible wave
 recommendations must come from `allowed_waves`, never from blocked repeats.
 
+VWAP-aware waves include the executable condition in the signature, for example
+`30m W100 8,13,21 vwap_reclaim_long`. A legacy prohibited triple such as
+`30m W100 8,13,21` is recorded as `legacy_overlap=true` on the VWAP proposal
+but remains allowed because the explicit VWAP condition changes the sampled
+window universe. Exact prohibited VWAP signatures still block.
+
 ## Current search philosophy
 
 When costs dominate, the planner prioritizes higher timeframe and slower exits. When OOS, drawdown or robustness failures dominate, it proposes larger pattern windows and regime probes.

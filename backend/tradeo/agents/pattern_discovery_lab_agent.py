@@ -418,9 +418,24 @@ class PatternDiscoveryLabAgent:
                             stride=params["stride"],
                             max_windows_per_symbol=params["max_windows_per_symbol"],
                             benchmark_frames=benchmark_frames,
+                            vwap_condition=params["vwap_condition"],
+                            vwap_side_bias=params["vwap_side_bias"],
+                            vwap_max_distance_bps=params["vwap_max_distance_bps"],
+                            vwap_min_slope_bps=params["vwap_min_slope_bps"],
                         )
                     finally:
                         timer.add("sampling_embedding_s", phase_started)
+                    diagnostics = sampler.last_diagnostics
+                    timer.increment(
+                        "windows_vwap_rejected",
+                        int(diagnostics.get("windows_vwap_rejected", 0)),
+                    )
+                    timer.increment(
+                        "windows_vwap_selected",
+                        int(diagnostics.get("windows_vwap_selected", 0)),
+                    )
+                    if bool(diagnostics.get("vwap_condition_applied")):
+                        timer.increment("vwap_condition_applied")
                     remaining = params["max_total_windows"] - len(samples)
                     selected_samples = symbol_samples[:remaining]
                     samples.extend(selected_samples)
@@ -602,6 +617,15 @@ class PatternDiscoveryLabAgent:
                 "candidate_completion": candidate_director_summary,
             }
             summary["research_committee"] = committee_summary
+            summary["vwap_conditioning"] = {
+                "vwap_condition": params["vwap_condition"],
+                "vwap_side_bias": params["vwap_side_bias"],
+                "vwap_max_distance_bps": params["vwap_max_distance_bps"],
+                "vwap_min_slope_bps": params["vwap_min_slope_bps"],
+                "applied": params["vwap_condition"] != "none",
+                "windows_vwap_rejected": timer.counts.get("windows_vwap_rejected", 0),
+                "windows_vwap_selected": timer.counts.get("windows_vwap_selected", 0),
+            }
             if clustering_diagnostics is not None:
                 summary["phase_diagnostics"] = {
                     "clustering_profile": clustering_diagnostics,
@@ -856,6 +880,10 @@ class PatternDiscoveryLabAgent:
             "store_rejected": s.discovery_store_rejected
             if request.store_rejected is None
             else request.store_rejected,
+            "vwap_condition": (request.vwap_condition or "none").strip().lower() or "none",
+            "vwap_side_bias": (request.vwap_side_bias or "").strip().lower() or None,
+            "vwap_max_distance_bps": request.vwap_max_distance_bps,
+            "vwap_min_slope_bps": request.vwap_min_slope_bps,
             "rr_levels": s.discovery_rr_level_list,
             "min_reward_risk": s.discovery_min_reward_risk,
             "candidate_reward_risk": s.discovery_candidate_reward_risk,
