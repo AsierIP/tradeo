@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import asdict
+from datetime import UTC, datetime
 from hashlib import sha256
 import json
 import os
@@ -54,6 +55,12 @@ def main() -> int:
     parser.add_argument("--forward-bars", default=None)
     parser.add_argument("--max-total-windows", type=int, default=None)
     parser.add_argument("--max-windows-per-symbol", type=int, default=None)
+    parser.add_argument(
+        "--stale-lock-minutes",
+        type=float,
+        default=None,
+        help="Allow replacing an execute lock only when it is older than this explicit threshold.",
+    )
     parser.add_argument("--vwap-condition", choices=sorted(VWAP_CONDITION_CHOICES), default=None)
     parser.add_argument("--vwap-side-bias", default=None)
     parser.add_argument("--vwap-max-distance-bps", type=float, default=None)
@@ -114,16 +121,43 @@ def main() -> int:
         }
         status_code = 3
     else:
-        started = time.monotonic()
-        result = worker._run_intraday_research_process_pool(
-            settings,
-            allow_recent_duplicates=bool(args.allow_recent_duplicates),
-            store_rejected=bool(args.store_rejected),
+        lock = _acquire_execute_lock(
+            settings=settings,
+            execution_spec=execution_spec,
+            execution_spec_hash=execution_spec_hash,
+            manifest_path=args.manifest_path,
+            stale_lock_minutes=args.stale_lock_minutes,
         )
-        wave_result["research_result"] = result
-        wave_result["elapsed_wall_s"] = round(time.monotonic() - started, 3)
-        wave_result["decision"] = "executed"
-        status_code = 0 if result.get("status") in {"ok", "degraded"} else 1
+        if lock is None:
+            wave_result["decision"] = "blocked_concurrent_wave"
+            wave_result["concurrency_lock"] = {
+                "path": str(_execute_lock_path(settings)),
+                "active": True,
+            }
+            status_code = 4
+        else:
+            release_lock = False
+            started = time.monotonic()
+            try:
+                result = worker._run_intraday_research_process_pool(
+                    settings,
+                    allow_recent_duplicates=bool(args.allow_recent_duplicates),
+                    store_rejected=bool(args.store_rejected),
+                )
+                release_lock = True
+            except Exception as exc:  # pragma: no cover - defensive manifest preservation
+                result = {
+                    "status": "error",
+                    "error": f"{type(exc).__name__}: {exc}",
+                    "lock_retained": True,
+                }
+            finally:
+                wave_result["elapsed_wall_s"] = round(time.monotonic() - started, 3)
+                if release_lock:
+                    _release_execute_lock(lock)
+            wave_result["research_result"] = result
+            wave_result["decision"] = "executed"
+            status_code = 0 if result.get("status") in {"ok", "degraded"} else 1
 
     manifest_hash = readiness.manifest_hash
     manifest_path = Path(
@@ -304,6 +338,55 @@ def _optional_float(value: Any) -> float | None:
 
 def _stable_spec_hash(spec: dict[str, Any]) -> str:
     return sha256(json.dumps(spec, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+def _execute_lock_path(settings: Any) -> Path:
+    return Path(settings.artifacts_path) / "runtime" / "locks" / "intraday_research_wave.lock"
+
+
+def _acquire_execute_lock(
+    *,
+    settings: Any,
+    execution_spec: dict[str, Any],
+    execution_spec_hash: str,
+    manifest_path: str | None,
+    stale_lock_minutes: float | None,
+) -> Path | None:
+    lock_path = _execute_lock_path(settings)
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "pid": os.getpid(),
+        "started_at": datetime.now(UTC).isoformat(),
+        "execution_spec_hash": execution_spec_hash,
+        "execution_spec": execution_spec,
+        "manifest_path": manifest_path,
+    }
+    flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY
+    try:
+        fd = os.open(lock_path, flags, 0o600)
+    except FileExistsError:
+        if stale_lock_minutes is None or not _lock_is_stale(lock_path, stale_lock_minutes):
+            return None
+        lock_path.unlink(missing_ok=True)
+        try:
+            fd = os.open(lock_path, flags, 0o600)
+        except FileExistsError:
+            return None
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        json.dump(payload, handle, indent=2, sort_keys=True)
+        handle.write("\n")
+    return lock_path
+
+
+def _release_execute_lock(lock_path: Path) -> None:
+    lock_path.unlink(missing_ok=True)
+
+
+def _lock_is_stale(lock_path: Path, stale_lock_minutes: float) -> bool:
+    if stale_lock_minutes <= 0:
+        return False
+    age_seconds = time.time() - lock_path.stat().st_mtime
+    return age_seconds > stale_lock_minutes * 60
 
 
 if __name__ == "__main__":

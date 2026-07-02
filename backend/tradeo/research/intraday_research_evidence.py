@@ -11,7 +11,11 @@ from zoneinfo import ZoneInfo
 
 from tradeo.db.models import DiscoveredPattern, DiscoveredPatternExample, DiscoveryRun
 from tradeo.research.determinism import CONTENT_HASH_ALGO, content_hash
-from tradeo.research.intraday_research_forensics import resolve_run_ids as _resolve_run_ids
+from tradeo.research.intraday_research_forensics import (
+    observed_run_ids_from_payload,
+    resolve_run_ids as _resolve_run_ids,
+    scope_integrity_report,
+)
 
 NOT_AVAILABLE = "not_available"
 SCHEMA_VERSION = "tradeo.intraday_research_evidence.v1"
@@ -153,6 +157,17 @@ def build_evidence_report(
         "summary": summary,
         "safety": safety_manifest(),
     }
+    report["scope_integrity"] = scope_integrity_report(
+        scope_run_ids=exact_run_ids,
+        observed_run_ids=observed_run_ids_from_payload(
+            {
+                "candidate_manifests": candidate_manifests,
+                "samples_by_candidate": samples_by_candidate,
+                "summary": summary,
+            }
+        ),
+    )
+    report["status"] = "OK" if report["scope_integrity"]["passed"] else "scope_violation"
     report["determinism"] = {"algo": CONTENT_HASH_ALGO, "content_hash": content_hash(report)}
     if artifact_root is not None:
         report["artifacts"] = write_evidence_artifacts(report, artifact_root)

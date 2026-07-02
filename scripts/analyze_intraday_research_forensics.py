@@ -11,9 +11,11 @@ sys.path.insert(0, str(ROOT / "backend"))
 
 from tradeo.db.session import SessionLocal  # noqa: E402
 from tradeo.research.intraday_research_forensics import (  # noqa: E402
+    ScopeViolationError,
     build_forensics_report,
     render_markdown,
     resolve_run_ids,
+    validate_scope_integrity,
 )
 
 
@@ -25,6 +27,7 @@ def main() -> int:
     parser.add_argument("--json-out", default="artifacts/runtime/research_forensics/_forensics.json")
     parser.add_argument("--md-out", default="artifacts/runtime/research_forensics/_forensics.md")
     parser.add_argument("--json-only", action="store_true")
+    parser.add_argument("--allow-scope-violation", action="store_true")
     args = parser.parse_args()
 
     run_ids = resolve_run_ids(wave_manifests=args.wave_manifest, run_ids=args.run_ids)
@@ -38,6 +41,13 @@ def main() -> int:
         )
     finally:
         db.close()
+
+    status_code = 0
+    try:
+        validate_scope_integrity(report)
+    except ScopeViolationError:
+        if not args.allow_scope_violation:
+            status_code = 5
 
     markdown = render_markdown(report)
     if args.json_out:
@@ -55,7 +65,7 @@ def main() -> int:
         print(markdown)
         print("JSON:")
         print(json.dumps(report, indent=2, sort_keys=True))
-    return 0
+    return status_code
 
 
 if __name__ == "__main__":

@@ -1,7 +1,16 @@
 from __future__ import annotations
 
-from tradeo.research.intraday_research_forensics import classify_failure, next_hypotheses
 from collections import Counter
+
+import pytest
+
+from tradeo.research.intraday_research_forensics import (
+    ScopeViolationError,
+    classify_failure,
+    next_hypotheses,
+    scope_integrity_report,
+    validate_scope_integrity,
+)
 
 
 def test_classifies_cost_dominated_from_cost_reasons() -> None:
@@ -81,3 +90,14 @@ def test_exact_scope_contract_is_modelled_in_report_shape() -> None:
 
     assert scope["exact_scope"] is True
     assert scope["run_ids"] == [1, 2]
+
+
+def test_forensics_scope_integrity_fails_with_out_of_scope_run_id() -> None:
+    report = {
+        "scope_integrity": scope_integrity_report(scope_run_ids=[1, 2], observed_run_ids=[1, 3])
+    }
+
+    assert report["scope_integrity"]["passed"] is False
+    assert report["scope_integrity"]["out_of_scope_run_ids"] == [3]
+    with pytest.raises(ScopeViolationError):
+        validate_scope_integrity(report)

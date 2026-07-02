@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import sys
+import time
 from types import SimpleNamespace
 
 
@@ -519,3 +520,116 @@ def test_env_overrides_do_not_enable_live_paper_orders_or_gates(monkeypatch) -> 
                 os.environ[key] = value
 
     assert {key: os.environ.get(key) for key in protected_keys} == before
+
+
+def test_wave_runner_blocks_execute_when_lock_active(monkeypatch, tmp_path: Path) -> None:
+    runner = _load_runner_module()
+    settings = _FakeSettings(artifacts_path=tmp_path / "artifacts")
+    lock_path = runner._execute_lock_path(settings)
+    lock_path.parent.mkdir(parents=True)
+    lock_path.write_text("{}", encoding="utf-8")
+    worker_calls: list[bool] = []
+    monkeypatch.setattr(runner, "get_settings", lambda: settings)
+    monkeypatch.setattr(runner, "IntradayResearchReadinessGate", _FakeReadinessGate)
+    monkeypatch.setattr(
+        runner.worker,
+        "_run_intraday_research_process_pool",
+        lambda *args, **kwargs: worker_calls.append(True),
+    )
+
+    code = _run_main(
+        monkeypatch,
+        runner,
+        ["--execute", "--manifest-path", str(tmp_path / "blocked.json"), "--json-only"],
+    )
+
+    manifest = json.loads((tmp_path / "blocked.json").read_text(encoding="utf-8"))
+    assert code == 4
+    assert manifest["decision"] == "blocked_concurrent_wave"
+    assert worker_calls == []
+
+
+def test_wave_runner_does_not_block_dry_run_with_lock_active(monkeypatch, tmp_path: Path) -> None:
+    runner = _load_runner_module()
+    settings = _FakeSettings(artifacts_path=tmp_path / "artifacts")
+    lock_path = runner._execute_lock_path(settings)
+    lock_path.parent.mkdir(parents=True)
+    lock_path.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(runner, "get_settings", lambda: settings)
+    monkeypatch.setattr(runner, "IntradayResearchReadinessGate", _FakeReadinessGate)
+
+    code = _run_main(monkeypatch, runner, ["--manifest-path", str(tmp_path / "dry.json"), "--json-only"])
+
+    manifest = json.loads((tmp_path / "dry.json").read_text(encoding="utf-8"))
+    assert code == 0
+    assert manifest["decision"] == "ready_dry_run"
+    assert lock_path.exists()
+
+
+def test_wave_runner_releases_lock_after_worker_ok(monkeypatch, tmp_path: Path) -> None:
+    runner = _load_runner_module()
+    settings = _FakeSettings(artifacts_path=tmp_path / "artifacts")
+    monkeypatch.setattr(runner, "get_settings", lambda: settings)
+    monkeypatch.setattr(runner, "IntradayResearchReadinessGate", _FakeReadinessGate)
+    monkeypatch.setattr(
+        runner.worker,
+        "_run_intraday_research_process_pool",
+        lambda *args, **kwargs: {"status": "ok"},
+    )
+
+    code = _run_main(monkeypatch, runner, ["--execute", "--manifest-path", str(tmp_path / "ok.json"), "--json-only"])
+
+    assert code == 0
+    assert not runner._execute_lock_path(settings).exists()
+
+
+def test_wave_runner_retains_lock_after_worker_exception(monkeypatch, tmp_path: Path) -> None:
+    runner = _load_runner_module()
+    settings = _FakeSettings(artifacts_path=tmp_path / "artifacts")
+
+    def raise_worker(*args, **kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(runner, "get_settings", lambda: settings)
+    monkeypatch.setattr(runner, "IntradayResearchReadinessGate", _FakeReadinessGate)
+    monkeypatch.setattr(runner.worker, "_run_intraday_research_process_pool", raise_worker)
+
+    code = _run_main(
+        monkeypatch,
+        runner,
+        ["--execute", "--manifest-path", str(tmp_path / "exception.json"), "--json-only"],
+    )
+
+    manifest = json.loads((tmp_path / "exception.json").read_text(encoding="utf-8"))
+    assert code == 1
+    assert manifest["research_result"]["lock_retained"] is True
+    assert runner._execute_lock_path(settings).exists()
+
+
+def test_stale_lock_requires_explicit_stale_lock_minutes(tmp_path: Path) -> None:
+    runner = _load_runner_module()
+    settings = _FakeSettings(artifacts_path=tmp_path / "artifacts")
+    lock_path = runner._execute_lock_path(settings)
+    lock_path.parent.mkdir(parents=True)
+    lock_path.write_text("{}", encoding="utf-8")
+    old = time.time() - 3600
+    os.utime(lock_path, (old, old))
+    spec = {"limit": 1}
+
+    blocked = runner._acquire_execute_lock(
+        settings=settings,
+        execution_spec=spec,
+        execution_spec_hash="hash",
+        manifest_path=None,
+        stale_lock_minutes=None,
+    )
+    acquired = runner._acquire_execute_lock(
+        settings=settings,
+        execution_spec=spec,
+        execution_spec_hash="hash",
+        manifest_path=None,
+        stale_lock_minutes=1,
+    )
+
+    assert blocked is None
+    assert acquired == lock_path
