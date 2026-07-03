@@ -232,6 +232,7 @@ class DiscoveryRunResponse(BaseModel):
     stored_patterns: int
     duration_seconds: float
     report_path: str | None = None
+    actual_resolved_params: dict[str, Any] = Field(default_factory=dict)
     top_patterns: list[dict[str, Any]] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
 

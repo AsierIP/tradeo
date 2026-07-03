@@ -697,6 +697,7 @@ class PatternDiscoveryLabAgent:
                 stored_patterns=len(stored),
                 duration_seconds=duration,
                 report_path=str(report_path) if report_path else None,
+                actual_resolved_params=params,
                 top_patterns=summary["top_patterns"],
                 warnings=warnings[:50],
             )

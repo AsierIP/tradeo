@@ -231,7 +231,25 @@ def build_forensics_report(
             }
         ),
     )
-    report["status"] = "OK" if report["scope_integrity"]["passed"] else "scope_violation"
+    report["execution_contract_integrity"] = execution_contract_integrity_report(
+        requested_execution_spec=manifest_metadata.get("requested_execution_spec"),
+        runs=runs,
+    )
+    report["requested_execution_spec"] = report["execution_contract_integrity"].get(
+        "requested_execution_spec"
+    )
+    if len(runs) == 1:
+        report["actual_resolved_params"] = report["execution_contract_integrity"]["runs"][0].get(
+            "actual_resolved_params"
+        )
+    report["status"] = (
+        "OK"
+        if report["scope_integrity"]["passed"]
+        and report["execution_contract_integrity"]["passed"]
+        else "scope_violation"
+        if not report["scope_integrity"]["passed"]
+        else "execution_contract_violation"
+    )
     report["determinism"] = {
         "algo": CONTENT_HASH_ALGO,
         "content_hash": content_hash(report),
@@ -249,6 +267,37 @@ def scope_integrity_report(*, scope_run_ids: Sequence[int], observed_run_ids: It
         "observed_run_ids": observed,
         "out_of_scope_run_ids": out_of_scope,
         "passed": not out_of_scope,
+    }
+
+
+def execution_contract_integrity_report(
+    *,
+    requested_execution_spec: dict[str, Any] | None,
+    runs: Sequence[DiscoveryRun],
+) -> dict[str, Any]:
+    requested = _normalize_requested_execution_spec(requested_execution_spec or {})
+    run_reports = [
+        _execution_contract_run_report(requested_execution_spec=requested, run=run)
+        for run in runs
+    ]
+    material = [
+        mismatch
+        for report in run_reports
+        for mismatch in report["material_mismatches"]
+    ]
+    non_material = [
+        mismatch
+        for report in run_reports
+        for mismatch in report["non_material_mismatches"]
+    ]
+    return {
+        "passed": not material,
+        "requested_execution_spec": requested or None,
+        "actual_params_source": "PatternDiscoveryLabAgent._resolve_params",
+        "material_mismatches": material,
+        "non_material_mismatches": non_material,
+        "requested_vs_actual_mismatches": [*material, *non_material],
+        "runs": run_reports,
     }
 
 
@@ -500,6 +549,13 @@ def render_markdown(report: dict[str, Any]) -> str:
         lines.extend(["", "## Hypothesis Integrity"])
         for key in ("vwap_condition", "vwap_side_bias", "expected_side", "side_mismatch_count"):
             lines.append(f"- {key}: `{integrity.get(key)}`")
+    contract = report.get("execution_contract_integrity") or {}
+    if contract:
+        lines.extend(["", "## Execution Contract Integrity"])
+        lines.append(f"- passed: `{contract.get('passed')}`")
+        lines.append(f"- actual_params_source: `{contract.get('actual_params_source')}`")
+        lines.append(f"- material_mismatches: `{len(contract.get('material_mismatches') or [])}`")
+        lines.append(f"- non_material_mismatches: `{len(contract.get('non_material_mismatches') or [])}`")
     lines.extend(["", "## Candidate Forensics"])
     for candidate in report["candidate_forensics"]:
         lines.extend(
@@ -661,6 +717,8 @@ def _manifest_metadata(paths: Sequence[str]) -> dict[str, Any]:
         readiness = payload.get("readiness") or {}
         spec = readiness.get("spec") or {}
         execution_spec = payload.get("execution_spec") or {}
+        if execution_spec and not out.get("requested_execution_spec"):
+            out["requested_execution_spec"] = execution_spec
         if spec.get("universe_file") and not out.get("universe_file"):
             out["universe_file"] = spec.get("universe_file")
         if execution_spec.get("universe_file") and not out.get("universe_file"):
@@ -679,6 +737,102 @@ def _manifest_metadata(paths: Sequence[str]) -> dict[str, Any]:
             out[key].extend(str(value) for value in values if str(value))
     for key in ("timeframes", "window_sizes", "forward_bars"):
         out[key] = _dedupe_strings(out[key])
+    return out
+
+
+def _execution_contract_run_report(
+    *,
+    requested_execution_spec: dict[str, Any],
+    run: DiscoveryRun,
+) -> dict[str, Any]:
+    actual = run.params_json if isinstance(run.params_json, dict) else {}
+    material: list[dict[str, Any]] = []
+    non_material: list[dict[str, Any]] = []
+
+    def compare(key: str, requested: Any, actual_value: Any, *, material_key: bool) -> None:
+        if requested is None or actual_value is None:
+            return
+        if requested == actual_value:
+            return
+        mismatch = {
+            "run_id": int(run.id),
+            "field": key,
+            "requested": requested,
+            "actual": actual_value,
+        }
+        if material_key:
+            mismatch["impact"] = "material_hypothesis_scope_mismatch"
+            material.append(mismatch)
+        elif (
+            key == "max_total_windows"
+            and _optional_int(run.windows_sampled) is not None
+            and _optional_int(actual_value) is not None
+            and int(run.windows_sampled or 0) < int(actual_value)
+        ):
+            mismatch["impact"] = "not_material_windows_sampled_below_actual_cap"
+            non_material.append(mismatch)
+        else:
+            mismatch["impact"] = "non_hypothesis_parameter_mismatch"
+            non_material.append(mismatch)
+
+    compare("timeframes", requested_execution_spec.get("timeframes"), [_normalize_optional(actual.get("interval"))], material_key=True)
+    compare("window_sizes", requested_execution_spec.get("window_sizes"), _int_list(actual.get("window_sizes")), material_key=True)
+    compare("forward_bars", requested_execution_spec.get("forward_bars"), _int_list(actual.get("forward_bars")), material_key=True)
+    compare("vwap_condition", requested_execution_spec.get("vwap_condition"), _normalize_optional(actual.get("vwap_condition")) or "none", material_key=True)
+    compare("vwap_side_bias", requested_execution_spec.get("vwap_side_bias"), _normalize_optional(actual.get("vwap_side_bias")), material_key=True)
+    compare("universe_file", requested_execution_spec.get("universe_file"), actual.get("universe_file"), material_key=True)
+    compare("limit", requested_execution_spec.get("limit"), _optional_int(actual.get("limit")), material_key=False)
+    compare("max_total_windows", requested_execution_spec.get("max_total_windows"), _optional_int(actual.get("max_total_windows")), material_key=False)
+    compare("max_windows_per_symbol", requested_execution_spec.get("max_windows_per_symbol"), _optional_int(actual.get("max_windows_per_symbol")), material_key=False)
+    compare("store_rejected", requested_execution_spec.get("store_rejected"), actual.get("store_rejected"), material_key=False)
+
+    return {
+        "run_id": int(run.id),
+        "passed": not material,
+        "actual_resolved_params": actual,
+        "actual_params_source": "PatternDiscoveryLabAgent._resolve_params",
+        "actual_vs_requested": {
+            mismatch["field"]: {
+                "requested": mismatch["requested"],
+                "actual": mismatch["actual"],
+                "impact": mismatch["impact"],
+            }
+            for mismatch in [*material, *non_material]
+        },
+        "material_mismatches": material,
+        "non_material_mismatches": non_material,
+    }
+
+
+def _normalize_requested_execution_spec(spec: dict[str, Any]) -> dict[str, Any]:
+    if not spec:
+        return {}
+    return {
+        "universe_file": str(spec.get("universe_file") or ""),
+        "product_policy": str(spec.get("product_policy") or spec.get("universe_policy") or ""),
+        "period": str(spec.get("period") or ""),
+        "timeframes": [str(item) for item in spec.get("timeframes") or []],
+        "limit": _optional_int(spec.get("limit")),
+        "window_sizes": _int_list(spec.get("window_sizes")),
+        "forward_bars": _int_list(spec.get("forward_bars")),
+        "max_total_windows": _optional_int(spec.get("max_total_windows")),
+        "max_windows_per_symbol": _optional_int(spec.get("max_windows_per_symbol")),
+        "vwap_condition": _normalize_optional(spec.get("vwap_condition")) or "none",
+        "vwap_side_bias": _normalize_optional(spec.get("vwap_side_bias")),
+        "store_rejected": spec.get("store_rejected"),
+    }
+
+
+def _int_list(value: Any) -> list[int]:
+    if value is None:
+        return []
+    if not isinstance(value, list | tuple):
+        value = [value]
+    out: list[int] = []
+    for item in value:
+        parsed = _optional_int(item)
+        if parsed is not None:
+            out.append(parsed)
     return out
 
 

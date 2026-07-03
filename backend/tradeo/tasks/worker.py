@@ -821,6 +821,8 @@ def _run_intraday_research(
                     "accepted_patterns": result.accepted_patterns,
                     "rejected_patterns": result.rejected_patterns,
                     "stored_patterns": result.stored_patterns,
+                    "actual_resolved_params": result.actual_resolved_params,
+                    "actual_params_source": "PatternDiscoveryLabAgent._resolve_params",
                 }
             )
     finally:
