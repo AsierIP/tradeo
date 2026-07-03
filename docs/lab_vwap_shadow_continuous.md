@@ -40,3 +40,23 @@ For T-LAB-002B, run the command manually or through a short-lived scheduler with
 an explicit `--max-iterations`. Do not leave an indefinite process running. A
 future T-LAB-002C can add a cron or systemd timer after Director reviews the
 first continuous smoke artifacts.
+
+## T-LAB-002C Scheduled Wrapper
+
+`scripts/run_lab_shadow_scheduled_once.sh` is a one-shot wrapper for cron or a
+systemd timer. It checks the real runtime flags fail-closed before running,
+sources `/home/vboxuser/tradeo/.env`, and writes artifacts to
+`artifacts/runtime/lab_shadow/` under the code root by default. Override
+`TRADEO_SHADOW_OUTPUT_DIR` if a different writable artifact directory is
+required.
+
+Recommended cron command:
+
+```bash
+flock -n /tmp/tradeo_lab_shadow.lock timeout 120s \
+  /home/vboxuser/tradeo-worktrees/director-control-loop-operability/scripts/run_lab_shadow_scheduled_once.sh \
+  >> /home/vboxuser/tradeo-worktrees/director-control-loop-operability/artifacts/runtime/lab_shadow/scheduled_shadow_cron.log 2>&1
+```
+
+The job must remain one-shot. Keep `TRADEO_SHADOW_MAX_ITERATIONS=1` unless a
+future Director task explicitly authorizes longer bounded runs.
