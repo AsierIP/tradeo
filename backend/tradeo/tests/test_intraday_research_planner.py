@@ -399,6 +399,78 @@ def test_t008r_like_payload_with_top_long_mismatch_blocks_confirmation() -> None
     assert result.candidate_for_confirmation == ()
 
 
+def test_planner_exposes_execution_contract_integrity() -> None:
+    planner_input = planner_input_from_payload(
+        {
+            "selected_count": 117,
+            "top_blockers": {"cost_dominated": 8},
+            "execution_contract_integrity": {
+                "passed": True,
+                "material_mismatches": [],
+                "non_material_mismatches": [
+                    {
+                        "field": "max_total_windows",
+                        "requested": 120000,
+                        "actual": 80000,
+                        "impact": "not_material_windows_sampled_below_actual_cap",
+                    }
+                ],
+            },
+        }
+    )
+
+    result = IntradayResearchPlanner().plan(planner_input)
+
+    assert result.execution_contract_integrity["available"] is True
+    assert result.execution_contract_integrity["passed"] is True
+    assert result.execution_contract_integrity["non_material_mismatches"][0]["field"] == "max_total_windows"
+
+
+def test_planner_blocks_material_execution_contract_mismatch() -> None:
+    planner_input = planner_input_from_payload(
+        {
+            "selected_count": 117,
+            "near_misses": [
+                {
+                    "pattern_key": "candidate",
+                    "side": "long",
+                    "expected_side": "long",
+                    "side_matches_hypothesis": True,
+                    "expectancy_r": 0.5,
+                    "profit_factor": 2.0,
+                    "oos_expectancy_r": 0.2,
+                    "oos_profit_factor": 1.4,
+                    "symbol_count": 8,
+                    "sample_count": 140,
+                    "drawdown_r": 8.0,
+                    "market_replay": "passed",
+                    "cost_x2_result": "passed",
+                    "fdr_result": "passed",
+                    "wrc_result": "passed",
+                    "spa_result": "passed",
+                }
+            ],
+            "execution_contract_integrity": {
+                "passed": False,
+                "material_mismatches": [
+                    {
+                        "field": "vwap_condition",
+                        "requested": "vwap_pullback_long",
+                        "actual": "vwap_reclaim_long",
+                    }
+                ],
+                "non_material_mismatches": [],
+            },
+        }
+    )
+
+    result = IntradayResearchPlanner().plan(planner_input)
+
+    assert result.decision == "change_search_space"
+    assert result.candidate_for_confirmation == ()
+    assert result.execution_contract_integrity["material_mismatches"][0]["field"] == "vwap_condition"
+
+
 def _candidate(**overrides: object) -> CandidateSignal:
     values = {
         "pattern_key": "candidate",

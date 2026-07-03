@@ -13,6 +13,7 @@ from tradeo.research.intraday_research_forensics import (
     ScopeViolationError,
     build_forensics_report,
     classify_failure,
+    execution_contract_integrity_report,
     next_hypotheses,
     scope_integrity_report,
     validate_scope_integrity,
@@ -113,6 +114,91 @@ def test_forensics_scope_integrity_fails_with_out_of_scope_run_id() -> None:
     assert report["scope_integrity"]["out_of_scope_run_ids"] == [3]
     with pytest.raises(ScopeViolationError):
         validate_scope_integrity(report)
+
+
+def test_execution_contract_records_non_material_max_total_windows_clamp() -> None:
+    run = DiscoveryRun(
+        id=6806,
+        status="completed",
+        windows_sampled=9866,
+        params_json={
+            "interval": "15m",
+            "window_sizes": [50],
+            "forward_bars": [2, 3, 4],
+            "max_total_windows": 80000,
+            "max_windows_per_symbol": 1200,
+            "vwap_condition": "vwap_pullback_long",
+            "vwap_side_bias": "long",
+            "universe_file": "/app/artifacts/runtime/universe_intraday_stock_only_v3.csv",
+            "limit": 117,
+            "store_rejected": True,
+        },
+    )
+
+    integrity = execution_contract_integrity_report(
+        requested_execution_spec={
+            "timeframes": ["15m"],
+            "window_sizes": [50],
+            "forward_bars": [2, 3, 4],
+            "max_total_windows": 120000,
+            "max_windows_per_symbol": 1200,
+            "vwap_condition": "vwap_pullback_long",
+            "vwap_side_bias": "long",
+            "universe_file": "/app/artifacts/runtime/universe_intraday_stock_only_v3.csv",
+            "limit": 117,
+            "store_rejected": True,
+        },
+        runs=[run],
+    )
+
+    assert integrity["passed"] is True
+    assert integrity["material_mismatches"] == []
+    assert integrity["non_material_mismatches"][0]["field"] == "max_total_windows"
+    assert integrity["non_material_mismatches"][0]["impact"] == "not_material_windows_sampled_below_actual_cap"
+
+
+def test_execution_contract_flags_material_timeframe_mismatch() -> None:
+    run = DiscoveryRun(
+        id=1,
+        status="completed",
+        windows_sampled=100,
+        params_json={"interval": "30m", "window_sizes": [50], "forward_bars": [2, 3, 4]},
+    )
+
+    integrity = execution_contract_integrity_report(
+        requested_execution_spec={"timeframes": ["15m"], "window_sizes": [50], "forward_bars": [2, 3, 4]},
+        runs=[run],
+    )
+
+    assert integrity["passed"] is False
+    assert integrity["material_mismatches"][0]["field"] == "timeframes"
+
+
+def test_execution_contract_flags_material_vwap_condition_mismatch() -> None:
+    run = DiscoveryRun(
+        id=1,
+        status="completed",
+        windows_sampled=100,
+        params_json={
+            "interval": "15m",
+            "window_sizes": [50],
+            "forward_bars": [2, 3, 4],
+            "vwap_condition": "vwap_reclaim_long",
+        },
+    )
+
+    integrity = execution_contract_integrity_report(
+        requested_execution_spec={
+            "timeframes": ["15m"],
+            "window_sizes": [50],
+            "forward_bars": [2, 3, 4],
+            "vwap_condition": "vwap_pullback_long",
+        },
+        runs=[run],
+    )
+
+    assert integrity["passed"] is False
+    assert integrity["material_mismatches"][0]["field"] == "vwap_condition"
 
 
 def test_forensics_marks_long_candidate_as_side_mismatch_for_vwap_reject_short() -> None:

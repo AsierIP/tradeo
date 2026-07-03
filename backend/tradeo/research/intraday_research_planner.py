@@ -149,6 +149,7 @@ class PlannerInput:
     candidates: tuple[CandidateSignal, ...] = ()
     prohibited_repeats: tuple[str, ...] = ()
     vwap_summary: dict[str, Any] | None = None
+    execution_contract_integrity: dict[str, Any] | None = None
     source: str = "manual"
 
 
@@ -166,6 +167,7 @@ class PlannerOutput:
     blocked_waves: tuple[BlockedWave, ...]
     recommended_limit: int
     limit_source: str
+    execution_contract_integrity: dict[str, Any]
     vwap_context: dict[str, Any]
     actions: tuple[str, ...]
     safety: dict[str, Any]
@@ -193,6 +195,7 @@ class PlannerOutput:
             ],
             "recommended_limit": self.recommended_limit,
             "limit_source": self.limit_source,
+            "execution_contract_integrity": self.execution_contract_integrity,
             "vwap_context": self.vwap_context,
             "actions": list(self.actions),
             "safety": self.safety,
@@ -234,8 +237,28 @@ class IntradayResearchPlanner:
         allowed_waves: tuple[ResearchWaveSpec, ...] = ()
         blocked_waves: tuple[BlockedWave, ...] = ()
         actions: list[str] = []
+        contract = _execution_contract_integrity(data.execution_contract_integrity)
 
-        if not data.readiness_ready or data.readiness_coverage < 0.90:
+        if contract["material_mismatches"]:
+            decision = "change_search_space"
+            confirmation = ()
+            blocked_candidates = tuple(
+                {
+                    "pattern_key": "execution_contract",
+                    "reason": "material_execution_contract_mismatch",
+                    "metric": item.get("field"),
+                    "value": item.get("actual"),
+                    "threshold": item.get("requested"),
+                }
+                for item in contract["material_mismatches"]
+            )
+            confirmation_gate = {
+                "passed": False,
+                "hard_blockers": list(blocked_candidates),
+            }
+            rationale.append("Execution contract has material requested-vs-actual mismatches; do not confirm or shadow-review.")
+            actions.append("Fix the execution spec contract before any new wave authorization.")
+        elif not data.readiness_ready or data.readiness_coverage < 0.90:
             decision = "data_missing"
             rationale.append("Readiness is not DATA_READY; research must not run until cache coverage is restored.")
             actions.append("Run warmup only for the selected universe/timeframe that failed readiness.")
@@ -297,6 +320,7 @@ class IntradayResearchPlanner:
             blocked_waves=tuple(blocked_waves),
             recommended_limit=max(0, int(data.selected_count)),
             limit_source="selected_count_effective",
+            execution_contract_integrity=contract,
             vwap_context=_vwap_context(data.vwap_summary, allowed_waves),
             actions=tuple(actions),
             safety={
@@ -467,6 +491,7 @@ def planner_input_from_payload(
             blockers=dict(summary.get("top_blockers") or {}),
             exact_rejection_reasons=dict(summary.get("top_exact_rejection_reasons") or {}),
             prohibited_repeats=tuple(str(item) for item in payload.get("prohibited_repeats") or ()),
+            execution_contract_integrity=payload.get("execution_contract_integrity"),
             source=source,
         )
 
@@ -500,6 +525,7 @@ def planner_input_from_payload(
         exact_rejection_reasons=dict(exact),
         candidates=candidates,
         prohibited_repeats=tuple(str(item) for item in payload.get("prohibited_repeats") or ()),
+        execution_contract_integrity=payload.get("execution_contract_integrity"),
         source=source,
     )
 
@@ -562,6 +588,13 @@ def render_markdown(plan: PlannerOutput) -> str:
     lines.append(f"- passed: `{plan.confirmation_gate.get('passed')}`")
     lines.append(f"- hard_blockers: `{len(plan.confirmation_gate.get('hard_blockers') or [])}`")
     lines.append("")
+    contract = plan.execution_contract_integrity
+    if contract.get("available"):
+        lines.append("## Execution Contract Integrity")
+        lines.append(f"- passed: `{contract.get('passed')}`")
+        lines.append(f"- material_mismatches: `{len(contract.get('material_mismatches') or [])}`")
+        lines.append(f"- non_material_mismatches: `{len(contract.get('non_material_mismatches') or [])}`")
+        lines.append("")
     if plan.vwap_context.get("available"):
         lines.append("## VWAP context")
         lines.append(f"- symbols_analyzed: `{plan.vwap_context.get('symbols_analyzed')}`")
@@ -596,6 +629,27 @@ def _candidate_from_payload(row: dict[str, Any]) -> CandidateSignal:
         failure_taxonomy=tuple(str(item) for item in row.get("failure_taxonomy") or ()),
         rejection_reasons=tuple(str(item) for item in row.get("rejection_reasons") or row.get("reasons") or ()),
     )
+
+
+def _execution_contract_integrity(payload: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        return {
+            "available": False,
+            "passed": True,
+            "material_mismatches": [],
+            "non_material_mismatches": [],
+            "requested_vs_actual_mismatches": [],
+        }
+    material = list(payload.get("material_mismatches") or [])
+    non_material = list(payload.get("non_material_mismatches") or [])
+    return {
+        **payload,
+        "available": True,
+        "passed": bool(payload.get("passed", not material)),
+        "material_mismatches": material,
+        "non_material_mismatches": non_material,
+        "requested_vs_actual_mismatches": list(payload.get("requested_vs_actual_mismatches") or [*material, *non_material]),
+    }
 
 
 def resolve_selected_count(
