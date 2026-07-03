@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import math
-from typing import Iterable
+from typing import Any, Iterable
 
 import numpy as np
 import pandas as pd
@@ -13,6 +13,14 @@ from tradeo.research.intraday_vwap_conditions import (
     normalize_vwap_condition_spec,
     vwap_condition_passes,
     vwap_features_at,
+)
+from tradeo.research.intraday_context_filters import (
+    context_filter_payload,
+    cost_filter_passes,
+    normalize_context_filter_spec,
+    session_bucket,
+    session_filter_passes,
+    timestamp_timezone_assumption_for_index,
 )
 from tradeo.research.types import ForwardOutcome, WindowSample
 from tradeo.services.technical_indicators import atr, normalize_ohlcv
@@ -29,7 +37,7 @@ class WindowSampler:
     stop_r: float = 1.0
     min_risk_pct: float = 0.015
     atr_multiplier: float = 1.5
-    last_diagnostics: dict[str, int | str] = field(default_factory=dict, init=False)
+    last_diagnostics: dict[str, Any] = field(default_factory=dict, init=False)
 
     def __post_init__(self) -> None:
         self.embedding_engine = self.embedding_engine or PatternEmbeddingEngine()
@@ -48,6 +56,9 @@ class WindowSampler:
         vwap_side_bias: str | None = None,
         vwap_max_distance_bps: float | None = None,
         vwap_min_slope_bps: float | None = None,
+        session_filter: str | None = None,
+        cost_filter: str | None = None,
+        max_execution_cost_r: float | None = None,
     ) -> list[WindowSample]:
         vwap_spec = normalize_vwap_condition_spec(
             condition=vwap_condition,
@@ -55,6 +66,21 @@ class WindowSampler:
             max_distance_bps=vwap_max_distance_bps,
             min_slope_bps=vwap_min_slope_bps,
         )
+        context_spec = normalize_context_filter_spec(
+            session_filter=session_filter,
+            cost_filter=cost_filter,
+            max_execution_cost_r=max_execution_cost_r,
+        )
+        context_filters: dict[str, Any] = {
+            "vwap_condition": vwap_spec.condition,
+            "session_filter": context_spec.session_filter,
+            "cost_filter": context_spec.cost_filter,
+            "max_execution_cost_r": context_spec.max_execution_cost_r,
+            "windows_vwap_rejected": 0,
+            "windows_session_rejected": 0,
+            "windows_cost_rejected": 0,
+            "windows_selected": 0,
+        }
         self.last_diagnostics = {
             "vwap_condition": vwap_spec.condition,
             "vwap_side_bias": vwap_spec.side_bias,
@@ -62,6 +88,10 @@ class WindowSampler:
             "vwap_condition_applied": int(vwap_spec.enabled),
             "windows_vwap_rejected": 0,
             "windows_vwap_selected": 0,
+            "windows_session_rejected": 0,
+            "windows_cost_rejected": 0,
+            "windows_selected": 0,
+            "context_filters": context_filters,
         }
         window_sizes = sorted({int(size) for size in window_sizes if int(size) >= 10})
         if not window_sizes:
@@ -89,6 +119,10 @@ class WindowSampler:
         atr_raw_values = atr_raw_series.to_numpy(dtype=float, copy=False)
         atr_values = atr_series.to_numpy(dtype=float, copy=False)
         index_values = df.index
+        timezone_assumption = timestamp_timezone_assumption_for_index(index_values)
+        if timezone_assumption and context_spec.session_enabled:
+            context_filters["timestamp_timezone_assumption"] = timezone_assumption
+            self.last_diagnostics["timestamp_timezone_assumption"] = timezone_assumption
         dollar_volume = close_values * volume_values
         bar_ranges = high_values - low_values
         true_ranges = self._true_range_values(high_values, low_values, close_values)
@@ -150,7 +184,23 @@ class WindowSampler:
                     self.last_diagnostics["windows_vwap_rejected"] = (
                         int(self.last_diagnostics["windows_vwap_rejected"]) + 1
                     )
+                    context_filters["windows_vwap_rejected"] = (
+                        int(context_filters["windows_vwap_rejected"]) + 1
+                    )
                     continue
+                end_idx = index_values[end_pos]
+                if not session_filter_passes(end_idx, context_spec):
+                    self.last_diagnostics["windows_session_rejected"] = (
+                        int(self.last_diagnostics["windows_session_rejected"]) + 1
+                    )
+                    context_filters["windows_session_rejected"] = (
+                        int(context_filters["windows_session_rejected"]) + 1
+                    )
+                    continue
+                if vwap_frame is not None:
+                    self.last_diagnostics["windows_vwap_selected"] = (
+                        int(self.last_diagnostics["windows_vwap_selected"]) + 1
+                    )
                 start_pos = end_pos - window_size + 1
                 future_start = end_pos + 1
                 future_stop = min(len(df), future_start + max_forward)
@@ -176,6 +226,14 @@ class WindowSampler:
                     avg_range=float(avg_range_values[end_pos]),
                 )
                 execution_cost_r = float(execution_metrics["execution_cost_r"])
+                if not cost_filter_passes(execution_cost_r, context_spec):
+                    self.last_diagnostics["windows_cost_rejected"] = (
+                        int(self.last_diagnostics["windows_cost_rejected"]) + 1
+                    )
+                    context_filters["windows_cost_rejected"] = (
+                        int(context_filters["windows_cost_rejected"]) + 1
+                    )
+                    continue
                 outcome = self._forward_outcome_from_arrays(
                     entry,
                     risk_proxy,
@@ -219,9 +277,14 @@ class WindowSampler:
                 if vwap_frame is not None:
                     features.update(vwap_features_at(vwap_frame, end_pos, vwap_spec))
                 features.update({f"execution_{k}": float(v) for k, v in execution_metrics.items()})
+                features.update(context_filter_payload(context_spec))
+                features["session_bucket"] = session_bucket(end_idx)
+                features["session_filter_passed"] = True
+                features["cost_filter_passed"] = True
+                if timezone_assumption:
+                    features["timestamp_timezone_assumption"] = timezone_assumption
                 features["sample_window_size_quota"] = int(window_quota)
                 start_idx = index_values[start_pos]
-                end_idx = index_values[end_pos]
                 year = self._year(end_idx)
                 samples.append(
                     WindowSample(
@@ -237,10 +300,10 @@ class WindowSampler:
                         features=features,
                     )
                 )
-                if vwap_frame is not None:
-                    self.last_diagnostics["windows_vwap_selected"] = (
-                        int(self.last_diagnostics["windows_vwap_selected"]) + 1
-                    )
+                self.last_diagnostics["windows_selected"] = (
+                    int(self.last_diagnostics["windows_selected"]) + 1
+                )
+                context_filters["windows_selected"] = int(context_filters["windows_selected"]) + 1
                 window_count += 1
                 if len(samples) >= max_windows_per_symbol or window_count >= window_quota:
                     break

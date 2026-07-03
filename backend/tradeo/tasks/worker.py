@@ -28,6 +28,7 @@ from tradeo.ops.false_match_metrics import (
     collect_false_match_drift_metrics,
     persist_false_match_drift_report,
 )
+from tradeo.research.intraday_context_filters import normalize_context_filter_spec
 from tradeo.research.autonomous_research_director import ResearchDirector
 from tradeo.research.novel_pattern_matcher import NovelPatternMatcher
 from tradeo.schemas import DiscoveryRunRequest, ScanRequest
@@ -1038,6 +1039,7 @@ def _intraday_research_order_process_jobs(
 
 
 def _intraday_research_common_expected_params(settings: Settings) -> dict[str, Any]:
+    context_spec = _intraday_research_context_filter_spec()
     return {
         "cadence": "intraday",
         "limit": settings.intraday_research_limit_default,
@@ -1053,6 +1055,9 @@ def _intraday_research_common_expected_params(settings: Settings) -> dict[str, A
         "vwap_side_bias": _optional_env("TRADEO_INTRADAY_RESEARCH_VWAP_SIDE_BIAS"),
         "vwap_max_distance_bps": _optional_float_env("TRADEO_INTRADAY_RESEARCH_VWAP_MAX_DISTANCE_BPS"),
         "vwap_min_slope_bps": _optional_float_env("TRADEO_INTRADAY_RESEARCH_VWAP_MIN_SLOPE_BPS"),
+        "session_filter": context_spec.session_filter,
+        "cost_filter": context_spec.cost_filter,
+        "max_execution_cost_r": context_spec.max_execution_cost_r,
         "min_samples": settings.intraday_research_min_samples,
         "min_effective_samples": settings.intraday_research_min_effective_samples,
         "min_symbols": settings.intraday_research_min_symbols,
@@ -1196,6 +1201,7 @@ def _intraday_research_request(
     symbols: list[str] | None = None,
     store_rejected: bool | None = None,
 ) -> DiscoveryRunRequest:
+    context_spec = _intraday_research_context_filter_spec()
     return DiscoveryRunRequest(
         limit=settings.intraday_research_limit_default,
         symbols=symbols,
@@ -1213,6 +1219,9 @@ def _intraday_research_request(
         vwap_side_bias=_optional_env("TRADEO_INTRADAY_RESEARCH_VWAP_SIDE_BIAS"),
         vwap_max_distance_bps=_optional_float_env("TRADEO_INTRADAY_RESEARCH_VWAP_MAX_DISTANCE_BPS"),
         vwap_min_slope_bps=_optional_float_env("TRADEO_INTRADAY_RESEARCH_VWAP_MIN_SLOPE_BPS"),
+        session_filter=context_spec.session_filter,
+        cost_filter=context_spec.cost_filter,
+        max_execution_cost_r=context_spec.max_execution_cost_r,
     )
 
 
@@ -1236,6 +1245,9 @@ def _intraday_research_expected_params(
         "vwap_side_bias": request.vwap_side_bias,
         "vwap_max_distance_bps": request.vwap_max_distance_bps,
         "vwap_min_slope_bps": request.vwap_min_slope_bps,
+        "session_filter": request.session_filter or "none",
+        "cost_filter": request.cost_filter or "none",
+        "max_execution_cost_r": request.max_execution_cost_r,
         "min_samples": settings.intraday_research_min_samples,
         "min_effective_samples": settings.intraday_research_min_effective_samples,
         "min_symbols": settings.intraday_research_min_symbols,
@@ -1251,6 +1263,14 @@ def _discovery_params_match(stored: dict[str, Any], expected: dict[str, Any]) ->
 
 def _intraday_research_vwap_condition() -> str:
     return (os.environ.get("TRADEO_INTRADAY_RESEARCH_VWAP_CONDITION") or "none").strip().lower() or "none"
+
+
+def _intraday_research_context_filter_spec():
+    return normalize_context_filter_spec(
+        session_filter=os.environ.get("TRADEO_INTRADAY_RESEARCH_SESSION_FILTER"),
+        cost_filter=os.environ.get("TRADEO_INTRADAY_RESEARCH_COST_FILTER"),
+        max_execution_cost_r=os.environ.get("TRADEO_INTRADAY_RESEARCH_MAX_EXECUTION_COST_R"),
+    )
 
 
 def _optional_env(key: str) -> str | None:

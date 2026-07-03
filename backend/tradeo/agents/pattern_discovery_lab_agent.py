@@ -25,6 +25,7 @@ from tradeo.research.autonomous_research_director import (
 )
 from tradeo.research.determinism import CONTENT_HASH_ALGO, DEFAULT_VOLATILE_KEYS, content_hash
 from tradeo.research.global_experiment_registry import GlobalExperimentRegistry
+from tradeo.research.intraday_context_filters import normalize_context_filter_spec
 from tradeo.research.novel_pattern_registry import NovelPatternRegistry
 from tradeo.research.pattern_committee import PatternResearchCommittee
 from tradeo.research.quant_validation import (
@@ -423,6 +424,9 @@ class PatternDiscoveryLabAgent:
                             vwap_side_bias=params["vwap_side_bias"],
                             vwap_max_distance_bps=params["vwap_max_distance_bps"],
                             vwap_min_slope_bps=params["vwap_min_slope_bps"],
+                            session_filter=params["session_filter"],
+                            cost_filter=params["cost_filter"],
+                            max_execution_cost_r=params["max_execution_cost_r"],
                         )
                     finally:
                         timer.add("sampling_embedding_s", phase_started)
@@ -437,6 +441,18 @@ class PatternDiscoveryLabAgent:
                     )
                     if bool(diagnostics.get("vwap_condition_applied")):
                         timer.increment("vwap_condition_applied")
+                    timer.increment(
+                        "windows_session_rejected",
+                        int(diagnostics.get("windows_session_rejected", 0)),
+                    )
+                    timer.increment(
+                        "windows_cost_rejected",
+                        int(diagnostics.get("windows_cost_rejected", 0)),
+                    )
+                    timer.increment(
+                        "windows_selected",
+                        int(diagnostics.get("windows_selected", 0)),
+                    )
                     remaining = params["max_total_windows"] - len(samples)
                     selected_samples = symbol_samples[:remaining]
                     samples.extend(selected_samples)
@@ -627,6 +643,16 @@ class PatternDiscoveryLabAgent:
                 "applied": params["vwap_condition"] != "none",
                 "windows_vwap_rejected": timer.counts.get("windows_vwap_rejected", 0),
                 "windows_vwap_selected": timer.counts.get("windows_vwap_selected", 0),
+            }
+            summary["context_filtering"] = {
+                "vwap_condition": params["vwap_condition"],
+                "session_filter": params["session_filter"],
+                "cost_filter": params["cost_filter"],
+                "max_execution_cost_r": params["max_execution_cost_r"],
+                "windows_vwap_rejected": timer.counts.get("windows_vwap_rejected", 0),
+                "windows_session_rejected": timer.counts.get("windows_session_rejected", 0),
+                "windows_cost_rejected": timer.counts.get("windows_cost_rejected", 0),
+                "windows_selected": timer.counts.get("windows_selected", 0),
             }
             if clustering_diagnostics is not None:
                 summary["phase_diagnostics"] = {
@@ -856,6 +882,11 @@ class PatternDiscoveryLabAgent:
         max_total_windows = min(request.max_total_windows or s.discovery_max_total_windows, 80_000)
         universe_scope = universe_scope_for_interval(request.interval or s.discovery_interval)
         is_intraday = universe_scope != "daily_midcap"
+        context_spec = normalize_context_filter_spec(
+            session_filter=request.session_filter,
+            cost_filter=request.cost_filter,
+            max_execution_cost_r=request.max_execution_cost_r,
+        )
         return {
             "limit": request.limit or s.discovery_limit_default,
             "period": request.period or s.discovery_period,
@@ -888,6 +919,9 @@ class PatternDiscoveryLabAgent:
             "vwap_expected_side": expected_side_from_vwap_condition(request.vwap_condition, request.vwap_side_bias),
             "vwap_max_distance_bps": request.vwap_max_distance_bps,
             "vwap_min_slope_bps": request.vwap_min_slope_bps,
+            "session_filter": context_spec.session_filter,
+            "cost_filter": context_spec.cost_filter,
+            "max_execution_cost_r": context_spec.max_execution_cost_r,
             "rr_levels": s.discovery_rr_level_list,
             "min_reward_risk": s.discovery_min_reward_risk,
             "candidate_reward_risk": s.discovery_candidate_reward_risk,

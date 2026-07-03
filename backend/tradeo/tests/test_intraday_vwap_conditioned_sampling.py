@@ -30,6 +30,26 @@ def test_vwap_condition_none_preserves_sample_count() -> None:
     assert len(explicit_none) == len(baseline)
 
 
+def test_context_filter_none_preserves_sample_count() -> None:
+    bars = _bars()
+    sampler = WindowSampler()
+
+    baseline = sampler.sample("AAA", bars, "30m", [10], [1], stride=1, max_windows_per_symbol=20)
+    explicit_none = sampler.sample(
+        "AAA",
+        bars,
+        "30m",
+        [10],
+        [1],
+        stride=1,
+        max_windows_per_symbol=20,
+        session_filter="none",
+        cost_filter="none",
+    )
+
+    assert len(explicit_none) == len(baseline)
+
+
 def test_vwap_reclaim_long_filters_to_compatible_events() -> None:
     samples = WindowSampler().sample(
         "AAA",
@@ -121,6 +141,111 @@ def test_vwap_condition_uses_no_future_bars() -> None:
     assert base[0].features["vwap_distance_bps"] == changed[0].features["vwap_distance_bps"]
 
 
+def test_session_filter_mid_accepts_only_mid_session_samples() -> None:
+    sampler = WindowSampler()
+
+    samples = sampler.sample(
+        "AAA",
+        _bars(),
+        "30m",
+        [10],
+        [1],
+        stride=1,
+        max_windows_per_symbol=20,
+        session_filter="mid",
+    )
+
+    assert samples
+    assert all(sample.features["session_bucket"] == "mid" for sample in samples)
+    assert sampler.last_diagnostics["windows_session_rejected"] > 0
+
+
+def test_session_filter_no_close_rejects_close_samples() -> None:
+    samples = WindowSampler().sample(
+        "AAA",
+        _bars(),
+        "30m",
+        [10],
+        [1],
+        stride=1,
+        max_windows_per_symbol=20,
+        session_filter="no_close",
+    )
+
+    assert samples
+    assert all(sample.features["session_bucket"] != "close" for sample in samples)
+
+
+def test_low_cost_filter_accepts_and_rejects_by_execution_cost(monkeypatch) -> None:
+    monkeypatch.setattr(
+        WindowSampler,
+        "_execution_cost_metrics_from_values",
+        staticmethod(lambda **_: {"execution_cost_r": 0.14}),
+    )
+    accepted = WindowSampler().sample(
+        "AAA",
+        _bars(),
+        "30m",
+        [10],
+        [1],
+        stride=1,
+        max_windows_per_symbol=20,
+        cost_filter="low_cost",
+        max_execution_cost_r=0.15,
+    )
+
+    monkeypatch.setattr(
+        WindowSampler,
+        "_execution_cost_metrics_from_values",
+        staticmethod(lambda **_: {"execution_cost_r": 0.16}),
+    )
+    rejected_sampler = WindowSampler()
+    rejected = rejected_sampler.sample(
+        "AAA",
+        _bars(),
+        "30m",
+        [10],
+        [1],
+        stride=1,
+        max_windows_per_symbol=20,
+        cost_filter="low_cost",
+        max_execution_cost_r=0.15,
+    )
+
+    assert accepted
+    assert rejected == []
+    assert rejected_sampler.last_diagnostics["windows_cost_rejected"] > 0
+
+
+def test_vwap_session_and_cost_filters_apply_before_sample_creation(monkeypatch) -> None:
+    monkeypatch.setattr(
+        WindowSampler,
+        "_execution_cost_metrics_from_values",
+        staticmethod(lambda **_: {"execution_cost_r": 0.14}),
+    )
+    sampler = WindowSampler()
+
+    samples = sampler.sample(
+        "AAA",
+        _bars(),
+        "30m",
+        [10],
+        [1],
+        stride=1,
+        max_windows_per_symbol=20,
+        vwap_condition="vwap_above_rising",
+        session_filter="mid",
+        cost_filter="low_cost",
+        max_execution_cost_r=0.15,
+    )
+
+    assert samples
+    assert all(sample.features["vwap_condition_passed"] is True for sample in samples)
+    assert all(sample.features["session_bucket"] == "mid" for sample in samples)
+    assert all(sample.features["execution_execution_cost_r"] <= 0.15 for sample in samples)
+    assert sampler.last_diagnostics["context_filters"]["windows_selected"] == len(samples)
+
+
 def test_discovery_run_request_accepts_vwap_fields() -> None:
     request = DiscoveryRunRequest(
         vwap_condition="vwap_reclaim_long",
@@ -133,6 +258,18 @@ def test_discovery_run_request_accepts_vwap_fields() -> None:
     assert request.vwap_side_bias == "long"
     assert request.vwap_max_distance_bps == 150.0
     assert request.vwap_min_slope_bps == 0.0
+
+
+def test_discovery_run_request_accepts_context_filter_fields() -> None:
+    request = DiscoveryRunRequest(
+        session_filter="mid",
+        cost_filter="low_cost",
+        max_execution_cost_r=0.15,
+    )
+
+    assert request.session_filter == "mid"
+    assert request.cost_filter == "low_cost"
+    assert request.max_execution_cost_r == 0.15
 
 
 def test_agent_resolved_params_include_vwap_contract() -> None:
@@ -153,6 +290,20 @@ def test_agent_resolved_params_include_vwap_contract() -> None:
     assert params["vwap_min_slope_bps"] == 0.0
 
 
+def test_agent_resolved_params_include_context_filter_contract() -> None:
+    agent = PatternDiscoveryLabAgent(provider=object(), settings=Settings())
+    request = DiscoveryRunRequest(
+        session_filter="mid_session",
+        cost_filter="low_cost",
+    )
+
+    params = agent._resolve_params(request)
+
+    assert params["session_filter"] == "mid"
+    assert params["cost_filter"] == "low_cost"
+    assert params["max_execution_cost_r"] == 0.15
+
+
 def test_worker_expected_params_include_vwap_contract() -> None:
     settings = Settings()
     request = DiscoveryRunRequest(
@@ -168,6 +319,21 @@ def test_worker_expected_params_include_vwap_contract() -> None:
     assert expected["vwap_side_bias"] == "short"
     assert expected["vwap_max_distance_bps"] == 250.0
     assert expected["vwap_min_slope_bps"] == 0.0
+
+
+def test_worker_expected_params_include_context_filter_contract() -> None:
+    settings = Settings()
+    request = DiscoveryRunRequest(
+        session_filter="mid",
+        cost_filter="low_cost",
+        max_execution_cost_r=0.15,
+    )
+
+    expected = worker._intraday_research_expected_params(settings, request)
+
+    assert expected["session_filter"] == "mid"
+    assert expected["cost_filter"] == "low_cost"
+    assert expected["max_execution_cost_r"] == 0.15
 
 
 def test_vwap_signature_is_distinct_but_tracks_legacy_overlap() -> None:
@@ -188,6 +354,31 @@ def test_vwap_signature_is_distinct_but_tracks_legacy_overlap() -> None:
     assert blocked == ()
     assert allowed[0].signatures == ("30m W100 8,13,21 vwap_reclaim_long",)
     assert allowed[0].legacy_overlap is True
+
+
+def test_context_filter_signature_distinguishes_from_unfiltered_repeat() -> None:
+    wave = ResearchWaveSpec(
+        name="30m_W50_cost_regime",
+        timeframe="30m",
+        window_sizes=(50,),
+        forward_bars=(4, 8, 13),
+        max_total_windows=120000,
+        max_windows_per_symbol=1200,
+        hypothesis="cost/regime filtered VWAP hypothesis",
+        priority=1,
+        vwap_condition="vwap_above_rising",
+        session_filter="mid",
+        cost_filter="low_cost",
+        max_execution_cost_r=0.15,
+    )
+
+    allowed, blocked = filter_prohibited_waves((wave,), ("30m W50 4,8,13 vwap_above_rising",))
+
+    assert blocked == ()
+    assert allowed[0].signatures == (
+        "30m W50 4,8,13 vwap_above_rising session_mid low_cost_0.15",
+    )
+    assert allowed[0].legacy_overlap is False
 
 
 def _bars() -> pd.DataFrame:

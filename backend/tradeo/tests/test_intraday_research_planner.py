@@ -171,6 +171,52 @@ def test_planner_uses_vwap_summary_json_when_changing_search_space() -> None:
     assert result.vwap_context["symbols_analyzed"] == 117
 
 
+def test_planner_signature_includes_session_and_cost_filters() -> None:
+    payload = _vwap_summary()
+    payload["recommended_next_waves"] = [
+        {
+            "name": "30m_W50_vwap_above_rising_mid_low_cost",
+            "timeframe": "30m",
+            "window_size": 50,
+            "forward_bars": [4, 8, 13],
+            "research_vwap_condition": "vwap_above_rising",
+            "session_filter": "mid",
+            "cost_filter": "low_cost",
+            "max_execution_cost_r": 0.15,
+        }
+    ]
+
+    result = IntradayResearchPlanner().plan(
+        PlannerInput(
+            selected_count=117,
+            blockers={"oos_unstable": 1},
+            vwap_summary=payload,
+        )
+    )
+
+    assert result.allowed_waves[0].signatures == (
+        "30m W50 4,8,13 vwap_above_rising session_mid low_cost_0.15",
+    )
+
+
+def test_planner_exposes_context_filtering_in_output_and_markdown() -> None:
+    planner_input = planner_input_from_payload(
+        {
+            "selected_count": 117,
+            "top_blockers": {"oos_unstable": 1},
+            "context_filtering": {
+                "session_filter": "mid",
+                "cost_filter": "low_cost",
+                "max_execution_cost_r": 0.15,
+            },
+        }
+    )
+    result = IntradayResearchPlanner().plan(planner_input)
+
+    assert result.to_dict()["context_filtering"]["session_filter"] == "mid"
+    assert "session_filter: `mid`" in render_markdown(result)
+
+
 def test_planner_keeps_previous_behavior_without_vwap_summary_json() -> None:
     result = IntradayResearchPlanner().plan(PlannerInput(selected_count=117, blockers={"oos_unstable": 1}))
 

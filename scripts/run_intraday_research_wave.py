@@ -18,12 +18,17 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 from tradeo.core.config import get_settings  # noqa: E402
+from tradeo.research.intraday_context_filters import (  # noqa: E402
+    COST_FILTER_CHOICES,
+    SESSION_FILTER_CHOICES,
+    normalize_context_filter_spec,
+)
+from tradeo.research.intraday_vwap_conditions import VWAP_CONDITION_CHOICES  # noqa: E402
 from tradeo.services.data_provider import UNIVERSE_POLICY_CHOICES, normalize_universe_policy  # noqa: E402
 from tradeo.services.intraday_research_readiness import (  # noqa: E402
     IntradayResearchReadinessGate,
     IntradayResearchWaveSpec,
 )
-from tradeo.research.intraday_vwap_conditions import VWAP_CONDITION_CHOICES  # noqa: E402
 from tradeo.tasks import worker  # noqa: E402
 
 
@@ -65,6 +70,9 @@ def main() -> int:
     parser.add_argument("--vwap-side-bias", default=None)
     parser.add_argument("--vwap-max-distance-bps", type=float, default=None)
     parser.add_argument("--vwap-min-slope-bps", type=float, default=None)
+    parser.add_argument("--session-filter", choices=sorted(SESSION_FILTER_CHOICES), default=None)
+    parser.add_argument("--cost-filter", choices=sorted(COST_FILTER_CHOICES), default=None)
+    parser.add_argument("--max-execution-cost-r", type=float, default=None)
     parser.add_argument("--min-cache-coverage", type=float, default=0.90)
     parser.add_argument("--min-rows-per-symbol", type=int, default=1)
     parser.add_argument("--manifest-path", default=None)
@@ -244,6 +252,15 @@ def _apply_settings_env_overrides(args: argparse.Namespace) -> None:
     if args.vwap_min_slope_bps is not None:
         os.environ["TRADEO_INTRADAY_RESEARCH_VWAP_MIN_SLOPE_BPS"] = str(args.vwap_min_slope_bps)
         changed = True
+    if getattr(args, "session_filter", None) is not None:
+        os.environ["TRADEO_INTRADAY_RESEARCH_SESSION_FILTER"] = str(args.session_filter)
+        changed = True
+    if getattr(args, "cost_filter", None) is not None:
+        os.environ["TRADEO_INTRADAY_RESEARCH_COST_FILTER"] = str(args.cost_filter)
+        changed = True
+    if getattr(args, "max_execution_cost_r", None) is not None:
+        os.environ["TRADEO_INTRADAY_RESEARCH_MAX_EXECUTION_COST_R"] = str(args.max_execution_cost_r)
+        changed = True
     if changed:
         _clear_settings_cache()
 
@@ -270,6 +287,7 @@ def _execution_spec_from_wave_spec(
             "max_total_windows": raw["max_total_windows"],
             "max_windows_per_symbol": raw["max_windows_per_symbol"],
             **_vwap_execution_spec_from_env(),
+            **_context_filter_execution_spec_from_env(),
             "store_rejected": store_rejected,
         }
     )
@@ -290,6 +308,7 @@ def _execution_spec_from_settings(settings: Any, *, store_rejected: bool) -> dic
             "max_total_windows": int(settings.intraday_research_max_total_windows),
             "max_windows_per_symbol": int(settings.intraday_research_max_windows_per_symbol),
             **_vwap_execution_spec_from_env(),
+            **_context_filter_execution_spec_from_env(),
             "store_rejected": store_rejected,
         }
     )
@@ -310,6 +329,9 @@ def _normalize_execution_spec(spec: dict[str, Any]) -> dict[str, Any]:
         "vwap_side_bias": _optional_str(spec.get("vwap_side_bias")),
         "vwap_max_distance_bps": _optional_float(spec.get("vwap_max_distance_bps")),
         "vwap_min_slope_bps": _optional_float(spec.get("vwap_min_slope_bps")),
+        "session_filter": str(spec.get("session_filter") or "none").strip().lower() or "none",
+        "cost_filter": str(spec.get("cost_filter") or "none").strip().lower() or "none",
+        "max_execution_cost_r": _optional_float(spec.get("max_execution_cost_r")),
         "store_rejected": bool(spec["store_rejected"]),
     }
 
@@ -320,6 +342,19 @@ def _vwap_execution_spec_from_env() -> dict[str, Any]:
         "vwap_side_bias": os.environ.get("TRADEO_INTRADAY_RESEARCH_VWAP_SIDE_BIAS"),
         "vwap_max_distance_bps": os.environ.get("TRADEO_INTRADAY_RESEARCH_VWAP_MAX_DISTANCE_BPS"),
         "vwap_min_slope_bps": os.environ.get("TRADEO_INTRADAY_RESEARCH_VWAP_MIN_SLOPE_BPS"),
+    }
+
+
+def _context_filter_execution_spec_from_env() -> dict[str, Any]:
+    spec = normalize_context_filter_spec(
+        session_filter=os.environ.get("TRADEO_INTRADAY_RESEARCH_SESSION_FILTER"),
+        cost_filter=os.environ.get("TRADEO_INTRADAY_RESEARCH_COST_FILTER"),
+        max_execution_cost_r=os.environ.get("TRADEO_INTRADAY_RESEARCH_MAX_EXECUTION_COST_R"),
+    )
+    return {
+        "session_filter": spec.session_filter,
+        "cost_filter": spec.cost_filter,
+        "max_execution_cost_r": spec.max_execution_cost_r,
     }
 
 
