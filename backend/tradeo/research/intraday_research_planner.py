@@ -100,6 +100,12 @@ class CandidateSignal:
     symbol_count: int = 0
     sample_count: int = 0
     max_drawdown_r: float = 0.0
+    market_replay: str | None = None
+    cost_x2_result: str | None = None
+    fdr_result: str | None = None
+    wrc_result: str | None = None
+    spa_result: str | None = None
+    failure_taxonomy: tuple[str, ...] = ()
     rejection_reasons: tuple[str, ...] = ()
 
     @property
@@ -154,6 +160,7 @@ class PlannerOutput:
     candidate_for_confirmation: tuple[CandidateSignal, ...]
     candidate_for_shadow_review: tuple[CandidateSignal, ...]
     blocked_candidates: tuple[dict[str, Any], ...]
+    confirmation_gate: dict[str, Any]
     waves: tuple[ResearchWaveSpec, ...]
     allowed_waves: tuple[ResearchWaveSpec, ...]
     blocked_waves: tuple[BlockedWave, ...]
@@ -172,6 +179,7 @@ class PlannerOutput:
             "candidate_for_confirmation": [asdict(candidate) for candidate in self.candidate_for_confirmation],
             "candidate_for_shadow_review": [asdict(candidate) for candidate in self.candidate_for_shadow_review],
             "blocked_candidates": list(self.blocked_candidates),
+            "confirmation_gate": self.confirmation_gate,
             "waves": [asdict(wave) for wave in self.waves],
             "allowed_waves": [asdict(wave) for wave in self.allowed_waves],
             "blocked_waves": [
@@ -208,20 +216,23 @@ class IntradayResearchPlanner:
                 reverse=True,
             )[:5]
         )
-        blocked_candidates = tuple(
-            {
-                **asdict(candidate),
-                "reason": "side_mismatch",
-            }
+        hard_blockers = tuple(
+            blocker
             for candidate in promising
-            if candidate.side_matches_hypothesis is False
+            for blocker in _confirmation_hard_blockers(candidate)
         )
-        confirmation = tuple(
-            candidate for candidate in promising if candidate.side_matches_hypothesis is not False
-        )
+        blocked_keys = {str(blocker["pattern_key"]) for blocker in hard_blockers}
+        blocked_candidates = hard_blockers
+        confirmation = tuple(candidate for candidate in promising if candidate.pattern_key not in blocked_keys)
+        confirmation_gate = {
+            "passed": bool(confirmation) and not hard_blockers,
+            "hard_blockers": list(hard_blockers),
+        }
         decision: PlannerDecision
         rationale: list[str] = []
         waves: list[ResearchWaveSpec] = []
+        allowed_waves: tuple[ResearchWaveSpec, ...] = ()
+        blocked_waves: tuple[BlockedWave, ...] = ()
         actions: list[str] = []
 
         if not data.readiness_ready or data.readiness_coverage < 0.90:
@@ -237,11 +248,20 @@ class IntradayResearchPlanner:
             rationale.append("At least one candidate meets the confirmation preconditions; do not paper yet, isolate and confirm.")
             actions.append("Run a narrow confirmation wave on the candidate family with identical gates and exact-scope diagnosis.")
         elif blocked_candidates:
-            decision = "hypothesis_side_mismatch_blocked"
-            rationale.append(
-                "Promising candidates were blocked because their side contradicts the VWAP side-bias hypothesis."
-            )
-            actions.append("Do not confirm the mismatched candidate; change the search space or rerun a side-compatible hypothesis.")
+            if all(item.get("reason") == "side_mismatch" for item in blocked_candidates):
+                decision = "hypothesis_side_mismatch_blocked"
+                rationale.append(
+                    "Promising candidates were blocked because their side contradicts the VWAP side-bias hypothesis."
+                )
+                actions.append(
+                    "Do not confirm the mismatched candidate; change the search space or rerun a side-compatible hypothesis."
+                )
+            else:
+                decision = "change_search_space"
+                rationale.append("Promising candidates were rejected by hard confirmation blockers.")
+                rationale.extend(self._rationale_from_blockers(data))
+                actions.append("Do not confirm or shadow-review hard-blocked candidates.")
+                actions.extend(self._actions_from_blockers(data))
         else:
             decision = "change_search_space"
             rationale.extend(self._rationale_from_blockers(data))
@@ -271,6 +291,7 @@ class IntradayResearchPlanner:
             candidate_for_confirmation=confirmation,
             candidate_for_shadow_review=confirmation,
             blocked_candidates=blocked_candidates,
+            confirmation_gate=confirmation_gate,
             waves=tuple(waves),
             allowed_waves=tuple(allowed_waves),
             blocked_waves=tuple(blocked_waves),
@@ -534,9 +555,13 @@ def render_markdown(plan: PlannerOutput) -> str:
         for candidate in plan.blocked_candidates:
             lines.append(
                 f"- {candidate.get('pattern_key')}: `{candidate.get('reason')}` "
-                f"`{candidate.get('hypothesis_rejection_reason')}`"
+                f"`{candidate.get('metric')}`={candidate.get('value')!r} threshold={candidate.get('threshold')!r}"
             )
         lines.append("")
+    lines.append("## Confirmation gate")
+    lines.append(f"- passed: `{plan.confirmation_gate.get('passed')}`")
+    lines.append(f"- hard_blockers: `{len(plan.confirmation_gate.get('hard_blockers') or [])}`")
+    lines.append("")
     if plan.vwap_context.get("available"):
         lines.append("## VWAP context")
         lines.append(f"- symbols_analyzed: `{plan.vwap_context.get('symbols_analyzed')}`")
@@ -563,6 +588,12 @@ def _candidate_from_payload(row: dict[str, Any]) -> CandidateSignal:
         symbol_count=int(row.get("symbol_count") or row.get("symbols") or 0),
         sample_count=int(row.get("sample_count") or row.get("samples") or 0),
         max_drawdown_r=float(row.get("max_drawdown_r") or row.get("drawdown_r") or 0.0),
+        market_replay=str(row.get("market_replay") or "") or None,
+        cost_x2_result=str(row.get("cost_x2_result") or "") or None,
+        fdr_result=str(row.get("fdr_result") or "") or None,
+        wrc_result=str(row.get("wrc_result") or "") or None,
+        spa_result=str(row.get("spa_result") or "") or None,
+        failure_taxonomy=tuple(str(item) for item in row.get("failure_taxonomy") or ()),
         rejection_reasons=tuple(str(item) for item in row.get("rejection_reasons") or row.get("reasons") or ()),
     )
 
@@ -625,6 +656,70 @@ def filter_prohibited_waves(
                 )
             )
     return tuple(allowed), tuple(blocked)
+
+
+def _confirmation_hard_blockers(candidate: CandidateSignal) -> tuple[dict[str, Any], ...]:
+    blockers: list[dict[str, Any]] = []
+
+    def add(reason: str, metric: str, value: Any, threshold: Any) -> None:
+        blockers.append(
+            {
+                "pattern_key": candidate.pattern_key,
+                "reason": reason,
+                "metric": metric,
+                "value": value,
+                "threshold": threshold,
+                "run_id": candidate.run_id,
+                "side": candidate.side,
+                "expected_side": candidate.expected_side,
+                "side_matches_hypothesis": candidate.side_matches_hypothesis,
+            }
+        )
+
+    if candidate.max_drawdown_r > 12:
+        add("drawdown_excessive_for_confirmation", "max_drawdown_r", candidate.max_drawdown_r, 12)
+    replay = (candidate.market_replay or "").strip().lower()
+    if replay == "failed":
+        add("market_replay_failed", "market_replay", candidate.market_replay, "passed")
+    elif replay == "not_available":
+        add("market_replay_not_available", "market_replay", candidate.market_replay, "available_positive")
+    if _has_negative_market_replay(candidate.rejection_reasons):
+        add("market_replay_negative_expectancy", "market_replay_expectancy_r", _market_replay_reason(candidate), 0)
+    if candidate.side_matches_hypothesis is False:
+        add("side_mismatch", "side_matches_hypothesis", False, True)
+    if candidate.oos_profit_factor <= 1.2:
+        add("oos_profit_factor_too_low", "out_of_sample_profit_factor", candidate.oos_profit_factor, "> 1.2")
+    if candidate.oos_expectancy_r <= 0:
+        add("oos_expectancy_not_positive", "out_of_sample_expectancy_r", candidate.oos_expectancy_r, "> 0")
+    if _is_failed(candidate.cost_x2_result):
+        add("cost_x2_failed", "cost_x2_result", candidate.cost_x2_result, "passed")
+    for metric, value in (
+        ("fdr_result", candidate.fdr_result),
+        ("wrc_result", candidate.wrc_result),
+        ("spa_result", candidate.spa_result),
+    ):
+        if _is_failed(value):
+            add(f"{metric.removesuffix('_result')}_failed", metric, value, "passed")
+    if _has_severe_concentration_risk(candidate):
+        add("concentration_risk_severe", "concentration_risk", "severe", "not_severe")
+    return tuple(blockers)
+
+
+def _is_failed(value: str | None) -> bool:
+    return str(value or "").strip().lower() in {"failed", "fail", "false", "rejected"}
+
+
+def _has_negative_market_replay(reasons: Iterable[str]) -> bool:
+    return any("market replay" in item.lower() and "-" in item for item in reasons)
+
+
+def _market_replay_reason(candidate: CandidateSignal) -> str | None:
+    return next((item for item in candidate.rejection_reasons if "market replay" in item.lower()), None)
+
+
+def _has_severe_concentration_risk(candidate: CandidateSignal) -> bool:
+    text = " ".join((*candidate.failure_taxonomy, *candidate.rejection_reasons)).lower()
+    return "concentration" in text and "severe" in text
 
 
 def _legacy_wave_signatures(wave: ResearchWaveSpec) -> tuple[str, ...]:
