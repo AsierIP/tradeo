@@ -5,6 +5,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
+from tradeo.research.intraday_context_filters import normalize_context_filter_spec
 from tradeo.research.intraday_vwap_conditions import normalize_vwap_condition_spec
 
 
@@ -204,6 +205,9 @@ class DiscoveryRunRequest(BaseModel):
     vwap_side_bias: str | None = None
     vwap_max_distance_bps: float | None = None
     vwap_min_slope_bps: float | None = None
+    session_filter: str | None = None
+    cost_filter: str | None = None
+    max_execution_cost_r: float | None = None
 
     @field_validator("vwap_condition")
     @classmethod
@@ -218,6 +222,18 @@ class DiscoveryRunRequest(BaseModel):
             return value
         if str(value).strip().lower() not in {"long", "short"}:
             raise ValueError("vwap_side_bias must be long, short or empty")
+        return value
+
+    @field_validator("session_filter")
+    @classmethod
+    def known_session_filter(cls, value: str | None) -> str | None:
+        normalize_context_filter_spec(session_filter=value)
+        return value
+
+    @field_validator("cost_filter")
+    @classmethod
+    def known_cost_filter(cls, value: str | None) -> str | None:
+        normalize_context_filter_spec(cost_filter=value)
         return value
 
 

@@ -201,6 +201,38 @@ def test_execution_contract_flags_material_vwap_condition_mismatch() -> None:
     assert integrity["material_mismatches"][0]["field"] == "vwap_condition"
 
 
+def test_execution_contract_flags_material_context_filter_mismatch() -> None:
+    run = DiscoveryRun(
+        id=1,
+        status="completed",
+        windows_sampled=100,
+        params_json={
+            "interval": "30m",
+            "window_sizes": [50],
+            "forward_bars": [4, 8, 13],
+            "session_filter": "none",
+            "cost_filter": "low_cost",
+            "max_execution_cost_r": 0.2,
+        },
+    )
+
+    integrity = execution_contract_integrity_report(
+        requested_execution_spec={
+            "timeframes": ["30m"],
+            "window_sizes": [50],
+            "forward_bars": [4, 8, 13],
+            "session_filter": "mid",
+            "cost_filter": "low_cost",
+            "max_execution_cost_r": 0.15,
+        },
+        runs=[run],
+    )
+
+    fields = {item["field"] for item in integrity["material_mismatches"]}
+    assert integrity["passed"] is False
+    assert {"session_filter", "max_execution_cost_r"} <= fields
+
+
 def test_forensics_marks_long_candidate_as_side_mismatch_for_vwap_reject_short() -> None:
     db = _db()
     run = DiscoveryRun(
@@ -248,3 +280,26 @@ def test_forensics_marks_long_candidate_as_side_mismatch_for_vwap_reject_short()
         "side_mismatch:vwap_reject_short_expected_short_got_long"
     )
     assert by_key["short_candidate"]["side_matches_hypothesis"] is True
+
+
+def test_forensics_exposes_context_filtering_from_run_params() -> None:
+    db = _db()
+    run = DiscoveryRun(
+        status="completed",
+        params_json={
+            "session_filter": "mid",
+            "cost_filter": "low_cost",
+            "max_execution_cost_r": 0.15,
+        },
+        clusters_evaluated=0,
+    )
+    db.add(run)
+    db.commit()
+
+    report = build_forensics_report(db=db, run_ids=[int(run.id)])
+
+    assert report["context_filtering"] == {
+        "session_filter": "mid",
+        "cost_filter": "low_cost",
+        "max_execution_cost_r": 0.15,
+    }

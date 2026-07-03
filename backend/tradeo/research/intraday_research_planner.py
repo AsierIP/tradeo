@@ -49,6 +49,9 @@ class ResearchWaveSpec:
     priority: int
     requires_cache_warmup: bool = False
     vwap_condition: str | None = None
+    session_filter: str = "none"
+    cost_filter: str = "none"
+    max_execution_cost_r: float | None = None
     legacy_overlap: bool = False
 
     def env(self, *, universe_file: str, product_policy: str, period: str, store_rejected: bool) -> dict[str, str]:
@@ -66,11 +69,27 @@ class ResearchWaveSpec:
         }
         if self.vwap_condition:
             env["TRADEO_INTRADAY_RESEARCH_VWAP_CONDITION"] = self.vwap_condition
+        if self.session_filter != "none":
+            env["TRADEO_INTRADAY_RESEARCH_SESSION_FILTER"] = self.session_filter
+        if self.cost_filter != "none":
+            env["TRADEO_INTRADAY_RESEARCH_COST_FILTER"] = self.cost_filter
+        if self.max_execution_cost_r is not None:
+            env["TRADEO_INTRADAY_RESEARCH_MAX_EXECUTION_COST_R"] = str(self.max_execution_cost_r)
         return env
 
     @property
     def signatures(self) -> tuple[str, ...]:
-        suffix = f" {self.vwap_condition}" if self.vwap_condition else ""
+        suffix_parts = []
+        if self.vwap_condition:
+            suffix_parts.append(self.vwap_condition)
+        if self.session_filter != "none":
+            suffix_parts.append(f"session_{self.session_filter}")
+        if self.cost_filter != "none":
+            cost_suffix = self.cost_filter
+            if self.max_execution_cost_r is not None:
+                cost_suffix = f"{cost_suffix}_{self.max_execution_cost_r:g}"
+            suffix_parts.append(cost_suffix)
+        suffix = f" {' '.join(suffix_parts)}" if suffix_parts else ""
         return tuple(
             f"{self.timeframe} W{window_size} {_csv(self.forward_bars)}{suffix}"
             for window_size in self.window_sizes
@@ -149,6 +168,7 @@ class PlannerInput:
     candidates: tuple[CandidateSignal, ...] = ()
     prohibited_repeats: tuple[str, ...] = ()
     vwap_summary: dict[str, Any] | None = None
+    context_filtering: dict[str, Any] = field(default_factory=dict)
     execution_contract_integrity: dict[str, Any] | None = None
     source: str = "manual"
 
@@ -169,6 +189,7 @@ class PlannerOutput:
     limit_source: str
     execution_contract_integrity: dict[str, Any]
     vwap_context: dict[str, Any]
+    context_filtering: dict[str, Any]
     actions: tuple[str, ...]
     safety: dict[str, Any]
     input_summary: dict[str, Any]
@@ -197,6 +218,7 @@ class PlannerOutput:
             "limit_source": self.limit_source,
             "execution_contract_integrity": self.execution_contract_integrity,
             "vwap_context": self.vwap_context,
+            "context_filtering": self.context_filtering,
             "actions": list(self.actions),
             "safety": self.safety,
             "input_summary": self.input_summary,
@@ -322,6 +344,7 @@ class IntradayResearchPlanner:
             limit_source="selected_count_effective",
             execution_contract_integrity=contract,
             vwap_context=_vwap_context(data.vwap_summary, allowed_waves),
+            context_filtering=_context_filtering(data.context_filtering),
             actions=tuple(actions),
             safety={
                 "paper_allowed": False,
@@ -491,6 +514,7 @@ def planner_input_from_payload(
             blockers=dict(summary.get("top_blockers") or {}),
             exact_rejection_reasons=dict(summary.get("top_exact_rejection_reasons") or {}),
             prohibited_repeats=tuple(str(item) for item in payload.get("prohibited_repeats") or ()),
+            context_filtering=_context_filtering(payload.get("context_filtering")),
             execution_contract_integrity=payload.get("execution_contract_integrity"),
             source=source,
         )
@@ -525,6 +549,7 @@ def planner_input_from_payload(
         exact_rejection_reasons=dict(exact),
         candidates=candidates,
         prohibited_repeats=tuple(str(item) for item in payload.get("prohibited_repeats") or ()),
+        context_filtering=_context_filtering(payload.get("context_filtering")),
         execution_contract_integrity=payload.get("execution_contract_integrity"),
         source=source,
     )
@@ -600,6 +625,11 @@ def render_markdown(plan: PlannerOutput) -> str:
         lines.append(f"- symbols_analyzed: `{plan.vwap_context.get('symbols_analyzed')}`")
         lines.append(f"- bars_analyzed: `{plan.vwap_context.get('bars_analyzed')}`")
         lines.append(f"- recommended_waves: `{', '.join(plan.vwap_context.get('recommended_waves') or [])}`")
+        lines.append("")
+    if plan.context_filtering:
+        lines.append("## Context filtering")
+        for key in ("session_filter", "cost_filter", "max_execution_cost_r"):
+            lines.append(f"- {key}: `{plan.context_filtering.get(key)}`")
         lines.append("")
     lines.append("## Actions")
     lines.extend(f"- {item}" for item in plan.actions)
@@ -777,6 +807,8 @@ def _has_severe_concentration_risk(candidate: CandidateSignal) -> bool:
 
 
 def _legacy_wave_signatures(wave: ResearchWaveSpec) -> tuple[str, ...]:
+    if wave.session_filter != "none" or wave.cost_filter != "none":
+        return ()
     return tuple(
         f"{wave.timeframe} W{window_size} {_csv(wave.forward_bars)}"
         for window_size in wave.window_sizes
@@ -825,6 +857,9 @@ def _waves_from_vwap_summary(summary: dict[str, Any] | None) -> list[ResearchWav
                 priority=index,
                 requires_cache_warmup=timeframe != "30m",
                 vwap_condition=_vwap_condition_from_summary_row(row),
+                session_filter=str(row.get("session_filter") or "none"),
+                cost_filter=str(row.get("cost_filter") or "none"),
+                max_execution_cost_r=_optional_float(row.get("max_execution_cost_r")),
                 legacy_overlap=bool(row.get("legacy_overlap")),
             )
         )
@@ -856,6 +891,15 @@ def _vwap_context(summary: dict[str, Any] | None, allowed_waves: Iterable[Resear
     }
 
 
+def _context_filtering(payload: dict[str, Any] | None) -> dict[str, Any]:
+    payload = payload if isinstance(payload, dict) else {}
+    return {
+        "session_filter": str(payload.get("session_filter") or "none").strip().lower() or "none",
+        "cost_filter": str(payload.get("cost_filter") or "none").strip().lower() or "none",
+        "max_execution_cost_r": _optional_float(payload.get("max_execution_cost_r")),
+    }
+
+
 def _optional_int(value: Any) -> int | None:
     try:
         return int(value)
@@ -874,6 +918,15 @@ def _optional_bool(value: Any) -> bool | None:
     if text in {"false", "0", "no"}:
         return False
     return None
+
+
+def _optional_float(value: Any) -> float | None:
+    try:
+        if value is None or str(value).strip() == "":
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _csv(values: Iterable[int]) -> str:

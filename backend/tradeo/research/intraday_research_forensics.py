@@ -169,6 +169,10 @@ def build_forensics_report(
         "vwap_condition": hypothesis["vwap_condition"],
         "vwap_side_bias": hypothesis["vwap_side_bias"],
         "vwap_expected_side": hypothesis["expected_side"],
+        "context_filtering": _context_filtering_from_metadata_or_runs(
+            manifest_metadata=manifest_metadata,
+            runs=runs,
+        ),
     }
     wave_summary = {
         **run_totals,
@@ -206,6 +210,7 @@ def build_forensics_report(
             vwap_side_bias=hypothesis["vwap_side_bias"],
             expected_side=hypothesis["expected_side"],
         ),
+        "context_filtering": scope["context_filtering"],
         "near_misses": all_candidate_dicts,
         "recommended_actions": next_hypotheses(blocker_counts),
         "diagnostic_flags": _diagnostic_flags(run_totals, persisted_candidates),
@@ -549,6 +554,11 @@ def render_markdown(report: dict[str, Any]) -> str:
         lines.extend(["", "## Hypothesis Integrity"])
         for key in ("vwap_condition", "vwap_side_bias", "expected_side", "side_mismatch_count"):
             lines.append(f"- {key}: `{integrity.get(key)}`")
+    context_filtering = report.get("context_filtering") or {}
+    if context_filtering:
+        lines.extend(["", "## Context Filtering"])
+        for key in ("session_filter", "cost_filter", "max_execution_cost_r"):
+            lines.append(f"- {key}: `{context_filtering.get(key)}`")
     contract = report.get("execution_contract_integrity") or {}
     if contract:
         lines.extend(["", "## Execution Contract Integrity"])
@@ -703,6 +713,26 @@ def _hypothesis_from_context(*, runs: Sequence[DiscoveryRun], manifest_metadata:
     }
 
 
+def _context_filtering_from_metadata_or_runs(
+    *,
+    manifest_metadata: dict[str, Any],
+    runs: Sequence[DiscoveryRun],
+) -> dict[str, Any]:
+    return {
+        "session_filter": _normalize_optional(
+            manifest_metadata.get("session_filter") or _first_param(runs, "session_filter")
+        ) or "none",
+        "cost_filter": _normalize_optional(
+            manifest_metadata.get("cost_filter") or _first_param(runs, "cost_filter")
+        ) or "none",
+        "max_execution_cost_r": _optional_float(
+            manifest_metadata.get("max_execution_cost_r")
+            if manifest_metadata.get("max_execution_cost_r") is not None
+            else _first_param(runs, "max_execution_cost_r")
+        ),
+    }
+
+
 def _manifest_metadata(paths: Sequence[str]) -> dict[str, Any]:
     out: dict[str, Any] = {
         "timeframes": [],
@@ -730,6 +760,10 @@ def _manifest_metadata(paths: Sequence[str]) -> dict[str, Any]:
             value = execution_spec.get(key) or spec.get(key)
             if value and not out.get(key):
                 out[key] = str(value).strip().lower()
+        for key in ("session_filter", "cost_filter", "max_execution_cost_r"):
+            value = execution_spec.get(key) if key in execution_spec else spec.get(key)
+            if value is not None and not out.get(key):
+                out[key] = value
         for key in ("timeframes", "window_sizes", "forward_bars"):
             values = spec.get(key) or execution_spec.get(key) or []
             if not isinstance(values, list):
@@ -780,6 +814,9 @@ def _execution_contract_run_report(
     compare("forward_bars", requested_execution_spec.get("forward_bars"), _int_list(actual.get("forward_bars")), material_key=True)
     compare("vwap_condition", requested_execution_spec.get("vwap_condition"), _normalize_optional(actual.get("vwap_condition")) or "none", material_key=True)
     compare("vwap_side_bias", requested_execution_spec.get("vwap_side_bias"), _normalize_optional(actual.get("vwap_side_bias")), material_key=True)
+    compare("session_filter", requested_execution_spec.get("session_filter"), _normalize_optional(actual.get("session_filter")) or "none", material_key=True)
+    compare("cost_filter", requested_execution_spec.get("cost_filter"), _normalize_optional(actual.get("cost_filter")) or "none", material_key=True)
+    compare("max_execution_cost_r", requested_execution_spec.get("max_execution_cost_r"), _optional_float(actual.get("max_execution_cost_r")), material_key=True)
     compare("universe_file", requested_execution_spec.get("universe_file"), actual.get("universe_file"), material_key=True)
     compare("limit", requested_execution_spec.get("limit"), _optional_int(actual.get("limit")), material_key=False)
     compare("max_total_windows", requested_execution_spec.get("max_total_windows"), _optional_int(actual.get("max_total_windows")), material_key=False)
@@ -819,6 +856,9 @@ def _normalize_requested_execution_spec(spec: dict[str, Any]) -> dict[str, Any]:
         "max_windows_per_symbol": _optional_int(spec.get("max_windows_per_symbol")),
         "vwap_condition": _normalize_optional(spec.get("vwap_condition")) or "none",
         "vwap_side_bias": _normalize_optional(spec.get("vwap_side_bias")),
+        "session_filter": _normalize_optional(spec.get("session_filter")) or "none",
+        "cost_filter": _normalize_optional(spec.get("cost_filter")) or "none",
+        "max_execution_cost_r": _optional_float(spec.get("max_execution_cost_r")),
         "store_rejected": spec.get("store_rejected"),
     }
 

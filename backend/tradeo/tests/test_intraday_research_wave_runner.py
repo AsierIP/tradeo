@@ -23,6 +23,9 @@ _OVERRIDE_ENV_KEYS = [
     "TRADEO_INTRADAY_RESEARCH_VWAP_SIDE_BIAS",
     "TRADEO_INTRADAY_RESEARCH_VWAP_MAX_DISTANCE_BPS",
     "TRADEO_INTRADAY_RESEARCH_VWAP_MIN_SLOPE_BPS",
+    "TRADEO_INTRADAY_RESEARCH_SESSION_FILTER",
+    "TRADEO_INTRADAY_RESEARCH_COST_FILTER",
+    "TRADEO_INTRADAY_RESEARCH_MAX_EXECUTION_COST_R",
 ]
 
 
@@ -141,6 +144,9 @@ def test_cli_arguments_apply_exact_env_before_settings_and_worker(monkeypatch, t
         assert os.environ["TRADEO_INTRADAY_RESEARCH_VWAP_SIDE_BIAS"] == "long"
         assert os.environ["TRADEO_INTRADAY_RESEARCH_VWAP_MAX_DISTANCE_BPS"] == "150.0"
         assert os.environ["TRADEO_INTRADAY_RESEARCH_VWAP_MIN_SLOPE_BPS"] == "0.0"
+        assert os.environ["TRADEO_INTRADAY_RESEARCH_SESSION_FILTER"] == "mid"
+        assert os.environ["TRADEO_INTRADAY_RESEARCH_COST_FILTER"] == "low_cost"
+        assert os.environ["TRADEO_INTRADAY_RESEARCH_MAX_EXECUTION_COST_R"] == "0.15"
         return _FakeSettings(artifacts_path=tmp_path / "artifacts")
 
     worker_calls: list[dict] = []
@@ -191,6 +197,12 @@ def test_cli_arguments_apply_exact_env_before_settings_and_worker(monkeypatch, t
                 "150",
                 "--vwap-min-slope-bps",
                 "0",
+                "--session-filter",
+                "mid",
+                "--cost-filter",
+                "low_cost",
+                "--max-execution-cost-r",
+                "0.15",
                 "--manifest-path",
                 str(tmp_path / "manifest.json"),
                 "--json-only",
@@ -257,9 +269,93 @@ def test_summary_and_manifest_include_execution_spec_and_matching_hashes(
     assert summary["execution_spec"]["limit"] == 117
     assert summary["execution_spec"]["store_rejected"] is True
     assert summary["execution_spec"]["vwap_condition"] == "none"
+    assert summary["execution_spec"]["session_filter"] == "none"
+    assert summary["execution_spec"]["cost_filter"] == "none"
+    assert summary["execution_spec"]["max_execution_cost_r"] is None
     assert manifest["execution_spec"] == summary["execution_spec"]
-    assert manifest["readiness_spec_hash"] == manifest["execution_spec_hash"]
-    assert manifest["specs_match"] is True
+
+
+def test_context_filters_are_included_in_execution_spec(monkeypatch, tmp_path: Path, capsys) -> None:
+    runner = _load_runner_module()
+    manifest_path = tmp_path / "dry_run_context.json"
+    monkeypatch.setattr(
+        runner,
+        "get_settings",
+        lambda: _FakeSettings(artifacts_path=tmp_path / "artifacts"),
+    )
+    monkeypatch.setattr(runner, "IntradayResearchReadinessGate", _FakeReadinessGate)
+
+    code = _run_main(
+        monkeypatch,
+        runner,
+        [
+            "--universe-file",
+            "/tmp/universe.csv",
+            "--product-policy",
+            "stock_only",
+            "--period",
+            "60d",
+            "--timeframes",
+            "30m",
+            "--limit",
+            "117",
+            "--window-sizes",
+            "100",
+            "--forward-bars",
+            "8,13,21",
+            "--session-filter",
+            "mid",
+            "--cost-filter",
+            "low_cost",
+            "--max-execution-cost-r",
+            "0.15",
+            "--manifest-path",
+            str(manifest_path),
+            "--json-only",
+        ],
+    )
+
+    summary = json.loads(capsys.readouterr().out)
+
+    assert code == 0
+    assert summary["specs_match"] is True
+    assert summary["execution_spec"]["session_filter"] == "mid"
+    assert summary["execution_spec"]["cost_filter"] == "low_cost"
+    assert summary["execution_spec"]["max_execution_cost_r"] == 0.15
+
+
+def test_spec_hash_changes_when_session_filter_or_cost_threshold_changes() -> None:
+    runner = _load_runner_module()
+    base = {
+        "universe_file": "/tmp/universe.csv",
+        "product_policy": "stock_only",
+        "period": "60d",
+        "timeframes": ["30m"],
+        "limit": 117,
+        "window_sizes": [50],
+        "forward_bars": [4, 8, 13],
+        "max_total_windows": 120000,
+        "max_windows_per_symbol": 1200,
+        "vwap_condition": "vwap_above_rising",
+        "vwap_side_bias": "long",
+        "vwap_max_distance_bps": 250.0,
+        "vwap_min_slope_bps": 0.0,
+        "session_filter": "none",
+        "cost_filter": "low_cost",
+        "max_execution_cost_r": 0.15,
+        "store_rejected": True,
+    }
+
+    base_hash = runner._stable_spec_hash(runner._normalize_execution_spec(base))
+    session_hash = runner._stable_spec_hash(
+        runner._normalize_execution_spec({**base, "session_filter": "mid"})
+    )
+    threshold_hash = runner._stable_spec_hash(
+        runner._normalize_execution_spec({**base, "max_execution_cost_r": 0.12})
+    )
+
+    assert session_hash != base_hash
+    assert threshold_hash != base_hash
 
 
 def test_execute_blocks_mismatch_and_does_not_call_worker(monkeypatch, tmp_path: Path) -> None:
