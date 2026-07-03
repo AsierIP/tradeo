@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import Counter
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime
 import json
 from pathlib import Path
@@ -15,6 +15,7 @@ from tradeo.db.models import (
     DiscoveryRun,
 )
 from tradeo.research.determinism import CONTENT_HASH_ALGO, content_hash
+from tradeo.research.intraday_vwap_conditions import expected_side_from_vwap_condition
 
 NOT_AVAILABLE = "not_available"
 
@@ -56,6 +57,9 @@ class CandidateForensics:
     failure_taxonomy: tuple[str, ...]
     rejection_reasons: tuple[str, ...]
     data_granularity: dict[str, Any]
+    expected_side: str | None = None
+    side_matches_hypothesis: bool | None = None
+    hypothesis_rejection_reason: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         payload = asdict(self)
@@ -128,10 +132,6 @@ def build_forensics_report(
         )
         for pattern in patterns
     ]
-    candidates = sorted(all_candidates, key=_candidate_rank, reverse=True)[: max(1, int(top_candidates))]
-    all_candidate_dicts = [candidate.to_dict() for candidate in candidates]
-    blocker_counts = Counter(label for candidate in all_candidates for label in candidate.failure_taxonomy)
-    exact_reasons = Counter(reason for pattern in patterns for reason in _reasons(pattern))
     run_totals = {
         "runs": len(runs),
         "completed": sum(1 for run in runs if str(run.status) == "completed"),
@@ -145,6 +145,14 @@ def build_forensics_report(
     }
     persisted_candidates = len(patterns)
     manifest_metadata = _manifest_metadata(wave_manifests)
+    hypothesis = _hypothesis_from_context(runs=runs, manifest_metadata=manifest_metadata)
+    all_candidates = [
+        _with_hypothesis(candidate, hypothesis) for candidate in all_candidates
+    ]
+    candidates = sorted(all_candidates, key=_candidate_rank, reverse=True)[: max(1, int(top_candidates))]
+    all_candidate_dicts = [candidate.to_dict() for candidate in candidates]
+    blocker_counts = Counter(label for candidate in all_candidates for label in candidate.failure_taxonomy)
+    exact_reasons = Counter(reason for pattern in patterns for reason in _reasons(pattern))
     scope = {
         "exact_scope": True,
         "wave_manifests": list(wave_manifests),
@@ -158,6 +166,9 @@ def build_forensics_report(
             or _first_param(runs, "product_policy")
         ),
         "manifest_metadata": manifest_metadata,
+        "vwap_condition": hypothesis["vwap_condition"],
+        "vwap_side_bias": hypothesis["vwap_side_bias"],
+        "vwap_expected_side": hypothesis["expected_side"],
     }
     wave_summary = {
         **run_totals,
@@ -189,6 +200,12 @@ def build_forensics_report(
         "top_blockers": wave_summary["top_blockers"],
         "top_exact_rejection_reasons": wave_summary["exact_rejection_reasons"],
         "taxonomy_counts": dict(blocker_counts.most_common()),
+        "hypothesis_integrity": hypothesis_integrity_report(
+            candidates=all_candidates,
+            vwap_condition=hypothesis["vwap_condition"],
+            vwap_side_bias=hypothesis["vwap_side_bias"],
+            expected_side=hypothesis["expected_side"],
+        ),
         "near_misses": all_candidate_dicts,
         "recommended_actions": next_hypotheses(blocker_counts),
         "diagnostic_flags": _diagnostic_flags(run_totals, persisted_candidates),
@@ -334,6 +351,51 @@ def candidate_forensics(
     )
 
 
+def hypothesis_integrity_report(
+    *,
+    candidates: Sequence[CandidateForensics],
+    vwap_condition: str | None,
+    vwap_side_bias: str | None,
+    expected_side: str | None,
+) -> dict[str, Any]:
+    side_counts = Counter(str(candidate.side or NOT_AVAILABLE) for candidate in candidates)
+    mismatches = [candidate for candidate in candidates if candidate.side_matches_hypothesis is False]
+    return {
+        "vwap_condition": vwap_condition or "none",
+        "vwap_side_bias": vwap_side_bias,
+        "expected_side": expected_side,
+        "candidate_side_counts": dict(side_counts),
+        "side_mismatch_count": len(mismatches),
+        "side_mismatch_pattern_keys": [candidate.pattern_key for candidate in mismatches],
+    }
+
+
+def _with_hypothesis(candidate: CandidateForensics, hypothesis: dict[str, str | None]) -> CandidateForensics:
+    expected_side = hypothesis.get("expected_side")
+    if expected_side is None:
+        return replace(candidate, expected_side=None, side_matches_hypothesis=None, hypothesis_rejection_reason=None)
+    candidate_side = str(candidate.side or "").strip().lower() or None
+    side_matches = candidate_side == expected_side
+    reason = None
+    taxonomy = candidate.failure_taxonomy
+    reasons = candidate.rejection_reasons
+    if not side_matches:
+        reason = (
+            f"side_mismatch:{hypothesis.get('vwap_condition') or 'none'}"
+            f"_expected_{expected_side}_got_{candidate_side or 'unknown'}"
+        )
+        taxonomy = _dedupe_strings((*taxonomy, "side_mismatch"))
+        reasons = (*reasons, reason)
+    return replace(
+        candidate,
+        expected_side=expected_side,
+        side_matches_hypothesis=side_matches,
+        hypothesis_rejection_reason=reason,
+        failure_taxonomy=tuple(taxonomy),
+        rejection_reasons=tuple(reasons),
+    )
+
+
 def classify_failure(
     *,
     rejection_reasons: Sequence[str],
@@ -433,6 +495,11 @@ def render_markdown(report: dict[str, Any]) -> str:
     lines.extend(["", "## Data Granularity"])
     for key, value in report["data_granularity"].items():
         lines.append(f"- {key}: `{value}`")
+    integrity = report.get("hypothesis_integrity") or {}
+    if integrity:
+        lines.extend(["", "## Hypothesis Integrity"])
+        for key in ("vwap_condition", "vwap_side_bias", "expected_side", "side_mismatch_count"):
+            lines.append(f"- {key}: `{integrity.get(key)}`")
     lines.extend(["", "## Candidate Forensics"])
     for candidate in report["candidate_forensics"]:
         lines.extend(
@@ -446,6 +513,8 @@ def render_markdown(report: dict[str, Any]) -> str:
                 f"- drawdown_r: `{candidate['drawdown_r']}` cost_x2: `{candidate['cost_x2_result']}`",
                 f"- FDR/WRC/SPA: `{candidate['fdr_result']}` / `{candidate['wrc_result']}` / `{candidate['spa_result']}`",
                 f"- market_replay: `{candidate['market_replay']}` placebo_adversarial: `{candidate['placebo_adversarial']}`",
+                f"- expected_side: `{candidate.get('expected_side')}` side_matches_hypothesis: `{candidate.get('side_matches_hypothesis')}`",
+                f"- hypothesis_rejection_reason: `{candidate.get('hypothesis_rejection_reason')}`",
                 f"- dominant_failure_class: `{candidate['dominant_failure_class']}`",
                 f"- failure_taxonomy: `{', '.join(candidate['failure_taxonomy'])}`",
                 "",
@@ -559,6 +628,25 @@ def _first_param(runs: Sequence[DiscoveryRun], key: str) -> Any:
     return None
 
 
+def _hypothesis_from_context(*, runs: Sequence[DiscoveryRun], manifest_metadata: dict[str, Any]) -> dict[str, str | None]:
+    condition = _normalize_optional(
+        manifest_metadata.get("vwap_condition")
+        or _first_param(runs, "vwap_condition")
+        or "none"
+    ) or "none"
+    side_bias = _normalize_optional(manifest_metadata.get("vwap_side_bias") or _first_param(runs, "vwap_side_bias"))
+    expected = _normalize_optional(
+        manifest_metadata.get("vwap_expected_side")
+        or _first_param(runs, "vwap_expected_side")
+        or expected_side_from_vwap_condition(condition, side_bias)
+    )
+    return {
+        "vwap_condition": condition,
+        "vwap_side_bias": side_bias,
+        "expected_side": expected,
+    }
+
+
 def _manifest_metadata(paths: Sequence[str]) -> dict[str, Any]:
     out: dict[str, Any] = {
         "timeframes": [],
@@ -572,19 +660,31 @@ def _manifest_metadata(paths: Sequence[str]) -> dict[str, Any]:
             continue
         readiness = payload.get("readiness") or {}
         spec = readiness.get("spec") or {}
+        execution_spec = payload.get("execution_spec") or {}
         if spec.get("universe_file") and not out.get("universe_file"):
             out["universe_file"] = spec.get("universe_file")
-        policy = spec.get("product_policy") or spec.get("universe_policy")
+        if execution_spec.get("universe_file") and not out.get("universe_file"):
+            out["universe_file"] = execution_spec.get("universe_file")
+        policy = spec.get("product_policy") or spec.get("universe_policy") or execution_spec.get("product_policy")
         if policy and not out.get("product_policy"):
             out["product_policy"] = policy
+        for key in ("vwap_condition", "vwap_side_bias", "vwap_expected_side"):
+            value = execution_spec.get(key) or spec.get(key)
+            if value and not out.get(key):
+                out[key] = str(value).strip().lower()
         for key in ("timeframes", "window_sizes", "forward_bars"):
-            values = spec.get(key) or []
+            values = spec.get(key) or execution_spec.get(key) or []
             if not isinstance(values, list):
                 values = [values]
             out[key].extend(str(value) for value in values if str(value))
     for key in ("timeframes", "window_sizes", "forward_bars"):
         out[key] = _dedupe_strings(out[key])
     return out
+
+
+def _normalize_optional(value: Any) -> str | None:
+    text = str(value or "").strip().lower()
+    return text or None
 
 
 def _cost_x2_result(metrics: dict[str, Any], reasons: Sequence[str]) -> str:

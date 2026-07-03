@@ -30,7 +30,13 @@ def _db():
     return sessionmaker(bind=engine, future=True)()
 
 
-def _seed_run(db, *, with_examples: bool = True) -> int:
+def _seed_run(
+    db,
+    *,
+    with_examples: bool = True,
+    side: str = "long",
+    params_json: dict[str, object] | None = None,
+) -> int:
     run = DiscoveryRun(
         status="completed",
         symbols_scanned=4,
@@ -39,6 +45,7 @@ def _seed_run(db, *, with_examples: bool = True) -> int:
         accepted_patterns=1,
         rejected_patterns=2,
         summary_json={},
+        params_json=params_json or {},
     )
     db.add(run)
     db.flush()
@@ -47,7 +54,7 @@ def _seed_run(db, *, with_examples: bool = True) -> int:
         pattern_key="30m W20 4,8,13 / ABC",
         name="ABC candidate",
         status="lab_candidate",
-        side="long",
+        side=side,
         timeframe="30m",
         window_size=20,
         cluster_id=7,
@@ -144,6 +151,7 @@ def test_build_report_writes_jsonl_and_summary(tmp_path: Path) -> None:
     assert report["summary"]["by_split"]["oos"]["n"] == 1
     assert report["summary"]["terminal_research_recommendation"] in ALLOWED_TERMINAL_RECOMMENDATIONS
     assert report["summary"]["terminal_research_recommendation"] == "candidate_for_shadow_review"
+    assert report["hypothesis_integrity"]["expected_side"] is None
 
     jsonl = tmp_path / f"run_{run_id}" / "candidate_30m_w20_4_8_13_abc.jsonl"
     assert jsonl.exists()
@@ -234,3 +242,23 @@ def test_evidence_scope_integrity_fails_with_out_of_scope_sample() -> None:
     assert report["scope_integrity"]["out_of_scope_run_ids"] == [3]
     with pytest.raises(ScopeViolationError):
         validate_scope_integrity(report)
+
+
+def test_evidence_reports_hypothesis_integrity_and_blocks_mismatched_review() -> None:
+    db = _db()
+    run_id = _seed_run(
+        db,
+        side="long",
+        params_json={"vwap_condition": "vwap_reject_short", "vwap_side_bias": "short"},
+    )
+
+    report = build_evidence_report(db=db, run_ids=[run_id])
+    candidate = report["candidate_manifests"][0]
+    sample = next(iter(report["samples_by_candidate"].values()))[0]
+
+    assert report["hypothesis_integrity"]["expected_side"] == "short"
+    assert report["hypothesis_integrity"]["side_mismatch_count"] == 1
+    assert candidate["side_matches_hypothesis"] is False
+    assert sample["side_matches_hypothesis"] is False
+    assert sample["sample_hypothesis_side"] == "not_available"
+    assert report["summary"]["terminal_research_recommendation"] == "change_search_space"

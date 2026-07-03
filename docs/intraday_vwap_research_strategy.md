@@ -135,6 +135,17 @@ Conditioned windows record VWAP fields in `WindowSample.features`. Discovery
 summaries record `windows_vwap_selected`, `windows_vwap_rejected` and
 `vwap_condition_applied`.
 
+VWAP side-bias integrity is explicit. The canonical `vwap_expected_side` is
+derived from `vwap_side_bias` first, otherwise from the executable condition:
+long for `vwap_reclaim_long`, `vwap_above_rising`, `vwap_pullback_long` and
+`vwap_mean_reversion_long`; short for `vwap_reject_short`,
+`vwap_below_falling`, `vwap_pullback_short` and
+`vwap_mean_reversion_short`; `None` for `none`. Forensics and evidence mark
+candidates whose discovered `side` contradicts that expected side with
+`side_matches_hypothesis=false` and a `side_mismatch:*` rejection reason. Those
+candidates remain visible as research evidence but cannot be promoted as VWAP
+hypothesis confirmation.
+
 ## Validation Metrics
 
 VWAP-aware families must still pass normal research validation:

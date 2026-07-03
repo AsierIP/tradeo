@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 from tradeo.research.intraday_research_planner import (
+    CandidateSignal,
     IntradayResearchPlanner,
     PlannerInput,
     filter_prohibited_waves,
@@ -177,6 +178,92 @@ def test_planner_keeps_previous_behavior_without_vwap_summary_json() -> None:
     assert "30m_W100_standard_regime_probe" in names
     assert "30m_W100_vwap_reclaim_slow" not in names
     assert result.vwap_context["available"] is False
+
+
+def test_planner_blocks_confirmation_for_side_mismatch() -> None:
+    result = IntradayResearchPlanner().plan(
+        PlannerInput(
+            selected_count=117,
+            candidates=(
+                CandidateSignal(
+                    pattern_key="long_candidate",
+                    side="long",
+                    expected_side="short",
+                    side_matches_hypothesis=False,
+                    hypothesis_rejection_reason="side_mismatch:vwap_reject_short_expected_short_got_long",
+                    expectancy_r=0.5,
+                    profit_factor=2.0,
+                    oos_expectancy_r=0.2,
+                    oos_profit_factor=1.4,
+                    symbol_count=8,
+                    sample_count=140,
+                    max_drawdown_r=8.0,
+                ),
+            ),
+        )
+    )
+
+    assert result.decision == "hypothesis_side_mismatch_blocked"
+    assert result.candidate_for_confirmation == ()
+    assert result.candidate_for_shadow_review == ()
+    assert result.blocked_candidates[0]["reason"] == "side_mismatch"
+
+
+def test_planner_keeps_confirmation_when_side_matches() -> None:
+    result = IntradayResearchPlanner().plan(
+        PlannerInput(
+            selected_count=117,
+            candidates=(
+                CandidateSignal(
+                    pattern_key="short_candidate",
+                    side="short",
+                    expected_side="short",
+                    side_matches_hypothesis=True,
+                    expectancy_r=0.5,
+                    profit_factor=2.0,
+                    oos_expectancy_r=0.2,
+                    oos_profit_factor=1.4,
+                    symbol_count=8,
+                    sample_count=140,
+                    max_drawdown_r=8.0,
+                ),
+            ),
+        )
+    )
+
+    assert result.decision == "candidate_for_confirmation"
+    assert result.candidate_for_confirmation[0].pattern_key == "short_candidate"
+    assert result.blocked_candidates == ()
+
+
+def test_t008r_like_payload_with_top_long_mismatch_blocks_confirmation() -> None:
+    planner_input = planner_input_from_payload(
+        {
+            "selected_count": 117,
+            "near_misses": [
+                {
+                    "pattern_key": "top_long_near_miss",
+                    "side": "long",
+                    "expected_side": "short",
+                    "side_matches_hypothesis": False,
+                    "hypothesis_rejection_reason": "side_mismatch:vwap_reject_short_expected_short_got_long",
+                    "expectancy_r": 0.5,
+                    "profit_factor": 2.0,
+                    "oos_expectancy_r": 0.2,
+                    "oos_profit_factor": 1.4,
+                    "symbol_count": 8,
+                    "sample_count": 140,
+                    "drawdown_r": 8.0,
+                }
+            ],
+        }
+    )
+
+    result = IntradayResearchPlanner().plan(planner_input)
+
+    assert result.decision in {"change_search_space", "hypothesis_side_mismatch_blocked"}
+    assert result.decision == "hypothesis_side_mismatch_blocked"
+    assert result.candidate_for_confirmation == ()
 
 
 def _vwap_summary() -> dict[str, object]:

@@ -74,8 +74,17 @@ The planner emits one of:
 - `data_missing`: readiness is not good enough; warm cache before research.
 - `expand_universe`: selected stock-only universe is still below the serious-search threshold.
 - `candidate_for_confirmation`: a candidate deserves narrow confirmation, not paper.
+- `hypothesis_side_mismatch_blocked`: a promising candidate exists but its discovered side contradicts the VWAP side-bias hypothesis.
 - `change_search_space`: last wave was a valid negative result; rotate timeframe/window/exit family.
 - `continue_matrix`: reserved for future matrix workflows.
+
+When a diagnostic payload includes VWAP hypothesis integrity fields, the planner
+must not put candidates with `side_matches_hypothesis=false` in
+`candidate_for_confirmation` or `candidate_for_shadow_review`. They are emitted
+under `blocked_candidates` with `reason=side_mismatch`. If all otherwise
+promising candidates are side mismatches, the planner returns
+`hypothesis_side_mismatch_blocked` or changes search space instead of promoting
+the candidate.
 
 ## Safety rules
 
