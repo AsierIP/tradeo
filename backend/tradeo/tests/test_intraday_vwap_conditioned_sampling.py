@@ -5,6 +5,7 @@ import pandas as pd
 from tradeo.agents.pattern_discovery_lab_agent import PatternDiscoveryLabAgent
 from tradeo.core.config import Settings
 from tradeo.research.intraday_research_planner import ResearchWaveSpec, filter_prohibited_waves
+from tradeo.research.intraday_vwap_conditions import expected_side_from_vwap_condition
 from tradeo.research.window_sampler import WindowSampler
 from tradeo.schemas import DiscoveryRunRequest
 from tradeo.tasks import worker
@@ -65,6 +66,13 @@ def test_vwap_reject_short_filters_to_compatible_events() -> None:
     assert all(sample.features["vwap_side_bias"] == "short" for sample in samples)
     assert all(sample.features["vwap_condition_passed"] is True for sample in samples)
     assert all(sample.features["below_vwap"] is True for sample in samples)
+
+
+def test_expected_side_from_vwap_condition_prefers_explicit_bias() -> None:
+    assert expected_side_from_vwap_condition("vwap_reject_short", "long") == "long"
+    assert expected_side_from_vwap_condition("vwap_reject_short", None) == "short"
+    assert expected_side_from_vwap_condition("vwap_reclaim_long", None) == "long"
+    assert expected_side_from_vwap_condition("none", None) is None
 
 
 def test_vwap_features_appear_on_conditioned_window_samples() -> None:
@@ -140,6 +148,7 @@ def test_agent_resolved_params_include_vwap_contract() -> None:
 
     assert params["vwap_condition"] == "vwap_reclaim_long"
     assert params["vwap_side_bias"] == "long"
+    assert params["vwap_expected_side"] == "long"
     assert params["vwap_max_distance_bps"] == 150.0
     assert params["vwap_min_slope_bps"] == 0.0
 

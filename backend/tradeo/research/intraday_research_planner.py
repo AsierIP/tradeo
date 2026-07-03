@@ -11,6 +11,7 @@ PlannerDecision = Literal[
     "data_missing",
     "expand_universe",
     "candidate_for_confirmation",
+    "hypothesis_side_mismatch_blocked",
     "change_search_space",
     "continue_matrix",
 ]
@@ -88,6 +89,10 @@ class BlockedWave:
 class CandidateSignal:
     pattern_key: str
     run_id: int | None = None
+    side: str | None = None
+    expected_side: str | None = None
+    side_matches_hypothesis: bool | None = None
+    hypothesis_rejection_reason: str | None = None
     expectancy_r: float = 0.0
     profit_factor: float = 0.0
     oos_expectancy_r: float = 0.0
@@ -147,6 +152,8 @@ class PlannerOutput:
     decision: PlannerDecision
     rationale: tuple[str, ...]
     candidate_for_confirmation: tuple[CandidateSignal, ...]
+    candidate_for_shadow_review: tuple[CandidateSignal, ...]
+    blocked_candidates: tuple[dict[str, Any], ...]
     waves: tuple[ResearchWaveSpec, ...]
     allowed_waves: tuple[ResearchWaveSpec, ...]
     blocked_waves: tuple[BlockedWave, ...]
@@ -163,6 +170,8 @@ class PlannerOutput:
             "decision": self.decision,
             "rationale": list(self.rationale),
             "candidate_for_confirmation": [asdict(candidate) for candidate in self.candidate_for_confirmation],
+            "candidate_for_shadow_review": [asdict(candidate) for candidate in self.candidate_for_shadow_review],
+            "blocked_candidates": list(self.blocked_candidates),
             "waves": [asdict(wave) for wave in self.waves],
             "allowed_waves": [asdict(wave) for wave in self.allowed_waves],
             "blocked_waves": [
@@ -192,12 +201,23 @@ class IntradayResearchPlanner:
     """
 
     def plan(self, data: PlannerInput) -> PlannerOutput:
-        confirmation = tuple(
+        promising = tuple(
             sorted(
                 (candidate for candidate in data.candidates if candidate.confirmation_score >= 5.0),
                 key=lambda candidate: candidate.confirmation_score,
                 reverse=True,
             )[:5]
+        )
+        blocked_candidates = tuple(
+            {
+                **asdict(candidate),
+                "reason": "side_mismatch",
+            }
+            for candidate in promising
+            if candidate.side_matches_hypothesis is False
+        )
+        confirmation = tuple(
+            candidate for candidate in promising if candidate.side_matches_hypothesis is not False
         )
         decision: PlannerDecision
         rationale: list[str] = []
@@ -216,6 +236,12 @@ class IntradayResearchPlanner:
             decision = "candidate_for_confirmation"
             rationale.append("At least one candidate meets the confirmation preconditions; do not paper yet, isolate and confirm.")
             actions.append("Run a narrow confirmation wave on the candidate family with identical gates and exact-scope diagnosis.")
+        elif blocked_candidates:
+            decision = "hypothesis_side_mismatch_blocked"
+            rationale.append(
+                "Promising candidates were blocked because their side contradicts the VWAP side-bias hypothesis."
+            )
+            actions.append("Do not confirm the mismatched candidate; change the search space or rerun a side-compatible hypothesis.")
         else:
             decision = "change_search_space"
             rationale.extend(self._rationale_from_blockers(data))
@@ -243,6 +269,8 @@ class IntradayResearchPlanner:
             decision=decision,
             rationale=tuple(rationale),
             candidate_for_confirmation=confirmation,
+            candidate_for_shadow_review=confirmation,
+            blocked_candidates=blocked_candidates,
             waves=tuple(waves),
             allowed_waves=tuple(allowed_waves),
             blocked_waves=tuple(blocked_waves),
@@ -501,6 +529,14 @@ def render_markdown(plan: PlannerOutput) -> str:
         for blocked in plan.blocked_waves:
             lines.append(f"- {blocked.name}: `{blocked.reason}` `{blocked.signature}`")
         lines.append("")
+    if plan.blocked_candidates:
+        lines.append("## Blocked candidates")
+        for candidate in plan.blocked_candidates:
+            lines.append(
+                f"- {candidate.get('pattern_key')}: `{candidate.get('reason')}` "
+                f"`{candidate.get('hypothesis_rejection_reason')}`"
+            )
+        lines.append("")
     if plan.vwap_context.get("available"):
         lines.append("## VWAP context")
         lines.append(f"- symbols_analyzed: `{plan.vwap_context.get('symbols_analyzed')}`")
@@ -516,6 +552,10 @@ def _candidate_from_payload(row: dict[str, Any]) -> CandidateSignal:
     return CandidateSignal(
         pattern_key=str(row.get("pattern_key") or row.get("name") or "unknown"),
         run_id=_optional_int(row.get("run_id")),
+        side=str(row.get("side") or "") or None,
+        expected_side=str(row.get("expected_side") or "") or None,
+        side_matches_hypothesis=_optional_bool(row.get("side_matches_hypothesis")),
+        hypothesis_rejection_reason=str(row.get("hypothesis_rejection_reason") or "") or None,
         expectancy_r=float(row.get("expectancy_r") or row.get("best_expectancy_r") or 0.0),
         profit_factor=float(row.get("profit_factor") or row.get("best_profit_factor") or 0.0),
         oos_expectancy_r=float(row.get("oos_expectancy_r") or row.get("out_of_sample_expectancy_r") or 0.0),
@@ -672,6 +712,19 @@ def _optional_int(value: Any) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _optional_bool(value: Any) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return None
+    text = str(value).strip().lower()
+    if text in {"true", "1", "yes"}:
+        return True
+    if text in {"false", "0", "no"}:
+        return False
+    return None
 
 
 def _csv(values: Iterable[int]) -> str:

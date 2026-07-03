@@ -46,10 +46,15 @@ class VWAPConditionSpec:
     def enabled(self) -> bool:
         return self.condition != VWAP_CONDITION_NONE
 
+    @property
+    def expected_side(self) -> str | None:
+        return expected_side_from_vwap_condition(self.condition, self.side_bias)
+
     def to_params(self) -> dict[str, Any]:
         return {
             "vwap_condition": self.condition,
             "vwap_side_bias": self.side_bias,
+            "vwap_expected_side": self.expected_side,
             "vwap_max_distance_bps": self.max_distance_bps,
             "vwap_min_slope_bps": self.min_slope_bps,
         }
@@ -78,6 +83,18 @@ def normalize_vwap_condition_spec(
         max_distance_bps=_optional_float(max_distance_bps),
         min_slope_bps=_optional_float(min_slope_bps),
     )
+
+
+def expected_side_from_vwap_condition(vwap_condition: str | None, vwap_side_bias: str | None = None) -> str | None:
+    normalized_side = str(vwap_side_bias or "").strip().lower() or None
+    if normalized_side in {"long", "short"}:
+        return normalized_side
+    normalized_condition = str(vwap_condition or VWAP_CONDITION_NONE).strip().lower() or VWAP_CONDITION_NONE
+    if normalized_condition in _LONG_CONDITIONS:
+        return "long"
+    if normalized_condition in _SHORT_CONDITIONS:
+        return "short"
+    return None
 
 
 def build_vwap_condition_frame(df: pd.DataFrame) -> pd.DataFrame:

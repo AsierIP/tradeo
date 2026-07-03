@@ -16,6 +16,7 @@ from tradeo.research.intraday_research_forensics import (
     resolve_run_ids as _resolve_run_ids,
     scope_integrity_report,
 )
+from tradeo.research.intraday_vwap_conditions import expected_side_from_vwap_condition
 
 NOT_AVAILABLE = "not_available"
 SCHEMA_VERSION = "tradeo.intraday_research_evidence.v1"
@@ -46,6 +47,10 @@ class EvidenceSample:
     window_size: int | None
     forward_bars: int | None
     side: str | None
+    expected_side: str | None
+    side_matches_hypothesis: bool | None
+    hypothesis_rejection_reason: str | None
+    sample_hypothesis_side: str
     window_start_ts: str | None
     window_end_ts: str | None
     entry_ts: str | None
@@ -96,6 +101,7 @@ def build_evidence_report(
         .all()
     )
     found_run_ids = [int(run.id) for run in runs]
+    hypothesis = _hypothesis_from_context(runs=runs, wave_manifests=wave_manifests)
     patterns = _load_patterns(db, found_run_ids, limit=limits["candidate_limit"])
     samples_by_candidate: dict[str, list[dict[str, Any]]] = {}
     candidate_manifests: list[dict[str, Any]] = []
@@ -114,7 +120,7 @@ def build_evidence_report(
             truncated = True
             candidate_truncated = True
             examples = examples[:sample_limit]
-        samples = [sample.to_dict() for sample in evidence_samples_for_pattern(pattern, examples)]
+        samples = [sample.to_dict() for sample in evidence_samples_for_pattern(pattern, examples, hypothesis=hypothesis)]
         total_samples += len(samples)
         candidate_key = safe_candidate_key(pattern.pattern_key or pattern.name or str(pattern.id))
         samples_by_candidate[candidate_key] = samples
@@ -124,6 +130,7 @@ def build_evidence_report(
                 candidate_key=candidate_key,
                 sample_count=len(samples),
                 truncated=candidate_truncated,
+                hypothesis=hypothesis,
             )
         )
 
@@ -145,6 +152,9 @@ def build_evidence_report(
             "requested_run_ids": exact_run_ids,
             "run_ids": found_run_ids,
             "missing_run_ids": sorted(set(exact_run_ids) - set(found_run_ids)),
+            "vwap_condition": hypothesis["vwap_condition"],
+            "vwap_side_bias": hypothesis["vwap_side_bias"],
+            "vwap_expected_side": hypothesis["expected_side"],
         },
         "limits": limits,
         "runs": [_run_manifest(run) for run in runs],
@@ -155,6 +165,12 @@ def build_evidence_report(
         "candidate_manifests": candidate_manifests,
         "samples_by_candidate": samples_by_candidate,
         "summary": summary,
+        "hypothesis_integrity": hypothesis_integrity_report(
+            candidates=candidate_manifests,
+            vwap_condition=hypothesis["vwap_condition"],
+            vwap_side_bias=hypothesis["vwap_side_bias"],
+            expected_side=hypothesis["expected_side"],
+        ),
         "safety": safety_manifest(),
     }
     report["scope_integrity"] = scope_integrity_report(
@@ -175,9 +191,11 @@ def build_evidence_report(
 
 
 def evidence_samples_for_pattern(
-    pattern: DiscoveredPattern, examples: Iterable[DiscoveredPatternExample]
+    pattern: DiscoveredPattern,
+    examples: Iterable[DiscoveredPatternExample],
+    hypothesis: dict[str, str | None] | None = None,
 ) -> list[EvidenceSample]:
-    return [_sample_from_example(pattern, example) for example in examples]
+    return [_sample_from_example(pattern, example, hypothesis=hypothesis or {}) for example in examples]
 
 
 def summarize_evidence(
@@ -280,6 +298,11 @@ def render_markdown(report: dict[str, Any]) -> str:
         "## Candidate Quality Flags",
     ]
     lines.extend(f"- {item}" for item in summary["candidate_quality_flags"])
+    integrity = report.get("hypothesis_integrity") or {}
+    if integrity:
+        lines.extend(["", "## Hypothesis Integrity"])
+        for key in ("vwap_condition", "vwap_side_bias", "expected_side", "side_mismatch_count", "sample_level_side"):
+            lines.append(f"- {key}: `{integrity.get(key)}`")
     lines.extend(["", "## Group Stats"])
     for key in ("by_symbol", "by_session", "by_month", "by_split"):
         lines.append(f"### {key}")
@@ -364,13 +387,79 @@ def terminal_research_recommendation(
         completed = all(str(run.status) == "completed" for run in runs)
         clusters = sum(int(run.clusters_evaluated or 0) for run in runs)
         return "research_closed_no_candidate" if completed and clusters > 0 else "insufficient_evidence"
-    if any(candidate.get("validation_passed") and int(candidate.get("sample_count") or 0) >= 100 for candidate in candidates):
+    if any(
+        candidate.get("validation_passed")
+        and candidate.get("side_matches_hypothesis") is not False
+        and int(candidate.get("sample_count") or 0) >= 100
+        for candidate in candidates
+    ):
         return "candidate_for_shadow_review"
+    if any(candidate.get("side_matches_hypothesis") is False for candidate in candidates):
+        return "change_search_space"
     if not samples or missing_fields_summary.get("outcome_r", 0) == len(samples):
         return "insufficient_evidence"
     if any(candidate.get("rejection_reasons") for candidate in candidates):
         return "change_search_space"
     return "continue_research"
+
+
+def hypothesis_integrity_report(
+    *,
+    candidates: Sequence[dict[str, Any]],
+    vwap_condition: str | None,
+    vwap_side_bias: str | None,
+    expected_side: str | None,
+) -> dict[str, Any]:
+    side_counts = Counter(str(candidate.get("side") or NOT_AVAILABLE) for candidate in candidates)
+    mismatches = [candidate for candidate in candidates if candidate.get("side_matches_hypothesis") is False]
+    return {
+        "vwap_condition": vwap_condition or "none",
+        "vwap_side_bias": vwap_side_bias,
+        "expected_side": expected_side,
+        "candidate_side_counts": dict(side_counts),
+        "side_mismatch_count": len(mismatches),
+        "side_mismatch_pattern_keys": [str(candidate.get("pattern_key") or "") for candidate in mismatches],
+        "sample_level_side": NOT_AVAILABLE,
+    }
+
+
+def _side_context(side: str | None, hypothesis: dict[str, str | None]) -> dict[str, Any]:
+    expected = hypothesis.get("expected_side")
+    if expected is None:
+        return {
+            "expected_side": None,
+            "side_matches_hypothesis": None,
+            "hypothesis_rejection_reason": None,
+        }
+    normalized_side = str(side or "").strip().lower() or None
+    matches = normalized_side == expected
+    reason = None
+    if not matches:
+        reason = (
+            f"side_mismatch:{hypothesis.get('vwap_condition') or 'none'}"
+            f"_expected_{expected}_got_{normalized_side or 'unknown'}"
+        )
+    return {
+        "expected_side": expected,
+        "side_matches_hypothesis": matches,
+        "hypothesis_rejection_reason": reason,
+    }
+
+
+def _hypothesis_from_context(*, runs: Sequence[DiscoveryRun], wave_manifests: Sequence[str]) -> dict[str, str | None]:
+    manifest_metadata = _manifest_metadata(wave_manifests)
+    condition = _normalize_optional(
+        manifest_metadata.get("vwap_condition")
+        or _first_param(runs, "vwap_condition")
+        or "none"
+    ) or "none"
+    side_bias = _normalize_optional(manifest_metadata.get("vwap_side_bias") or _first_param(runs, "vwap_side_bias"))
+    expected = _normalize_optional(
+        manifest_metadata.get("vwap_expected_side")
+        or _first_param(runs, "vwap_expected_side")
+        or expected_side_from_vwap_condition(condition, side_bias)
+    )
+    return {"vwap_condition": condition, "vwap_side_bias": side_bias, "expected_side": expected}
 
 
 def safety_manifest() -> dict[str, bool]:
@@ -398,7 +487,12 @@ def missing_fields(sample_groups: Iterable[Sequence[dict[str, Any]]]) -> dict[st
     return dict(sorted(counts.items()))
 
 
-def _sample_from_example(pattern: DiscoveredPattern, example: DiscoveredPatternExample) -> EvidenceSample:
+def _sample_from_example(
+    pattern: DiscoveredPattern,
+    example: DiscoveredPatternExample,
+    *,
+    hypothesis: dict[str, str | None],
+) -> EvidenceSample:
     features = example.features_json if isinstance(example.features_json, dict) else {}
     chart = example.chart_json if isinstance(example.chart_json, dict) else {}
     metrics = pattern.metrics_json if isinstance(pattern.metrics_json, dict) else {}
@@ -426,6 +520,7 @@ def _sample_from_example(pattern: DiscoveredPattern, example: DiscoveredPatternE
         "forward_bars": forward_bars,
         "split": None if split == NOT_AVAILABLE else split,
     }
+    side_context = _side_context(str(pattern.side or "") or None, hypothesis)
     return EvidenceSample(
         run_id=_optional_int(pattern.run_id),
         candidate_key=safe_candidate_key(pattern.pattern_key or pattern.name or pattern.id),
@@ -436,6 +531,10 @@ def _sample_from_example(pattern: DiscoveredPattern, example: DiscoveredPatternE
         window_size=_optional_int(pattern.window_size),
         forward_bars=forward_bars,
         side=str(pattern.side or "") or None,
+        expected_side=side_context["expected_side"],
+        side_matches_hypothesis=side_context["side_matches_hypothesis"],
+        hypothesis_rejection_reason=side_context["hypothesis_rejection_reason"],
+        sample_hypothesis_side=NOT_AVAILABLE,
         window_start_ts=example.window_start or None,
         window_end_ts=str(window_end) if window_end else None,
         entry_ts=str(entry_ts) if entry_ts else None,
@@ -480,8 +579,14 @@ def _load_examples(db: Any, pattern_id: int, *, limit: int) -> list[DiscoveredPa
 
 
 def _candidate_manifest(
-    *, pattern: DiscoveredPattern, candidate_key: str, sample_count: int, truncated: bool
+    *,
+    pattern: DiscoveredPattern,
+    candidate_key: str,
+    sample_count: int,
+    truncated: bool,
+    hypothesis: dict[str, str | None],
 ) -> dict[str, Any]:
+    side_context = _side_context(str(pattern.side or "") or None, hypothesis)
     return {
         "candidate_key": candidate_key,
         "pattern_key": str(pattern.pattern_key or ""),
@@ -489,6 +594,9 @@ def _candidate_manifest(
         "status": str(getattr(pattern.status, "value", pattern.status)),
         "cluster_id": _optional_int(pattern.cluster_id),
         "side": str(pattern.side or "") or None,
+        "expected_side": side_context["expected_side"],
+        "side_matches_hypothesis": side_context["side_matches_hypothesis"],
+        "hypothesis_rejection_reason": side_context["hypothesis_rejection_reason"],
         "timeframe": str(pattern.timeframe or "") or None,
         "window_size": _optional_int(pattern.window_size),
         "score": _optional_float(pattern.score),
@@ -620,6 +728,36 @@ def _first_present(*values: Any) -> Any:
         if value is not None and value != "":
             return value
     return None
+
+
+def _first_param(runs: Sequence[DiscoveryRun], key: str) -> Any:
+    for run in runs:
+        params = run.params_json if isinstance(run.params_json, dict) else {}
+        if params.get(key):
+            return params.get(key)
+    return None
+
+
+def _manifest_metadata(paths: Sequence[str]) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    for path in paths:
+        try:
+            payload = json.loads(Path(path).read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        readiness = payload.get("readiness") or {}
+        spec = readiness.get("spec") or {}
+        execution_spec = payload.get("execution_spec") or {}
+        for key in ("vwap_condition", "vwap_side_bias", "vwap_expected_side"):
+            value = execution_spec.get(key) or spec.get(key)
+            if value and not out.get(key):
+                out[key] = str(value).strip().lower()
+    return out
+
+
+def _normalize_optional(value: Any) -> str | None:
+    text = str(value or "").strip().lower()
+    return text or None
 
 
 def _iso(value: datetime | None) -> str | None:

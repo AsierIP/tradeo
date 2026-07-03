@@ -57,6 +57,8 @@ class WindowSampler:
         )
         self.last_diagnostics = {
             "vwap_condition": vwap_spec.condition,
+            "vwap_side_bias": vwap_spec.side_bias,
+            "vwap_expected_side": vwap_spec.expected_side,
             "vwap_condition_applied": int(vwap_spec.enabled),
             "windows_vwap_rejected": 0,
             "windows_vwap_selected": 0,

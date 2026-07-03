@@ -34,6 +34,7 @@ from tradeo.research.quant_validation import (
 )
 from tradeo.research.research_director import ResearchDirector as CandidateResearchDirector
 from tradeo.research.validation_gate import ValidationGate
+from tradeo.research.intraday_vwap_conditions import expected_side_from_vwap_condition
 from tradeo.research.window_sampler import WindowSampler
 from tradeo.schemas import DiscoveryRunRequest, DiscoveryRunResponse
 from tradeo.services.data_provider import (
@@ -620,6 +621,7 @@ class PatternDiscoveryLabAgent:
             summary["vwap_conditioning"] = {
                 "vwap_condition": params["vwap_condition"],
                 "vwap_side_bias": params["vwap_side_bias"],
+                "vwap_expected_side": params["vwap_expected_side"],
                 "vwap_max_distance_bps": params["vwap_max_distance_bps"],
                 "vwap_min_slope_bps": params["vwap_min_slope_bps"],
                 "applied": params["vwap_condition"] != "none",
@@ -882,6 +884,7 @@ class PatternDiscoveryLabAgent:
             else request.store_rejected,
             "vwap_condition": (request.vwap_condition or "none").strip().lower() or "none",
             "vwap_side_bias": (request.vwap_side_bias or "").strip().lower() or None,
+            "vwap_expected_side": expected_side_from_vwap_condition(request.vwap_condition, request.vwap_side_bias),
             "vwap_max_distance_bps": request.vwap_max_distance_bps,
             "vwap_min_slope_bps": request.vwap_min_slope_bps,
             "rr_levels": s.discovery_rr_level_list,

@@ -3,14 +3,26 @@ from __future__ import annotations
 from collections import Counter
 
 import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+
+from tradeo.db.models import DiscoveredPattern, DiscoveryRun
+from tradeo.db.session import Base
 
 from tradeo.research.intraday_research_forensics import (
     ScopeViolationError,
+    build_forensics_report,
     classify_failure,
     next_hypotheses,
     scope_integrity_report,
     validate_scope_integrity,
 )
+
+
+def _db():
+    engine = create_engine("sqlite:///:memory:", future=True)
+    Base.metadata.create_all(bind=engine)
+    return sessionmaker(bind=engine, future=True)()
 
 
 def test_classifies_cost_dominated_from_cost_reasons() -> None:
@@ -101,3 +113,52 @@ def test_forensics_scope_integrity_fails_with_out_of_scope_run_id() -> None:
     assert report["scope_integrity"]["out_of_scope_run_ids"] == [3]
     with pytest.raises(ScopeViolationError):
         validate_scope_integrity(report)
+
+
+def test_forensics_marks_long_candidate_as_side_mismatch_for_vwap_reject_short() -> None:
+    db = _db()
+    run = DiscoveryRun(
+        status="completed",
+        params_json={"vwap_condition": "vwap_reject_short", "vwap_side_bias": "short"},
+        clusters_evaluated=2,
+    )
+    db.add(run)
+    db.flush()
+    db.add_all(
+        [
+            DiscoveredPattern(
+                run_id=run.id,
+                pattern_key="long_candidate",
+                name="long candidate",
+                side="long",
+                sample_count=120,
+                symbol_count=8,
+                score=2.0,
+                expectancy_r=0.4,
+                profit_factor=1.8,
+            ),
+            DiscoveredPattern(
+                run_id=run.id,
+                pattern_key="short_candidate",
+                name="short candidate",
+                side="short",
+                sample_count=120,
+                symbol_count=8,
+                score=1.0,
+                expectancy_r=0.2,
+                profit_factor=1.4,
+            ),
+        ]
+    )
+    db.commit()
+
+    report = build_forensics_report(db=db, run_ids=[int(run.id)])
+    by_key = {row["pattern_key"]: row for row in report["candidate_forensics"]}
+
+    assert report["hypothesis_integrity"]["expected_side"] == "short"
+    assert report["hypothesis_integrity"]["side_mismatch_count"] == 1
+    assert by_key["long_candidate"]["side_matches_hypothesis"] is False
+    assert by_key["long_candidate"]["hypothesis_rejection_reason"] == (
+        "side_mismatch:vwap_reject_short_expected_short_got_long"
+    )
+    assert by_key["short_candidate"]["side_matches_hypothesis"] is True
