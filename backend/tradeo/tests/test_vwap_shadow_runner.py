@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -106,3 +107,77 @@ def test_runner_does_not_import_broker_or_paper_paths() -> None:
 
     assert "tradeo.services.ibkr_broker" not in sys.modules
     assert "tradeo.services.paper_broker" not in sys.modules
+
+
+def test_shadow_loop_defaults_to_single_bounded_iteration(tmp_path: Path) -> None:
+    script = Path(__file__).resolve().parents[3] / "scripts" / "run_vwap_shadow_loop.py"
+    jsonl = tmp_path / "events.jsonl"
+    summary_json = tmp_path / "summary.json"
+    summary_md = tmp_path / "summary.md"
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(script),
+            "--symbols",
+            "AAPL,MSFT",
+            "--conditions",
+            "vwap_reclaim_long:long,vwap_reject_short:short",
+            "--jsonl-out",
+            str(jsonl),
+            "--summary-json",
+            str(summary_json),
+            "--summary-md",
+            str(summary_md),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    events = jsonl.read_text(encoding="utf-8").splitlines()
+    summary = json.loads(summary_json.read_text(encoding="utf-8"))
+    assert len(events) == 4
+    assert summary["iterations_requested"] == 1
+    assert summary["iterations_completed"] == 1
+    assert summary["forbidden_outcomes"] == 0
+    assert summary["orders_allowed"] is False
+    assert summary["paper_allowed"] is False
+    assert summary["live_allowed"] is False
+    assert summary_md.exists()
+
+
+def test_shadow_loop_respects_existing_stop_file(tmp_path: Path) -> None:
+    script = Path(__file__).resolve().parents[3] / "scripts" / "run_vwap_shadow_loop.py"
+    stop_file = tmp_path / "STOP"
+    stop_file.write_text("stop\n", encoding="utf-8")
+    jsonl = tmp_path / "events.jsonl"
+    summary_json = tmp_path / "summary.json"
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(script),
+            "--symbols",
+            "AAPL",
+            "--stop-file",
+            str(stop_file),
+            "--jsonl-out",
+            str(jsonl),
+            "--summary-json",
+            str(summary_json),
+            "--summary-md",
+            str(tmp_path / "summary.md"),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    summary = json.loads(summary_json.read_text(encoding="utf-8"))
+    assert summary["stopped_by_file"] is True
+    assert summary["iterations_completed"] == 0
+    assert summary["forbidden_outcomes"] == 0
+    assert not jsonl.exists()
