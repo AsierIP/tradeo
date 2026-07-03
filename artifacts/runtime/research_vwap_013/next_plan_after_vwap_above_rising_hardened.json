@@ -1,0 +1,160 @@
+{
+  "actions": [
+    "Do not confirm or shadow-review hard-blocked candidates.",
+    "Do not paper/live; no candidate met confirmation criteria.",
+    "Diagnose every new wave by --wave-manifest or --run-ids, never by a broad --hours scope.",
+    "Persist rejected candidates for every wave.",
+    "Add a follow-up cost-aware analysis: rank candidates by gross edge minus base and x2 costs.",
+    "Plan regime splits: opening hour, final hour, gap days, high RVOL, SPY/QQQ up/down."
+  ],
+  "allowed_waves": [],
+  "blocked_candidates": [
+    {
+      "expected_side": "long",
+      "metric": "max_drawdown_r",
+      "pattern_key": "novel_long_w100_93323dcacfe3e42aeef2",
+      "reason": "drawdown_excessive_for_confirmation",
+      "run_id": 6805,
+      "side": "long",
+      "side_matches_hypothesis": true,
+      "threshold": 12,
+      "value": 102.82831
+    },
+    {
+      "expected_side": "long",
+      "metric": "market_replay",
+      "pattern_key": "novel_long_w100_93323dcacfe3e42aeef2",
+      "reason": "market_replay_failed",
+      "run_id": 6805,
+      "side": "long",
+      "side_matches_hypothesis": true,
+      "threshold": "passed",
+      "value": "failed"
+    },
+    {
+      "expected_side": "long",
+      "metric": "market_replay_expectancy_r",
+      "pattern_key": "novel_long_w100_93323dcacfe3e42aeef2",
+      "reason": "market_replay_negative_expectancy",
+      "run_id": 6805,
+      "side": "long",
+      "side_matches_hypothesis": true,
+      "threshold": 0,
+      "value": "market replay sin expectancy positiva: -0.02R"
+    }
+  ],
+  "blocked_waves": [],
+  "candidate_for_confirmation": [],
+  "candidate_for_shadow_review": [],
+  "confirmation_gate": {
+    "hard_blockers": [
+      {
+        "expected_side": "long",
+        "metric": "max_drawdown_r",
+        "pattern_key": "novel_long_w100_93323dcacfe3e42aeef2",
+        "reason": "drawdown_excessive_for_confirmation",
+        "run_id": 6805,
+        "side": "long",
+        "side_matches_hypothesis": true,
+        "threshold": 12,
+        "value": 102.82831
+      },
+      {
+        "expected_side": "long",
+        "metric": "market_replay",
+        "pattern_key": "novel_long_w100_93323dcacfe3e42aeef2",
+        "reason": "market_replay_failed",
+        "run_id": 6805,
+        "side": "long",
+        "side_matches_hypothesis": true,
+        "threshold": "passed",
+        "value": "failed"
+      },
+      {
+        "expected_side": "long",
+        "metric": "market_replay_expectancy_r",
+        "pattern_key": "novel_long_w100_93323dcacfe3e42aeef2",
+        "reason": "market_replay_negative_expectancy",
+        "run_id": 6805,
+        "side": "long",
+        "side_matches_hypothesis": true,
+        "threshold": 0,
+        "value": "market replay sin expectancy positiva: -0.02R"
+      }
+    ],
+    "passed": false
+  },
+  "decision": "change_search_space",
+  "generated_at": "2026-07-03T14:38:51.868717+00:00",
+  "input_summary": {
+    "accepted": 0,
+    "clusters": 8,
+    "period": "60d",
+    "persisted_candidates": 8,
+    "product_policy": "stock_only",
+    "prohibited_repeats": [
+      "30m W20 4,8,13",
+      "30m W50 4,8,13",
+      "30m W50 8,13,21",
+      "1h W20 2,4,6",
+      "1h W50 2,4,6"
+    ],
+    "readiness_coverage": 1.0,
+    "readiness_ready": true,
+    "rejected": 8,
+    "selected_count": 117,
+    "selected_count_diagnostic_value": null,
+    "selected_count_effective": 117,
+    "selected_count_source": "universe_metadata",
+    "source": "/home/vboxuser/tradeo-worktrees/director-control-loop-operability/artifacts/runtime/research_vwap_012/forensics_30m_w100_vwap_above_rising.json",
+    "top_blockers": {
+      "cost_dominated": 7,
+      "drawdown_excessive": 1,
+      "oos_unstable": 8,
+      "operationally_unavailable": 7,
+      "regime_sensitive_candidate": 8,
+      "side_mismatch": 3,
+      "statistical_datamined": 7
+    },
+    "top_exact_rejection_reasons": {
+      "Deflated Sharpe d\u00e9bil: prob=0.00 < 0.50": 7,
+      "adversarial rejection: cost_shock": 7,
+      "baja probabilidad de fill estimada: 0.00": 7,
+      "bootstrap reality proxy SPA-like insuficiente: p=1.00 > 0.25": 7,
+      "bootstrap reality proxy WRC-like insuficiente: p=1.00 > 0.25": 7,
+      "edge no sobrevive coste x2": 7,
+      "no demuestra edge positivo en 4R": 7,
+      "no supera BH-FDR del run (q=0.05, p=1.0000, tests=8)": 7,
+      "profit factor d\u00e9bil en todos los R:R": 7,
+      "purged combinatorial CV inestable: 0.00 < 0.50": 7,
+      "significancia insuficiente: p_adj=1.00 > 0.25": 7,
+      "sin expectancy positiva en ning\u00fan R:R evaluado": 7
+    },
+    "universe_file": "/app/artifacts/runtime/universe_intraday_stock_only_v3.csv",
+    "windows": 33636
+  },
+  "limit_source": "selected_count_effective",
+  "rationale": [
+    "Promising candidates were rejected by hard confirmation blockers.",
+    "Cost stress dominates; move to higher timeframe/slower exits and require cost-aware follow-up.",
+    "Drawdown remains excessive; longer windows or regime filters are preferred over repeating W20/W50.",
+    "OOS weakness dominates; split by regime/time-of-day instead of broad-market repetitions.",
+    "Multiple-testing failures remain high; run narrower families one at a time with exact-scope diagnosis."
+  ],
+  "recommended_limit": 117,
+  "safety": {
+    "live_allowed": false,
+    "order_code_allowed": false,
+    "paper_allowed": false,
+    "relax_gates_allowed": false,
+    "requires_exact_scope_diagnosis": true,
+    "requires_store_rejected": true
+  },
+  "vwap_context": {
+    "available": true,
+    "bars_analyzed": 89297,
+    "recommended_waves": [],
+    "symbols_analyzed": 117
+  },
+  "waves": []
+}

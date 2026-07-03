@@ -207,6 +207,7 @@ def test_planner_blocks_confirmation_for_side_mismatch() -> None:
     assert result.candidate_for_confirmation == ()
     assert result.candidate_for_shadow_review == ()
     assert result.blocked_candidates[0]["reason"] == "side_mismatch"
+    assert result.confirmation_gate["passed"] is False
 
 
 def test_planner_keeps_confirmation_when_side_matches() -> None:
@@ -234,6 +235,138 @@ def test_planner_keeps_confirmation_when_side_matches() -> None:
     assert result.decision == "candidate_for_confirmation"
     assert result.candidate_for_confirmation[0].pattern_key == "short_candidate"
     assert result.blocked_candidates == ()
+    assert result.confirmation_gate["passed"] is True
+
+
+def test_planner_blocks_confirmation_for_excessive_drawdown() -> None:
+    result = IntradayResearchPlanner().plan(
+        PlannerInput(
+            selected_count=117,
+            candidates=(_candidate(max_drawdown_r=12.01),),
+        )
+    )
+
+    assert result.decision == "change_search_space"
+    assert result.candidate_for_confirmation == ()
+    assert result.candidate_for_shadow_review == ()
+    assert result.blocked_candidates[0]["reason"] == "drawdown_excessive_for_confirmation"
+    assert result.blocked_candidates[0]["metric"] == "max_drawdown_r"
+    assert result.blocked_candidates[0]["threshold"] == 12
+
+
+def test_planner_blocks_confirmation_for_negative_market_replay() -> None:
+    result = IntradayResearchPlanner().plan(
+        PlannerInput(
+            selected_count=117,
+            candidates=(
+                _candidate(
+                    market_replay="failed",
+                    rejection_reasons=("market replay sin expectancy positiva: -0.02R",),
+                ),
+            ),
+        )
+    )
+
+    reasons = {item["reason"] for item in result.blocked_candidates}
+    assert result.decision == "change_search_space"
+    assert "market_replay_failed" in reasons
+    assert "market_replay_negative_expectancy" in reasons
+    assert result.confirmation_gate["passed"] is False
+
+
+def test_planner_blocks_confirmation_for_oos_and_cost_statistical_failures() -> None:
+    result = IntradayResearchPlanner().plan(
+        PlannerInput(
+            selected_count=117,
+            candidates=(
+                _candidate(
+                    oos_expectancy_r=0.0,
+                    oos_profit_factor=1.2,
+                    cost_x2_result="failed",
+                    fdr_result="failed",
+                    wrc_result="failed",
+                    spa_result="failed",
+                ),
+            ),
+        )
+    )
+
+    reasons = {item["reason"] for item in result.blocked_candidates}
+    assert result.candidate_for_confirmation == ()
+    assert {
+        "oos_expectancy_not_positive",
+        "oos_profit_factor_too_low",
+        "cost_x2_failed",
+        "fdr_failed",
+        "wrc_failed",
+        "spa_failed",
+    }.issubset(reasons)
+
+
+def test_planner_allows_candidate_only_when_confirmation_gate_passes() -> None:
+    result = IntradayResearchPlanner().plan(
+        PlannerInput(
+            selected_count=117,
+            candidates=(
+                _candidate(
+                    max_drawdown_r=11.9,
+                    market_replay="passed",
+                    cost_x2_result="passed",
+                    fdr_result="passed",
+                    wrc_result="passed",
+                    spa_result="passed",
+                    oos_expectancy_r=0.25,
+                    oos_profit_factor=1.21,
+                ),
+            ),
+        )
+    )
+
+    assert result.decision == "candidate_for_confirmation"
+    assert result.confirmation_gate == {"passed": True, "hard_blockers": []}
+    assert result.candidate_for_confirmation[0].pattern_key == "candidate"
+
+
+def test_t012_like_payload_blocks_confirmation_and_shadow_review() -> None:
+    planner_input = planner_input_from_payload(
+        {
+            "selected_count": 117,
+            "top_blockers": {"drawdown_excessive": 1, "oos_unstable": 8},
+            "near_misses": [
+                {
+                    "pattern_key": "novel_long_w100_93323dcacfe3e42aeef2",
+                    "side": "long",
+                    "expected_side": "long",
+                    "side_matches_hypothesis": True,
+                    "expectancy_r": 0.2149,
+                    "profit_factor": 1.34173,
+                    "oos_expectancy_r": 0.18258,
+                    "oos_profit_factor": 1.30376,
+                    "symbol_count": 81,
+                    "sample_count": 3181,
+                    "drawdown_r": 102.82831,
+                    "market_replay": "failed",
+                    "cost_x2_result": "passed",
+                    "fdr_result": "passed",
+                    "wrc_result": "passed",
+                    "spa_result": "passed",
+                    "rejection_reasons": [
+                        "drawdown excesivo: 102.83R > 12.00R",
+                        "market replay sin expectancy positiva: -0.02R",
+                    ],
+                }
+            ],
+        }
+    )
+
+    result = IntradayResearchPlanner().plan(planner_input)
+    reasons = {item["reason"] for item in result.blocked_candidates}
+
+    assert result.decision == "change_search_space"
+    assert result.candidate_for_confirmation == ()
+    assert result.candidate_for_shadow_review == ()
+    assert "drawdown_excessive_for_confirmation" in reasons
+    assert "market_replay_failed" in reasons
 
 
 def test_t008r_like_payload_with_top_long_mismatch_blocks_confirmation() -> None:
@@ -264,6 +397,29 @@ def test_t008r_like_payload_with_top_long_mismatch_blocks_confirmation() -> None
     assert result.decision in {"change_search_space", "hypothesis_side_mismatch_blocked"}
     assert result.decision == "hypothesis_side_mismatch_blocked"
     assert result.candidate_for_confirmation == ()
+
+
+def _candidate(**overrides: object) -> CandidateSignal:
+    values = {
+        "pattern_key": "candidate",
+        "side": "long",
+        "expected_side": "long",
+        "side_matches_hypothesis": True,
+        "expectancy_r": 0.5,
+        "profit_factor": 2.0,
+        "oos_expectancy_r": 0.2,
+        "oos_profit_factor": 1.4,
+        "symbol_count": 8,
+        "sample_count": 140,
+        "max_drawdown_r": 8.0,
+        "market_replay": "passed",
+        "cost_x2_result": "passed",
+        "fdr_result": "passed",
+        "wrc_result": "passed",
+        "spa_result": "passed",
+    }
+    values.update(overrides)
+    return CandidateSignal(**values)
 
 
 def _vwap_summary() -> dict[str, object]:
