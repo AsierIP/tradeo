@@ -1,0 +1,22 @@
+{
+  "benchmark_ready": 2,
+  "cache_status": "CACHE_WRITTEN",
+  "decision": "PILOT_CACHE_READY_FOR_BACKTEST",
+  "docker_tcp": "TCP_OK",
+  "false_bar_2026_07_03_present": false,
+  "host_tcp": "TCP_OK",
+  "last_valid_bar_date": "2026-07-02",
+  "live_used": false,
+  "no_backtest": true,
+  "orders_used": false,
+  "operational_ready": 50,
+  "paper_execution_used": false,
+  "pilot_cache_failed": 0,
+  "pilot_cache_fetched": 28,
+  "pilot_cache_skipped": 24,
+  "quality_gate": "PASS",
+  "read_only": true,
+  "recommended_next_phase": "DSS-004 backtest DSS-PB-001, only after explicit Director authorization",
+  "signals_generated": false,
+  "universe_decision": "PILOT_UNIVERSE_PASS"
+}

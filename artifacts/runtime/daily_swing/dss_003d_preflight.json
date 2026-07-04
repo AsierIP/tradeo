@@ -1,0 +1,32 @@
+{
+  "classification": "IB_GATEWAY_PAPER",
+  "decision": "PREFLIGHT_PASS",
+  "docker": {
+    "decision": "TCP_OK",
+    "host": "host.docker.internal",
+    "port": 4002,
+    "resolved_addresses": [
+      "172.17.0.1"
+    ],
+    "runtime": "docker_exec:tradeo-backend",
+    "tcp_status": "TCP_OK"
+  },
+  "host": {
+    "decision": "TCP_OK",
+    "host": "127.0.0.1",
+    "port": 4002,
+    "resolved_addresses": [
+      "127.0.0.1"
+    ],
+    "tcp_status": "TCP_OK"
+  },
+  "ibkr_api_used_for_tcp": false,
+  "live_ports_blocked": [
+    4001,
+    7496
+  ],
+  "live_used": false,
+  "orders_used": false,
+  "paper_execution_used": false,
+  "read_only": true
+}

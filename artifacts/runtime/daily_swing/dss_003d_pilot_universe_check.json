@@ -1,0 +1,18 @@
+{
+  "benchmark_count": 2,
+  "benchmark_policy_violations": [],
+  "benchmark_symbols": [
+    "SPY",
+    "QQQ"
+  ],
+  "decision": "PILOT_UNIVERSE_PASS",
+  "duplicate_symbols": [],
+  "live_used": false,
+  "non_stock_operational_symbols": [],
+  "operational_count": 50,
+  "orders_used": false,
+  "paper_execution_used": false,
+  "total_rows": 52,
+  "universe_path": "artifacts/runtime/daily_swing/dss_003_universe_pilot.csv",
+  "unknown_product_symbols": []
+}
