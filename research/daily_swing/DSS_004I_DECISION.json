@@ -1,0 +1,23 @@
+{
+  "schema_version": "tradeo.daily_swing.dss_004i.decision.v1",
+  "generated_at": "2026-07-04T19:00:00Z",
+  "decision": "CLEAN_BRANCH_READY_FOR_PR_INFRA_ONLY",
+  "branch": "feature/daily-research-infra-clean-001",
+  "compare_url": "https://github.com/AsierIP/tradeo/compare/main...feature/daily-research-infra-clean-001",
+  "security_decision": "CLEAN_SECURITY_PASS",
+  "validation_decision": "CLEAN_VALIDATION_PASS",
+  "pr_ready": true,
+  "pr_scope": "infra-only plus terminal negative findings; no paper/live/shadow/preview/signals/orders",
+  "safety": {
+    "orders": false,
+    "paper": false,
+    "live": false,
+    "preview": false,
+    "signals": false,
+    "ibkr": false,
+    "downloads": false,
+    "cron": false,
+    "merge": false,
+    "gh": false
+  }
+}

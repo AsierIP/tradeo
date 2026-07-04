@@ -1,0 +1,28 @@
+{
+  "schema_version": "tradeo.daily_swing.dss_004i.validation.v1",
+  "generated_at": "2026-07-04T19:00:00Z",
+  "decision": "CLEAN_VALIDATION_PASS",
+  "commands": [
+    {
+      "command": "python -m py_compile <included Daily modules/scripts>",
+      "exit_code": 0
+    },
+    {
+      "command": "PYTHONPATH=backend python -m pytest <Daily focal tests>",
+      "exit_code": 0,
+      "summary": "113 passed"
+    },
+    {
+      "command": "python -m ruff check <included Daily modules/scripts/tests>",
+      "exit_code": 0
+    },
+    {
+      "command": "git diff --check",
+      "exit_code": 0
+    },
+    {
+      "command": "docker build -f backend/Dockerfile -t tradeo-backend:dss004i-clean .",
+      "exit_code": 0
+    }
+  ]
+}
