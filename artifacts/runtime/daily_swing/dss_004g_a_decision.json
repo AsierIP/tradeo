@@ -1,0 +1,90 @@
+{
+  "schema_version": "tradeo.daily_swing.dss_004g_a.decision.v1",
+  "generated_at": "2026-07-04T16:30:00Z",
+  "task_id": "T-DAILY-SWING-004G-A",
+  "decision": "DSS_CW_001_SPEC_READY_FOR_RESEARCH_BACKTEST",
+  "scope": "design_only_no_backtest",
+  "canonical_inputs": {
+    "dss_004e": "DSS_CO_001_RESEARCH_WARNING_RESEARCH150",
+    "dss_004f_r": "DSS_004F_CANONICAL_EFFECTIVE_SAMPLE_WARNING",
+    "superseded": [
+      "DSS-004F Report A calendar-day episode metrics and bootstrap 100"
+    ],
+    "canonical_figures": {
+      "raw_signals_total": 15119,
+      "raw_signals_oos": 9488,
+      "episode_gap_5_total": 1394,
+      "episode_gap_5_oos": 847,
+      "offsets_oos_x2": {
+        "0": {"expectancy_pct": 0.7336, "profit_factor": 1.2516},
+        "1": {"expectancy_pct": 1.0653, "profit_factor": 1.3720},
+        "2": {"expectancy_pct": 0.9730, "profit_factor": 1.3454},
+        "5": {"expectancy_pct": 0.9861, "profit_factor": 1.3524},
+        "10": {"expectancy_pct": 0.8648, "profit_factor": 1.3}
+      },
+      "symbol_bootstrap_expectancy_p05": -0.0316,
+      "symbol_bootstrap_expectancy_p50": 0.9166,
+      "symbol_bootstrap_expectancy_p95": 1.3883
+    }
+  },
+  "dss_cw_001_spec_draft": {
+    "episode_definition": "EPISODE_GAP_5 by trading-session signal_idx gaps <= 5",
+    "eligibility_window": "first_signal_date through min(first_signal_date + 5 trading sessions, last_signal_date)",
+    "entry_rule": "first eligible session passing portfolio filters; no post-hoc offset selection",
+    "exit_rule": "close after 10 trading sessions from entry",
+    "overlap_policy": "one active episode per symbol",
+    "portfolio_cap": "max 2 new episodes per day",
+    "priority": ["lower ATR14_pct_rank t-1", "earlier first_signal_date", "stable symbol sort"]
+  },
+  "validation_protocol": {
+    "is_end": "2024-12-31",
+    "oos_start": "2025-01-01",
+    "required_controls": [
+      "temporal_placebo",
+      "random_matched",
+      "trend_only",
+      "vol_high_only",
+      "delayed_offsets_as_adversarial"
+    ],
+    "required_robustness": [
+      "symbol_bootstrap",
+      "symbol_month_bootstrap",
+      "effective_sample_audit",
+      "concentration_audit",
+      "fdr_wrc_spa_light_before_paper_or_live"
+    ],
+    "minimum_criteria": {
+      "oos_net_x2_positive": true,
+      "oos_pf_x2_min": 1.2,
+      "max2_pf_x2_min": 1.15,
+      "last_12m_non_negative": true,
+      "placebos_must_not_dominate": true
+    }
+  },
+  "safety": {
+    "orders": false,
+    "paper_orders": false,
+    "live_orders": false,
+    "paper_execution": false,
+    "preview_operational": false,
+    "signals_operational": false,
+    "backtest_executed": false,
+    "ibkr_used": false,
+    "downloaded_more_data": false,
+    "cron": false,
+    "env_modified": false,
+    "relaxed_gates": false,
+    "merge": false,
+    "pull_request": false,
+    "gh_used": false
+  },
+  "artifacts": [
+    "research/daily_swing/DSS_004G_A_CANONICAL_SYNTHESIS.md",
+    "research/daily_swing/DSS_004G_A_DSS_CW_001_SPEC_DRAFT.md",
+    "research/daily_swing/DSS_004G_A_VALIDATION_PROTOCOL.md",
+    "research/daily_swing/DSS_004G_A_OPERABILITY_PROTOCOL.md",
+    "research/daily_swing/DSS_004G_A_FINAL_REPORT.md",
+    "artifacts/runtime/daily_swing/dss_004g_a_decision.json"
+  ],
+  "next_phase_recommendation": "Director may authorize DSS-004G-B as a separate research-only backtest task using this frozen specification."
+}
