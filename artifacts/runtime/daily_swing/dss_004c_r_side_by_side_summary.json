@@ -1,0 +1,8 @@
+{
+  "base_matched_oos_expectancy_net_x2_pct": 1.8694492545524646,
+  "contraction_matched_oos_expectancy_net_x2_pct": 2.740843655876667,
+  "contraction_unmatched_oos_expectancy_net_x2_pct": 1.7851437283468126,
+  "matching": "Exact symbol-year counts from DSS-BO-001 base trades; deterministic spread sample; random baseline uses fixed seed.",
+  "random_seed": 40401,
+  "side_by_side_decision": "BASELINE_EXPLAINED_CONFIRMED"
+}

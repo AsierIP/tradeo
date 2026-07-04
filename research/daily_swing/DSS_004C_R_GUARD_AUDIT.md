@@ -1,0 +1,5 @@
+# DSS-004C-R Guard Audit
+
+Status: `PASS`.
+
+Checks: `{"atr_contraction_uses_t_minus_1": true, "breakout_uses_prior_high20": true, "cache_only": true, "costs_equal_x2_20_bps": true, "deduplication_after_sampling_documented": true, "excludes_spy_qqq_from_trades": true, "fake_2026_07_03_absent": true, "last_valid_bar_date": "2026-07-02", "last_valid_bar_date_expected": "2026-07-02", "latest_operational_cache_date": "2026-07-02", "no_t_plus_1_in_signal": true, "side_by_side_modes_present": true, "signal_t_entry_t_plus_1": true}`

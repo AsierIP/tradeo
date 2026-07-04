@@ -1,0 +1,20 @@
+{
+  "dss_004c": {
+    "baselines": "TREND_ONLY, BREAKOUT_ONLY, CONTRACTION_ONLY, RANDOM_MATCHED.",
+    "entry_exit_costs": "Signal t, entry next open, exit 10-session close, x2 round-trip 20 bps.",
+    "matched_sample": "Approximate year-level count per symbol using count // len(frames), not exact base symbol-year counts."
+  },
+  "dss_004c_a": {
+    "baselines": "Same named baselines, but the matched population differs.",
+    "entry_exit_costs": "Signal t, entry next open, exit 10-session close, x2 round-trip 20 bps.",
+    "matched_sample": "Exact DSS-BO-001 symbol-year counts sampled from each baseline before non-overlap trade construction."
+  },
+  "fields_checked": {
+    "breakout": "close_t > prior high20, excluding t.",
+    "contraction": "ATR14_pct(t-1) <= rolling 120d p40 through t-1.",
+    "overlap": "Overlapping trades per symbol are de-duplicated after candidate sampling.",
+    "split": "IS <= 2024-12-31; OOS >= 2025-01-01.",
+    "universe": "Operational symbols from DSS-003D checked universe; SPY/QQQ benchmark only."
+  },
+  "probable_cause": "DSS-004C used a coarse per-year sampler that divided total yearly base trades across all symbols; DSS-004C-A used exact base symbol-year counts. The sample definition changed, so matched baselines are not comparable."
+}
