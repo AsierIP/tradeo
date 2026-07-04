@@ -1,0 +1,37 @@
+{
+  "decision": "DSS_CO_001_TIMING_WINDOW_CONFIRMED",
+  "episode_decision": "EPISODE_OVERLAP_HEAVY",
+  "false_bar_2026_07_03_present": false,
+  "generated_at": "2026-07-04T15:58:20.828239+00:00",
+  "last_valid_bar_date": "2026-07-02",
+  "next_phase": "Design DSS-CW-001 Contraction Window in a separate research task; no DSS-005 and no paper preview",
+  "offset_timing_decision": "TIMING_WINDOW_CONFIRMED",
+  "overlap_effective_sample_decision": "EFFECTIVE_SAMPLE_WARNING",
+  "pattern_id": "DSS-CO-001",
+  "phase": "DSS-004F",
+  "portfolio_timing_decision": "PORTFOLIO_TIMING_WARNING",
+  "regime_symbol": "SPY",
+  "safety": {
+    "cron": false,
+    "downloaded_more_data": false,
+    "env_modified": false,
+    "ibkr_used": false,
+    "live": false,
+    "merge": false,
+    "orders": false,
+    "paper_execution": false,
+    "paper_orders": false,
+    "preview_operational": false,
+    "signals_operational": false
+  },
+  "schema_version": "tradeo.daily_swing.dss_004f.v1",
+  "universe_summary": {
+    "benchmark_symbols": [
+      "QQQ",
+      "SPY"
+    ],
+    "operational_etf_or_fund_rows": 0,
+    "operational_symbols": 150,
+    "universe_rows": 152
+  }
+}

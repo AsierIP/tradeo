@@ -1,0 +1,199 @@
+{
+  "bootstrap_iterations": 20,
+  "bootstrap_seed": 40406,
+  "bootstrap_summary": {
+    "symbol": {
+      "expectancy_mean": 0.8194598985194826,
+      "expectancy_p05": -0.0315552113883849,
+      "expectancy_p50": 0.9166331058957714,
+      "expectancy_p95": 1.388253136812267,
+      "pf_p05": 0.9899613779490708,
+      "pf_p50": 1.3327283389722255,
+      "pf_p95": 1.4708326301471595
+    },
+    "symbol_month": {
+      "expectancy_mean": 0.8187713303316251,
+      "expectancy_p05": 0.40064288130041587,
+      "expectancy_p50": 0.9213848317818087,
+      "expectancy_p95": 1.1286913508761187,
+      "pf_p05": 1.1310419693108225,
+      "pf_p50": 1.3256277100693328,
+      "pf_p95": 1.4055209811690883
+    }
+  },
+  "episode_dedup_oos": {
+    "OOS": {
+      "avg_loss_pct": -5.893787151039813,
+      "avg_win_pct": 7.220885766086629,
+      "expectancy_pct": 0.7335564583265738,
+      "profit_factor": 1.251611575448284,
+      "symbols": 147,
+      "trades": 843,
+      "winrate": 0.505338078291815,
+      "worst_streak": 14
+    },
+    "concentration": {
+      "top_1_symbol_contribution_pct": 0.07253785849953727,
+      "top_3_symbols_contribution_pct": 0.18727291086000147,
+      "top_5_trades_contribution_pct": 0.08146077117687804
+    },
+    "episodes_OOS": 843,
+    "episodes_total": 843,
+    "last_12_months": {
+      "avg_loss_pct": -5.62387629903591,
+      "avg_win_pct": 7.397004202030063,
+      "expectancy_pct": 0.999201326073771,
+      "profit_factor": 1.3615986002004428,
+      "symbols": 140,
+      "trades": 578,
+      "winrate": 0.5086505190311419,
+      "worst_streak": 10
+    },
+    "last_24_months": {
+      "avg_loss_pct": -5.893787151039813,
+      "avg_win_pct": 7.220885766086629,
+      "expectancy_pct": 0.7335564583265738,
+      "profit_factor": 1.251611575448284,
+      "symbols": 147,
+      "trades": 843,
+      "winrate": 0.505338078291815,
+      "worst_streak": 14
+    },
+    "max_drawdown_pct": 388.6647895831795,
+    "symbols_OOS": 147,
+    "worst_loss_streak": 14
+  },
+  "generated_at": "2026-07-04T15:58:17.950752+00:00",
+  "partial_decision": "EFFECTIVE_SAMPLE_WARNING",
+  "policy_summary": {
+    "ALL_EVENTS": {
+      "approx_effective_events": 847,
+      "days_with_more_than_2_signals": 470,
+      "max_simultaneous_new_trades": 85,
+      "mean_simultaneous_new_trades": 30.496969696969696,
+      "overlap_pct_by_symbol": 0.9231584525702172,
+      "raw_oos": {
+        "avg_loss_pct": -5.776689853881151,
+        "avg_win_pct": 6.688278848808961,
+        "expectancy_pct": 0.9806006282639054,
+        "profit_factor": 1.3707189848878556,
+        "symbols": 147,
+        "trades": 9465,
+        "winrate": 0.5421024828314844,
+        "worst_streak": 24
+      },
+      "trades_OOS": 9465,
+      "trades_sharing_episode_pct": 1.0,
+      "trades_total": 15096
+    },
+    "MAX_2_NEW_TRADES_PER_DAY_SIM": {
+      "approx_effective_events": 847,
+      "days_with_more_than_2_signals": 0,
+      "max_simultaneous_new_trades": 2,
+      "mean_simultaneous_new_trades": 1.9331896551724137,
+      "overlap_pct_by_symbol": 0.0,
+      "raw_oos": {
+        "avg_loss_pct": -4.962165222488605,
+        "avg_win_pct": 5.408487059675098,
+        "expectancy_pct": 0.4572207791281914,
+        "profit_factor": 1.1929943203637217,
+        "symbols": 116,
+        "trades": 576,
+        "winrate": 0.5225694444444444,
+        "worst_streak": 10
+      },
+      "trades_OOS": 576,
+      "trades_sharing_episode_pct": 1.0,
+      "trades_total": 897
+    },
+    "ONE_ACTIVE_PER_SYMBOL": {
+      "approx_effective_events": 847,
+      "days_with_more_than_2_signals": 296,
+      "max_simultaneous_new_trades": 19,
+      "mean_simultaneous_new_trades": 4.72930648769575,
+      "overlap_pct_by_symbol": 0.0,
+      "raw_oos": {
+        "avg_loss_pct": -5.843494517532391,
+        "avg_win_pct": 7.069100610862752,
+        "expectancy_pct": 0.9723070300262958,
+        "profit_factor": 1.352405621507822,
+        "symbols": 147,
+        "trades": 1311,
+        "winrate": 0.5278413424866514,
+        "worst_streak": 14
+      },
+      "trades_OOS": 1311,
+      "trades_sharing_episode_pct": 1.0,
+      "trades_total": 2114
+    }
+  },
+  "raw_overlap": {
+    "ALL_EVENTS": {
+      "approx_effective_events": 847,
+      "days_with_more_than_2_signals": 470,
+      "effective_events_approx": 847,
+      "max_simultaneous_new_trades": 85,
+      "mean_simultaneous_new_trades": 30.496969696969696,
+      "overlap_pct_by_symbol": 0.9231584525702172,
+      "overlap_trade_pct": 0.9231584525702172,
+      "raw_oos": {
+        "avg_loss_pct": -5.776689853881151,
+        "avg_win_pct": 6.688278848808961,
+        "expectancy_pct": 0.9806006282639054,
+        "profit_factor": 1.3707189848878556,
+        "symbols": 147,
+        "trades": 9465,
+        "winrate": 0.5421024828314844,
+        "worst_streak": 24
+      },
+      "trades_OOS": 9465,
+      "trades_sharing_episode_pct": 1.0,
+      "trades_total": 15096
+    },
+    "MAX_2_NEW_TRADES_PER_DAY_SIM": {
+      "approx_effective_events": 847,
+      "days_with_more_than_2_signals": 0,
+      "effective_events_approx": 847,
+      "max_simultaneous_new_trades": 2,
+      "mean_simultaneous_new_trades": 1.9331896551724137,
+      "overlap_pct_by_symbol": 0.0,
+      "overlap_trade_pct": 0.0,
+      "raw_oos": {
+        "avg_loss_pct": -4.962165222488605,
+        "avg_win_pct": 5.408487059675098,
+        "expectancy_pct": 0.4572207791281914,
+        "profit_factor": 1.1929943203637217,
+        "symbols": 116,
+        "trades": 576,
+        "winrate": 0.5225694444444444,
+        "worst_streak": 10
+      },
+      "trades_OOS": 576,
+      "trades_sharing_episode_pct": 1.0,
+      "trades_total": 897
+    },
+    "ONE_ACTIVE_PER_SYMBOL": {
+      "approx_effective_events": 847,
+      "days_with_more_than_2_signals": 296,
+      "effective_events_approx": 847,
+      "max_simultaneous_new_trades": 19,
+      "mean_simultaneous_new_trades": 4.72930648769575,
+      "overlap_pct_by_symbol": 0.0,
+      "overlap_trade_pct": 0.0,
+      "raw_oos": {
+        "avg_loss_pct": -5.843494517532391,
+        "avg_win_pct": 7.069100610862752,
+        "expectancy_pct": 0.9723070300262958,
+        "profit_factor": 1.352405621507822,
+        "symbols": 147,
+        "trades": 1311,
+        "winrate": 0.5278413424866514,
+        "worst_streak": 14
+      },
+      "trades_OOS": 1311,
+      "trades_sharing_episode_pct": 1.0,
+      "trades_total": 2114
+    }
+  },
+  "schema_version": "tradeo.daily_swing.dss_004f.v1"
+}
