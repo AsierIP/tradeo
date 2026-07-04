@@ -1,0 +1,13 @@
+{
+  "decision": "LIVE_PORT_RISK",
+  "dns_status": "BLOCKED_LIVE_PORT",
+  "error": "live IBKR ports 7496/4001 are blocked for this diagnostic",
+  "host": "127.0.0.1",
+  "ibkr_api_used": false,
+  "orders_used": false,
+  "port": 4001,
+  "port_classification": "LIVE_PORT_RISK",
+  "resolved_addresses": [],
+  "tcp_status": "BLOCKED_LIVE_PORT",
+  "timeout_seconds": 3.0
+}

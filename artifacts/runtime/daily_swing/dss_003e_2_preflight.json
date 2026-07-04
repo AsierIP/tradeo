@@ -1,0 +1,30 @@
+{
+  "decision": "BLOCKED_CANARY",
+  "host_tcp_4002": "TCP_OK",
+  "docker_tcp_4002": "TCP_OK",
+  "port_classification": "IB_GATEWAY_PAPER",
+  "read_only": true,
+  "live_ports_used": false,
+  "live_ports_blocked_by_guard": [4001, 7496],
+  "canaries": [
+    {
+      "symbol": "SPY",
+      "period": "5D",
+      "status": "FAILED",
+      "historical_data_ok": false,
+      "connected": false,
+      "error_class": "TimeoutError"
+    },
+    {
+      "symbol": "AAON",
+      "period": "5D",
+      "status": "FAILED",
+      "historical_data_ok": false,
+      "connected": false,
+      "error_class": "TimeoutError"
+    }
+  ],
+  "orders_used": false,
+  "paper_orders_used": false,
+  "live_used": false
+}

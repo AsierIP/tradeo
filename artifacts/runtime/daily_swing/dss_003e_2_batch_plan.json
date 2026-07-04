@@ -1,0 +1,13 @@
+{
+  "decision": "NOT_EXECUTED_BLOCKED_CANARY",
+  "universe_path": "artifacts/runtime/daily_swing/dss_003e_2_research_universe_checked.csv",
+  "operational_symbols": 150,
+  "benchmark_symbols": ["SPY", "QQQ"],
+  "existing_cache_symbols": ["AAON", "AAPL", "AEO", "ALGM", "APPF", "AX", "BROS", "MSFT", "QQQ", "SPY"],
+  "planned_batch_size": 25,
+  "resume": true,
+  "quarantine_failures": true,
+  "max_consecutive_timeouts": 2,
+  "executed": false,
+  "block_reason": "SPY and AAON historical canaries failed"
+}

@@ -1,0 +1,20 @@
+{
+  "decision": "BLOCKED_IBKR_CONNECTION",
+  "phase": "DSS-003E-2",
+  "reason": "TCP 4002 passed, but SPY and AAON historical canaries failed with API connection TimeoutError before cache start.",
+  "cache_executed": false,
+  "quality_gate_executed": false,
+  "fetched": 0,
+  "skipped": 0,
+  "failed": 0,
+  "quarantined": 0,
+  "operational_ready": 0,
+  "benchmark_ready": 0,
+  "orders_used": false,
+  "paper_orders_used": false,
+  "live_used": false,
+  "backtest_executed": false,
+  "signals_generated": false,
+  "preview_generated": false,
+  "next_recommended_action": "Restore or verify IB Gateway Paper API session on port 4002, rerun SPY/AAON 5D read-only canaries, then resume DSS-003E-2 in small batches."
+}

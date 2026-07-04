@@ -1,0 +1,16 @@
+{
+  "bars_count": 0,
+  "client_id": 229,
+  "connected": false,
+  "error": "",
+  "historical_data_ok": false,
+  "host": "host.docker.internal",
+  "live_used": false,
+  "orders_used": false,
+  "paper_orders_used": false,
+  "period": "5D",
+  "port": 4002,
+  "read_only": true,
+  "status": "FAILED",
+  "symbol": "SPY"
+}

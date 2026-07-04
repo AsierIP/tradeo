@@ -1,0 +1,8 @@
+{
+  "data_gate": "NOT_RUN_BLOCKED_CANARY",
+  "operational_ready": 0,
+  "benchmark_ready": 0,
+  "false_bar_2026_07_03_present": null,
+  "last_valid_bar_date": null,
+  "note": "Quality gate not run because DSS-003E-2 stopped after failed SPY and AAON historical canaries."
+}
