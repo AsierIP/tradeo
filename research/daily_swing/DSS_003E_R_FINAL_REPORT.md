@@ -16,7 +16,11 @@ No se ejecuto DSS-004E. No hubo backtest, senales, preview operativo, paper exec
 
 Rama: `feature/daily-swing-paper-probe-001`.
 
-Commit/push: pendiente al cierre de este reporte; ejecutar tras validacion final si el diff queda limpio.
+Commits:
+- `0141f98 fix(daily): add safe IBKR cache resume`
+- follow-up HEAD commit on `feature/daily-swing-paper-probe-001` for Docker host probe artifact normalization and this report update.
+
+Push: pending at report write time; final chat report must include the pushed HEAD hash.
 
 ## D. Canary probes
 
