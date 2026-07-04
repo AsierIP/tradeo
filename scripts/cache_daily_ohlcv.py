@@ -29,6 +29,14 @@ def main() -> int:
     parser.add_argument("--sleep", type=float, default=0.0)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--force", action="store_true")
+    parser.add_argument("--max-new-fetches", type=int, default=None)
+    parser.add_argument("--max-consecutive-timeouts", type=int, default=None)
+    parser.add_argument("--request-timeout", type=float, default=None)
+    parser.add_argument("--retry-count", type=int, default=0)
+    parser.add_argument("--retry-backoff-seconds", type=float, default=0.0)
+    parser.add_argument("--quarantine-failures", action="store_true")
+    parser.add_argument("--continue-on-symbol-timeout", action="store_true")
+    parser.add_argument("--stop-on-global-timeout", action="store_true")
     parser.add_argument("--build-universes", action="store_true")
     parser.add_argument("--json-only", action="store_true")
     args = parser.parse_args()
@@ -47,6 +55,14 @@ def main() -> int:
         sleep_seconds=args.sleep,
         dry_run=args.dry_run,
         force=args.force,
+        max_new_fetches=args.max_new_fetches,
+        max_consecutive_timeouts=args.max_consecutive_timeouts,
+        request_timeout=args.request_timeout,
+        retry_count=args.retry_count,
+        retry_backoff_seconds=args.retry_backoff_seconds,
+        quarantine_failures=args.quarantine_failures,
+        continue_on_symbol_timeout=args.continue_on_symbol_timeout,
+        stop_on_global_timeout=args.stop_on_global_timeout,
     )
     payload = {
         "status": result.status,

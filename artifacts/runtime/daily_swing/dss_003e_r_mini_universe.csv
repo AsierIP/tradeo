@@ -1,0 +1,11 @@
+symbol,name,tier,benchmark_only,operational_eligible,product_type,security_type,source,source_rank,cap_segment,classification_status,exclusion_reason
+AAON,AAON Inc,research,False,True,STK,stock,data/universe_us_mid_caps.csv,1,midcap,stock_only_seed_or_fallback,
+AEO,American Eagle Outfitters,research,False,True,STK,stock,data/universe_us_mid_caps.csv,2,midcap,stock_only_seed_or_fallback,
+ALGM,Allegro MicroSystems,research,False,True,STK,stock,data/universe_us_mid_caps.csv,3,midcap,stock_only_seed_or_fallback,
+APPF,AppFolio,research,False,True,STK,stock,data/universe_us_mid_caps.csv,4,midcap,stock_only_seed_or_fallback,
+AX,Axos Financial,research,False,True,STK,stock,data/universe_us_mid_caps.csv,5,midcap,stock_only_seed_or_fallback,
+BROS,Dutch Bros,research,False,True,STK,stock,data/universe_us_mid_caps.csv,6,midcap,stock_only_seed_or_fallback,
+AAPL,,research,False,True,STK,stock,fallback_liquid_stock_list,41,large_liquid_fallback,stock_only_seed_or_fallback,
+MSFT,,research,False,True,STK,stock,fallback_liquid_stock_list,42,large_liquid_fallback,stock_only_seed_or_fallback,
+SPY,SPY,research,True,False,ETF,benchmark_etf,benchmark_required,0,benchmark,benchmark_only,benchmark_not_operational_symbol
+QQQ,QQQ,research,True,False,ETF,benchmark_etf,benchmark_required,0,benchmark,benchmark_only,benchmark_not_operational_symbol

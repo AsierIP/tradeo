@@ -1,0 +1,24 @@
+{
+  "schema_version": "tradeo.daily_swing.dss_003e_r.v1",
+  "generated_at": "2026-07-04T13:40:30+00:00",
+  "decision": "HISTORICAL_FARM_OK",
+  "tcp": {
+    "host_127001_4002": "TCP_OK",
+    "docker_hostdocker_4002": "TCP_OK",
+    "port_classification": "IB_GATEWAY_PAPER",
+    "read_only": true,
+    "live_ports_used": false
+  },
+  "probes": [
+    {"symbol": "SPY", "period": "5D", "status": "OK", "bars_count": 5},
+    {"symbol": "SPY", "period": "1M", "status": "OK", "bars_count": 501},
+    {"symbol": "AAON", "period": "5D", "status": "OK", "bars_count": 5},
+    {"symbol": "AAON", "period": "1M", "status": "OK", "bars_count": 501},
+    {"symbol": "AAON", "period": "3Y", "status": "OK", "bars_count": 752},
+    {"symbol": "AAPL", "period": "3Y", "status": "OK", "bars_count": 752}
+  ],
+  "classification": "HISTORICAL_FARM_OK",
+  "orders_used": false,
+  "paper_orders_used": false,
+  "live_used": false
+}

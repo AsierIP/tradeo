@@ -305,6 +305,29 @@ def _load_universe(path: Path, limit: int | None = None) -> list[dict[str, str]]
     return rows
 
 
+def _error_type(exc: Exception) -> str:
+    name = type(exc).__name__
+    text = str(exc).lower()
+    if "timeout" in name.lower() or "timeout" in text or "timed out" in text:
+        return "FETCH_TIMEOUT"
+    return name or "FETCH_FAILED"
+
+
+def _short_error(exc: Exception, limit: int = 500) -> str:
+    text = str(exc).strip() or type(exc).__name__
+    return text[:limit]
+
+
+def _cache_file_complete(path: Path) -> bool:
+    if not path.exists():
+        return False
+    try:
+        df = pd.read_csv(path, nrows=2)
+    except Exception:  # noqa: BLE001 - corrupt cache files must be refetched.
+        return False
+    return not df.empty and all(column in df.columns for column in REQUIRED_BAR_COLUMNS)
+
+
 def cache_daily_ohlcv(
     *,
     universe_path: Path,
@@ -318,6 +341,14 @@ def cache_daily_ohlcv(
     sleep_seconds: float = 0.0,
     dry_run: bool = False,
     force: bool = False,
+    max_new_fetches: int | None = None,
+    max_consecutive_timeouts: int | None = None,
+    request_timeout: float | None = None,
+    retry_count: int = 0,
+    retry_backoff_seconds: float = 0.0,
+    quarantine_failures: bool = False,
+    continue_on_symbol_timeout: bool = False,
+    stop_on_global_timeout: bool = False,
 ) -> CacheResult:
     out_dir.mkdir(parents=True, exist_ok=True)
     manifest_path = out_dir.parent / "dss_003_daily_cache_manifest.json"
@@ -333,6 +364,14 @@ def cache_daily_ohlcv(
         "read_only": read_only,
         "dry_run": dry_run,
         "adjusted": source == "ibkr",
+        "max_new_fetches": max_new_fetches,
+        "max_consecutive_timeouts": max_consecutive_timeouts,
+        "request_timeout": request_timeout,
+        "retry_count": retry_count,
+        "retry_backoff_seconds": retry_backoff_seconds,
+        "quarantine_failures": quarantine_failures,
+        "continue_on_symbol_timeout": continue_on_symbol_timeout,
+        "stop_on_global_timeout": stop_on_global_timeout,
         "symbols": [],
     }
     if not read_only:
@@ -357,33 +396,64 @@ def cache_daily_ohlcv(
         provider = IBKRHistoricalDataProvider(settings=settings)
 
     fetched = skipped = failed = 0
+    new_fetch_attempts = 0
+    consecutive_timeouts = 0
     first_error: str | None = None
+    stopped_reason: str | None = None
     for row in rows:
         symbol = (row.get("symbol") or "").upper().strip()
         if not symbol:
             continue
         output_path = out_dir / f"{symbol}.csv"
+        benchmark_only = _truthy(row.get("benchmark_only"))
         symbol_record: dict[str, Any] = {
             "symbol": symbol,
-            "benchmark_only": _truthy(row.get("benchmark_only")),
+            "benchmark_only": benchmark_only,
             "path": str(output_path),
             "status": "DRY_RUN" if dry_run else "PENDING",
+            "attempts": 0,
+            "quarantine": False,
+            "cache_file": str(output_path),
         }
-        if output_path.exists() and resume and not force:
+        if _cache_file_complete(output_path) and resume and not force:
             skipped += 1
-            symbol_record["status"] = "SKIPPED_EXISTS"
+            symbol_record["status"] = "SKIPPED_COMPLETE"
             manifest["symbols"].append(symbol_record)
             continue
         if dry_run:
             skipped += 1
             manifest["symbols"].append(symbol_record)
             continue
+        if max_new_fetches is not None and new_fetch_attempts >= max_new_fetches:
+            stopped_reason = "MAX_NEW_FETCHES_REACHED"
+            symbol_record["status"] = "NOT_FETCHED_MAX_NEW_FETCHES"
+            manifest["symbols"].append(symbol_record)
+            break
         try:
             assert provider is not None
-            df = provider.fetch_ohlcv(symbol, period=duration.lower().replace(" ", ""), interval="1d")
+            last_exc: Exception | None = None
+            for attempt in range(max(0, retry_count) + 1):
+                symbol_record["attempts"] = attempt + 1
+                try:
+                    new_fetch_attempts += 1 if attempt == 0 else 0
+                    df = provider.fetch_ohlcv(
+                        symbol,
+                        period=duration.lower().replace(" ", ""),
+                        interval="1d",
+                        timeout=request_timeout,
+                    )
+                    break
+                except Exception as exc:  # noqa: BLE001 - provider exposes heterogeneous IBKR/runtime failures.
+                    last_exc = exc
+                    if attempt < max(0, retry_count) and retry_backoff_seconds > 0:
+                        sleep(retry_backoff_seconds)
+            else:
+                assert last_exc is not None
+                raise last_exc
             normalized = bars_to_cache_frame(df, symbol=symbol, source=source)
             normalized.to_csv(output_path, index=False)
             fetched += 1
+            consecutive_timeouts = 0
             symbol_record.update(
                 {
                     "status": "FETCHED",
@@ -394,9 +464,39 @@ def cache_daily_ohlcv(
             )
         except Exception as exc:  # noqa: BLE001 - provider exposes heterogeneous IBKR/runtime failures.
             failed += 1
-            first_error = first_error or str(exc)
-            symbol_record.update({"status": "FETCH_FAILED", "error": str(exc)})
-            if not resume:
+            error_type = _error_type(exc)
+            is_timeout = error_type == "FETCH_TIMEOUT"
+            if is_timeout:
+                consecutive_timeouts += 1
+            else:
+                consecutive_timeouts = 0
+            first_error = first_error or _short_error(exc)
+            symbol_record.update(
+                {
+                    "status": error_type,
+                    "error_type": error_type,
+                    "error_message": _short_error(exc),
+                    "last_attempt_at": utc_now(),
+                    "quarantine": bool(quarantine_failures),
+                }
+            )
+            if benchmark_only:
+                stopped_reason = "BENCHMARK_FETCH_FAILED"
+            elif is_timeout and stop_on_global_timeout:
+                stopped_reason = "GLOBAL_TIMEOUT_STOP"
+            elif (
+                is_timeout
+                and max_consecutive_timeouts is not None
+                and max_consecutive_timeouts > 0
+                and consecutive_timeouts >= max_consecutive_timeouts
+            ):
+                stopped_reason = "MAX_CONSECUTIVE_TIMEOUTS"
+            elif is_timeout and not continue_on_symbol_timeout:
+                stopped_reason = "SYMBOL_TIMEOUT"
+            elif not resume:
+                stopped_reason = "FETCH_FAILED_NO_RESUME"
+            if stopped_reason:
+                symbol_record["stopped_reason"] = stopped_reason
                 manifest["symbols"].append(symbol_record)
                 break
         manifest["symbols"].append(symbol_record)
@@ -414,6 +514,8 @@ def cache_daily_ohlcv(
     manifest["skipped"] = skipped
     manifest["failed"] = failed
     manifest["error"] = first_error
+    manifest["new_fetch_attempts"] = new_fetch_attempts
+    manifest["stopped_reason"] = stopped_reason
     manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return CacheResult(status, fetched, skipped, failed, manifest_path, first_error)
 

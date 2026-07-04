@@ -1,0 +1,33 @@
+{
+  "schema_version": "tradeo.daily_swing.dss_003e_r.v1",
+  "generated_at": "2026-07-04T13:40:30+00:00",
+  "decision": "LOADER_PATCH_APPLIED",
+  "before": {
+    "request_timeout_cli": false,
+    "retry_count_cli": false,
+    "backoff_cli": false,
+    "max_new_fetches_cli": false,
+    "max_consecutive_timeouts_cli": false,
+    "per_symbol_quarantine": false,
+    "manifest_attempts": false,
+    "manifest_error_type": false,
+    "resume_skips_complete_files": "path_exists_only",
+    "benchmark_failure_stop": false
+  },
+  "after": {
+    "request_timeout_cli": true,
+    "retry_count_cli": true,
+    "backoff_cli": true,
+    "max_new_fetches_cli": true,
+    "max_consecutive_timeouts_cli": true,
+    "per_symbol_quarantine": true,
+    "manifest_attempts": true,
+    "manifest_error_type": true,
+    "resume_skips_complete_files": "requires readable cache with required columns",
+    "benchmark_failure_stop": true
+  },
+  "dss_003e_skipped_zero_reason": "DSS-003E used artifacts/runtime/daily_swing/daily_ohlcv_research, while the pilot cache was in artifacts/runtime/daily_swing/daily_ohlcv; therefore resume had no files to skip.",
+  "orders_used": false,
+  "paper_orders_used": false,
+  "live_used": false
+}

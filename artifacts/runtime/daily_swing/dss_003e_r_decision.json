@@ -1,0 +1,18 @@
+{
+  "schema_version": "tradeo.daily_swing.dss_003e_r.v1",
+  "generated_at": "2026-07-04T13:40:30+00:00",
+  "canary_decision": "HISTORICAL_FARM_OK",
+  "loader_decision": "LOADER_PATCH_APPLIED",
+  "mini_batch_decision": "MINI_BATCH_OK_READY_FOR_RESEARCH_RESUME",
+  "final_decision": "RESEARCH_RESUME_READY_SMALL_BATCHES",
+  "next_action": "Run DSS-003E-2 only when authorized: cache research-150 in batches of 25-30 with resume, max-new-fetches, timeout caps, and quarantine. Do not run DSS-004E yet.",
+  "orders_used": false,
+  "paper_orders_used": false,
+  "live_used": false,
+  "backtest_used": false,
+  "signals_generated": false,
+  "preview_generated": false,
+  "cron_created": false,
+  "env_real_modified": false,
+  "merge_done": false
+}
