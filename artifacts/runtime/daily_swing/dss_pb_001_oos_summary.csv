@@ -1,0 +1,2 @@
+pattern_id,split,status,trades,expectancy,profit_factor,reason
+DSS-PB-001,OOS,INSUFFICIENT_DATA,0,,,local repo has seed universe files but no reusable historical Daily OHLCV cache for DSS-PB-001

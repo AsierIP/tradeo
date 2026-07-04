@@ -7,6 +7,7 @@ from tradeo.modules.daily_swing import (
     DailySwingConfig,
     MarketBar,
     build_order,
+    build_dss_002_artifacts,
     check_daily_swing_operability,
     classify_paper_probe_candidate,
     generate_daily_swing_preview,
@@ -91,3 +92,37 @@ def test_daily_bracket_order_payload_valid() -> None:
 
 def test_daily_classification_blocks_without_real_backtest() -> None:
     assert classify_paper_probe_candidate({"real_backtest": False, "oos_expectancy_net": 0.5}) == "research_gap"
+
+
+def test_dss_002_safe_env_passes_and_current_env_can_remain_blocked(tmp_path, monkeypatch) -> None:
+    (tmp_path / ".git").mkdir()
+    (tmp_path / "docker-compose.yml").write_text("services: {}\n", encoding="utf-8")
+    (tmp_path / "configs").mkdir()
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    (data_dir / "universe_us_mid_caps.csv").write_text(
+        "symbol,name,cap_segment,note\nAAPL,Apple,midcap,seed\n",
+        encoding="utf-8",
+    )
+    (data_dir / "universe_us_small_caps.csv").write_text(
+        "symbol,name,cap_segment,note\nCOST,Costco,smallcap,seed\n",
+        encoding="utf-8",
+    )
+    (tmp_path / ".env.example").write_text(
+        "TRADEO_TRADING_MODE=paper\n"
+        "TRADEO_KILL_SWITCH_ENABLED=false\n"
+        "TRADEO_IBKR_READONLY=true\n"
+        "TRADEO_ALLOW_SHORTS=true\n",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    result = build_dss_002_artifacts(repo=tmp_path)
+    assert result["decision"] == "NO_GO"
+    assert result["research_gate"] == "INSUFFICIENT_DATA"
+    assert "PASS_FOR_SAFE_ENV" in result["operability_gate"]
+    assert "BLOCKED_CURRENT_ENV" in result["operability_gate"]
+    assert (tmp_path / "configs" / "daily_swing_paper_probe.safe.env.example").exists()
+    metrics = (tmp_path / "artifacts" / "runtime" / "daily_swing" / "dss_pb_001_metrics.json").read_text(
+        encoding="utf-8"
+    )
+    assert '"real_backtest": false' in metrics

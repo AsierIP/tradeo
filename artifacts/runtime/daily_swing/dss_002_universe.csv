@@ -1,0 +1,41 @@
+symbol,name,cap_segment,product_type,source_file,eligible_for_backtest,exclusion_reason,min_price_rule,min_adv20_rule,min_dollar_volume20_rule
+AAON,AAON Inc,midcap,STK,data/universe_us_mid_caps.csv,no_daily_ohlcv_cache,no historical OHLCV columns available in local seed universe,10,1000000,20000000
+AEO,American Eagle Outfitters,midcap,STK,data/universe_us_mid_caps.csv,no_daily_ohlcv_cache,no historical OHLCV columns available in local seed universe,10,1000000,20000000
+ALGM,Allegro MicroSystems,midcap,STK,data/universe_us_mid_caps.csv,no_daily_ohlcv_cache,no historical OHLCV columns available in local seed universe,10,1000000,20000000
+APPF,AppFolio,midcap,STK,data/universe_us_mid_caps.csv,no_daily_ohlcv_cache,no historical OHLCV columns available in local seed universe,10,1000000,20000000
+AX,Axos Financial,midcap,STK,data/universe_us_mid_caps.csv,no_daily_ohlcv_cache,no historical OHLCV columns available in local seed universe,10,1000000,20000000
+BROS,Dutch Bros,midcap,STK,data/universe_us_mid_caps.csv,no_daily_ohlcv_cache,no historical OHLCV columns available in local seed universe,10,1000000,20000000
+CALM,Cal-Maine Foods,midcap,STK,data/universe_us_mid_caps.csv,no_daily_ohlcv_cache,no historical OHLCV columns available in local seed universe,10,1000000,20000000
+CRDO,Credo Technology Group,midcap,STK,data/universe_us_mid_caps.csv,no_daily_ohlcv_cache,no historical OHLCV columns available in local seed universe,10,1000000,20000000
+CROX,Crocs,midcap,STK,data/universe_us_mid_caps.csv,no_daily_ohlcv_cache,no historical OHLCV columns available in local seed universe,10,1000000,20000000
+CVLT,Commvault Systems,midcap,STK,data/universe_us_mid_caps.csv,no_daily_ohlcv_cache,no historical OHLCV columns available in local seed universe,10,1000000,20000000
+ENPH,Enphase Energy,midcap,STK,data/universe_us_mid_caps.csv,no_daily_ohlcv_cache,no historical OHLCV columns available in local seed universe,10,1000000,20000000
+FN,Fabrinet,midcap,STK,data/universe_us_mid_caps.csv,no_daily_ohlcv_cache,no historical OHLCV columns available in local seed universe,10,1000000,20000000
+FOUR,Shift4 Payments,midcap,STK,data/universe_us_mid_caps.csv,no_daily_ohlcv_cache,no historical OHLCV columns available in local seed universe,10,1000000,20000000
+FRPT,Freshpet,midcap,STK,data/universe_us_mid_caps.csv,no_daily_ohlcv_cache,no historical OHLCV columns available in local seed universe,10,1000000,20000000
+HIMS,Hims & Hers Health,midcap,STK,data/universe_us_mid_caps.csv,no_daily_ohlcv_cache,no historical OHLCV columns available in local seed universe,10,1000000,20000000
+INSP,Inspire Medical Systems,midcap,STK,data/universe_us_mid_caps.csv,no_daily_ohlcv_cache,no historical OHLCV columns available in local seed universe,10,1000000,20000000
+LRN,Stride,midcap,STK,data/universe_us_mid_caps.csv,no_daily_ohlcv_cache,no historical OHLCV columns available in local seed universe,10,1000000,20000000
+MNDY,monday.com,midcap,STK,data/universe_us_mid_caps.csv,no_daily_ohlcv_cache,no historical OHLCV columns available in local seed universe,10,1000000,20000000
+NXT,Nextracker,midcap,STK,data/universe_us_mid_caps.csv,no_daily_ohlcv_cache,no historical OHLCV columns available in local seed universe,10,1000000,20000000
+OLLI,Ollie's Bargain Outlet,midcap,STK,data/universe_us_mid_caps.csv,no_daily_ohlcv_cache,no historical OHLCV columns available in local seed universe,10,1000000,20000000
+SKYW,SkyWest,midcap,STK,data/universe_us_mid_caps.csv,no_daily_ohlcv_cache,no historical OHLCV columns available in local seed universe,10,1000000,20000000
+TMDX,TransMedics Group,midcap,STK,data/universe_us_mid_caps.csv,no_daily_ohlcv_cache,no historical OHLCV columns available in local seed universe,10,1000000,20000000
+WING,Wingstop,midcap,STK,data/universe_us_mid_caps.csv,no_daily_ohlcv_cache,no historical OHLCV columns available in local seed universe,10,1000000,20000000
+ZETA,Zeta Global Holdings,midcap,STK,data/universe_us_mid_caps.csv,no_daily_ohlcv_cache,no historical OHLCV columns available in local seed universe,10,1000000,20000000
+ACMR,ACM Research,smallcap,STK,data/universe_us_small_caps.csv,no_daily_ohlcv_cache,no historical OHLCV columns available in local seed universe,10,1000000,20000000
+AMBA,Ambarella,smallcap,STK,data/universe_us_small_caps.csv,no_daily_ohlcv_cache,no historical OHLCV columns available in local seed universe,10,1000000,20000000
+ARWR,Arrowhead Pharmaceuticals,smallcap,STK,data/universe_us_small_caps.csv,no_daily_ohlcv_cache,no historical OHLCV columns available in local seed universe,10,1000000,20000000
+CARG,CarGurus,smallcap,STK,data/universe_us_small_caps.csv,no_daily_ohlcv_cache,no historical OHLCV columns available in local seed universe,10,1000000,20000000
+DLO,DLocal,smallcap,STK,data/universe_us_small_caps.csv,no_daily_ohlcv_cache,no historical OHLCV columns available in local seed universe,10,1000000,20000000
+FIVN,Five9,smallcap,STK,data/universe_us_small_caps.csv,no_daily_ohlcv_cache,no historical OHLCV columns available in local seed universe,10,1000000,20000000
+FUBO,FuboTV,smallcap,STK,data/universe_us_small_caps.csv,no_daily_ohlcv_cache,no historical OHLCV columns available in local seed universe,10,1000000,20000000
+GH,Guardant Health,smallcap,STK,data/universe_us_small_caps.csv,no_daily_ohlcv_cache,no historical OHLCV columns available in local seed universe,10,1000000,20000000
+IOVA,Iovance Biotherapeutics,smallcap,STK,data/universe_us_small_caps.csv,no_daily_ohlcv_cache,no historical OHLCV columns available in local seed universe,10,1000000,20000000
+PATH,UiPath,smallcap,STK,data/universe_us_small_caps.csv,no_daily_ohlcv_cache,no historical OHLCV columns available in local seed universe,10,1000000,20000000
+PRVA,Privia Health Group,smallcap,STK,data/universe_us_small_caps.csv,no_daily_ohlcv_cache,no historical OHLCV columns available in local seed universe,10,1000000,20000000
+RXRX,Recursion Pharmaceuticals,smallcap,STK,data/universe_us_small_caps.csv,no_daily_ohlcv_cache,no historical OHLCV columns available in local seed universe,10,1000000,20000000
+SEDG,SolarEdge Technologies,smallcap,STK,data/universe_us_small_caps.csv,no_daily_ohlcv_cache,no historical OHLCV columns available in local seed universe,10,1000000,20000000
+SG,Sweetgreen,smallcap,STK,data/universe_us_small_caps.csv,no_daily_ohlcv_cache,no historical OHLCV columns available in local seed universe,10,1000000,20000000
+SOUN,SoundHound AI,smallcap,STK,data/universe_us_small_caps.csv,no_daily_ohlcv_cache,no historical OHLCV columns available in local seed universe,10,1000000,20000000
+UPST,Upstart Holdings,smallcap,STK,data/universe_us_small_caps.csv,no_daily_ohlcv_cache,no historical OHLCV columns available in local seed universe,10,1000000,20000000

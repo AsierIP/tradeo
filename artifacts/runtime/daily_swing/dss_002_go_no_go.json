@@ -1,0 +1,20 @@
+{
+  "bias_gate": "WARNING",
+  "data_gate": "BLOCKED",
+  "decision": "NO_GO",
+  "difference_vs_previous_preview": "previous AAPL/COST preview remains deterministic scaffold; DSS-002 produced no real signals",
+  "generated_at": "2026-07-04T08:53:43.123087+00:00",
+  "kill_switch_required": true,
+  "live_allowed": false,
+  "operability_gate": "PASS_FOR_SAFE_ENV / BLOCKED_CURRENT_ENV",
+  "orders_allowed": false,
+  "previous_preview_symbols": [
+    "AAPL",
+    "COST"
+  ],
+  "real_monday_signals": [],
+  "required_decision": "no merge as paper-ready; continue research/data ingestion iteration",
+  "research_gate": "INSUFFICIENT_DATA",
+  "schema_version": "tradeo.daily_swing.dss_002.v1",
+  "shorts_allowed": false
+}

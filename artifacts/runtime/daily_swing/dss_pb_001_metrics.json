@@ -1,0 +1,432 @@
+{
+  "avg_loss": null,
+  "avg_win": null,
+  "blocked_reason": "local repo has seed universe files but no reusable historical Daily OHLCV cache for DSS-PB-001",
+  "by_year": {},
+  "candidate_signals_2026_07_06": 0,
+  "cost_x1": null,
+  "cost_x2": null,
+  "cost_x3": null,
+  "daily_data_candidates": [
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260611-213558_daily_internal/config_snapshot/data_config.json",
+      "size_bytes": 209
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260611-213558_daily_internal/config_snapshot/detector_config.json",
+      "size_bytes": 1100
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260611-213558_daily_internal/config_snapshot/execution_config.json",
+      "size_bytes": 213
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260611-213558_daily_internal/config_snapshot/ib_paper_config.redacted.json",
+      "size_bytes": 231
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260611-213558_daily_internal/config_snapshot/risk_config.json",
+      "size_bytes": 265
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260611-213558_daily_internal/config_snapshot/universe_config.json",
+      "size_bytes": 596
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260611-213558_daily_internal/director_audit_run.json",
+      "size_bytes": 566252
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260611-213558_daily_internal/director_gate_result.json",
+      "size_bytes": 688558
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260611-213558_daily_internal/experiment_registry.csv",
+      "size_bytes": 1959610
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260611-213558_daily_internal/ib_fills.csv",
+      "size_bytes": 174
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260611-213558_daily_internal/internal_auditor_agent_review.json",
+      "size_bytes": 1606
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260611-213558_daily_internal/manifest.json",
+      "size_bytes": 4613
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260611-213558_daily_internal/metrics_by_entry_variant.csv",
+      "size_bytes": 428
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260611-213558_daily_internal/metrics_by_pattern.csv",
+      "size_bytes": 138025
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260611-213558_daily_internal/metrics_by_period.csv",
+      "size_bytes": 978002
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260611-213558_daily_internal/metrics_by_regime.csv",
+      "size_bytes": 426
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260611-213558_daily_internal/metrics_by_ticker.csv",
+      "size_bytes": 468863
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260611-213558_daily_internal/paper_trades.csv",
+      "size_bytes": 510
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260611-213558_daily_internal/pattern_catalog.csv",
+      "size_bytes": 886231
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260611-213558_daily_internal/pattern_events.csv",
+      "size_bytes": 7737380
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260614-213550_daily_internal/config_snapshot/data_config.json",
+      "size_bytes": 209
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260614-213550_daily_internal/config_snapshot/detector_config.json",
+      "size_bytes": 1100
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260614-213550_daily_internal/config_snapshot/execution_config.json",
+      "size_bytes": 213
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260614-213550_daily_internal/config_snapshot/ib_paper_config.redacted.json",
+      "size_bytes": 231
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260614-213550_daily_internal/config_snapshot/risk_config.json",
+      "size_bytes": 265
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260614-213550_daily_internal/config_snapshot/universe_config.json",
+      "size_bytes": 596
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260614-213550_daily_internal/director_audit_run.json",
+      "size_bytes": 565188
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260614-213550_daily_internal/director_gate_result.json",
+      "size_bytes": 688572
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260614-213550_daily_internal/experiment_registry.csv",
+      "size_bytes": 1989032
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260614-213550_daily_internal/ib_fills.csv",
+      "size_bytes": 174
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260614-213550_daily_internal/internal_auditor_agent_review.json",
+      "size_bytes": 1606
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260614-213550_daily_internal/manifest.json",
+      "size_bytes": 4620
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260614-213550_daily_internal/metrics_by_entry_variant.csv",
+      "size_bytes": 428
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260614-213550_daily_internal/metrics_by_pattern.csv",
+      "size_bytes": 138023
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260614-213550_daily_internal/metrics_by_period.csv",
+      "size_bytes": 977618
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260614-213550_daily_internal/metrics_by_regime.csv",
+      "size_bytes": 426
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260614-213550_daily_internal/metrics_by_ticker.csv",
+      "size_bytes": 469044
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260614-213550_daily_internal/paper_trades.csv",
+      "size_bytes": 510
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260614-213550_daily_internal/pattern_catalog.csv",
+      "size_bytes": 887337
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260614-213550_daily_internal/pattern_events.csv",
+      "size_bytes": 7800374
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260615-213559_daily_internal/config_snapshot/data_config.json",
+      "size_bytes": 209
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260615-213559_daily_internal/config_snapshot/detector_config.json",
+      "size_bytes": 1100
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260615-213559_daily_internal/config_snapshot/execution_config.json",
+      "size_bytes": 213
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260615-213559_daily_internal/config_snapshot/ib_paper_config.redacted.json",
+      "size_bytes": 231
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260615-213559_daily_internal/config_snapshot/risk_config.json",
+      "size_bytes": 265
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260615-213559_daily_internal/config_snapshot/universe_config.json",
+      "size_bytes": 596
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260615-213559_daily_internal/director_audit_run.json",
+      "size_bytes": 565247
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260615-213559_daily_internal/director_gate_result.json",
+      "size_bytes": 688572
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260615-213559_daily_internal/experiment_registry.csv",
+      "size_bytes": 1989044
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260615-213559_daily_internal/ib_fills.csv",
+      "size_bytes": 174
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260615-213559_daily_internal/internal_auditor_agent_review.json",
+      "size_bytes": 1606
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260615-213559_daily_internal/manifest.json",
+      "size_bytes": 4580
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260615-213559_daily_internal/metrics_by_entry_variant.csv",
+      "size_bytes": 428
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260615-213559_daily_internal/metrics_by_pattern.csv",
+      "size_bytes": 138023
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260615-213559_daily_internal/metrics_by_period.csv",
+      "size_bytes": 977618
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260615-213559_daily_internal/metrics_by_regime.csv",
+      "size_bytes": 426
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260615-213559_daily_internal/metrics_by_ticker.csv",
+      "size_bytes": 469044
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260615-213559_daily_internal/paper_trades.csv",
+      "size_bytes": 510
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260615-213559_daily_internal/pattern_catalog.csv",
+      "size_bytes": 887337
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260615-213559_daily_internal/pattern_events.csv",
+      "size_bytes": 7799802
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260616-213627_daily_internal/config_snapshot/data_config.json",
+      "size_bytes": 209
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260616-213627_daily_internal/config_snapshot/detector_config.json",
+      "size_bytes": 1100
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260616-213627_daily_internal/config_snapshot/execution_config.json",
+      "size_bytes": 213
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260616-213627_daily_internal/config_snapshot/ib_paper_config.redacted.json",
+      "size_bytes": 231
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260616-213627_daily_internal/config_snapshot/risk_config.json",
+      "size_bytes": 265
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260616-213627_daily_internal/config_snapshot/universe_config.json",
+      "size_bytes": 596
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260616-213627_daily_internal/director_audit_run.json",
+      "size_bytes": 375530
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260616-213627_daily_internal/director_gate_result.json",
+      "size_bytes": 687406
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260616-213627_daily_internal/experiment_registry.csv",
+      "size_bytes": 3534355
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260616-213627_daily_internal/ib_fills.csv",
+      "size_bytes": 174
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260616-213627_daily_internal/internal_auditor_agent_review.json",
+      "size_bytes": 1601
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260616-213627_daily_internal/manifest.json",
+      "size_bytes": 4579
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260616-213627_daily_internal/metrics_by_entry_variant.csv",
+      "size_bytes": 428
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260616-213627_daily_internal/metrics_by_pattern.csv",
+      "size_bytes": 138022
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260616-213627_daily_internal/metrics_by_period.csv",
+      "size_bytes": 977234
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260616-213627_daily_internal/metrics_by_regime.csv",
+      "size_bytes": 426
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260616-213627_daily_internal/metrics_by_ticker.csv",
+      "size_bytes": 469231
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260616-213627_daily_internal/paper_trades.csv",
+      "size_bytes": 510
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260616-213627_daily_internal/pattern_catalog.csv",
+      "size_bytes": 888078
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260616-213627_daily_internal/pattern_events.csv",
+      "size_bytes": 6662314
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260617-213620_daily_internal/config_snapshot/data_config.json",
+      "size_bytes": 209
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260617-213620_daily_internal/config_snapshot/detector_config.json",
+      "size_bytes": 1100
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260617-213620_daily_internal/config_snapshot/execution_config.json",
+      "size_bytes": 213
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260617-213620_daily_internal/config_snapshot/ib_paper_config.redacted.json",
+      "size_bytes": 231
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260617-213620_daily_internal/config_snapshot/risk_config.json",
+      "size_bytes": 265
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260617-213620_daily_internal/config_snapshot/universe_config.json",
+      "size_bytes": 596
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260617-213620_daily_internal/director_audit_run.json",
+      "size_bytes": 374771
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260617-213620_daily_internal/director_gate_result.json",
+      "size_bytes": 686967
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260617-213620_daily_internal/experiment_registry.csv",
+      "size_bytes": 3556512
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260617-213620_daily_internal/ib_fills.csv",
+      "size_bytes": 174
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260617-213620_daily_internal/internal_auditor_agent_review.json",
+      "size_bytes": 1348
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260617-213620_daily_internal/manifest.json",
+      "size_bytes": 4579
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260617-213620_daily_internal/metrics_by_entry_variant.csv",
+      "size_bytes": 428
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260617-213620_daily_internal/metrics_by_pattern.csv",
+      "size_bytes": 138019
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260617-213620_daily_internal/metrics_by_period.csv",
+      "size_bytes": 977234
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260617-213620_daily_internal/metrics_by_regime.csv",
+      "size_bytes": 426
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260617-213620_daily_internal/metrics_by_ticker.csv",
+      "size_bytes": 469235
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260617-213620_daily_internal/paper_trades.csv",
+      "size_bytes": 510
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260617-213620_daily_internal/pattern_catalog.csv",
+      "size_bytes": 890695
+    },
+    {
+      "path": "research/audit_bridge/requests/TRADEO-AUDIT-20260617-213620_daily_internal/pattern_events.csv",
+      "size_bytes": 6946693
+    }
+  ],
+  "generated_at": "2026-07-04T08:53:43.122364+00:00",
+  "is_expectancy": null,
+  "is_profit_factor": null,
+  "last_12_months": null,
+  "last_24_months": null,
+  "max_drawdown_R": null,
+  "oos_expectancy": null,
+  "oos_profit_factor": null,
+  "pattern_id": "DSS-PB-001",
+  "pattern_name": "DSS-PB-001 Pullback in Uptrend Long",
+  "real_backtest": false,
+  "research_gate": "INSUFFICIENT_DATA",
+  "schema_version": "tradeo.daily_swing.dss_002.v1",
+  "symbols_total": 40,
+  "top_1_symbol_pnl": null,
+  "top_3_symbols_pnl": null,
+  "top_5_trades_contribution": null,
+  "trades_total": 0,
+  "winrate": null,
+  "worst_streak": null
+}
