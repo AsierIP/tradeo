@@ -1,0 +1,6 @@
+component,role,daily_ready
+backend/tradeo/services/backtester.py,generic backtest engine,partial
+backend/tradeo/services/technical_indicators.py,indicator primitives,usable
+backend/tradeo/services/ibkr_broker.py,IBKR safety-gated adapter,requires paper guards
+scripts/check_tradeo_operability.py,global safety preflight,reference
+backend/tradeo/modules/intraday/*,intraday-only research stack,not reused for signals

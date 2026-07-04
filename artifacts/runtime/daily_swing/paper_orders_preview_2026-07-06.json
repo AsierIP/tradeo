@@ -1,0 +1,61 @@
+{
+  "last_valid_bar_date": "2026-07-02",
+  "orders": [
+    {
+      "entry_order_type": "LMT",
+      "entry_plan": "paper-only entry during 09:35-10:00 ET after spread/gap recheck",
+      "expected_R_distribution": {
+        "median": 0.35,
+        "p10": -1.0,
+        "p90": 1.75
+      },
+      "last_valid_bar_date": "2026-07-02",
+      "limit_price": 212.82,
+      "limit_price_logic": "marketable limit capped at previous close * 1.002; never MOO/MOC",
+      "pattern_id": "DSS-PB-001",
+      "quantity": 7,
+      "regime_snapshot": {
+        "SPY_20d_return_positive": true,
+        "SPY_close_gt_SMA200": true
+      },
+      "risk_R": 1.0,
+      "signal_date": "2026-07-02",
+      "signal_id": "5d02fad31220e304",
+      "spec_hash": "9eb19d376c000395046ab4055e2036bac0e58e551d5430c5fe5e8108812f53da",
+      "stop_price": 206.64,
+      "symbol": "AAPL",
+      "target_price": 222.48,
+      "time_stop_date": "2026-07-14"
+    },
+    {
+      "entry_order_type": "LMT",
+      "entry_plan": "paper-only entry during 09:35-10:00 ET after spread/gap recheck",
+      "expected_R_distribution": {
+        "median": 0.35,
+        "p10": -1.0,
+        "p90": 1.75
+      },
+      "last_valid_bar_date": "2026-07-02",
+      "limit_price": 993.98,
+      "limit_price_logic": "marketable limit capped at previous close * 1.002; never MOO/MOC",
+      "pattern_id": "DSS-PB-001",
+      "quantity": 1,
+      "regime_snapshot": {
+        "SPY_20d_return_positive": true,
+        "SPY_close_gt_SMA200": true
+      },
+      "risk_R": 1.0,
+      "signal_date": "2026-07-02",
+      "signal_id": "70e5cb6d093ffba8",
+      "spec_hash": "7f991e2c828d16ae8aff9ebb882fa82bb6652d81b132acd832458b6f9737f4fd",
+      "stop_price": 972.8,
+      "symbol": "COST",
+      "target_price": 1025.6,
+      "time_stop_date": "2026-07-14"
+    }
+  ],
+  "run_date": "2026-07-06",
+  "schema_version": "tradeo.daily_swing.paper_probe.v1",
+  "spec_hash": "d67278d4ba55b02b6cb9532995ed12973b8bba8e1ed322ea14ebf68d1fa3f823",
+  "status": "PREVIEW_ONLY"
+}
