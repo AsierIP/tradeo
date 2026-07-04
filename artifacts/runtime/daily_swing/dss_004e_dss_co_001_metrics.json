@@ -1,0 +1,334 @@
+{
+  "by_policy": {
+    "ALL_EVENTS": {
+      "IS": {
+        "avg_loss_pct": -5.557442670980794,
+        "avg_win_pct": 6.220682529546455,
+        "expectancy_pct": 0.40587378199437674,
+        "profit_factor": 1.1479301639000956,
+        "symbols": 143,
+        "trades": 5631,
+        "winrate": 0.5063043864322501,
+        "worst_streak": 40
+      },
+      "OOS": {
+        "avg_loss_pct": -5.776689853881151,
+        "avg_win_pct": 6.688278848808961,
+        "expectancy_pct": 0.9806006282639054,
+        "profit_factor": 1.3707189848878556,
+        "symbols": 147,
+        "trades": 9465,
+        "winrate": 0.5421024828314844,
+        "worst_streak": 24
+      },
+      "OOS_expectancy_net_x2_pct": 0.9806006282639054,
+      "OOS_pf_net_x2": 1.3707189848878556,
+      "concentration": {
+        "top_1_symbol_contribution_pct": 0.059113720138899525,
+        "top_3_symbols_contribution_pct": 0.15828526762006545,
+        "top_5_trades_contribution_pct": 0.011829700262603701
+      },
+      "cost_x1": {
+        "avg_loss_pct": -5.682007416739597,
+        "avg_win_pct": 6.529486613653134,
+        "expectancy_pct": 0.8662202048839561,
+        "profit_factor": 1.3287216610778698,
+        "symbols": 150,
+        "trades": 15096,
+        "winrate": 0.5362347641759406,
+        "worst_streak": 40
+      },
+      "cost_x2": {
+        "avg_loss_pct": -5.691012714653854,
+        "avg_win_pct": 6.521263425830082,
+        "expectancy_pct": 0.766220204883956,
+        "profit_factor": 1.2857012038517364,
+        "symbols": 150,
+        "trades": 15096,
+        "winrate": 0.528749337572867,
+        "worst_streak": 40
+      },
+      "cost_x3": {
+        "avg_loss_pct": -5.712206956525545,
+        "avg_win_pct": 6.502525560109978,
+        "expectancy_pct": 0.6662202048839561,
+        "profit_factor": 1.244095526843983,
+        "symbols": 150,
+        "trades": 15096,
+        "winrate": 0.5221913089560148,
+        "worst_streak": 40
+      },
+      "days_with_more_than_2_signals": 470,
+      "gross": {
+        "avg_loss_pct": -5.6659969471659775,
+        "avg_win_pct": 6.555527928970211,
+        "expectancy_pct": 0.9662202048839562,
+        "profit_factor": 1.3731972851926322,
+        "symbols": 150,
+        "trades": 15096,
+        "winrate": 0.5423290937996821,
+        "worst_streak": 40
+      },
+      "last_12_months": {
+        "avg_loss_pct": -5.681708259310085,
+        "avg_win_pct": 6.494618135195901,
+        "expectancy_pct": 0.5920184968728122,
+        "profit_factor": 1.2149459665836633,
+        "symbols": 145,
+        "trades": 6529,
+        "winrate": 0.5152396998008884,
+        "worst_streak": 13
+      },
+      "last_24_months": {
+        "avg_loss_pct": -5.837464448457638,
+        "avg_win_pct": 6.693435958269936,
+        "expectancy_pct": 0.7705025202750615,
+        "profit_factor": 1.2792513242192327,
+        "symbols": 150,
+        "trades": 13701,
+        "winrate": 0.5273337712575724,
+        "worst_streak": 40
+      },
+      "max_drawdown_pct": 4059.083925845,
+      "max_new_trades_in_day": 85,
+      "policy": "ALL_EVENTS",
+      "symbols_IS": 143,
+      "symbols_OOS": 147,
+      "symbols_total": 150,
+      "trades_IS": 5631,
+      "trades_OOS": 9465,
+      "trades_total": 15096
+    },
+    "MAX_2_NEW_TRADES_PER_DAY_SIM": {
+      "IS": {
+        "avg_loss_pct": -4.332048832112163,
+        "avg_win_pct": 4.569109903307925,
+        "expectancy_pct": -0.006252063496792844,
+        "profit_factor": 0.9971922972663317,
+        "symbols": 98,
+        "trades": 321,
+        "winrate": 0.48598130841121495,
+        "worst_streak": 12
+      },
+      "OOS": {
+        "avg_loss_pct": -4.962165222488605,
+        "avg_win_pct": 5.408487059675098,
+        "expectancy_pct": 0.4572207791281914,
+        "profit_factor": 1.1929943203637217,
+        "symbols": 116,
+        "trades": 576,
+        "winrate": 0.5225694444444444,
+        "worst_streak": 10
+      },
+      "OOS_expectancy_net_x2_pct": 0.4572207791281914,
+      "OOS_pf_net_x2": 1.1929943203637217,
+      "concentration": {
+        "top_1_symbol_contribution_pct": 0.09234537265911624,
+        "top_3_symbols_contribution_pct": 0.19449884573247192,
+        "top_5_trades_contribution_pct": 0.15182116129988776
+      },
+      "cost_x1": {
+        "avg_loss_pct": -4.723414410069184,
+        "avg_win_pct": 5.1219825475004,
+        "expectancy_pct": 0.39136260467711004,
+        "profit_factor": 1.1724401724338542,
+        "symbols": 126,
+        "trades": 897,
+        "winrate": 0.5195094760312151,
+        "worst_streak": 12
+      },
+      "cost_x2": {
+        "avg_loss_pct": -4.72587157609744,
+        "avg_win_pct": 5.121960065379084,
+        "expectancy_pct": 0.29136260467711006,
+        "profit_factor": 1.1256873766741384,
+        "symbols": 126,
+        "trades": 897,
+        "winrate": 0.5094760312151616,
+        "worst_streak": 12
+      },
+      "cost_x3": {
+        "avg_loss_pct": -4.804441145887547,
+        "avg_win_pct": 5.0444291052256345,
+        "expectancy_pct": 0.19136260467711005,
+        "profit_factor": 1.0808321945183794,
+        "symbols": 126,
+        "trades": 897,
+        "winrate": 0.5072463768115942,
+        "worst_streak": 12
+      },
+      "days_with_more_than_2_signals": 0,
+      "gross": {
+        "avg_loss_pct": -4.74541289788003,
+        "avg_win_pct": 5.113079146018865,
+        "expectancy_pct": 0.49136260467711007,
+        "profit_factor": 1.2211420074201549,
+        "symbols": 126,
+        "trades": 897,
+        "winrate": 0.5306577480490524,
+        "worst_streak": 12
+      },
+      "last_12_months": {
+        "avg_loss_pct": -4.530890951032005,
+        "avg_win_pct": 5.282658460635907,
+        "expectancy_pct": 0.5655175598583358,
+        "profit_factor": 1.2596628082562926,
+        "symbols": 104,
+        "trades": 414,
+        "winrate": 0.5193236714975845,
+        "worst_streak": 7
+      },
+      "last_24_months": {
+        "avg_loss_pct": -4.907368406741209,
+        "avg_win_pct": 5.2237121695527,
+        "expectancy_pct": 0.20895424018416087,
+        "profit_factor": 1.0860217595238533,
+        "symbols": 125,
+        "trades": 798,
+        "winrate": 0.5050125313283208,
+        "worst_streak": 12
+      },
+      "max_drawdown_pct": 225.92636420414965,
+      "max_new_trades_in_day": 2,
+      "policy": "MAX_2_NEW_TRADES_PER_DAY_SIM",
+      "symbols_IS": 98,
+      "symbols_OOS": 116,
+      "symbols_total": 126,
+      "trades_IS": 321,
+      "trades_OOS": 576,
+      "trades_total": 897
+    },
+    "ONE_ACTIVE_PER_SYMBOL": {
+      "IS": {
+        "avg_loss_pct": -5.5040313484952,
+        "avg_win_pct": 5.753424006948647,
+        "expectancy_pct": 0.005532729573830805,
+        "profit_factor": 1.0019687484683832,
+        "symbols": 143,
+        "trades": 803,
+        "winrate": 0.48941469489414696,
+        "worst_streak": 25
+      },
+      "OOS": {
+        "avg_loss_pct": -5.843494517532391,
+        "avg_win_pct": 7.069100610862752,
+        "expectancy_pct": 0.9723070300262958,
+        "profit_factor": 1.352405621507822,
+        "symbols": 147,
+        "trades": 1311,
+        "winrate": 0.5278413424866514,
+        "worst_streak": 14
+      },
+      "OOS_expectancy_net_x2_pct": 0.9723070300262958,
+      "OOS_pf_net_x2": 1.352405621507822,
+      "concentration": {
+        "top_1_symbol_contribution_pct": 0.05708742278730585,
+        "top_3_symbols_contribution_pct": 0.14444896768327475,
+        "top_5_trades_contribution_pct": 0.05496015933305685
+      },
+      "cost_x1": {
+        "avg_loss_pct": -5.7088676313220015,
+        "avg_win_pct": 6.5840457601802385,
+        "expectancy_pct": 0.7050791382271807,
+        "profit_factor": 1.2582508258794523,
+        "symbols": 150,
+        "trades": 2114,
+        "winrate": 0.521759697256386,
+        "worst_streak": 23
+      },
+      "cost_x2": {
+        "avg_loss_pct": -5.708237083805231,
+        "avg_win_pct": 6.592546781057918,
+        "expectancy_pct": 0.6050791382271808,
+        "profit_factor": 1.2177708695547058,
+        "symbols": 150,
+        "trades": 2114,
+        "winrate": 0.5132450331125827,
+        "worst_streak": 25
+      },
+      "cost_x3": {
+        "avg_loss_pct": -5.736316453843906,
+        "avg_win_pct": 6.571808808878368,
+        "expectancy_pct": 0.5050791382271806,
+        "profit_factor": 1.1786337818982036,
+        "symbols": 150,
+        "trades": 2114,
+        "winrate": 0.5070955534531694,
+        "worst_streak": 25
+      },
+      "days_with_more_than_2_signals": 296,
+      "gross": {
+        "avg_loss_pct": -5.676703824860768,
+        "avg_win_pct": 6.630363686374252,
+        "expectancy_pct": 0.8050791382271809,
+        "profit_factor": 1.3001109432009512,
+        "symbols": 150,
+        "trades": 2114,
+        "winrate": 0.5260170293282876,
+        "worst_streak": 23
+      },
+      "last_12_months": {
+        "avg_loss_pct": -5.625924787743267,
+        "avg_win_pct": 6.863217533060718,
+        "expectancy_pct": 0.7438159504841553,
+        "profit_factor": 1.2698331016819795,
+        "symbols": 142,
+        "trades": 898,
+        "winrate": 0.5100222717149221,
+        "worst_streak": 11
+      },
+      "last_24_months": {
+        "avg_loss_pct": -5.822441455506456,
+        "avg_win_pct": 6.743632895932239,
+        "expectancy_pct": 0.5874583199351732,
+        "profit_factor": 1.2059494452874957,
+        "symbols": 150,
+        "trades": 1882,
+        "winrate": 0.51009564293305,
+        "worst_streak": 25
+      },
+      "max_drawdown_pct": 556.5950396045869,
+      "max_new_trades_in_day": 19,
+      "policy": "ONE_ACTIVE_PER_SYMBOL",
+      "symbols_IS": 143,
+      "symbols_OOS": 147,
+      "symbols_total": 150,
+      "trades_IS": 803,
+      "trades_OOS": 1311,
+      "trades_total": 2114
+    }
+  },
+  "cache_dir": "artifacts/runtime/daily_swing/daily_ohlcv_research",
+  "definition": {
+    "contraction": "ATR14_pct(t-1)<=rolling_120d_percentile_40(t-1)",
+    "cost_model": {
+      "x1_round_trip_bps": 10.0,
+      "x2_round_trip_bps": 20.0,
+      "x3_round_trip_bps": 30.0
+    },
+    "entry": "next_open_after_signal",
+    "exit": "time_stop_10_sessions_at_close_or_truncated_sample_end",
+    "market_regime": "SPY close>SMA200 OR SPY return20d>0",
+    "symbol_trend": "close>SMA50 AND (close>SMA200 OR SMA50>SMA200)"
+  },
+  "end_date": "2026-07-02",
+  "generated_at": "2026-07-04T15:32:00.538197+00:00",
+  "is_end_date": "2024-12-31",
+  "last_valid_bar_date": "2026-07-02",
+  "min_oos_symbols": 20,
+  "oos_start_date": "2025-01-01",
+  "pattern_id": "DSS-CO-001",
+  "pattern_name": "Contraction in Uptrend Long",
+  "schema_version": "tradeo.daily_swing.dss_004d.v1",
+  "start_date": "2023-07-05",
+  "universe": "artifacts/runtime/daily_swing/dss_003e_research_universe_checked.csv",
+  "universe_summary": {
+    "benchmark_symbols": [
+      "QQQ",
+      "SPY"
+    ],
+    "operational_etf_or_fund_rows": 0,
+    "operational_symbols": 150,
+    "universe_rows": 152
+  }
+}

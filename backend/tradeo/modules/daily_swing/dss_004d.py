@@ -24,6 +24,13 @@ DSS_004D_SCHEMA_VERSION = "tradeo.daily_swing.dss_004d.v1"
 RANDOM_MATCHED_SEED = 40404
 Policy = Literal["ALL_EVENTS", "ONE_ACTIVE_PER_SYMBOL", "MAX_2_NEW_TRADES_PER_DAY_SIM"]
 Variant = Literal["CONTRACTION_ONLY", "TREND_ONLY", "VOL_HIGH_ONLY", "RANDOM_MATCHED"]
+INDICATOR_COLUMNS = {
+    "sma50",
+    "sma200",
+    "atr14_pct",
+    "atr14_pct_t_minus_1",
+    "atr14_pct_p40_120_t_minus_1",
+}
 
 
 @dataclass(frozen=True)
@@ -39,6 +46,9 @@ class DSS004DConfig:
     cost_bps_x1: float = 10.0
     cost_bps_x2: float = 20.0
     cost_bps_x3: float = 30.0
+    phase: str = "DSS-004D"
+    artifact_prefix: str = ""
+    min_oos_symbols: int = 6
 
 
 DSSCOConfig = DSS004DConfig
@@ -95,6 +105,12 @@ def _trend(row: pd.Series) -> bool:
     return bool(row["close"] > row["sma50"] and (row["close"] > row["sma200"] or row["sma50"] > row["sma200"]))
 
 
+def _ensure_indicators(df: pd.DataFrame) -> pd.DataFrame:
+    if INDICATOR_COLUMNS.issubset(df.columns):
+        return df
+    return _add_indicators(df)
+
+
 def _condition(row: pd.Series, market_ok: bool, variant: Variant = "CONTRACTION_ONLY") -> bool:
     if not market_ok or not _trend(row):
         return False
@@ -113,7 +129,7 @@ def _signal_rows(
 ) -> pd.DataFrame:
     rows: list[dict[str, Any]] = []
     for symbol, raw in frames.items():
-        df = _add_indicators(raw)
+        df = _ensure_indicators(raw).copy()
         df["atr14_pct_p60_120_t_minus_1"] = df["atr14_pct"].shift(1).rolling(120, min_periods=120).quantile(0.60)
         symbol_regime = regime.reindex(df["date"]).fillna(False).to_numpy()
         for idx in range(len(df) - 1):
@@ -200,6 +216,7 @@ def _build_trades(
 ) -> pd.DataFrame:
     trades: list[dict[str, Any]] = []
     open_until_by_symbol: dict[str, int] = {}
+    indicator_frames = {symbol: _ensure_indicators(raw) for symbol, raw in frames.items()}
     for signal_date, day in signals.sort_values(["signal_date", "atr14_pct_t_minus_1", "symbol"]).groupby("signal_date"):
         selected = day
         if policy == "MAX_2_NEW_TRADES_PER_DAY_SIM":
@@ -210,7 +227,7 @@ def _build_trades(
             signal_idx = int(signal["signal_idx"])
             if policy == "ONE_ACTIVE_PER_SYMBOL" and signal_idx <= open_until_by_symbol.get(symbol, -1):
                 continue
-            df = _add_indicators(frames[symbol])
+            df = indicator_frames[symbol]
             trade = _trade_from_signal(
                 symbol,
                 df,
@@ -319,12 +336,12 @@ def _policy_metrics(policy: Policy, trades: pd.DataFrame, config: DSS004DConfig)
     }
 
 
-def _period_tables(trades: pd.DataFrame, output_dir: Path) -> None:
+def _period_tables(trades: pd.DataFrame, output_dir: Path, prefix: str = "") -> None:
     if trades.empty:
         for name in (
-            "dss_co_001_metrics_by_symbol.csv",
-            "dss_co_001_metrics_by_year.csv",
-            "dss_co_001_metrics_by_quarter.csv",
+            f"{prefix}dss_co_001_metrics_by_symbol.csv",
+            f"{prefix}dss_co_001_metrics_by_year.csv",
+            f"{prefix}dss_co_001_metrics_by_quarter.csv",
         ):
             pd.DataFrame().to_csv(output_dir / name, index=False)
         return
@@ -332,7 +349,7 @@ def _period_tables(trades: pd.DataFrame, output_dir: Path) -> None:
         trades=("trade_id", "count"),
         net_x2_sum_pct=("net_return_x2_pct", "sum"),
         net_x2_expectancy_pct=("net_return_x2_pct", "mean"),
-    ).reset_index().to_csv(output_dir / "dss_co_001_metrics_by_symbol.csv", index=False)
+    ).reset_index().to_csv(output_dir / f"{prefix}dss_co_001_metrics_by_symbol.csv", index=False)
     dated = trades.copy()
     dated["year"] = pd.to_datetime(dated["exit_date"]).dt.year
     dated["quarter"] = pd.to_datetime(dated["exit_date"]).dt.to_period("Q").astype(str)
@@ -340,12 +357,12 @@ def _period_tables(trades: pd.DataFrame, output_dir: Path) -> None:
         trades=("trade_id", "count"),
         net_x2_sum_pct=("net_return_x2_pct", "sum"),
         net_x2_expectancy_pct=("net_return_x2_pct", "mean"),
-    ).reset_index().to_csv(output_dir / "dss_co_001_metrics_by_year.csv", index=False)
+    ).reset_index().to_csv(output_dir / f"{prefix}dss_co_001_metrics_by_year.csv", index=False)
     dated.groupby(["policy", "quarter"]).agg(
         trades=("trade_id", "count"),
         net_x2_sum_pct=("net_return_x2_pct", "sum"),
         net_x2_expectancy_pct=("net_return_x2_pct", "mean"),
-    ).reset_index().to_csv(output_dir / "dss_co_001_metrics_by_quarter.csv", index=False)
+    ).reset_index().to_csv(output_dir / f"{prefix}dss_co_001_metrics_by_quarter.csv", index=False)
 
 
 def _bias_lite(
@@ -373,11 +390,15 @@ def _bias_lite(
     random_trades = _build_trades(frames, random_signals, config, "ONE_ACTIVE_PER_SYMBOL", variant="RANDOM_MATCHED")
     variants["RANDOM_MATCHED"] = _metric_block(random_trades[random_trades["signal_date"] >= config.oos_start_date], "net_return_x2_pct")
     variants["entry_next_close"] = _metric_block(
-        _build_trades(frames, base_signals, config, "ONE_ACTIVE_PER_SYMBOL", entry_model="next_close"),
+        _build_trades(frames, base_signals, config, "ONE_ACTIVE_PER_SYMBOL", entry_model="next_close").query(
+            "signal_date >= @config.oos_start_date"
+        ),
         "net_return_x2_pct",
     )
     variants["entry_next_open_adverse_10bps"] = _metric_block(
-        _build_trades(frames, base_signals, config, "ONE_ACTIVE_PER_SYMBOL", adverse_entry_bps=10.0),
+        _build_trades(frames, base_signals, config, "ONE_ACTIVE_PER_SYMBOL", adverse_entry_bps=10.0).query(
+            "signal_date >= @config.oos_start_date"
+        ),
         "net_return_x2_pct",
     )
     base_edge = base_oos["expectancy_pct"] or 0.0
@@ -403,7 +424,7 @@ def _decide(metrics: dict[str, Any], bias: dict[str, Any], guard: dict[str, Any]
     max2 = metrics["by_policy"]["MAX_2_NEW_TRADES_PER_DAY_SIM"]
     one_oos = one["OOS"]
     max2_oos = max2["OOS"]
-    if one["trades_OOS"] < 25 or one["symbols_OOS"] < 6:
+    if one["trades_OOS"] < 25 or one["symbols_OOS"] < metrics.get("min_oos_symbols", 6):
         return "DSS_CO_001_INSUFFICIENT_TRADES"
     if one_oos["expectancy_pct"] is None or one_oos["expectancy_pct"] <= 0:
         return "DSS_CO_001_RESEARCH_FAIL"
@@ -421,17 +442,19 @@ def _decide(metrics: dict[str, Any], bias: dict[str, Any], guard: dict[str, Any]
 
 def run_dss_004d(config: DSS004DConfig) -> dict[str, Any]:
     config.output_dir.mkdir(parents=True, exist_ok=True)
+    prefix = config.artifact_prefix
     frames, regime, regime_symbol, universe_summary, last_valid = _load_inputs(config)
+    frames = {symbol: _ensure_indicators(frame) for symbol, frame in frames.items()}
     signals = _signal_rows(frames, regime)
     trades_by_policy = {
         policy: _build_trades(frames, signals, config, policy)
         for policy in ("ALL_EVENTS", "ONE_ACTIVE_PER_SYMBOL", "MAX_2_NEW_TRADES_PER_DAY_SIM")
     }
-    trades_by_policy["ALL_EVENTS"].to_csv(config.output_dir / "dss_co_001_trades_all_events.csv", index=False)
-    trades_by_policy["ONE_ACTIVE_PER_SYMBOL"].to_csv(config.output_dir / "dss_co_001_trades_one_active.csv", index=False)
-    trades_by_policy["MAX_2_NEW_TRADES_PER_DAY_SIM"].to_csv(config.output_dir / "dss_co_001_trades_max2_sim.csv", index=False)
+    trades_by_policy["ALL_EVENTS"].to_csv(config.output_dir / f"{prefix}dss_co_001_trades_all_events.csv", index=False)
+    trades_by_policy["ONE_ACTIVE_PER_SYMBOL"].to_csv(config.output_dir / f"{prefix}dss_co_001_trades_one_active.csv", index=False)
+    trades_by_policy["MAX_2_NEW_TRADES_PER_DAY_SIM"].to_csv(config.output_dir / f"{prefix}dss_co_001_trades_max2_sim.csv", index=False)
     all_policy_trades = pd.concat(trades_by_policy.values(), ignore_index=True)
-    _period_tables(all_policy_trades, config.output_dir)
+    _period_tables(all_policy_trades, config.output_dir, prefix)
     metrics_by_policy = {
         policy: _policy_metrics(policy, trades, config)
         for policy, trades in trades_by_policy.items()
@@ -450,7 +473,7 @@ def run_dss_004d(config: DSS004DConfig) -> dict[str, Any]:
             **policy_metrics["concentration"],
         }
         rows.append(row)
-    pd.DataFrame(rows).to_csv(config.output_dir / "dss_co_001_metrics_by_policy.csv", index=False)
+    pd.DataFrame(rows).to_csv(config.output_dir / f"{prefix}dss_co_001_metrics_by_policy.csv", index=False)
     bias = _bias_lite(frames, regime, config, signals, trades_by_policy["ONE_ACTIVE_PER_SYMBOL"])
     guard = {
         "status": "PASS",
@@ -487,9 +510,19 @@ def run_dss_004d(config: DSS004DConfig) -> dict[str, Any]:
         "oos_start_date": config.oos_start_date,
         "last_valid_bar_date": last_valid,
         "universe_summary": universe_summary,
+        "min_oos_symbols": config.min_oos_symbols,
         "by_policy": metrics_by_policy,
     }
     decision = _decide(metrics, bias, guard)
+    if config.phase == "DSS-004E":
+        decision = {
+            "DSS_CO_001_RESEARCH_PASS_PILOT_ONLY": "DSS_CO_001_RESEARCH_PASS_RESEARCH150",
+            "DSS_CO_001_RESEARCH_WARNING": "DSS_CO_001_RESEARCH_WARNING_RESEARCH150",
+            "DSS_CO_001_RESEARCH_FAIL": "DSS_CO_001_RESEARCH_FAIL_RESEARCH150",
+            "DSS_CO_001_INSUFFICIENT_TRADES": "DSS_CO_001_INSUFFICIENT_TRADES_RESEARCH150",
+            "DSS_CO_001_LOOKAHEAD_FAIL": "DSS_CO_001_LOOKAHEAD_FAIL_RESEARCH150",
+            "DSS_CO_001_OPERABILITY_CONSTRAINT_FAIL": "DSS_CO_001_OPERABILITY_CONSTRAINT_FAIL_RESEARCH150",
+        }[decision]
     safety = {
         "orders": False,
         "paper_orders": False,
@@ -521,20 +554,25 @@ def run_dss_004d(config: DSS004DConfig) -> dict[str, Any]:
     decision_payload = {
         "schema_version": DSS_004D_SCHEMA_VERSION,
         "generated_at": utc_now(),
-        "phase": "DSS-004D",
+        "phase": config.phase,
         "pattern_id": "DSS-CO-001",
         "decision": decision,
         "guard": guard,
         "guard_audit": guard,
         "bias_decision": bias["decision"],
-        "next_phase": "DSS-003E cache research-150 before DSS-005" if decision == "DSS_CO_001_RESEARCH_PASS_PILOT_ONLY" else "Director review; do not advance to DSS-005",
+        "next_phase": (
+            "Director decision for DSS-005-A preview design; no preview generated"
+            if decision == "DSS_CO_001_RESEARCH_PASS_RESEARCH150"
+            else "Director review; do not advance to DSS-005"
+        ),
         "safety": safety,
     }
-    _write_json(config.output_dir / "dss_co_001_backtest_config.json", config_payload)
-    _write_json(config.output_dir / "dss_co_001_metrics.json", metrics)
-    _write_json(config.output_dir / "dss_004d_ledger_guard.json", guard)
-    _write_json(config.output_dir / "dss_004d_bias_lite.json", bias)
-    _write_json(config.output_dir / "dss_004d_decision.json", decision_payload)
+    _write_json(config.output_dir / f"{prefix}dss_co_001_backtest_config.json", config_payload)
+    _write_json(config.output_dir / f"{prefix}dss_co_001_metrics.json", metrics)
+    phase_prefix = config.phase.lower().replace("-", "_")
+    _write_json(config.output_dir / f"{phase_prefix}_ledger_guard.json", guard)
+    _write_json(config.output_dir / f"{phase_prefix}_bias_lite.json", bias)
+    _write_json(config.output_dir / f"{phase_prefix}_decision.json", decision_payload)
     return {
         "config": config_payload,
         "metrics": metrics,
@@ -550,6 +588,8 @@ def run_dss_004d(config: DSS004DConfig) -> dict[str, Any]:
 def write_markdown_reports(result: dict[str, Any], research_dir: Path) -> None:
     research_dir.mkdir(parents=True, exist_ok=True)
     metrics = result["metrics"]
+    phase = result["decision"]["phase"]
+    file_prefix = phase.replace("-", "_")
     rows = []
     for policy, policy_metrics in metrics["by_policy"].items():
         rows.append(
@@ -558,40 +598,41 @@ def write_markdown_reports(result: dict[str, Any], research_dir: Path) -> None:
             f"{policy_metrics['max_drawdown_pct']} |"
         )
     table = "\n".join(["| Policy | OOS trades | OOS symbols | OOS exp x2 | OOS PF x2 | Max DD |", "|---|---:|---:|---:|---:|---:|", *rows])
-    (research_dir / "DSS_004D_DSS_CO_001_SPEC.md").write_text(
-        "# DSS-004D DSS-CO-001 Spec\n\n"
+    (research_dir / f"{file_prefix}_DSS_CO_001_SPEC.md").write_text(
+        f"# {phase} DSS-CO-001 Spec\n\n"
         "DSS-CO-001 is Contraction in Uptrend Long: market regime positive, symbol trend positive, "
         "ATR14_pct(t-1) at or below its rolling 120-session 40th percentile through t-1, signal at close t, "
         "entry next open t+1, and 10-session close exit. SPY/QQQ are benchmark-only.\n",
         encoding="utf-8",
     )
-    (research_dir / "DSS_004D_LEDGER_GUARD.md").write_text(
-        "# DSS-004D Ledger Guard\n\n"
+    (research_dir / f"{file_prefix}_DATA_LEDGER_GUARD.md").write_text(
+        f"# {phase} Data Ledger Guard\n\n"
         f"Status: `{result['guard']['status']}`.\n\nChecks: `{result['guard']['checks']}`\n",
         encoding="utf-8",
     )
-    (research_dir / "DSS_004D_BACKTEST_ENGINE.md").write_text(
-        "# DSS-004D Backtest Engine\n\n"
+    (research_dir / f"{file_prefix}_BACKTEST_ENGINE.md").write_text(
+        f"# {phase} Backtest Engine\n\n"
         "The engine runs ALL_EVENTS, ONE_ACTIVE_PER_SYMBOL, and MAX_2_NEW_TRADES_PER_DAY_SIM from cache only. "
         "MAX_2 prioritizes lower ATR14_pct(t-1) because no reliable liquidity field is available in the pilot cache.\n",
         encoding="utf-8",
     )
-    (research_dir / "DSS_004D_METRICS_OOS.md").write_text(
-        "# DSS-004D Metrics / OOS\n\n" + table + "\n",
+    (research_dir / f"{file_prefix}_METRICS_OOS.md").write_text(
+        f"# {phase} Metrics / OOS\n\n" + table + "\n",
         encoding="utf-8",
     )
-    (research_dir / "DSS_004D_BIAS_LITE.md").write_text(
-        "# DSS-004D Bias Lite\n\n"
+    (research_dir / f"{file_prefix}_BIAS_LITE.md").write_text(
+        f"# {phase} Bias Lite\n\n"
         f"Decision: `{result['bias']['decision']}`.\n\n"
         f"Variants: `{result['bias']['variants']}`\n\n"
         "FDR/WRC/SPA remains a documented gap for any future live or paper approval.\n",
         encoding="utf-8",
     )
     decision = result["decision"]
-    (research_dir / "DSS_004D_FINAL_REPORT.md").write_text(
-        "# DSS-004D Final Report\n\n"
+    (research_dir / f"{file_prefix}_FINAL_REPORT.md").write_text(
+        f"# {phase} Final Report\n\n"
         f"Decision: `{decision['decision']}`.\n\n"
         f"Bias: `{decision['bias_decision']}`.\n\n"
+        f"Cache: `{metrics['cache_dir']}`. Universe: `{metrics['universe']}`. Last valid bar: `{metrics['last_valid_bar_date']}`.\n\n"
         + table
         + "\n\nSafety: no orders, no paper, no live, no cron, no operational preview, no merge, no .env real modified.\n",
         encoding="utf-8",

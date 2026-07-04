@@ -1,0 +1,107 @@
+{
+  "base_one_active_oos": {
+    "avg_loss_pct": -5.843494517532391,
+    "avg_win_pct": 7.069100610862752,
+    "expectancy_pct": 0.9723070300262958,
+    "profit_factor": 1.352405621507822,
+    "symbols": 147,
+    "trades": 1311,
+    "winrate": 0.5278413424866514,
+    "worst_streak": 14
+  },
+  "decision": "BIAS_FAIL",
+  "fdr_wrc_spa": "NOT_IMPLEMENTED_GAP_FOR_LIVE_OR_PAPER_APPROVAL",
+  "random_seed": 40404,
+  "variants": {
+    "RANDOM_MATCHED": {
+      "avg_loss_pct": -6.2226568375279445,
+      "avg_win_pct": 7.206660976676478,
+      "expectancy_pct": 0.7047437379180985,
+      "profit_factor": 1.2339202873402906,
+      "symbols": 149,
+      "trades": 2020,
+      "winrate": 0.5158415841584159,
+      "worst_streak": 24
+    },
+    "TREND_ONLY": {
+      "avg_loss_pct": -6.488755663069555,
+      "avg_win_pct": 7.031276778589035,
+      "expectancy_pct": 0.5067122347756157,
+      "profit_factor": 1.1618177550278237,
+      "symbols": 149,
+      "trades": 2383,
+      "winrate": 0.5174150230801511,
+      "worst_streak": 42
+    },
+    "VOL_HIGH_ONLY": {
+      "avg_loss_pct": -7.202638191163124,
+      "avg_win_pct": 7.247059765608674,
+      "expectancy_pct": -0.15512121462200928,
+      "profit_factor": 0.95795845506022,
+      "symbols": 147,
+      "trades": 1263,
+      "winrate": 0.48772763262074426,
+      "worst_streak": 39
+    },
+    "entry_next_close": {
+      "avg_loss_pct": -5.692434946875041,
+      "avg_win_pct": 6.962913259543511,
+      "expectancy_pct": 0.9875810400369631,
+      "profit_factor": 1.3674402349062993,
+      "symbols": 147,
+      "trades": 1311,
+      "winrate": 0.5278413424866514,
+      "worst_streak": 14
+    },
+    "entry_next_open_adverse_10bps": {
+      "avg_loss_pct": -5.877465806757254,
+      "avg_win_pct": 7.0407125713788545,
+      "expectancy_pct": 0.8723070300262957,
+      "profit_factor": 1.3108190436091407,
+      "symbols": 147,
+      "trades": 1311,
+      "winrate": 0.5225019069412662,
+      "worst_streak": 14
+    },
+    "placebo_signal_shift_plus_1": {
+      "avg_loss_pct": -5.816265541921083,
+      "avg_win_pct": 7.382736246164938,
+      "expectancy_pct": 1.1364196507327922,
+      "profit_factor": 1.4128683615252415,
+      "symbols": 147,
+      "trades": 1308,
+      "winrate": 0.5267584097859327,
+      "worst_streak": 10
+    },
+    "placebo_signal_shift_plus_10": {
+      "avg_loss_pct": -6.186930153740731,
+      "avg_win_pct": 6.830123237305201,
+      "expectancy_pct": 0.9814471745080653,
+      "profit_factor": 1.3530586319556106,
+      "symbols": 147,
+      "trades": 1302,
+      "winrate": 0.5506912442396313,
+      "worst_streak": 12
+    },
+    "placebo_signal_shift_plus_2": {
+      "avg_loss_pct": -5.671377036875297,
+      "avg_win_pct": 7.02689870952499,
+      "expectancy_pct": 1.1444662236351169,
+      "profit_factor": 1.4356144342408645,
+      "symbols": 147,
+      "trades": 1306,
+      "winrate": 0.5367534456355283,
+      "worst_streak": 13
+    },
+    "placebo_signal_shift_plus_5": {
+      "avg_loss_pct": -5.96186173346065,
+      "avg_win_pct": 6.528952414499055,
+      "expectancy_pct": 1.0648203620531367,
+      "profit_factor": 1.4082855480988434,
+      "symbols": 147,
+      "trades": 1303,
+      "winrate": 0.5625479662317728,
+      "worst_streak": 20
+    }
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "config": {
+    "cache_dir": "artifacts/runtime/daily_swing/daily_ohlcv_research",
+    "cost_bps_x1": 10.0,
+    "cost_bps_x2": 20.0,
+    "cost_bps_x3": 30.0,
+    "end_date": "2026-07-02",
+    "holding_days": 10,
+    "is_end_date": "2024-12-31",
+    "oos_start_date": "2025-01-01",
+    "start_date": "2023-07-05",
+    "universe_path": "artifacts/runtime/daily_swing/dss_003e_research_universe_checked.csv"
+  },
+  "generated_at": "2026-07-04T15:32:00.538270+00:00",
+  "safety": {
+    "cron": false,
+    "env_modified": false,
+    "live": false,
+    "merge": false,
+    "orders": false,
+    "paper_execution": false,
+    "paper_orders": false,
+    "preview_operational": false,
+    "signals_operational": false
+  },
+  "schema_version": "tradeo.daily_swing.dss_004d.v1"
+}
