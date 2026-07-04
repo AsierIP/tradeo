@@ -6,7 +6,7 @@
   "error": null,
   "failed": 0,
   "fetched": 12,
-  "generated_at": "2026-07-04T10:20:05.942946+00:00",
+  "generated_at": "2026-07-04T10:25:04.689764+00:00",
   "out_dir": "artifacts/runtime/daily_swing/daily_ohlcv",
   "read_only": true,
   "schema_version": "tradeo.daily_swing.dss_003.v1",

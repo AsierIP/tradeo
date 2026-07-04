@@ -34,7 +34,7 @@
     "port": 4002,
     "port_classification": "IB_GATEWAY_PAPER"
   },
-  "generated_at": "2026-07-04T10:20:51Z",
+  "generated_at": "2026-07-04T10:25:40Z",
   "host": {
     "localhost_4002": {
       "decision": "TCP_OK",

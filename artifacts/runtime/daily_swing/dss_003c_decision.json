@@ -3,7 +3,7 @@
   "docker_tcp_status": "TCP_OK",
   "effective_host": "127.0.0.1",
   "effective_port": 4002,
-  "generated_at": "2026-07-04T10:20:51Z",
+  "generated_at": "2026-07-04T10:25:40Z",
   "historical_data_ok": true,
   "historical_probe_ran": true,
   "live_used": false,
