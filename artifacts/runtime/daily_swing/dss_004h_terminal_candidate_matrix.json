@@ -1,0 +1,79 @@
+{
+  "schema_version": "tradeo.daily_swing.dss_004h.terminal_candidate_matrix.v1",
+  "generated_at": "2026-07-04T18:35:00+00:00",
+  "decision_scope": "terminal Daily Swing research closure; no new backtests, signals, paper preview, or orders",
+  "candidates": [
+    {
+      "candidate": "DSS-PB-001",
+      "pattern": "Pullback in uptrend long",
+      "universe": "50 operational stocks plus SPY/QQQ benchmarks",
+      "policy": "next open 5-session time stop",
+      "oos_trades": 557,
+      "oos_symbols": 50,
+      "oos_x2_expectancy_pct": -0.057295211591716924,
+      "oos_pf_x2": 0.9831430147706817,
+      "cost_x3_expectancy_pct": 0.25224313472546583,
+      "top3_contribution_pct": 0.3905664117549612,
+      "bias_placebo_status": "OOS negative after x2 costs; cost robustness insufficient",
+      "fdr_wrc_spa_status": "Not advanced to statistical family",
+      "final_decision": "DSS_PB_001_RESEARCH_FAIL",
+      "class": "REJECTED_SPEC"
+    },
+    {
+      "candidate": "DSS-BO-001",
+      "pattern": "Volatility contraction breakout long",
+      "universe": "50 operational stocks plus SPY/QQQ benchmarks",
+      "policy": "next open 10-session time stop",
+      "oos_trades": 226,
+      "oos_symbols": 49,
+      "oos_x2_expectancy_pct": 1.8694492545524646,
+      "oos_pf_x2": 1.5362776493101964,
+      "cost_x3_expectancy_pct": 1.2828805955881444,
+      "top3_contribution_pct": 0.33902285429607426,
+      "bias_placebo_status": "CONTRACTION_ONLY baseline dominates base; placebos positive but lower",
+      "fdr_wrc_spa_status": "Baseline fail blocks promotion",
+      "final_decision": "DSS_BO_001_BASELINE_EXPLAINED_FAIL",
+      "class": "BASELINE_EXPLAINED_FAIL"
+    },
+    {
+      "candidate": "DSS-CO-001",
+      "pattern": "Contraction in uptrend long",
+      "universe": "research-150 plus SPY/QQQ benchmarks",
+      "policy": "ONE_ACTIVE_PER_SYMBOL primary; MAX2 comparison weaker",
+      "oos_trades": 1311,
+      "oos_symbols": 147,
+      "oos_x2_expectancy_pct": 0.9723070300262958,
+      "oos_pf_x2": 1.352405621507822,
+      "cost_x3_expectancy_pct": 0.5050791382271806,
+      "top3_contribution_pct": 0.14444896768327475,
+      "max2_comparison": {
+        "oos_trades": 576,
+        "oos_symbols": 116,
+        "oos_x2_expectancy_pct": 0.4572207791281914,
+        "oos_pf_x2": 1.1929943203637217,
+        "cost_x3_expectancy_pct": 0.19136260467711005,
+        "top3_contribution_pct": 0.19449884573247192
+      },
+      "bias_placebo_status": "Bias fail; timing/effective-sample warning; research-interesting only",
+      "fdr_wrc_spa_status": "No final FDR/WRC/SPA pass; carried into CW design only",
+      "final_decision": "DSS_CO_001_RESEARCH_WARNING_RESEARCH150; DSS_004F_CANONICAL_EFFECTIVE_SAMPLE_WARNING",
+      "class": "TIMING_WINDOW_WARNING"
+    },
+    {
+      "candidate": "DSS-CW-001",
+      "pattern": "Contraction window long",
+      "universe": "research-150 plus SPY/QQQ benchmarks",
+      "policy": "MAX_2_NEW_EPISODES_PER_DAY",
+      "oos_trades": 529,
+      "oos_symbols": 137,
+      "oos_x2_expectancy_pct": 0.8739220695566121,
+      "oos_pf_x2": 1.3801975845791603,
+      "cost_x3_expectancy_pct": 0.5897505470337713,
+      "top3_contribution_pct": 0.17638558742510418,
+      "bias_placebo_status": "Placebos +1/+2 dominate base; base rank 3",
+      "fdr_wrc_spa_status": "FDR_PLACEBO_DOMINANCE_FAIL; WRC_SPA_PLACEBO_BEST_FAIL; TIMING_PLACEBO_DOMINANCE_FAIL",
+      "final_decision": "DSS_CW_001_RESEARCH_FAIL_TIMING_NOT_SPECIFIC",
+      "class": "FAIL_TIMING_NOT_SPECIFIC"
+    }
+  ]
+}

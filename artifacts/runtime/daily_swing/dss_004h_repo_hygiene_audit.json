@@ -1,0 +1,57 @@
+{
+  "schema_version": "tradeo.daily_swing.dss_004h.repo_hygiene_audit.v1",
+  "generated_at": "2026-07-04T18:35:00+00:00",
+  "decision": "REPO_HYGIENE_BLOCKED_SECRET_OR_DATA",
+  "git_status_before_dss_004h": "clean on feature/daily-swing-paper-probe-001...origin/feature/daily-swing-paper-probe-001",
+  "blockers": {
+    "secret_or_data_blocker": true,
+    "live_risk_blocker": false,
+    "cleanup_required": true
+  },
+  "findings": [
+    "Tracked paper preview artifacts remain in artifacts/runtime/daily_swing and include concrete PREVIEW_ONLY order rows.",
+    "Tracked OpenClaw memory files are present in the app repo and should be untracked.",
+    "206 ignored-but-tracked generated files were found.",
+    "Paper-probe planning/config/code remains present and must not be represented as paper-ready.",
+    "Large tracked Daily research CSV artifacts need explicit PR policy.",
+    "No tracked real .env, venv, __pycache__, or .pyc was found in the Daily-focused audit."
+  ],
+  "tracked_memory_files": [
+    "MEMORY.md",
+    "memory/2026-06-24.md through memory/2026-06-28*.md"
+  ],
+  "tracked_paper_preview_artifacts": [
+    "artifacts/runtime/daily_swing/paper_operability_check.json",
+    "artifacts/runtime/daily_swing/paper_orders_preview_2026-07-06.csv",
+    "artifacts/runtime/daily_swing/paper_orders_preview_2026-07-06.json"
+  ],
+  "large_daily_artifacts": [
+    {
+      "path": "artifacts/runtime/daily_swing/dss_004e_dss_co_001_trades_all_events.csv",
+      "approx_bytes": 3852528
+    },
+    {
+      "path": "artifacts/runtime/daily_swing/dss_004f_r_offset_timing_by_episode.csv",
+      "approx_bytes": 1554226
+    },
+    {
+      "path": "artifacts/runtime/daily_swing/dss_004f_offset_timing_by_episode.csv",
+      "approx_bytes": 1554226
+    }
+  ],
+  "ignored_but_tracked_count": 206,
+  "safety": {
+    "orders": false,
+    "paper_orders": false,
+    "paper_execution": false,
+    "live": false,
+    "preview_operational": false,
+    "signals_operational": false,
+    "ibkr_used": false,
+    "downloaded_more_data": false,
+    "cron": false,
+    "merge": false,
+    "gh_used": false,
+    "env_modified": false
+  }
+}

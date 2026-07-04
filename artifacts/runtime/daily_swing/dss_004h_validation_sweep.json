@@ -1,0 +1,34 @@
+{
+  "schema_version": "tradeo.daily_swing.dss_004h.validation_sweep.v1",
+  "generated_at": "2026-07-04T18:35:00+00:00",
+  "decision": "VALIDATION_WARNING",
+  "scope": "Daily focal validation only; no new research/backtests, no IBKR, no downloads, no paper/live/preview/signals",
+  "commands": [
+    {
+      "command": "/tmp/tradeo-dss-004g-c-r-venv/bin/python -m py_compile <Daily scripts/modules>",
+      "exit_code": 0,
+      "summary": "Daily scripts and modules compile"
+    },
+    {
+      "command": "/tmp/tradeo-dss-004g-c-r-venv/bin/python -m pytest <Daily focal tests>",
+      "exit_code": 0,
+      "summary": "125 passed in 73.23s"
+    },
+    {
+      "command": "/tmp/tradeo-dss-004g-c-r-venv/bin/python -m ruff check <Daily scripts/modules/tests>",
+      "exit_code": 0,
+      "summary": "All checks passed"
+    },
+    {
+      "command": "git diff --check",
+      "exit_code": 0,
+      "summary": "Current diff whitespace clean"
+    },
+    {
+      "command": "git diff --check main...HEAD",
+      "exit_code": 2,
+      "summary": "Historical branch diff has blank-line-at-EOF issues in four DSS_004B markdown files not edited by DSS-004H"
+    }
+  ],
+  "warning": "Current DSS-004H validation passed, but branch-level PR diff hygiene still fails against main"
+}

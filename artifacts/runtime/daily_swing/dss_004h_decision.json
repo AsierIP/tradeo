@@ -1,0 +1,30 @@
+{
+  "schema_version": "tradeo.daily_swing.dss_004h.decision.v1",
+  "generated_at": "2026-07-04T18:35:00+00:00",
+  "phase": "DSS-004H",
+  "decision": "DAILY_RESEARCH_BRANCH_SECRET_OR_DATA_BLOCKER",
+  "candidate_matrix": "terminal negative; no shadow/paper/live candidate",
+  "repo_hygiene_decision": "REPO_HYGIENE_BLOCKED_SECRET_OR_DATA",
+  "validation_decision": "VALIDATION_WARNING",
+  "pr_readiness": {
+    "ready_for_pr": false,
+    "reason": "tracked OpenClaw memory, ignored generated runtime artifacts, paper preview order artifacts, and large bundles require cleanup/quarantine before infra-only PR"
+  },
+  "compare_url": "https://github.com/AsierIP/tradeo/compare/main...feature/daily-swing-paper-probe-001",
+  "safety": {
+    "orders": false,
+    "paper_orders": false,
+    "paper_execution": false,
+    "live": false,
+    "preview_operational": false,
+    "signals_operational": false,
+    "ibkr_used": false,
+    "downloaded_more_data": false,
+    "cron": false,
+    "merge": false,
+    "pr_created": false,
+    "gh_used": false,
+    "env_modified": false
+  },
+  "next_phase": "cleanup branch before any infra-only PR; do not open DSS-005, paper, shadow, preview, signals, or orders"
+}
