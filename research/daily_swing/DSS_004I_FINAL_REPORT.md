@@ -18,7 +18,8 @@ Decision: CLEAN_BRANCH_READY_FOR_PR_INFRA_ONLY.
 
 ## D. Commits y push
 
-Pendiente hasta commit/push final de DSS-004I.
+- `d82968c feat(daily): extract clean research infrastructure`
+- Pushed to `origin/feature/daily-research-infra-clean-001`.
 
 ## E. Allowlist/blocklist summary
 
@@ -56,6 +57,8 @@ CLEAN_VALIDATION_PASS.
 - ruff: exit 0.
 - git diff --check: exit 0.
 - docker build backend: exit 0.
+
+Reverified on 2026-07-04 with Docker image `tradeo-backend:dss004i-clean-verify`: build exit 0, py_compile exit 0, ruff exit 0, pytest focal 113 passed.
 
 ## I. PR readiness decision
 
