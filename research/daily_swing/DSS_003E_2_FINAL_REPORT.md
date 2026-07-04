@@ -14,7 +14,12 @@ DSS-003E-2 queda bloqueada antes de descargar batches. TCP a IB Gateway Paper 40
 
 Rama: `feature/daily-swing-paper-probe-001`.
 
-Commit/push: pendiente en el momento de escribir este reporte.
+Commits:
+
+- `f22b238 docs(daily): record DSS-003E-2 canary block`.
+- Follow-up finalization commit for this report section.
+
+Push: OK a `origin/feature/daily-swing-paper-probe-001`.
 
 ## D. Preflight IBKR 4002 y canary
 
