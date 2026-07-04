@@ -1,0 +1,25 @@
+{
+  "artifact_integrity_status": "PASS",
+  "decision": "DSS_CW_001_RESEARCH_FAIL_TIMING_NOT_SPECIFIC",
+  "fdr_decision": "FDR_PLACEBO_DOMINANCE_FAIL",
+  "generated_at": "2026-07-04T18:01:16.183904+00:00",
+  "next_phase": "Reject DSS-CW-001 as current operational candidate; return to Director search-space decision with no DSS-005 or paper preview.",
+  "pattern_id": "DSS-CW-001",
+  "phase": "DSS-004G-C",
+  "safety": {
+    "cron": false,
+    "downloaded_more_data": false,
+    "env_modified": false,
+    "ibkr_used": false,
+    "live": false,
+    "merge": false,
+    "orders": false,
+    "paper_execution": false,
+    "paper_orders": false,
+    "preview_operational": false,
+    "signals_operational": false
+  },
+  "schema_version": "tradeo.daily_swing.dss_004g_c.v1",
+  "timing_decision": "TIMING_PLACEBO_DOMINANCE_FAIL",
+  "wrc_spa_decision": "WRC_SPA_PLACEBO_BEST_FAIL"
+}

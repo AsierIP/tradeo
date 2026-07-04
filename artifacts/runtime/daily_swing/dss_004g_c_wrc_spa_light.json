@@ -1,0 +1,15 @@
+{
+  "approximate_p_value_base_vs_family": 0.7623762376237624,
+  "base_expectancy_pct": 0.8739220695566122,
+  "base_rank": 3,
+  "base_strategy_id": "DSS_CW_001_BASE_MAX2",
+  "best_strategy_id": "DSS_CW_WINDOW_PLACEBO_PLUS_1",
+  "bootstrap_iterations": 100,
+  "bootstrap_seed": 45411,
+  "decision": "WRC_SPA_PLACEBO_BEST_FAIL",
+  "family_max_expectancy_pct": 1.1803814379575674,
+  "generated_at": "2026-07-04T18:01:16.144075+00:00",
+  "limitations": "Approximation uses resampled symbol-month return clusters and compares family max to base; it is not a formal SPA implementation.",
+  "method": "symbol_month bootstrap family-max approximation; research-only, not formal WRC/SPA",
+  "schema_version": "tradeo.daily_swing.dss_004g_c.v1"
+}

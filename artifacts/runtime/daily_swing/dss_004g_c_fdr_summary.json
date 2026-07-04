@@ -1,0 +1,12 @@
+{
+  "base_rank": 3,
+  "base_strategy_id": "DSS_CW_001_BASE_MAX2",
+  "best_strategy_id": "DSS_CW_WINDOW_PLACEBO_PLUS_1",
+  "bootstrap_iterations": 100,
+  "bootstrap_seed": 40411,
+  "decision": "FDR_PLACEBO_DOMINANCE_FAIL",
+  "fdr_q": 0.05,
+  "generated_at": "2026-07-04T17:59:51.336133+00:00",
+  "placebo_dominates_base": true,
+  "schema_version": "tradeo.daily_swing.dss_004g_c.v1"
+}

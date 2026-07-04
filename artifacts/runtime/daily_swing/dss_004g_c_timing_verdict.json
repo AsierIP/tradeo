@@ -1,0 +1,81 @@
+{
+  "base": {
+    "base_rank": 3,
+    "bh_q_value": 0.0297029702970297,
+    "bonferroni_p_value": 0.0891089108910891,
+    "bootstrap_p_value_mean_le_0": 0.009900990099009901,
+    "bootstrap_symbol_month_p05_expectancy_pct": 0.2545062148602211,
+    "bootstrap_symbol_month_p50_expectancy_pct": 0.9224150333417964,
+    "bootstrap_symbol_month_p_value": 0.009900990099009901,
+    "bootstrap_symbol_p05_expectancy_pct": 0.4156681628134155,
+    "bootstrap_symbol_p50_expectancy_pct": 0.8718167114830955,
+    "bootstrap_symbol_p_value": 0.009900990099009901,
+    "effective_sample_symbol_month": 510,
+    "oos_expectancy_net_x2_pct": 0.8739220695566122,
+    "oos_profit_factor_net_x2": 1.3801975845791605,
+    "significant_after_bonferroni": false,
+    "significant_after_fdr": true,
+    "strategy_id": "DSS_CW_001_BASE_MAX2",
+    "symbols": 137,
+    "trades": 529,
+    "winrate": 0.5406427221172023
+  },
+  "classification": "placebos dominate base; timing is not specific",
+  "decision": "TIMING_PLACEBO_DOMINANCE_FAIL",
+  "generated_at": "2026-07-04T18:01:16.183800+00:00",
+  "placebo_dominators": [
+    "DSS_CW_WINDOW_PLACEBO_PLUS_1",
+    "DSS_CW_WINDOW_PLACEBO_PLUS_2"
+  ],
+  "placebos": [
+    {
+      "bootstrap_symbol_p05_expectancy_pct": 0.5143543968470107,
+      "expectancy_pct": 1.1803814379575674,
+      "last_12_months_expectancy_pct": 1.6284202129400844,
+      "max_drawdown_pct": 190.31398069737514,
+      "profit_factor": 1.5091529984362473,
+      "q_value": 0.0297029702970297,
+      "strategy_id": "DSS_CW_WINDOW_PLACEBO_PLUS_1",
+      "top_1_symbol_contribution_pct": 0.07917780937198926,
+      "top_3_symbols_contribution_pct": 0.16434361974123138,
+      "top_5_trades_contribution_pct": 0.13194928530801786
+    },
+    {
+      "bootstrap_symbol_p05_expectancy_pct": 0.6406831482571069,
+      "expectancy_pct": 1.1549629082736432,
+      "last_12_months_expectancy_pct": 1.6437615947502253,
+      "max_drawdown_pct": 215.1268903451483,
+      "profit_factor": 1.5121355885242682,
+      "q_value": 0.0297029702970297,
+      "strategy_id": "DSS_CW_WINDOW_PLACEBO_PLUS_2",
+      "top_1_symbol_contribution_pct": 0.05412336403859839,
+      "top_3_symbols_contribution_pct": 0.13615496946542407,
+      "top_5_trades_contribution_pct": 0.1217098827214022
+    },
+    {
+      "bootstrap_symbol_p05_expectancy_pct": 0.2987174380410916,
+      "expectancy_pct": 0.7624562590818529,
+      "last_12_months_expectancy_pct": 1.2465304809023123,
+      "max_drawdown_pct": 272.3402431269531,
+      "profit_factor": 1.3308037153679515,
+      "q_value": 0.03564356435643564,
+      "strategy_id": "DSS_CW_WINDOW_PLACEBO_PLUS_5",
+      "top_1_symbol_contribution_pct": 0.039981769273109695,
+      "top_3_symbols_contribution_pct": 0.10886693571324993,
+      "top_5_trades_contribution_pct": 0.07987923735149756
+    },
+    {
+      "bootstrap_symbol_p05_expectancy_pct": -0.09788177760856626,
+      "expectancy_pct": 0.35954625603385826,
+      "last_12_months_expectancy_pct": 0.5691772564862241,
+      "max_drawdown_pct": 260.89914224500944,
+      "profit_factor": 1.1356385487791956,
+      "q_value": 0.28960396039603964,
+      "strategy_id": "DSS_CW_WINDOW_PLACEBO_PLUS_10",
+      "top_1_symbol_contribution_pct": 0.0443141009388979,
+      "top_3_symbols_contribution_pct": 0.1225740057486134,
+      "top_5_trades_contribution_pct": 0.10927209605102534
+    }
+  ],
+  "schema_version": "tradeo.daily_swing.dss_004g_c.v1"
+}
