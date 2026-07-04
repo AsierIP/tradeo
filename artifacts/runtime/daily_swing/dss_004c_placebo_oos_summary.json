@@ -1,0 +1,7 @@
+{
+  "base_oos_expectancy_pct": 1.8694492545524646,
+  "base_oos_profit_factor": 1.5362776493101964,
+  "decision": "PLACEBO_TIMING_WINDOW_WARNING",
+  "placebos_matching_or_beating_base_count": 0,
+  "positive_placebo_count": 5
+}

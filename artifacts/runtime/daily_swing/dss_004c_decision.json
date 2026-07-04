@@ -1,0 +1,68 @@
+{
+  "base": {
+    "IS": {
+      "avg_loss_pct": -7.465587966680759,
+      "avg_win_pct": 7.960124295747486,
+      "expectancy_pct": 0.4960699752176898,
+      "profit_factor": 1.137324921585831,
+      "symbols": 44,
+      "trades": 124,
+      "winrate": 0.5161290322580645,
+      "worst_streak": 8
+    },
+    "OOS": {
+      "avg_loss_pct": -8.121957053370627,
+      "avg_win_pct": 9.382367176014014,
+      "expectancy_pct": 1.8694492545524646,
+      "profit_factor": 1.5362776493101964,
+      "symbols": 49,
+      "trades": 226,
+      "winrate": 0.5707964601769911,
+      "worst_streak": 5
+    },
+    "full": {
+      "avg_loss_pct": -7.871115364189785,
+      "avg_win_pct": 8.910742593956721,
+      "expectancy_pct": 1.3828805955881445,
+      "profit_factor": 1.3916668335156996,
+      "symbols": 50,
+      "trades": 350,
+      "winrate": 0.5514285714285714,
+      "worst_streak": 8
+    },
+    "symbols_OOS": 49,
+    "top_3_contribution_pct": 0.33902285429607426,
+    "trades_OOS": 226,
+    "trades_total": 350
+  },
+  "decision": "DSS_BO_001_TIMING_WINDOW_WARNING",
+  "generated_at": "2026-07-04T11:56:54.241315+00:00",
+  "next_phase": "DSS-003E research-150 confirmation before DSS-005",
+  "partial_decisions": {
+    "baseline": "BASELINE_WARNING",
+    "placebo": "PLACEBO_TIMING_WINDOW_WARNING",
+    "stability": "STABILITY_PASS",
+    "timing": "TIMING_PASS"
+  },
+  "pattern_id": "DSS-BO-001",
+  "regime_symbol": "SPY",
+  "safety": {
+    "cron": false,
+    "env_modified": false,
+    "live": false,
+    "orders": false,
+    "paper_execution": false,
+    "preview_operational": false,
+    "signals_operational": false
+  },
+  "schema_version": "tradeo.daily_swing.dss_004c.v1",
+  "universe_summary": {
+    "benchmark_symbols": [
+      "QQQ",
+      "SPY"
+    ],
+    "operational_etf_or_fund_rows": 0,
+    "operational_symbols": 50,
+    "universe_rows": 52
+  }
+}

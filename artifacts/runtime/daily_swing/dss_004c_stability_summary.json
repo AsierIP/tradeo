@@ -1,0 +1,45 @@
+{
+  "decision": "STABILITY_PASS",
+  "exclude_top_1_symbol": {
+    "avg_loss_pct": -8.038639173546708,
+    "avg_win_pct": 9.060787468768321,
+    "expectancy_pct": 1.5307647271984,
+    "profit_factor": 1.4324253761074521,
+    "symbols": 48,
+    "trades": 218,
+    "winrate": 0.5596330275229358,
+    "worst_streak": 6
+  },
+  "exclude_top_3_symbols": {
+    "avg_loss_pct": -7.8779998792730135,
+    "avg_win_pct": 8.371884627285752,
+    "expectancy_pct": 0.927356257285923,
+    "profit_factor": 1.2569471034266437,
+    "symbols": 46,
+    "trades": 203,
+    "winrate": 0.541871921182266,
+    "worst_streak": 6
+  },
+  "exclude_top_5_trades": {
+    "avg_loss_pct": -8.121957053370627,
+    "avg_win_pct": 8.35071869762386,
+    "expectancy_pct": 1.120630245829899,
+    "profit_factor": 1.3143563160274814,
+    "symbols": 49,
+    "trades": 221,
+    "winrate": 0.5610859728506787,
+    "worst_streak": 6
+  },
+  "negative_oos_quarters": 2,
+  "oos": {
+    "avg_loss_pct": -8.121957053370627,
+    "avg_win_pct": 9.382367176014014,
+    "expectancy_pct": 1.8694492545524646,
+    "profit_factor": 1.5362776493101964,
+    "symbols": 49,
+    "trades": 226,
+    "winrate": 0.5707964601769911,
+    "worst_streak": 5
+  },
+  "sector_audit": "OMITTED_NO_SECTOR_FIELD_IN_PILOT_UNIVERSE"
+}

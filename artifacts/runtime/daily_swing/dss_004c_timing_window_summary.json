@@ -1,0 +1,15 @@
+{
+  "decision": "TIMING_PASS",
+  "early_day1_to_day3_pct": 0.25106212494573255,
+  "late_day3_to_day10_pct": 1.4485733876366147,
+  "mean_segments_pct": {
+    "day1_to_day3_pct": 0.18955196464000534,
+    "day3_to_day5_pct": 0.5656586514126908,
+    "day5_to_day10_pct": 0.8829147362239239,
+    "mae_pct": -7.37381057814203,
+    "mfe_pct": 9.24778115556738,
+    "net_return_x2_pct": 1.3828805955881445,
+    "next_open_to_close_day1_pct": 0.061510160305727195,
+    "signal_close_to_next_open_pct": 0.3071776287198174
+  }
+}
