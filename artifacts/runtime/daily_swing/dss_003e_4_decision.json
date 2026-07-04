@@ -1,25 +1,22 @@
 {
   "cache": {
-    "backtest_used": false,
-    "batch_runs_csv": "artifacts/runtime/daily_swing/dss_003e_4_batch_runs.csv",
     "batches_executed": 6,
-    "existing_reused": 16,
+    "existing_reused": 10,
     "failed_total": 0,
-    "fetched_total": 136,
+    "fetched_new_csv_total": 142,
     "final_cache_files": 152,
-    "generated_at": "2026-07-04T15:03:50Z",
-    "live_used": false,
-    "orders_used": false,
-    "paper_orders_used": false,
-    "preview_used": false,
+    "final_runner_verification": {
+      "failed": 0,
+      "fetched": 0,
+      "skipped": 152,
+      "status": "CACHE_WRITTEN"
+    },
     "quarantined_total": 0,
-    "schema_version": "tradeo.daily_swing.dss_003e_4.v1",
-    "signals_used": false,
-    "status": "RESEARCH_CACHE_COMPLETE"
+    "status": "CACHE_WRITTEN"
   },
-  "decision": "RESEARCH_CACHE_READY_FOR_DSS_004E",
+  "decision": "DATA_GATE_RESEARCH_PASS",
   "generated_at": "2026-07-04T15:03:50Z",
-  "next_phase_recommended": "DSS-004E repeat DSS-CO-001 exactly unchanged on research-150; not executed in this task.",
+  "next_phase_recommended": "Await Director authorization before DSS-004E; do not generate signals or preview from this task.",
   "preflight": {
     "docker_tcp_4002": "TCP_OK",
     "host_tcp_4002": "TCP_OK",
@@ -46,7 +43,6 @@
     "orders": false,
     "paper_execution": false,
     "paper_orders": false,
-    "pr_new": false,
     "preview": false,
     "signals": false
   },
