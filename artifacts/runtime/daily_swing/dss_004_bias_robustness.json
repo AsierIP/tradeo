@@ -1,0 +1,70 @@
+{
+  "decision": "BIAS_WARNING",
+  "duplicate_trades_audit": "PASS",
+  "fdr_wrc_spa": "NOT_IMPLEMENTED_BLOCKS_LIVE_NOT_PAPER_PROBE",
+  "holiday_audit": "PASS_NO_2026_07_03_BAR",
+  "leakage_audit": "PASS_CACHE_ONLY_NO_FUTURE_SIGNAL_FIELDS",
+  "lookahead_audit": "PASS_SIGNAL_T_ENTRY_T_PLUS_1",
+  "variants": {
+    "base_next_open": {
+      "avg_loss_pct": -5.68526706711724,
+      "avg_win_pct": 6.80846209776979,
+      "expectancy_pct": 0.35224313472546576,
+      "profit_factor": 1.1198962232326697,
+      "symbols": 50,
+      "trades": 925,
+      "winrate": 0.48324324324324325,
+      "worst_streak": 18
+    },
+    "entry_next_close": {
+      "avg_loss_pct": -5.33971953557168,
+      "avg_win_pct": 6.2652218844108525,
+      "expectancy_pct": 0.3812029374143031,
+      "profit_factor": 1.1408013055926558,
+      "symbols": 50,
+      "trades": 925,
+      "winrate": 0.492972972972973,
+      "worst_streak": 12
+    },
+    "entry_next_open_adverse_10bps": {
+      "avg_loss_pct": -5.749414646845675,
+      "avg_win_pct": 6.7540390647608675,
+      "expectancy_pct": 0.2522431347254658,
+      "profit_factor": 1.0843708414144837,
+      "symbols": 50,
+      "trades": 925,
+      "winrate": 0.48,
+      "worst_streak": 18
+    },
+    "placebo_signal_shift_plus_1": {
+      "avg_loss_pct": -5.878935425008237,
+      "avg_win_pct": 6.540396124359352,
+      "expectancy_pct": 0.43849027635119775,
+      "profit_factor": 1.151807768492483,
+      "symbols": 50,
+      "trades": 922,
+      "winrate": 0.5086767895878525,
+      "worst_streak": 11
+    },
+    "placebo_signal_shift_plus_2": {
+      "avg_loss_pct": -5.658328073770618,
+      "avg_win_pct": 6.424361844037987,
+      "expectancy_pct": 0.4093408283097376,
+      "profit_factor": 1.1453193412944787,
+      "symbols": 50,
+      "trades": 918,
+      "winrate": 0.5021786492374728,
+      "worst_streak": 15
+    },
+    "placebo_signal_shift_plus_5": {
+      "avg_loss_pct": -5.99154350654366,
+      "avg_win_pct": 6.081640591309057,
+      "expectancy_pct": -0.04053018895431758,
+      "profit_factor": 0.9866599857341345,
+      "symbols": 50,
+      "trades": 917,
+      "winrate": 0.49291166848418755,
+      "worst_streak": 20
+    }
+  }
+}
