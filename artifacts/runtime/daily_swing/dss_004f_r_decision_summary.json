@@ -1,0 +1,23 @@
+{
+  "generated_at": "2026-07-04T16:19:08Z",
+  "phase": "DSS-004F-R",
+  "decision": "DSS_004F_CANONICAL_EFFECTIVE_SAMPLE_WARNING",
+  "canonical_report": "Reporte B",
+  "superseded_report": "Reporte A",
+  "conceptual_dss_004f_decision": "DSS_CO_001_TIMING_WINDOW_CONFIRMED",
+  "canonical_metrics": {
+    "raw_signals_total": 15119,
+    "raw_signals_OOS": 9488,
+    "episodes_total": 1394,
+    "episodes_OOS": 847,
+    "offset0_expectancy_pct": 0.7335564583265738,
+    "offset1_expectancy_pct": 1.0652589536110546,
+    "offset2_expectancy_pct": 0.9730012782840085,
+    "offset5_expectancy_pct": 0.9861085541090635,
+    "offset10_expectancy_pct": 0.864774982413264,
+    "bootstrap_iterations": 20,
+    "symbol_bootstrap_expectancy_p05": -0.0315552113883849
+  },
+  "requires_corrective_commit": true,
+  "next_phase": "Director review; do not advance to DSS-CW-001 without separate explicit authorization"
+}

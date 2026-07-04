@@ -1,0 +1,36 @@
+{
+  "schema_version": "tradeo.daily_swing.dss_004f_r.metric_diff.v1",
+  "generated_at": "2026-07-04T16:21:20.129Z",
+  "report_a": {
+    "raw_signals_total": 15119,
+    "raw_signals_OOS": 9488,
+    "episodes_total": 1597,
+    "episodes_OOS": 979,
+    "mean": 9.4671,
+    "median": 5,
+    "p95": 37,
+    "offset0": 0.8684,
+    "offset1": 1.1146,
+    "bootstrap_iterations": 100,
+    "episode_gap_basis": "calendar-day gaps <= 5"
+  },
+  "report_b": {
+    "raw_signals_total": 15119,
+    "raw_signals_OOS": 9488,
+    "episodes_total": 1394,
+    "episodes_OOS": 847,
+    "mean": 10.8458,
+    "median": 6,
+    "p95": 40,
+    "offset0": 0.7336,
+    "offset1": 1.0653,
+    "bootstrap_iterations": 20,
+    "episode_gap_basis": "trading-session signal_idx gaps <= 5"
+  },
+  "rerun_matches": "Report B",
+  "root_cause": "Report A used calendar-day gaps <= 5 for EPISODE_GAP_5 and 100 bootstrap iterations; current committed code uses trading-session signal_idx gaps <= 5 and default 20 bootstrap iterations. Weekend/calendar gaps split episodes more often, producing 1597 total / 979 OOS episodes and lower raw signals per episode. The current code path is reproducible and matches Report B.",
+  "method_bug": false,
+  "stale_or_superseded": "Report A chat/report metrics are superseded; 948410e artifacts and DSS-004F-R rerun are canonical.",
+  "offset_set_note": "Current offset audit uses the same primary episode list, but trades near sample end can be unavailable for larger offsets, so offset trade counts differ slightly.",
+  "bootstrap_note": "Negative symbol p05 is from the canonical 20-iteration bootstrap on the current episode sample; Report A 100-iteration positive p05 is noncanonical for this commit."
+}

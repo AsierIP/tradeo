@@ -1,0 +1,100 @@
+{
+  "schema_version": "tradeo.daily_swing.dss_004f_r.decision.v1",
+  "generated_at": "2026-07-04T16:21:20.129Z",
+  "decision": "DSS_004F_CANONICAL_EFFECTIVE_SAMPLE_WARNING",
+  "canonical_report": "Report B / committed 948410e artifacts / DSS-004F-R rerun",
+  "canonical_figures": {
+    "raw_signals_total": 15119,
+    "raw_signals_OOS": 9488,
+    "episodes_total": 1394,
+    "episodes_OOS": 847,
+    "raw_signals_per_episode_mean": 10.845767575322812,
+    "raw_signals_per_episode_median": 6,
+    "raw_signals_per_episode_p95": 40,
+    "offsets": {
+      "0": {
+        "episodes_OOS": 843,
+        "symbols_OOS": 147,
+        "expectancy_pct": 0.7335564583265738,
+        "profit_factor": 1.251611575448284
+      },
+      "1": {
+        "episodes_OOS": 841,
+        "symbols_OOS": 147,
+        "expectancy_pct": 1.0652589536110546,
+        "profit_factor": 1.371976618747053
+      },
+      "2": {
+        "episodes_OOS": 838,
+        "symbols_OOS": 147,
+        "expectancy_pct": 0.9730012782840085,
+        "profit_factor": 1.3453607183342189
+      },
+      "5": {
+        "episodes_OOS": 832,
+        "symbols_OOS": 147,
+        "expectancy_pct": 0.9861085541090635,
+        "profit_factor": 1.3524229226008375
+      },
+      "10": {
+        "episodes_OOS": 825,
+        "symbols_OOS": 147,
+        "expectancy_pct": 0.864774982413264,
+        "profit_factor": 1.2999665964057683
+      }
+    },
+    "bootstrap_iterations": 20,
+    "bootstrap_summary": {
+      "symbol": {
+        "expectancy_mean": 0.8194598985194826,
+        "expectancy_p05": -0.0315552113883849,
+        "expectancy_p50": 0.9166331058957714,
+        "expectancy_p95": 1.388253136812267,
+        "pf_p05": 0.9899613779490708,
+        "pf_p50": 1.3327283389722255,
+        "pf_p95": 1.4708326301471595
+      },
+      "symbol_month": {
+        "expectancy_mean": 0.8187713303316251,
+        "expectancy_p05": 0.40064288130041587,
+        "expectancy_p50": 0.9213848317818087,
+        "expectancy_p95": 1.1286913508761187,
+        "pf_p05": 1.1310419693108225,
+        "pf_p50": 1.3256277100693328,
+        "pf_p95": 1.4055209811690883
+      }
+    },
+    "portfolio_offset_0": {
+      "episodes_OOS": 449,
+      "symbols_OOS": 133,
+      "expectancy_pct": 0.8800903249784414,
+      "profit_factor": 1.370340444439208
+    }
+  },
+  "valid_artifacts": [
+    "research/daily_swing/DSS_004F_R_FINAL_REPORT.md",
+    "research/daily_swing/DSS_004F_R_ARTIFACT_INVENTORY.md",
+    "research/daily_swing/DSS_004F_R_DETERMINISTIC_RERUN.md",
+    "research/daily_swing/DSS_004F_R_METRIC_DIFF_ROOT_CAUSE.md",
+    "research/daily_swing/DSS_004F_R_GUARD_RECONFIRMATION.md",
+    "artifacts/runtime/daily_swing/dss_004f_r_*"
+  ],
+  "superseded": [
+    "Reporte A chat metrics using calendar-day episode grouping and 100 bootstrap iterations"
+  ],
+  "commit_948410e_requires_corrective_commit": true,
+  "safety": {
+    "cron": false,
+    "downloaded_more_data": false,
+    "env_modified": false,
+    "ibkr_used": false,
+    "live": false,
+    "merge": false,
+    "orders": false,
+    "paper_execution": false,
+    "paper_orders": false,
+    "preview_operational": false,
+    "signals_operational": false
+  },
+  "next_phase": "Director may specify DSS-CW-001 in a separate task; do not start it from DSS-004F-R."
+}

@@ -1,0 +1,31 @@
+{
+  "schema_version": "tradeo.daily_swing.dss_004f_r.guard_reconfirmation.v1",
+  "generated_at": "2026-07-04T16:21:20.129Z",
+  "cache": "research-150 cache-only",
+  "spy_qqq_excluded_from_episodes": true,
+  "false_bar_2026_07_03_present": false,
+  "last_valid_bar_date": "2026-07-02",
+  "signal_t_entry_t_plus_1_or_offset_plus_1": true,
+  "no_future_signal_data": true,
+  "atr_rank_uses_t_minus_1": true,
+  "regime_symbol": "SPY",
+  "operational_symbols": 150,
+  "benchmark_symbols": [
+    "QQQ",
+    "SPY"
+  ],
+  "leakage_or_lookahead": "PASS",
+  "safety": {
+    "cron": false,
+    "downloaded_more_data": false,
+    "env_modified": false,
+    "ibkr_used": false,
+    "live": false,
+    "merge": false,
+    "orders": false,
+    "paper_execution": false,
+    "paper_orders": false,
+    "preview_operational": false,
+    "signals_operational": false
+  }
+}
