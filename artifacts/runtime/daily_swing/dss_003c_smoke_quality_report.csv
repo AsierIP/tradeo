@@ -1,0 +1,13 @@
+symbol,benchmark_only,status,reason,bars,first_date,last_date,expected_last_valid_bar_date,path
+AAON,False,DATA_READY,ok,752,2023-07-05,2026-07-02,2026-07-02,artifacts/runtime/daily_swing/daily_ohlcv/AAON.csv
+AEO,False,DATA_READY,ok,752,2023-07-05,2026-07-02,2026-07-02,artifacts/runtime/daily_swing/daily_ohlcv/AEO.csv
+ALGM,False,DATA_READY,ok,752,2023-07-05,2026-07-02,2026-07-02,artifacts/runtime/daily_swing/daily_ohlcv/ALGM.csv
+APPF,False,DATA_READY,ok,752,2023-07-05,2026-07-02,2026-07-02,artifacts/runtime/daily_swing/daily_ohlcv/APPF.csv
+AX,False,DATA_READY,ok,752,2023-07-05,2026-07-02,2026-07-02,artifacts/runtime/daily_swing/daily_ohlcv/AX.csv
+BROS,False,DATA_READY,ok,752,2023-07-05,2026-07-02,2026-07-02,artifacts/runtime/daily_swing/daily_ohlcv/BROS.csv
+CALM,False,DATA_READY,ok,752,2023-07-05,2026-07-02,2026-07-02,artifacts/runtime/daily_swing/daily_ohlcv/CALM.csv
+CRDO,False,DATA_READY,ok,752,2023-07-05,2026-07-02,2026-07-02,artifacts/runtime/daily_swing/daily_ohlcv/CRDO.csv
+CROX,False,DATA_READY,ok,752,2023-07-05,2026-07-02,2026-07-02,artifacts/runtime/daily_swing/daily_ohlcv/CROX.csv
+CVLT,False,DATA_READY,ok,752,2023-07-05,2026-07-02,2026-07-02,artifacts/runtime/daily_swing/daily_ohlcv/CVLT.csv
+SPY,True,DATA_READY,ok,752,2023-07-05,2026-07-02,2026-07-02,artifacts/runtime/daily_swing/daily_ohlcv/SPY.csv
+QQQ,True,DATA_READY,ok,752,2023-07-05,2026-07-02,2026-07-02,artifacts/runtime/daily_swing/daily_ohlcv/QQQ.csv

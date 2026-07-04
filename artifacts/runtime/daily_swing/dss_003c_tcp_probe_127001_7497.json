@@ -1,0 +1,15 @@
+{
+  "decision": "TCP_REFUSED",
+  "dns_status": "DNS_OK",
+  "error": "[Errno 111] Connection refused",
+  "host": "127.0.0.1",
+  "ibkr_api_used": false,
+  "orders_used": false,
+  "port": 7497,
+  "port_classification": "TWS_PAPER",
+  "resolved_addresses": [
+    "127.0.0.1"
+  ],
+  "tcp_status": "TCP_REFUSED",
+  "timeout_seconds": 3.0
+}

@@ -1,0 +1,14 @@
+{
+  "decision": "TCP_OK",
+  "dns_status": "DNS_OK",
+  "host": "127.0.0.1",
+  "ibkr_api_used": false,
+  "orders_used": false,
+  "port": 4002,
+  "port_classification": "IB_GATEWAY_PAPER",
+  "resolved_addresses": [
+    "127.0.0.1"
+  ],
+  "tcp_status": "TCP_OK",
+  "timeout_seconds": 3.0
+}

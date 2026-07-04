@@ -1,0 +1,21 @@
+{
+  "decision": "SMOKE_CACHE_OK_READY_FOR_PILOT",
+  "docker_tcp_status": "TCP_OK",
+  "effective_host": "127.0.0.1",
+  "effective_port": 4002,
+  "generated_at": "2026-07-04T10:20:51Z",
+  "historical_data_ok": true,
+  "historical_probe_ran": true,
+  "live_used": false,
+  "orders_used": false,
+  "paper_orders_used": false,
+  "port_classification": "IB_GATEWAY_PAPER",
+  "read_only": true,
+  "smoke_cache_ran": true,
+  "smoke_quality_gate": "PASS",
+  "smoke_symbols_ready": {
+    "benchmark_ready": 2,
+    "operational_ready": 10
+  },
+  "next_phase": "DSS-003D: cache pilot 50 acciones + SPY/QQQ"
+}
