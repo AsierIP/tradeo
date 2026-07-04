@@ -1,0 +1,25 @@
+{
+  "schema_version": "tradeo.daily_swing.dss_004g_c_r.v1",
+  "generated_at": "2026-07-04T18:25:00+00:00",
+  "phase": "DSS-004G-C-R",
+  "decision": "DSS_004G_C_CANONICAL_EXIT0_VALIDATED",
+  "scientific_decision_unchanged": "DSS_CW_001_RESEARCH_FAIL_TIMING_NOT_SPECIFIC",
+  "artifact_integrity_result": "ARTIFACT_INTEGRITY_PASS",
+  "exit_root_cause": "UNKNOWN_NON_REPRODUCIBLE",
+  "deterministic_rerun_result": "RERUN_EXIT0_MATCHES_CANON",
+  "patch_applied": false,
+  "safety": {
+    "orders": false,
+    "paper_orders": false,
+    "paper_execution": false,
+    "live": false,
+    "signals_operational": false,
+    "preview_operational": false,
+    "cron": false,
+    "merge": false,
+    "env_modified": false,
+    "ibkr_used": false,
+    "downloaded_more_data": false
+  },
+  "next_phase": "Director may move to DSS-004H terminal closure and merge hygiene. Do not open DSS-005, paper, preview, or signals from DSS-CW-001."
+}

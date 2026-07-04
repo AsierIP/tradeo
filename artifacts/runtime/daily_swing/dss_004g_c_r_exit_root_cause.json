@@ -1,0 +1,18 @@
+{
+  "schema_version": "tradeo.daily_swing.dss_004g_c_r.v1",
+  "generated_at": "2026-07-04T18:25:00+00:00",
+  "phase": "DSS-004G-C-R",
+  "decision": "UNKNOWN_NON_REPRODUCIBLE",
+  "reported_original_exit_code": -1,
+  "original_stdout_stderr_available": false,
+  "runner_exit_code_bug_found": false,
+  "post_write_exception_reproduced": false,
+  "filesystem_full_reproduced": false,
+  "docker_or_resource_kill_evidence_found": false,
+  "wrapper_timeout_evidence_found": false,
+  "current_disk_available": {
+    "root": "18G",
+    "tmp": "9.8G"
+  },
+  "notes": "Direct cache-only rerun exited 0 after writing artifacts. No code-level exit bug was identified; prior exit -1 remains most consistent with an external wrapper/session or transient environment event."
+}

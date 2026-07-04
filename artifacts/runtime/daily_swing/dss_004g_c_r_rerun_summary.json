@@ -1,0 +1,22 @@
+{
+  "schema_version": "tradeo.daily_swing.dss_004g_c_r.v1",
+  "generated_at": "2026-07-04T18:25:00+00:00",
+  "phase": "DSS-004G-C-R",
+  "decision": "RERUN_EXIT0_MATCHES_CANON",
+  "command": "/tmp/tradeo-dss-004g-c-r-venv/bin/python scripts/backtest_daily_swing_dss_004g_c.py --output-dir /tmp/dss_004g_c_r_rerun_100 --research-dir /tmp/dss_004g_c_r_rerun_100_research --bootstrap-iterations 100",
+  "exit_code": 0,
+  "output_dir": "/tmp/dss_004g_c_r_rerun_100",
+  "research_dir": "/tmp/dss_004g_c_r_rerun_100_research",
+  "bootstrap_iterations": 100,
+  "canonical_artifacts_overwritten": false,
+  "matches_canonical_ignoring_generated_at": true,
+  "canonical_decision": "DSS_CW_001_RESEARCH_FAIL_TIMING_NOT_SPECIFIC",
+  "rerun_decision": "DSS_CW_001_RESEARCH_FAIL_TIMING_NOT_SPECIFIC",
+  "canonical_best_strategy_id": "DSS_CW_WINDOW_PLACEBO_PLUS_1",
+  "rerun_best_strategy_id": "DSS_CW_WINDOW_PLACEBO_PLUS_1",
+  "canonical_base_rank": 3,
+  "rerun_base_rank": 3,
+  "fdr_decision": "FDR_PLACEBO_DOMINANCE_FAIL",
+  "wrc_spa_decision": "WRC_SPA_PLACEBO_BEST_FAIL",
+  "timing_decision": "TIMING_PLACEBO_DOMINANCE_FAIL"
+}

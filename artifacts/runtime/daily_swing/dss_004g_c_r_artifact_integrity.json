@@ -1,0 +1,23 @@
+{
+  "schema_version": "tradeo.daily_swing.dss_004g_c_r.v1",
+  "generated_at": "2026-07-04T18:25:00+00:00",
+  "phase": "DSS-004G-C-R",
+  "decision": "ARTIFACT_INTEGRITY_PASS",
+  "canonical_decision": "DSS_CW_001_RESEARCH_FAIL_TIMING_NOT_SPECIFIC",
+  "artifact_integrity_status": "PASS",
+  "test_matrix_rows": 10,
+  "stat_family_rows": 9,
+  "base_strategy_id": "DSS_CW_001_BASE_MAX2",
+  "base_rank": 3,
+  "best_strategy_id": "DSS_CW_WINDOW_PLACEBO_PLUS_1",
+  "placebo_dominators": [
+    "DSS_CW_WINDOW_PLACEBO_PLUS_1",
+    "DSS_CW_WINDOW_PLACEBO_PLUS_2"
+  ],
+  "fdr_decision": "FDR_PLACEBO_DOMINANCE_FAIL",
+  "wrc_spa_decision": "WRC_SPA_PLACEBO_BEST_FAIL",
+  "timing_decision": "TIMING_PLACEBO_DOMINANCE_FAIL",
+  "chat_summaries_used_as_source": false,
+  "critical_nans_found": false,
+  "truncated_files_found": false
+}
