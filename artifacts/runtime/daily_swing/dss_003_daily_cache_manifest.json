@@ -1,0 +1,103 @@
+{
+  "adjusted": true,
+  "dry_run": false,
+  "duration": "3Y",
+  "end_date": "2026-07-06",
+  "error": "[Errno -2] Name or service not known",
+  "failed": 12,
+  "fetched": 0,
+  "generated_at": "2026-07-04T09:19:35.408296+00:00",
+  "out_dir": "artifacts/runtime/daily_swing/daily_ohlcv",
+  "read_only": true,
+  "schema_version": "tradeo.daily_swing.dss_003.v1",
+  "skipped": 0,
+  "source": "ibkr",
+  "status": "BLOCKED_IBKR_READONLY",
+  "symbols": [
+    {
+      "benchmark_only": false,
+      "error": "[Errno -2] Name or service not known",
+      "path": "artifacts/runtime/daily_swing/daily_ohlcv/AAON.csv",
+      "status": "FETCH_FAILED",
+      "symbol": "AAON"
+    },
+    {
+      "benchmark_only": false,
+      "error": "[Errno -2] Name or service not known",
+      "path": "artifacts/runtime/daily_swing/daily_ohlcv/AEO.csv",
+      "status": "FETCH_FAILED",
+      "symbol": "AEO"
+    },
+    {
+      "benchmark_only": false,
+      "error": "[Errno -2] Name or service not known",
+      "path": "artifacts/runtime/daily_swing/daily_ohlcv/ALGM.csv",
+      "status": "FETCH_FAILED",
+      "symbol": "ALGM"
+    },
+    {
+      "benchmark_only": false,
+      "error": "[Errno -2] Name or service not known",
+      "path": "artifacts/runtime/daily_swing/daily_ohlcv/APPF.csv",
+      "status": "FETCH_FAILED",
+      "symbol": "APPF"
+    },
+    {
+      "benchmark_only": false,
+      "error": "[Errno -2] Name or service not known",
+      "path": "artifacts/runtime/daily_swing/daily_ohlcv/AX.csv",
+      "status": "FETCH_FAILED",
+      "symbol": "AX"
+    },
+    {
+      "benchmark_only": false,
+      "error": "[Errno -2] Name or service not known",
+      "path": "artifacts/runtime/daily_swing/daily_ohlcv/BROS.csv",
+      "status": "FETCH_FAILED",
+      "symbol": "BROS"
+    },
+    {
+      "benchmark_only": false,
+      "error": "[Errno -2] Name or service not known",
+      "path": "artifacts/runtime/daily_swing/daily_ohlcv/CALM.csv",
+      "status": "FETCH_FAILED",
+      "symbol": "CALM"
+    },
+    {
+      "benchmark_only": false,
+      "error": "[Errno -2] Name or service not known",
+      "path": "artifacts/runtime/daily_swing/daily_ohlcv/CRDO.csv",
+      "status": "FETCH_FAILED",
+      "symbol": "CRDO"
+    },
+    {
+      "benchmark_only": false,
+      "error": "[Errno -2] Name or service not known",
+      "path": "artifacts/runtime/daily_swing/daily_ohlcv/CROX.csv",
+      "status": "FETCH_FAILED",
+      "symbol": "CROX"
+    },
+    {
+      "benchmark_only": false,
+      "error": "[Errno -2] Name or service not known",
+      "path": "artifacts/runtime/daily_swing/daily_ohlcv/CVLT.csv",
+      "status": "FETCH_FAILED",
+      "symbol": "CVLT"
+    },
+    {
+      "benchmark_only": true,
+      "error": "[Errno -2] Name or service not known",
+      "path": "artifacts/runtime/daily_swing/daily_ohlcv/SPY.csv",
+      "status": "FETCH_FAILED",
+      "symbol": "SPY"
+    },
+    {
+      "benchmark_only": true,
+      "error": "[Errno -2] Name or service not known",
+      "path": "artifacts/runtime/daily_swing/daily_ohlcv/QQQ.csv",
+      "status": "FETCH_FAILED",
+      "symbol": "QQQ"
+    }
+  ],
+  "universe": "artifacts/runtime/daily_swing/dss_003_universe_smoke.csv"
+}

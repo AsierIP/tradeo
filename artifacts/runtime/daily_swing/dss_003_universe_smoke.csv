@@ -1,0 +1,13 @@
+symbol,name,tier,benchmark_only,operational_eligible,product_type,security_type,source,source_rank,cap_segment,classification_status,exclusion_reason
+AAON,AAON Inc,smoke,False,True,STK,stock,data/universe_us_mid_caps.csv,1,midcap,stock_only_seed_or_fallback,
+AEO,American Eagle Outfitters,smoke,False,True,STK,stock,data/universe_us_mid_caps.csv,2,midcap,stock_only_seed_or_fallback,
+ALGM,Allegro MicroSystems,smoke,False,True,STK,stock,data/universe_us_mid_caps.csv,3,midcap,stock_only_seed_or_fallback,
+APPF,AppFolio,smoke,False,True,STK,stock,data/universe_us_mid_caps.csv,4,midcap,stock_only_seed_or_fallback,
+AX,Axos Financial,smoke,False,True,STK,stock,data/universe_us_mid_caps.csv,5,midcap,stock_only_seed_or_fallback,
+BROS,Dutch Bros,smoke,False,True,STK,stock,data/universe_us_mid_caps.csv,6,midcap,stock_only_seed_or_fallback,
+CALM,Cal-Maine Foods,smoke,False,True,STK,stock,data/universe_us_mid_caps.csv,7,midcap,stock_only_seed_or_fallback,
+CRDO,Credo Technology Group,smoke,False,True,STK,stock,data/universe_us_mid_caps.csv,8,midcap,stock_only_seed_or_fallback,
+CROX,Crocs,smoke,False,True,STK,stock,data/universe_us_mid_caps.csv,9,midcap,stock_only_seed_or_fallback,
+CVLT,Commvault Systems,smoke,False,True,STK,stock,data/universe_us_mid_caps.csv,10,midcap,stock_only_seed_or_fallback,
+SPY,SPY,smoke,True,False,ETF,benchmark_etf,benchmark_required,0,benchmark,benchmark_only,benchmark_not_operational_symbol
+QQQ,QQQ,smoke,True,False,ETF,benchmark_etf,benchmark_required,0,benchmark,benchmark_only,benchmark_not_operational_symbol
