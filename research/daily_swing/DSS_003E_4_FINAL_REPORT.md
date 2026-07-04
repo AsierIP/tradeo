@@ -14,7 +14,7 @@ DSS-003E-4 completada. La sesion IB Gateway Paper 4002 siguio sana: TCP host/Doc
 
 Rama: feature/daily-swing-paper-probe-001.
 
-Commit/push: pendiente hasta cierre de tarea.
+Commit base: a48eb2d docs(daily): record DSS-003E-4 cache pass. Push final: ver commit posterior de correccion de decision si aplica.
 
 ## D. Preflight IBKR 4002 y canary inicial
 
