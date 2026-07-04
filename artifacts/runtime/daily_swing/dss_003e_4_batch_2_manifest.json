@@ -1,0 +1,788 @@
+{
+  "adjusted": true,
+  "continue_on_symbol_timeout": true,
+  "dry_run": false,
+  "duration": "3Y",
+  "end_date": "2026-07-06",
+  "error": null,
+  "failed": 0,
+  "fetched": 25,
+  "generated_at": "2026-07-04T14:58:35.234887+00:00",
+  "max_consecutive_timeouts": 2,
+  "max_new_fetches": 25,
+  "new_fetch_attempts": 25,
+  "out_dir": "artifacts/runtime/daily_swing/daily_ohlcv_research",
+  "quarantine_failures": true,
+  "read_only": true,
+  "request_timeout": 25.0,
+  "retry_backoff_seconds": 2.0,
+  "retry_count": 1,
+  "schema_version": "tradeo.daily_swing.dss_003.v1",
+  "skipped": 50,
+  "source": "ibkr",
+  "status": "CACHE_WRITTEN",
+  "stop_on_global_timeout": true,
+  "stopped_reason": "MAX_NEW_FETCHES_REACHED",
+  "symbols": [
+    {
+      "attempts": 0,
+      "benchmark_only": false,
+      "cache_file": "artifacts/runtime/daily_swing/daily_ohlcv_research/AAON.csv",
+      "path": "artifacts/runtime/daily_swing/daily_ohlcv_research/AAON.csv",
+      "quarantine": false,
+      "status": "SKIPPED_COMPLETE",
+      "symbol": "AAON"
+    },
+    {
+      "attempts": 0,
+      "benchmark_only": false,
+      "cache_file": "artifacts/runtime/daily_swing/daily_ohlcv_research/AEO.csv",
+      "path": "artifacts/runtime/daily_swing/daily_ohlcv_research/AEO.csv",
+      "quarantine": false,
+      "status": "SKIPPED_COMPLETE",
+      "symbol": "AEO"
+    },
+    {
+      "attempts": 0,
+      "benchmark_only": false,
+      "cache_file": "artifacts/runtime/daily_swing/daily_ohlcv_research/ALGM.csv",
+      "path": "artifacts/runtime/daily_swing/daily_ohlcv_research/ALGM.csv",
+      "quarantine": false,
+      "status": "SKIPPED_COMPLETE",
+      "symbol": "ALGM"
+    },
+    {
+      "attempts": 0,
+      "benchmark_only": false,
+      "cache_file": "artifacts/runtime/daily_swing/daily_ohlcv_research/APPF.csv",
+      "path": "artifacts/runtime/daily_swing/daily_ohlcv_research/APPF.csv",
+      "quarantine": false,
+      "status": "SKIPPED_COMPLETE",
+      "symbol": "APPF"
+    },
+    {
+      "attempts": 0,
+      "benchmark_only": false,
+      "cache_file": "artifacts/runtime/daily_swing/daily_ohlcv_research/AX.csv",
+      "path": "artifacts/runtime/daily_swing/daily_ohlcv_research/AX.csv",
+      "quarantine": false,
+      "status": "SKIPPED_COMPLETE",
+      "symbol": "AX"
+    },
+    {
+      "attempts": 0,
+      "benchmark_only": false,
+      "cache_file": "artifacts/runtime/daily_swing/daily_ohlcv_research/BROS.csv",
+      "path": "artifacts/runtime/daily_swing/daily_ohlcv_research/BROS.csv",
+      "quarantine": false,
+      "status": "SKIPPED_COMPLETE",
+      "symbol": "BROS"
+    },
+    {
+      "attempts": 0,
+      "benchmark_only": false,
+      "cache_file": "artifacts/runtime/daily_swing/daily_ohlcv_research/CALM.csv",
+      "path": "artifacts/runtime/daily_swing/daily_ohlcv_research/CALM.csv",
+      "quarantine": false,
+      "status": "SKIPPED_COMPLETE",
+      "symbol": "CALM"
+    },
+    {
+      "attempts": 0,
+      "benchmark_only": false,
+      "cache_file": "artifacts/runtime/daily_swing/daily_ohlcv_research/CRDO.csv",
+      "path": "artifacts/runtime/daily_swing/daily_ohlcv_research/CRDO.csv",
+      "quarantine": false,
+      "status": "SKIPPED_COMPLETE",
+      "symbol": "CRDO"
+    },
+    {
+      "attempts": 0,
+      "benchmark_only": false,
+      "cache_file": "artifacts/runtime/daily_swing/daily_ohlcv_research/CROX.csv",
+      "path": "artifacts/runtime/daily_swing/daily_ohlcv_research/CROX.csv",
+      "quarantine": false,
+      "status": "SKIPPED_COMPLETE",
+      "symbol": "CROX"
+    },
+    {
+      "attempts": 0,
+      "benchmark_only": false,
+      "cache_file": "artifacts/runtime/daily_swing/daily_ohlcv_research/CVLT.csv",
+      "path": "artifacts/runtime/daily_swing/daily_ohlcv_research/CVLT.csv",
+      "quarantine": false,
+      "status": "SKIPPED_COMPLETE",
+      "symbol": "CVLT"
+    },
+    {
+      "attempts": 0,
+      "benchmark_only": false,
+      "cache_file": "artifacts/runtime/daily_swing/daily_ohlcv_research/ENPH.csv",
+      "path": "artifacts/runtime/daily_swing/daily_ohlcv_research/ENPH.csv",
+      "quarantine": false,
+      "status": "SKIPPED_COMPLETE",
+      "symbol": "ENPH"
+    },
+    {
+      "attempts": 0,
+      "benchmark_only": false,
+      "cache_file": "artifacts/runtime/daily_swing/daily_ohlcv_research/FN.csv",
+      "path": "artifacts/runtime/daily_swing/daily_ohlcv_research/FN.csv",
+      "quarantine": false,
+      "status": "SKIPPED_COMPLETE",
+      "symbol": "FN"
+    },
+    {
+      "attempts": 0,
+      "benchmark_only": false,
+      "cache_file": "artifacts/runtime/daily_swing/daily_ohlcv_research/FOUR.csv",
+      "path": "artifacts/runtime/daily_swing/daily_ohlcv_research/FOUR.csv",
+      "quarantine": false,
+      "status": "SKIPPED_COMPLETE",
+      "symbol": "FOUR"
+    },
+    {
+      "attempts": 0,
+      "benchmark_only": false,
+      "cache_file": "artifacts/runtime/daily_swing/daily_ohlcv_research/FRPT.csv",
+      "path": "artifacts/runtime/daily_swing/daily_ohlcv_research/FRPT.csv",
+      "quarantine": false,
+      "status": "SKIPPED_COMPLETE",
+      "symbol": "FRPT"
+    },
+    {
+      "attempts": 0,
+      "benchmark_only": false,
+      "cache_file": "artifacts/runtime/daily_swing/daily_ohlcv_research/HIMS.csv",
+      "path": "artifacts/runtime/daily_swing/daily_ohlcv_research/HIMS.csv",
+      "quarantine": false,
+      "status": "SKIPPED_COMPLETE",
+      "symbol": "HIMS"
+    },
+    {
+      "attempts": 0,
+      "benchmark_only": false,
+      "cache_file": "artifacts/runtime/daily_swing/daily_ohlcv_research/INSP.csv",
+      "path": "artifacts/runtime/daily_swing/daily_ohlcv_research/INSP.csv",
+      "quarantine": false,
+      "status": "SKIPPED_COMPLETE",
+      "symbol": "INSP"
+    },
+    {
+      "attempts": 0,
+      "benchmark_only": false,
+      "cache_file": "artifacts/runtime/daily_swing/daily_ohlcv_research/LRN.csv",
+      "path": "artifacts/runtime/daily_swing/daily_ohlcv_research/LRN.csv",
+      "quarantine": false,
+      "status": "SKIPPED_COMPLETE",
+      "symbol": "LRN"
+    },
+    {
+      "attempts": 0,
+      "benchmark_only": false,
+      "cache_file": "artifacts/runtime/daily_swing/daily_ohlcv_research/MNDY.csv",
+      "path": "artifacts/runtime/daily_swing/daily_ohlcv_research/MNDY.csv",
+      "quarantine": false,
+      "status": "SKIPPED_COMPLETE",
+      "symbol": "MNDY"
+    },
+    {
+      "attempts": 0,
+      "benchmark_only": false,
+      "cache_file": "artifacts/runtime/daily_swing/daily_ohlcv_research/NXT.csv",
+      "path": "artifacts/runtime/daily_swing/daily_ohlcv_research/NXT.csv",
+      "quarantine": false,
+      "status": "SKIPPED_COMPLETE",
+      "symbol": "NXT"
+    },
+    {
+      "attempts": 0,
+      "benchmark_only": false,
+      "cache_file": "artifacts/runtime/daily_swing/daily_ohlcv_research/OLLI.csv",
+      "path": "artifacts/runtime/daily_swing/daily_ohlcv_research/OLLI.csv",
+      "quarantine": false,
+      "status": "SKIPPED_COMPLETE",
+      "symbol": "OLLI"
+    },
+    {
+      "attempts": 0,
+      "benchmark_only": false,
+      "cache_file": "artifacts/runtime/daily_swing/daily_ohlcv_research/SKYW.csv",
+      "path": "artifacts/runtime/daily_swing/daily_ohlcv_research/SKYW.csv",
+      "quarantine": false,
+      "status": "SKIPPED_COMPLETE",
+      "symbol": "SKYW"
+    },
+    {
+      "attempts": 0,
+      "benchmark_only": false,
+      "cache_file": "artifacts/runtime/daily_swing/daily_ohlcv_research/TMDX.csv",
+      "path": "artifacts/runtime/daily_swing/daily_ohlcv_research/TMDX.csv",
+      "quarantine": false,
+      "status": "SKIPPED_COMPLETE",
+      "symbol": "TMDX"
+    },
+    {
+      "attempts": 0,
+      "benchmark_only": false,
+      "cache_file": "artifacts/runtime/daily_swing/daily_ohlcv_research/WING.csv",
+      "path": "artifacts/runtime/daily_swing/daily_ohlcv_research/WING.csv",
+      "quarantine": false,
+      "status": "SKIPPED_COMPLETE",
+      "symbol": "WING"
+    },
+    {
+      "attempts": 0,
+      "benchmark_only": false,
+      "cache_file": "artifacts/runtime/daily_swing/daily_ohlcv_research/ZETA.csv",
+      "path": "artifacts/runtime/daily_swing/daily_ohlcv_research/ZETA.csv",
+      "quarantine": false,
+      "status": "SKIPPED_COMPLETE",
+      "symbol": "ZETA"
+    },
+    {
+      "attempts": 0,
+      "benchmark_only": false,
+      "cache_file": "artifacts/runtime/daily_swing/daily_ohlcv_research/ACMR.csv",
+      "path": "artifacts/runtime/daily_swing/daily_ohlcv_research/ACMR.csv",
+      "quarantine": false,
+      "status": "SKIPPED_COMPLETE",
+      "symbol": "ACMR"
+    },
+    {
+      "attempts": 0,
+      "benchmark_only": false,
+      "cache_file": "artifacts/runtime/daily_swing/daily_ohlcv_research/AMBA.csv",
+      "path": "artifacts/runtime/daily_swing/daily_ohlcv_research/AMBA.csv",
+      "quarantine": false,
+      "status": "SKIPPED_COMPLETE",
+      "symbol": "AMBA"
+    },
+    {
+      "attempts": 0,
+      "benchmark_only": false,
+      "cache_file": "artifacts/runtime/daily_swing/daily_ohlcv_research/ARWR.csv",
+      "path": "artifacts/runtime/daily_swing/daily_ohlcv_research/ARWR.csv",
+      "quarantine": false,
+      "status": "SKIPPED_COMPLETE",
+      "symbol": "ARWR"
+    },
+    {
+      "attempts": 0,
+      "benchmark_only": false,
+      "cache_file": "artifacts/runtime/daily_swing/daily_ohlcv_research/CARG.csv",
+      "path": "artifacts/runtime/daily_swing/daily_ohlcv_research/CARG.csv",
+      "quarantine": false,
+      "status": "SKIPPED_COMPLETE",
+      "symbol": "CARG"
+    },
+    {
+      "attempts": 0,
+      "benchmark_only": false,
+      "cache_file": "artifacts/runtime/daily_swing/daily_ohlcv_research/DLO.csv",
+      "path": "artifacts/runtime/daily_swing/daily_ohlcv_research/DLO.csv",
+      "quarantine": false,
+      "status": "SKIPPED_COMPLETE",
+      "symbol": "DLO"
+    },
+    {
+      "attempts": 0,
+      "benchmark_only": false,
+      "cache_file": "artifacts/runtime/daily_swing/daily_ohlcv_research/FIVN.csv",
+      "path": "artifacts/runtime/daily_swing/daily_ohlcv_research/FIVN.csv",
+      "quarantine": false,
+      "status": "SKIPPED_COMPLETE",
+      "symbol": "FIVN"
+    },
+    {
+      "attempts": 0,
+      "benchmark_only": false,
+      "cache_file": "artifacts/runtime/daily_swing/daily_ohlcv_research/FUBO.csv",
+      "path": "artifacts/runtime/daily_swing/daily_ohlcv_research/FUBO.csv",
+      "quarantine": false,
+      "status": "SKIPPED_COMPLETE",
+      "symbol": "FUBO"
+    },
+    {
+      "attempts": 0,
+      "benchmark_only": false,
+      "cache_file": "artifacts/runtime/daily_swing/daily_ohlcv_research/GH.csv",
+      "path": "artifacts/runtime/daily_swing/daily_ohlcv_research/GH.csv",
+      "quarantine": false,
+      "status": "SKIPPED_COMPLETE",
+      "symbol": "GH"
+    },
+    {
+      "attempts": 0,
+      "benchmark_only": false,
+      "cache_file": "artifacts/runtime/daily_swing/daily_ohlcv_research/IOVA.csv",
+      "path": "artifacts/runtime/daily_swing/daily_ohlcv_research/IOVA.csv",
+      "quarantine": false,
+      "status": "SKIPPED_COMPLETE",
+      "symbol": "IOVA"
+    },
+    {
+      "attempts": 0,
+      "benchmark_only": false,
+      "cache_file": "artifacts/runtime/daily_swing/daily_ohlcv_research/PATH.csv",
+      "path": "artifacts/runtime/daily_swing/daily_ohlcv_research/PATH.csv",
+      "quarantine": false,
+      "status": "SKIPPED_COMPLETE",
+      "symbol": "PATH"
+    },
+    {
+      "attempts": 0,
+      "benchmark_only": false,
+      "cache_file": "artifacts/runtime/daily_swing/daily_ohlcv_research/PRVA.csv",
+      "path": "artifacts/runtime/daily_swing/daily_ohlcv_research/PRVA.csv",
+      "quarantine": false,
+      "status": "SKIPPED_COMPLETE",
+      "symbol": "PRVA"
+    },
+    {
+      "attempts": 0,
+      "benchmark_only": false,
+      "cache_file": "artifacts/runtime/daily_swing/daily_ohlcv_research/RXRX.csv",
+      "path": "artifacts/runtime/daily_swing/daily_ohlcv_research/RXRX.csv",
+      "quarantine": false,
+      "status": "SKIPPED_COMPLETE",
+      "symbol": "RXRX"
+    },
+    {
+      "attempts": 0,
+      "benchmark_only": false,
+      "cache_file": "artifacts/runtime/daily_swing/daily_ohlcv_research/SEDG.csv",
+      "path": "artifacts/runtime/daily_swing/daily_ohlcv_research/SEDG.csv",
+      "quarantine": false,
+      "status": "SKIPPED_COMPLETE",
+      "symbol": "SEDG"
+    },
+    {
+      "attempts": 1,
+      "benchmark_only": false,
+      "cache_file": "artifacts/runtime/daily_swing/daily_ohlcv_research/SG.csv",
+      "first_date": "2023-07-05",
+      "last_date": "2026-07-02",
+      "path": "artifacts/runtime/daily_swing/daily_ohlcv_research/SG.csv",
+      "quarantine": false,
+      "rows": 752,
+      "status": "FETCHED",
+      "symbol": "SG"
+    },
+    {
+      "attempts": 0,
+      "benchmark_only": false,
+      "cache_file": "artifacts/runtime/daily_swing/daily_ohlcv_research/SOUN.csv",
+      "path": "artifacts/runtime/daily_swing/daily_ohlcv_research/SOUN.csv",
+      "quarantine": false,
+      "status": "SKIPPED_COMPLETE",
+      "symbol": "SOUN"
+    },
+    {
+      "attempts": 1,
+      "benchmark_only": false,
+      "cache_file": "artifacts/runtime/daily_swing/daily_ohlcv_research/UPST.csv",
+      "first_date": "2023-07-05",
+      "last_date": "2026-07-02",
+      "path": "artifacts/runtime/daily_swing/daily_ohlcv_research/UPST.csv",
+      "quarantine": false,
+      "rows": 752,
+      "status": "FETCHED",
+      "symbol": "UPST"
+    },
+    {
+      "attempts": 0,
+      "benchmark_only": false,
+      "cache_file": "artifacts/runtime/daily_swing/daily_ohlcv_research/AAPL.csv",
+      "path": "artifacts/runtime/daily_swing/daily_ohlcv_research/AAPL.csv",
+      "quarantine": false,
+      "status": "SKIPPED_COMPLETE",
+      "symbol": "AAPL"
+    },
+    {
+      "attempts": 0,
+      "benchmark_only": false,
+      "cache_file": "artifacts/runtime/daily_swing/daily_ohlcv_research/MSFT.csv",
+      "path": "artifacts/runtime/daily_swing/daily_ohlcv_research/MSFT.csv",
+      "quarantine": false,
+      "status": "SKIPPED_COMPLETE",
+      "symbol": "MSFT"
+    },
+    {
+      "attempts": 0,
+      "benchmark_only": false,
+      "cache_file": "artifacts/runtime/daily_swing/daily_ohlcv_research/NVDA.csv",
+      "path": "artifacts/runtime/daily_swing/daily_ohlcv_research/NVDA.csv",
+      "quarantine": false,
+      "status": "SKIPPED_COMPLETE",
+      "symbol": "NVDA"
+    },
+    {
+      "attempts": 1,
+      "benchmark_only": false,
+      "cache_file": "artifacts/runtime/daily_swing/daily_ohlcv_research/AMZN.csv",
+      "first_date": "2023-07-05",
+      "last_date": "2026-07-02",
+      "path": "artifacts/runtime/daily_swing/daily_ohlcv_research/AMZN.csv",
+      "quarantine": false,
+      "rows": 752,
+      "status": "FETCHED",
+      "symbol": "AMZN"
+    },
+    {
+      "attempts": 1,
+      "benchmark_only": false,
+      "cache_file": "artifacts/runtime/daily_swing/daily_ohlcv_research/META.csv",
+      "first_date": "2023-07-05",
+      "last_date": "2026-07-02",
+      "path": "artifacts/runtime/daily_swing/daily_ohlcv_research/META.csv",
+      "quarantine": false,
+      "rows": 752,
+      "status": "FETCHED",
+      "symbol": "META"
+    },
+    {
+      "attempts": 0,
+      "benchmark_only": false,
+      "cache_file": "artifacts/runtime/daily_swing/daily_ohlcv_research/GOOGL.csv",
+      "path": "artifacts/runtime/daily_swing/daily_ohlcv_research/GOOGL.csv",
+      "quarantine": false,
+      "status": "SKIPPED_COMPLETE",
+      "symbol": "GOOGL"
+    },
+    {
+      "attempts": 1,
+      "benchmark_only": false,
+      "cache_file": "artifacts/runtime/daily_swing/daily_ohlcv_research/GOOG.csv",
+      "first_date": "2023-07-05",
+      "last_date": "2026-07-02",
+      "path": "artifacts/runtime/daily_swing/daily_ohlcv_research/GOOG.csv",
+      "quarantine": false,
+      "rows": 752,
+      "status": "FETCHED",
+      "symbol": "GOOG"
+    },
+    {
+      "attempts": 0,
+      "benchmark_only": false,
+      "cache_file": "artifacts/runtime/daily_swing/daily_ohlcv_research/AVGO.csv",
+      "path": "artifacts/runtime/daily_swing/daily_ohlcv_research/AVGO.csv",
+      "quarantine": false,
+      "status": "SKIPPED_COMPLETE",
+      "symbol": "AVGO"
+    },
+    {
+      "attempts": 1,
+      "benchmark_only": false,
+      "cache_file": "artifacts/runtime/daily_swing/daily_ohlcv_research/TSLA.csv",
+      "first_date": "2023-07-05",
+      "last_date": "2026-07-02",
+      "path": "artifacts/runtime/daily_swing/daily_ohlcv_research/TSLA.csv",
+      "quarantine": false,
+      "rows": 752,
+      "status": "FETCHED",
+      "symbol": "TSLA"
+    },
+    {
+      "attempts": 0,
+      "benchmark_only": false,
+      "cache_file": "artifacts/runtime/daily_swing/daily_ohlcv_research/COST.csv",
+      "path": "artifacts/runtime/daily_swing/daily_ohlcv_research/COST.csv",
+      "quarantine": false,
+      "status": "SKIPPED_COMPLETE",
+      "symbol": "COST"
+    },
+    {
+      "attempts": 1,
+      "benchmark_only": false,
+      "cache_file": "artifacts/runtime/daily_swing/daily_ohlcv_research/NFLX.csv",
+      "first_date": "2023-07-05",
+      "last_date": "2026-07-02",
+      "path": "artifacts/runtime/daily_swing/daily_ohlcv_research/NFLX.csv",
+      "quarantine": false,
+      "rows": 752,
+      "status": "FETCHED",
+      "symbol": "NFLX"
+    },
+    {
+      "attempts": 1,
+      "benchmark_only": false,
+      "cache_file": "artifacts/runtime/daily_swing/daily_ohlcv_research/AMD.csv",
+      "first_date": "2023-07-05",
+      "last_date": "2026-07-02",
+      "path": "artifacts/runtime/daily_swing/daily_ohlcv_research/AMD.csv",
+      "quarantine": false,
+      "rows": 752,
+      "status": "FETCHED",
+      "symbol": "AMD"
+    },
+    {
+      "attempts": 1,
+      "benchmark_only": false,
+      "cache_file": "artifacts/runtime/daily_swing/daily_ohlcv_research/CRM.csv",
+      "first_date": "2023-07-05",
+      "last_date": "2026-07-02",
+      "path": "artifacts/runtime/daily_swing/daily_ohlcv_research/CRM.csv",
+      "quarantine": false,
+      "rows": 752,
+      "status": "FETCHED",
+      "symbol": "CRM"
+    },
+    {
+      "attempts": 0,
+      "benchmark_only": false,
+      "cache_file": "artifacts/runtime/daily_swing/daily_ohlcv_research/ADBE.csv",
+      "path": "artifacts/runtime/daily_swing/daily_ohlcv_research/ADBE.csv",
+      "quarantine": false,
+      "status": "SKIPPED_COMPLETE",
+      "symbol": "ADBE"
+    },
+    {
+      "attempts": 1,
+      "benchmark_only": false,
+      "cache_file": "artifacts/runtime/daily_swing/daily_ohlcv_research/ORCL.csv",
+      "first_date": "2023-07-05",
+      "last_date": "2026-07-02",
+      "path": "artifacts/runtime/daily_swing/daily_ohlcv_research/ORCL.csv",
+      "quarantine": false,
+      "rows": 752,
+      "status": "FETCHED",
+      "symbol": "ORCL"
+    },
+    {
+      "attempts": 1,
+      "benchmark_only": false,
+      "cache_file": "artifacts/runtime/daily_swing/daily_ohlcv_research/NOW.csv",
+      "first_date": "2023-07-05",
+      "last_date": "2026-07-02",
+      "path": "artifacts/runtime/daily_swing/daily_ohlcv_research/NOW.csv",
+      "quarantine": false,
+      "rows": 752,
+      "status": "FETCHED",
+      "symbol": "NOW"
+    },
+    {
+      "attempts": 1,
+      "benchmark_only": false,
+      "cache_file": "artifacts/runtime/daily_swing/daily_ohlcv_research/QCOM.csv",
+      "first_date": "2023-07-05",
+      "last_date": "2026-07-02",
+      "path": "artifacts/runtime/daily_swing/daily_ohlcv_research/QCOM.csv",
+      "quarantine": false,
+      "rows": 752,
+      "status": "FETCHED",
+      "symbol": "QCOM"
+    },
+    {
+      "attempts": 0,
+      "benchmark_only": false,
+      "cache_file": "artifacts/runtime/daily_swing/daily_ohlcv_research/INTC.csv",
+      "path": "artifacts/runtime/daily_swing/daily_ohlcv_research/INTC.csv",
+      "quarantine": false,
+      "status": "SKIPPED_COMPLETE",
+      "symbol": "INTC"
+    },
+    {
+      "attempts": 1,
+      "benchmark_only": false,
+      "cache_file": "artifacts/runtime/daily_swing/daily_ohlcv_research/TXN.csv",
+      "first_date": "2023-07-05",
+      "last_date": "2026-07-02",
+      "path": "artifacts/runtime/daily_swing/daily_ohlcv_research/TXN.csv",
+      "quarantine": false,
+      "rows": 752,
+      "status": "FETCHED",
+      "symbol": "TXN"
+    },
+    {
+      "attempts": 1,
+      "benchmark_only": false,
+      "cache_file": "artifacts/runtime/daily_swing/daily_ohlcv_research/MU.csv",
+      "first_date": "2023-07-05",
+      "last_date": "2026-07-02",
+      "path": "artifacts/runtime/daily_swing/daily_ohlcv_research/MU.csv",
+      "quarantine": false,
+      "rows": 752,
+      "status": "FETCHED",
+      "symbol": "MU"
+    },
+    {
+      "attempts": 1,
+      "benchmark_only": false,
+      "cache_file": "artifacts/runtime/daily_swing/daily_ohlcv_research/AMAT.csv",
+      "first_date": "2023-07-05",
+      "last_date": "2026-07-02",
+      "path": "artifacts/runtime/daily_swing/daily_ohlcv_research/AMAT.csv",
+      "quarantine": false,
+      "rows": 752,
+      "status": "FETCHED",
+      "symbol": "AMAT"
+    },
+    {
+      "attempts": 1,
+      "benchmark_only": false,
+      "cache_file": "artifacts/runtime/daily_swing/daily_ohlcv_research/LRCX.csv",
+      "first_date": "2023-07-05",
+      "last_date": "2026-07-02",
+      "path": "artifacts/runtime/daily_swing/daily_ohlcv_research/LRCX.csv",
+      "quarantine": false,
+      "rows": 752,
+      "status": "FETCHED",
+      "symbol": "LRCX"
+    },
+    {
+      "attempts": 1,
+      "benchmark_only": false,
+      "cache_file": "artifacts/runtime/daily_swing/daily_ohlcv_research/KLAC.csv",
+      "first_date": "2023-07-05",
+      "last_date": "2026-07-02",
+      "path": "artifacts/runtime/daily_swing/daily_ohlcv_research/KLAC.csv",
+      "quarantine": false,
+      "rows": 752,
+      "status": "FETCHED",
+      "symbol": "KLAC"
+    },
+    {
+      "attempts": 0,
+      "benchmark_only": false,
+      "cache_file": "artifacts/runtime/daily_swing/daily_ohlcv_research/PANW.csv",
+      "path": "artifacts/runtime/daily_swing/daily_ohlcv_research/PANW.csv",
+      "quarantine": false,
+      "status": "SKIPPED_COMPLETE",
+      "symbol": "PANW"
+    },
+    {
+      "attempts": 1,
+      "benchmark_only": false,
+      "cache_file": "artifacts/runtime/daily_swing/daily_ohlcv_research/CRWD.csv",
+      "first_date": "2023-07-05",
+      "last_date": "2026-07-02",
+      "path": "artifacts/runtime/daily_swing/daily_ohlcv_research/CRWD.csv",
+      "quarantine": false,
+      "rows": 752,
+      "status": "FETCHED",
+      "symbol": "CRWD"
+    },
+    {
+      "attempts": 1,
+      "benchmark_only": false,
+      "cache_file": "artifacts/runtime/daily_swing/daily_ohlcv_research/SNOW.csv",
+      "first_date": "2023-07-05",
+      "last_date": "2026-07-02",
+      "path": "artifacts/runtime/daily_swing/daily_ohlcv_research/SNOW.csv",
+      "quarantine": false,
+      "rows": 752,
+      "status": "FETCHED",
+      "symbol": "SNOW"
+    },
+    {
+      "attempts": 0,
+      "benchmark_only": false,
+      "cache_file": "artifacts/runtime/daily_swing/daily_ohlcv_research/SHOP.csv",
+      "path": "artifacts/runtime/daily_swing/daily_ohlcv_research/SHOP.csv",
+      "quarantine": false,
+      "status": "SKIPPED_COMPLETE",
+      "symbol": "SHOP"
+    },
+    {
+      "attempts": 1,
+      "benchmark_only": false,
+      "cache_file": "artifacts/runtime/daily_swing/daily_ohlcv_research/UBER.csv",
+      "first_date": "2023-07-05",
+      "last_date": "2026-07-02",
+      "path": "artifacts/runtime/daily_swing/daily_ohlcv_research/UBER.csv",
+      "quarantine": false,
+      "rows": 752,
+      "status": "FETCHED",
+      "symbol": "UBER"
+    },
+    {
+      "attempts": 1,
+      "benchmark_only": false,
+      "cache_file": "artifacts/runtime/daily_swing/daily_ohlcv_research/ABNB.csv",
+      "first_date": "2023-07-05",
+      "last_date": "2026-07-02",
+      "path": "artifacts/runtime/daily_swing/daily_ohlcv_research/ABNB.csv",
+      "quarantine": false,
+      "rows": 752,
+      "status": "FETCHED",
+      "symbol": "ABNB"
+    },
+    {
+      "attempts": 0,
+      "benchmark_only": false,
+      "cache_file": "artifacts/runtime/daily_swing/daily_ohlcv_research/BKNG.csv",
+      "path": "artifacts/runtime/daily_swing/daily_ohlcv_research/BKNG.csv",
+      "quarantine": false,
+      "status": "SKIPPED_COMPLETE",
+      "symbol": "BKNG"
+    },
+    {
+      "attempts": 1,
+      "benchmark_only": false,
+      "cache_file": "artifacts/runtime/daily_swing/daily_ohlcv_research/MELI.csv",
+      "first_date": "2023-07-05",
+      "last_date": "2026-07-02",
+      "path": "artifacts/runtime/daily_swing/daily_ohlcv_research/MELI.csv",
+      "quarantine": false,
+      "rows": 752,
+      "status": "FETCHED",
+      "symbol": "MELI"
+    },
+    {
+      "attempts": 1,
+      "benchmark_only": false,
+      "cache_file": "artifacts/runtime/daily_swing/daily_ohlcv_research/PDD.csv",
+      "first_date": "2023-07-05",
+      "last_date": "2026-07-02",
+      "path": "artifacts/runtime/daily_swing/daily_ohlcv_research/PDD.csv",
+      "quarantine": false,
+      "rows": 752,
+      "status": "FETCHED",
+      "symbol": "PDD"
+    },
+    {
+      "attempts": 1,
+      "benchmark_only": false,
+      "cache_file": "artifacts/runtime/daily_swing/daily_ohlcv_research/PYPL.csv",
+      "first_date": "2023-07-05",
+      "last_date": "2026-07-02",
+      "path": "artifacts/runtime/daily_swing/daily_ohlcv_research/PYPL.csv",
+      "quarantine": false,
+      "rows": 752,
+      "status": "FETCHED",
+      "symbol": "PYPL"
+    },
+    {
+      "attempts": 0,
+      "benchmark_only": false,
+      "cache_file": "artifacts/runtime/daily_swing/daily_ohlcv_research/COIN.csv",
+      "path": "artifacts/runtime/daily_swing/daily_ohlcv_research/COIN.csv",
+      "quarantine": false,
+      "status": "SKIPPED_COMPLETE",
+      "symbol": "COIN"
+    },
+    {
+      "attempts": 1,
+      "benchmark_only": false,
+      "cache_file": "artifacts/runtime/daily_swing/daily_ohlcv_research/HOOD.csv",
+      "first_date": "2023-07-05",
+      "last_date": "2026-07-02",
+      "path": "artifacts/runtime/daily_swing/daily_ohlcv_research/HOOD.csv",
+      "quarantine": false,
+      "rows": 752,
+      "status": "FETCHED",
+      "symbol": "HOOD"
+    },
+    {
+      "attempts": 0,
+      "benchmark_only": false,
+      "cache_file": "artifacts/runtime/daily_swing/daily_ohlcv_research/JPM.csv",
+      "path": "artifacts/runtime/daily_swing/daily_ohlcv_research/JPM.csv",
+      "quarantine": false,
+      "status": "NOT_FETCHED_MAX_NEW_FETCHES",
+      "symbol": "JPM"
+    }
+  ],
+  "universe": "artifacts/runtime/daily_swing/dss_003e_research_universe_checked.csv"
+}

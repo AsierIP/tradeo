@@ -1,0 +1,13 @@
+batch,phase,symbol,status,bars_count,exit_code
+1,pre_batch,SPY,OK,5,0
+1,pre_batch,AAON,OK,5,0
+2,pre_batch,SPY,OK,5,0
+2,pre_batch,AAON,OK,5,0
+3,pre_batch,SPY,OK,5,0
+3,pre_batch,AAON,OK,5,0
+4,pre_batch,SPY,OK,5,0
+4,pre_batch,AAON,OK,5,0
+5,pre_batch,SPY,OK,5,0
+5,pre_batch,AAON,OK,5,0
+6,pre_batch,SPY,OK,5,0
+6,pre_batch,AAON,OK,5,0

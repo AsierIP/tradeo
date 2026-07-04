@@ -1,0 +1,18 @@
+{
+  "batch_size_max": 25,
+  "batches_executed": 6,
+  "benchmarks": [
+    "SPY",
+    "QQQ"
+  ],
+  "decision": "BATCH_PLAN_PASS",
+  "existing_cache_files_before_full_run": 16,
+  "failed_total": 0,
+  "final_cache_files": 152,
+  "generated_at": "2026-07-04T15:03:50Z",
+  "operational_universe_count": 150,
+  "quarantined_total": 0,
+  "resume": true,
+  "schema_version": "tradeo.daily_swing.dss_003e_4.v1",
+  "universe_path": "artifacts/runtime/daily_swing/dss_003e_research_universe_checked.csv"
+}

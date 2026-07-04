@@ -1,0 +1,42 @@
+{
+  "account_data_used": false,
+  "decision": "API_HISTORICAL_READY",
+  "handshakes": [
+    {
+      "account_data_used": false,
+      "client_id": 17,
+      "connected": true,
+      "historical_data_used": false,
+      "live_used": false,
+      "orders_used": false,
+      "paper_orders_used": false,
+      "server_version": 176,
+      "status": "OK"
+    }
+  ],
+  "historical_canaries": [
+    {
+      "account_data_used": false,
+      "bars_count": 5,
+      "client_id": 17,
+      "connected": true,
+      "historical_data_ok": true,
+      "interval": "1d",
+      "last_bar_date": "2026-07-02",
+      "live_used": false,
+      "orders_used": false,
+      "paper_orders_used": false,
+      "period": "5D",
+      "status": "OK",
+      "symbol": "SPY"
+    }
+  ],
+  "host": "127.0.0.1",
+  "live_used": false,
+  "orders_used": false,
+  "paper_orders_used": false,
+  "port": 4002,
+  "port_classification": "IB_GATEWAY_PAPER",
+  "read_only": true,
+  "research_cache_used": false
+}

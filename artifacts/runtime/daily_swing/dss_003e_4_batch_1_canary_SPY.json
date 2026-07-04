@@ -1,0 +1,16 @@
+{
+  "bars_count": 5,
+  "client_id": 17,
+  "connected": true,
+  "historical_data_ok": true,
+  "host": "127.0.0.1",
+  "last_bar_date": null,
+  "live_used": false,
+  "orders_used": false,
+  "paper_orders_used": false,
+  "period": "5D",
+  "port": 4002,
+  "read_only": true,
+  "status": "OK",
+  "symbol": "SPY"
+}

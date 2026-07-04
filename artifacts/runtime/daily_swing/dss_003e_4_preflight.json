@@ -1,0 +1,19 @@
+{
+  "account_data_used": false,
+  "decision": "PREFLIGHT_PASS",
+  "docker_tcp_hostdocker_4002": "TCP_OK",
+  "generated_at": "2026-07-04T15:03:50Z",
+  "host_tcp_4002": "TCP_OK",
+  "initial_canary": "PASS",
+  "live_ports_blocked": [
+    "4001",
+    "7496"
+  ],
+  "live_used": false,
+  "orders_used": false,
+  "paper_orders_used": false,
+  "per_batch_canary": "PASS",
+  "port_classification": "IB_GATEWAY_PAPER",
+  "read_only": true,
+  "schema_version": "tradeo.daily_swing.dss_003e_4.v1"
+}

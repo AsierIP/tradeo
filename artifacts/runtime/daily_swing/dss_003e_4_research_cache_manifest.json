@@ -1,0 +1,18 @@
+{
+  "backtest_used": false,
+  "batch_runs_csv": "artifacts/runtime/daily_swing/dss_003e_4_batch_runs.csv",
+  "batches_executed": 6,
+  "existing_reused": 16,
+  "failed_total": 0,
+  "fetched_total": 136,
+  "final_cache_files": 152,
+  "generated_at": "2026-07-04T15:03:50Z",
+  "live_used": false,
+  "orders_used": false,
+  "paper_orders_used": false,
+  "preview_used": false,
+  "quarantined_total": 0,
+  "schema_version": "tradeo.daily_swing.dss_003e_4.v1",
+  "signals_used": false,
+  "status": "RESEARCH_CACHE_COMPLETE"
+}

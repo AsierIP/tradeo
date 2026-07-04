@@ -1,0 +1,54 @@
+{
+  "cache": {
+    "backtest_used": false,
+    "batch_runs_csv": "artifacts/runtime/daily_swing/dss_003e_4_batch_runs.csv",
+    "batches_executed": 6,
+    "existing_reused": 16,
+    "failed_total": 0,
+    "fetched_total": 136,
+    "final_cache_files": 152,
+    "generated_at": "2026-07-04T15:03:50Z",
+    "live_used": false,
+    "orders_used": false,
+    "paper_orders_used": false,
+    "preview_used": false,
+    "quarantined_total": 0,
+    "schema_version": "tradeo.daily_swing.dss_003e_4.v1",
+    "signals_used": false,
+    "status": "RESEARCH_CACHE_COMPLETE"
+  },
+  "decision": "RESEARCH_CACHE_READY_FOR_DSS_004E",
+  "generated_at": "2026-07-04T15:03:50Z",
+  "next_phase_recommended": "DSS-004E repeat DSS-CO-001 exactly unchanged on research-150; not executed in this task.",
+  "preflight": {
+    "docker_tcp_4002": "TCP_OK",
+    "host_tcp_4002": "TCP_OK",
+    "initial_canary": "PASS",
+    "per_batch_canary": "PASS",
+    "port_classification": "IB_GATEWAY_PAPER",
+    "read_only": true
+  },
+  "quality": {
+    "benchmark_ready": 2,
+    "data_gate": "PASS",
+    "false_bar_2026_07_03_present": false,
+    "last_valid_bar_date": "2026-07-02",
+    "operational_ready": 150
+  },
+  "safety": {
+    "backtest": false,
+    "cron": false,
+    "dss_004e_executed": false,
+    "env_real_modified": false,
+    "gh_used": false,
+    "live_orders": false,
+    "merge": false,
+    "orders": false,
+    "paper_execution": false,
+    "paper_orders": false,
+    "pr_new": false,
+    "preview": false,
+    "signals": false
+  },
+  "schema_version": "tradeo.daily_swing.dss_003e_4.v1"
+}
