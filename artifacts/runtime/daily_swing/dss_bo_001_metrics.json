@@ -1,0 +1,113 @@
+{
+  "IS": {
+    "avg_loss_pct": -7.465587966680759,
+    "avg_win_pct": 7.960124295747486,
+    "expectancy_pct": 0.4960699752176898,
+    "profit_factor": 1.137324921585831,
+    "symbols": 44,
+    "trades": 124,
+    "winrate": 0.5161290322580645,
+    "worst_streak": 8
+  },
+  "avg_loss_pct": -7.871115364189785,
+  "avg_win_pct": 8.910742593956721,
+  "cache_dir": "artifacts/runtime/daily_swing/daily_ohlcv",
+  "candidate_signals_2026_07_06_research_count": 2,
+  "concentration": {
+    "top_1_symbol_contribution_pct": 0.13350789452017092,
+    "top_3_symbols_contribution_pct": 0.30726509452430023,
+    "top_5_trades_contribution_pct": 0.10949989288053805
+  },
+  "cost_x1": {
+    "expectancy_pct": 1.4828805955881443,
+    "profit_factor": 1.425361935611957
+  },
+  "cost_x2": {
+    "expectancy_pct": 1.3828805955881445,
+    "profit_factor": 1.3916668335156996
+  },
+  "cost_x3": {
+    "expectancy_pct": 1.2828805955881444,
+    "profit_factor": 1.358750151315942
+  },
+  "decision": "DSS_BO_001_RESEARCH_WARNING",
+  "definition": {
+    "breakout": "close_t>prior_high20_t_minus_1",
+    "contraction": "ATR14_pct(t-1)<=rolling_120d_percentile_40(t-1)",
+    "cost_model": {
+      "x1_round_trip_bps": 10.0,
+      "x2_round_trip_bps": 20.0,
+      "x3_round_trip_bps": 30.0
+    },
+    "entry": "next_open_after_signal",
+    "exit": "time_stop_10_sessions_at_close",
+    "market_regime": "SPY close>SMA200 OR SPY return20d>0",
+    "symbol_trend": "close>SMA50 AND (close>SMA200 OR SMA50>SMA200)"
+  },
+  "end_date": "2026-07-02",
+  "false_bar_2026_07_03_present": false,
+  "generated_at": "2026-07-04T11:33:26.203969+00:00",
+  "gross": {
+    "expectancy_pct": 1.5828805955881446,
+    "profit_factor": 1.4599270555279504
+  },
+  "is_end_date": "2024-12-31",
+  "last_12_months": {
+    "avg_loss_pct": -8.202137151654547,
+    "avg_win_pct": 9.350835468099111,
+    "expectancy_pct": 1.3400828631108646,
+    "profit_factor": 1.357999139004243,
+    "symbols": 46,
+    "trades": 149,
+    "winrate": 0.5436241610738255,
+    "worst_streak": 5
+  },
+  "last_24_months": {
+    "avg_loss_pct": -8.256677131427491,
+    "avg_win_pct": 9.117027473061315,
+    "expectancy_pct": 1.072611193169392,
+    "profit_factor": 1.2805659217162246,
+    "symbols": 50,
+    "trades": 311,
+    "winrate": 0.5369774919614148,
+    "worst_streak": 8
+  },
+  "last_valid_bar_date": "2026-07-02",
+  "max_drawdown_pct": 185.53874181219413,
+  "oos": {
+    "avg_loss_pct": -8.121957053370627,
+    "avg_win_pct": 9.382367176014014,
+    "expectancy_net_x2_pct": 1.8694492545524646,
+    "expectancy_pct": 1.8694492545524646,
+    "profit_factor": 1.5362776493101964,
+    "profit_factor_net_x2": 1.5362776493101964,
+    "symbols": 49,
+    "trades": 226,
+    "winrate": 0.5707964601769911,
+    "worst_streak": 5
+  },
+  "oos_start_date": "2025-01-01",
+  "pattern_id": "DSS-BO-001",
+  "pattern_name": "Volatility Contraction Breakout Long",
+  "risk_R_status": "NOT_AVAILABLE_NO_STOP_RISK_DEFINED_PERCENT_METRICS_USED",
+  "schema_version": "tradeo.daily_swing.dss_004b.v1",
+  "start_date": "2023-07-05",
+  "symbols_IS": 44,
+  "symbols_OOS": 49,
+  "symbols_total": 50,
+  "trades_IS": 124,
+  "trades_OOS": 226,
+  "trades_total": 350,
+  "universe": "artifacts/runtime/daily_swing/dss_003d_pilot_universe_checked.csv",
+  "universe_summary": {
+    "benchmark_symbols": [
+      "QQQ",
+      "SPY"
+    ],
+    "operational_etf_or_fund_rows": 0,
+    "operational_symbols": 50,
+    "universe_rows": 52
+  },
+  "winrate": 0.5514285714285714,
+  "worst_streak": 8
+}

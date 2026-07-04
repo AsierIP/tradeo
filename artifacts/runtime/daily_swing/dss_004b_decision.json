@@ -1,0 +1,16 @@
+{
+  "decision": "DSS_BO_001_RESEARCH_WARNING",
+  "generated_at": "2026-07-04T11:33:26.469877+00:00",
+  "next_phase": "review Director criteria",
+  "pattern_id": "DSS-BO-001",
+  "research_pass": false,
+  "safety": {
+    "cron": false,
+    "env_modified": false,
+    "live": false,
+    "orders": false,
+    "paper_execution": false,
+    "signals_operational": false
+  },
+  "schema_version": "tradeo.daily_swing.dss_004b.v1"
+}
