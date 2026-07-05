@@ -1,0 +1,40 @@
+{
+  "baseline_group_counts": {
+    "CANDIDATE_PRE_REGISTERED": 28,
+    "DELAYED_ENTRY": 4,
+    "DESIGN_LOCKED_FILTER_OR_POLICY": 28,
+    "DIRECTION_SENSITIVITY": 8,
+    "EARNINGS_SENSITIVITY": 4,
+    "MATCHED_NON_GAP": 4,
+    "PORTFOLIO_POLICY_SENSITIVITY": 4,
+    "RANDOM_MATCHED": 4,
+    "SIGN_INVERTED_GAP": 4,
+    "THRESHOLD_PERTURBATION": 4
+  },
+  "decision": "RESULTS_INTEGRITY_PASS",
+  "duplicate_test_ids": [],
+  "executed_test_ids": 92,
+  "expected_test_ids": 92,
+  "extra_test_ids": [],
+  "family_counts": {
+    "GAP_CONTINUATION_NEXT_DAY": 23,
+    "GAP_CONTINUATION_SAME_DAY": 23,
+    "GAP_REVERSAL_NEXT_DAY": 23,
+    "GAP_REVERSAL_SAME_DAY": 23
+  },
+  "generated_at": "2026-07-05T15:50:58Z",
+  "missing_critical_metrics": [],
+  "missing_test_ids": [],
+  "notes": [
+    "runtime_artifacts_tracked is verified separately by git status/security scan"
+  ],
+  "policy_counts": {
+    "ALL_EVENTS_RESEARCH_ONLY": 84,
+    "MAX_2_NEW_TRADES_PER_DAY": 4,
+    "ONE_ACTIVE_PER_SYMBOL": 4
+  },
+  "runtime_artifacts_tracked": false,
+  "runtime_results_present": true,
+  "safety_issues": [],
+  "schema_version": "tradeo.daily_swing.dss_gap_005.results_integrity.v1"
+}
