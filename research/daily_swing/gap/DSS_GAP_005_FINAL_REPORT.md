@@ -12,7 +12,7 @@ GAP-005 completado como revisión forense research-only de GAP-004. La integrida
 
 ## C. Rama Y Commit/Push
 
-Rama: `feature/daily-gap-protocol-001`. Commit/push se completan después de este reporte.
+Rama: `feature/daily-gap-protocol-001`. Commit/push se completan al cerrar la tarea y se reportan en ChatGPT Daily.
 
 ## D. Results Integrity
 
@@ -41,7 +41,7 @@ Estas son observaciones para un protocolo confirmatorio, no candidatos.
 
 ## I. Tests/Validaciones
 
-Pendiente ejecutar tras escritura: `git diff --check`, `git status --short --branch`, JSON validation, security scan. No se toca código; no hace falta docker build.
+Ejecutado: `git diff --check` exit 0; JSON validation de `DSS_GAP_005_DECISION.json`, `DSS_GAP_005_RESULTS_INTEGRITY.json` y `dss_gap_005_triage_matrix.json` exit 0; `git status --short --branch` revisado; security scan exit 0 sin `artifacts/runtime`, `data/cache`, `.env`, `MEMORY.md` ni `memory/` tracked. No se toca código; no hace falta docker build.
 
 ## J. Decisión GAP-005
 
