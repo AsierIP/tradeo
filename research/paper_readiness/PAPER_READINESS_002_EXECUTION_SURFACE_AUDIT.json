@@ -1,0 +1,54 @@
+{
+  "execution_surface": {
+    "audit_result": "EXECUTION_SURFACE_PRESENT_BUT_GATED",
+    "docker_compose_config_ok": true,
+    "docker_compose_exit_code": 0,
+    "ibkr_preview_endpoint_present": true,
+    "ibkr_submit_endpoint_present": true,
+    "surface_files": [
+      {
+        "exists": true,
+        "path": "backend/tradeo/routers/ibkr.py"
+      },
+      {
+        "exists": true,
+        "path": "backend/tradeo/tasks/worker.py"
+      },
+      {
+        "exists": true,
+        "path": "backend/tradeo/services/ibkr_broker.py"
+      },
+      {
+        "exists": true,
+        "path": "backend/tradeo/services/paper_broker.py"
+      },
+      {
+        "exists": true,
+        "path": "backend/tradeo/modules/shared/entry_scanner.py"
+      },
+      {
+        "exists": true,
+        "path": "backend/tradeo/modules/intraday/flat_service.py"
+      },
+      {
+        "exists": true,
+        "path": "docker-compose.yml"
+      }
+    ],
+    "worker_declared": true,
+    "worker_has_entry_scanner_job": true
+  },
+  "generated_at": "2026-07-05T17:54:42.532336+00:00",
+  "safety_confirmations": {
+    "no_cron_trading": true,
+    "no_downloads": true,
+    "no_gh": true,
+    "no_ibkr_operational": true,
+    "no_live": true,
+    "no_orders": true,
+    "no_paper_orders": true,
+    "no_preview": true,
+    "no_signals": true
+  },
+  "schema_version": "tradeo.paper_readiness_002.v1"
+}

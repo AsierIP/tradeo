@@ -18,6 +18,7 @@ def test_intraday_defaults_are_off_and_live_blocked() -> None:
     assert settings.intraday_live_armed is False
     assert "intraday_disabled" in settings.intraday_live_config_blockers
     assert settings.intraday_timeframe_list == ["15m", "5m"]
+    assert settings.laboratory_auto_submit_paper_orders is False
 
 
 def test_intraday_live_fails_closed_without_required_gates() -> None:
