@@ -25,6 +25,10 @@
     "open_slippage_adverse_25bps",
     "open_slippage_adverse_50bps"
   ],
+  "liquidity_filter": {
+    "volume_t_minus_1_fallback_to_same_day_volume": false,
+    "volume_t_minus_1_rows_without_previous_volume_events": 0
+  },
   "outputs": {
     "candidate_approval": false,
     "orders": false,

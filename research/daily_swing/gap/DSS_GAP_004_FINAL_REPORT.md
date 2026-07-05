@@ -14,7 +14,7 @@ Final decision: GAP_DRY_RUN_COMPLETE_NO_CANDIDATE_APPROVAL.
 
 Branch: `feature/daily-gap-protocol-001`
 
-Commit/push status is recorded in the chat report after validation and push.
+Commit/push status is recorded in the final Director report after validation and push.
 
 ## D. Input / Matrix Gate
 
@@ -54,6 +54,7 @@ GAP_DRY_RUN_NO_LOOKAHEAD_PASS:
 - Same-day return is open_t to close_t after selection.
 - Next-day selection is after close_t with entry at open_t+1.
 - Open adverse slippage stress is applied at 10/25/50 bps.
+- `volume_t_minus_1` design rows do not use same-day `volume`; because previous-volume data is absent from the GAP-002A ledger, those rows execute with zero events.
 
 ## G. Results Summary
 
@@ -74,18 +75,18 @@ Commands:
 - `python3 -m py_compile scripts/run_daily_gap_matrix_dry_run.py backend/tradeo/modules/daily_swing/gap_matrix_dry_run.py backend/tradeo/tests/test_daily_gap_matrix_dry_run.py` -> exit 0.
 - `python3 scripts/validate_daily_gap_backtest_matrix.py --matrix-json research/daily_swing/gap/dss_gap_003_backtest_matrix.json` -> exit 0.
 - `/tmp/tradeo-gap004-venv/bin/python -m pytest backend/tradeo/tests/test_daily_gap_backtest_matrix.py backend/tradeo/tests/test_daily_gap_matrix_dry_run.py` -> 20 passed, exit 0.
-- `/tmp/tradeo-gap004-venv/bin/ruff check --no-cache backend/tradeo/modules/daily_swing/__init__.py backend/tradeo/modules/daily_swing/gap_matrix_dry_run.py scripts/run_daily_gap_matrix_dry_run.py backend/tradeo/tests/test_daily_gap_matrix_dry_run.py` -> all checks passed, exit 0.
+- `/tmp/tradeo-gap004-venv/bin/ruff check --no-cache scripts/run_daily_gap_matrix_dry_run.py backend/tradeo/modules/daily_swing/gap_matrix_dry_run.py backend/tradeo/tests/test_daily_gap_matrix_dry_run.py` -> all checks passed, exit 0.
 - `git diff --check` -> exit 0.
+- Security scan tracked files -> no `artifacts/runtime`, `data/cache`, `.env`, `MEMORY.md`, or `memory/` tracked.
 
 ## J. Docker Build Status
 
 Space checks before build:
-- `df -h` showed `/dev/sda2` at 99% with 2.9G available.
-- `docker system df` showed 14.62GB build cache and 5.452GB reclaimable.
+- `df -h` showed `/dev/sda2` at 100% with 667M available.
+- `docker system df` showed 15.99GB build cache and 6.359GB reclaimable.
 
 Build:
-- First context attempt with `docker build -f backend/Dockerfile -t tradeo-backend:gap004 backend` failed because the Dockerfile expects repository-root context.
-- Correct repository-root build `docker build -f backend/Dockerfile -t tradeo-backend:gap004 .` completed successfully, exit 0.
+- `docker build -f backend/Dockerfile -t tradeo-backend-gap004-test .` completed successfully, exit 0.
 
 ## K. Decision
 

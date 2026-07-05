@@ -15,6 +15,7 @@ Family summary:
 
 Observations:
 - The top net-x3 observation is GAP003_REVERSAL-SAME-DAY_ABS_3_0_BOTH_ALL with OOS events 3495 and expectancy_net_x3 0.00132996.
+- The four `DESIGN_VOLUME_T_MINUS_1` rows have zero events because previous-volume data is not present in GAP-002A; same-day `volume` was not used as a substitute.
 - These are observations only. No threshold, family, policy, or candidate is selected.
 - Baselines and placebos are present in the executed matrix and remain research-only controls.
 - Same-day open slippage stress is included in the runtime per-test sensitivity field.
