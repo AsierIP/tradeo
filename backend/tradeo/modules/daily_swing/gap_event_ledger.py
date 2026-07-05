@@ -147,10 +147,11 @@ def validate_cache_and_universe(config: GapLedgerConfig) -> dict[str, Any]:
         raise UniverseMissingError(f"Universe file missing: {universe_path}")
 
     universe = _load_universe(universe_path)
-    product_classes = set(universe["product_class"].dropna().astype(str).str.upper())
-    disallowed = product_classes - {"STK", "STOCK"}
+    operational_universe = universe[~universe["symbol"].isin(BENCHMARK_SYMBOLS)]
+    operational_product_classes = set(operational_universe["product_class"].dropna().astype(str).str.upper())
+    disallowed = operational_product_classes - {"STK", "STOCK"}
     if disallowed:
-        raise ProductPolicyError(f"Disallowed product classes in universe: {sorted(disallowed)}")
+        raise ProductPolicyError(f"Disallowed operational product classes in universe: {sorted(disallowed)}")
 
     return {
         "decision": "GAP_CACHE_READY",
@@ -160,7 +161,8 @@ def validate_cache_and_universe(config: GapLedgerConfig) -> dict[str, Any]:
         "universe_rows": int(len(universe)),
         "operational_symbols": int((~universe["symbol"].isin(BENCHMARK_SYMBOLS)).sum()),
         "benchmarks_present": sorted(set(universe["symbol"]) & BENCHMARK_SYMBOLS),
-        "product_classes": sorted(product_classes),
+        "product_classes": sorted(set(universe["product_class"].dropna().astype(str).str.upper())),
+        "operational_product_classes": sorted(operational_product_classes),
     }
 
 
@@ -318,7 +320,7 @@ def _load_universe(path: Path) -> pd.DataFrame:
     universe = universe.copy()
     universe["symbol"] = universe["symbol"].astype(str).str.upper().str.strip()
     if "product_class" not in universe.columns:
-        for candidate in ("secType", "asset_class", "instrument_type", "type"):
+        for candidate in ("product_type", "secType", "asset_class", "instrument_type", "type"):
             if candidate in universe.columns:
                 universe["product_class"] = universe[candidate]
                 break

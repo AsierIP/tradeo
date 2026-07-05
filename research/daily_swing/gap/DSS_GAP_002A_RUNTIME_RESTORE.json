@@ -1,0 +1,32 @@
+{
+  "decision": "RUNTIME_RESTORE_READY",
+  "repo_path": "/tmp/tradeo-main-004k-clean",
+  "restore_method": "symlink",
+  "runtime_paths": {
+    "cache_dir": "artifacts/runtime/daily_swing/daily_ohlcv_research",
+    "universe": "artifacts/runtime/daily_swing/dss_003e_research_universe_checked.csv",
+    "gap_output_dir": "artifacts/runtime/daily_swing/gap"
+  },
+  "source_paths": {
+    "cache_dir": "/home/vboxuser/tradeo-worktrees/daily-swing-paper-probe-001/artifacts/runtime/daily_swing/daily_ohlcv_research",
+    "universe": "/home/vboxuser/tradeo-worktrees/daily-swing-paper-probe-001/artifacts/runtime/daily_swing/dss_003e_research_universe_checked.csv"
+  },
+  "git_hygiene": {
+    "artifacts_runtime_tracked": false,
+    "ledger_versioned": false,
+    "only_research_summaries_versioned": true
+  },
+  "security": {
+    "no_ibkr": true,
+    "no_downloads": true,
+    "no_backtest": true,
+    "no_signals": true,
+    "no_preview": true,
+    "no_orders": true,
+    "no_paper": true,
+    "no_live": true,
+    "no_cron": true,
+    "no_env_modified": true
+  }
+}
+

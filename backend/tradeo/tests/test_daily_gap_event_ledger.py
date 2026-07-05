@@ -78,6 +78,33 @@ def test_gap_ledger_excludes_spy_qqq_from_operational_events(tmp_path: Path) -> 
     assert spy["event_quality_status"] == "GAP_EVENT_BENCHMARK_ONLY"
 
 
+def test_gap_ledger_allows_benchmark_etf_product_type(tmp_path: Path) -> None:
+    _write_fixture(tmp_path)
+    universe = pd.read_csv(tmp_path / "universe.csv")
+    universe.loc[universe["symbol"].isin(["SPY", "QQQ"]), "product_type"] = "ETF"
+    universe.loc[~universe["symbol"].isin(["SPY", "QQQ"]), "product_type"] = "STK"
+    universe = universe.drop(columns=["product_class"])
+    universe.to_csv(tmp_path / "universe.csv", index=False)
+
+    gate = validate_cache_and_universe(_config(tmp_path))
+
+    assert gate["decision"] == "GAP_CACHE_READY"
+    assert gate["operational_product_classes"] == ["STK"]
+    assert "ETF" in gate["product_classes"]
+
+
+def test_gap_ledger_blocks_non_benchmark_etf_product_type(tmp_path: Path) -> None:
+    _write_fixture(tmp_path)
+    universe = pd.read_csv(tmp_path / "universe.csv")
+    universe.loc[universe["symbol"] == "AAPL", "product_type"] = "ETF"
+    universe.loc[universe["symbol"] != "AAPL", "product_type"] = "STK"
+    universe = universe.drop(columns=["product_class"])
+    universe.to_csv(tmp_path / "universe.csv", index=False)
+
+    with pytest.raises(Exception, match="Disallowed operational product classes"):
+        validate_cache_and_universe(_config(tmp_path))
+
+
 def test_gap_ledger_rejects_fake_2026_07_03_bar(tmp_path: Path) -> None:
     _write_fixture(tmp_path)
     bad = pd.DataFrame(

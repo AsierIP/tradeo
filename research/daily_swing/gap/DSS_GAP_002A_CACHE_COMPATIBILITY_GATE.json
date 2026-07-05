@@ -1,0 +1,33 @@
+{
+  "decision": "CACHE_COMPATIBLE",
+  "selected_cache": "/home/vboxuser/tradeo-worktrees/daily-swing-paper-probe-001/artifacts/runtime/daily_swing/daily_ohlcv_research",
+  "selected_universe": "/home/vboxuser/tradeo-worktrees/daily-swing-paper-probe-001/artifacts/runtime/daily_swing/dss_003e_research_universe_checked.csv",
+  "required_ohlcv_columns_present": true,
+  "contains_SPY": true,
+  "contains_QQQ": true,
+  "cache_csv_files": 152,
+  "universe_rows": 152,
+  "operational_symbols": 150,
+  "product_classes": [
+    "ETF",
+    "STK"
+  ],
+  "operational_product_classes": [
+    "STK"
+  ],
+  "benchmark_symbols": [
+    "QQQ",
+    "SPY"
+  ],
+  "fake_2026_07_03_bar_present": false,
+  "last_ledger_date_after_rerun": "2026-07-02",
+  "runtime_cache_not_versioned": true,
+  "security": {
+    "no_ibkr": true,
+    "no_downloads": true,
+    "no_backtest": true,
+    "no_signals": true,
+    "no_preview": true,
+    "no_orders": true
+  }
+}
