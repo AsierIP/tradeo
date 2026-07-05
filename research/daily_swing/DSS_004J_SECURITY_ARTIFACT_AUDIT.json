@@ -1,22 +1,25 @@
 {
-  "task_id": "T-DAILY-SWING-004J",
-  "status": "PASS",
-  "tracked_memory_md": false,
-  "tracked_memory_dir": false,
-  "tracked_artifacts_runtime": false,
-  "tracked_data_dir": false,
-  "tracked_reports_dir": false,
+  "generated_at": "2026-07-05T14:52:24+02:00",
+  "result": "CLEAN_SECURITY_PASS",
+  "tracked_memory_files": false,
+  "tracked_runtime_artifacts": false,
+  "tracked_data_directory": false,
+  "tracked_reports_directory": false,
   "tracked_real_env": false,
-  "tracked_large_files_over_1mb": [],
-  "tracked_daily_ohlcv_caches": false,
+  "tracked_large_files_over_1mb": false,
+  "tracked_venv_or_cache_files": false,
   "tracked_paper_previews": false,
-  "new_paper_live_order_enablement": false,
-  "false_positive_categories": [
-    "example env values",
-    "defensive documentation",
-    "existing guarded live/paper infrastructure",
-    "tests",
-    "DSS-004I exclusion notes"
-  ],
-  "decision": "DSS_004J_SECURITY_ARTIFACT_PASS"
+  "tracked_order_previews": false,
+  "daily_paper_enabled": false,
+  "daily_live_enabled": false,
+  "daily_cron_enabled": false,
+  "daily_signals_enabled": false,
+  "daily_orders_enabled": false,
+  "false_positive_notes": [
+    "placeholder test account ids",
+    "defensive broker placeOrder methods",
+    "live_armed=true documentation and error strings",
+    "redaction and secret scan code paths",
+    "disabled auto-submit safety tests"
+  ]
 }

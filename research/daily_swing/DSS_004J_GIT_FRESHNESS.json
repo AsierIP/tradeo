@@ -1,16 +1,18 @@
 {
-  "task_id": "T-DAILY-SWING-004J",
+  "generated_at": "2026-07-05T14:52:24+02:00",
+  "result": "GIT_FRESHNESS_PASS",
   "path": "/home/vboxuser/tradeo-worktrees/daily-research-infra-clean-001",
   "branch": "feature/daily-research-infra-clean-001",
+  "head": "eb7f19c610d6014b77136b1190f290a68398324b",
+  "tracking": "origin/feature/daily-research-infra-clean-001",
   "base": "origin/main",
-  "head": "eb7f19c",
-  "origin_main": "c470044",
-  "merge_base": "c470044",
-  "fetch_exit": 0,
-  "pull_exit": 0,
-  "behind_origin_main": false,
-  "merge_performed": false,
-  "conflict": false,
-  "status": "PASS",
-  "decision": "DAILY_GIT_FRESHNESS_PASS"
+  "merge_base": "c470044ba46b47eb854d37c7c7787293187319f1",
+  "origin_main_current": true,
+  "merge_origin_main_performed": false,
+  "rebase_performed": false,
+  "merge_to_main_performed": false,
+  "commits_ahead_origin_main": [
+    "d82968c feat(daily): extract clean research infrastructure",
+    "eb7f19c docs(daily): update DSS-004I verification"
+  ]
 }
