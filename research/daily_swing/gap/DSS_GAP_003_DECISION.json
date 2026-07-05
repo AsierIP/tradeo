@@ -1,0 +1,18 @@
+{
+  "decision": "GAP_BACKTEST_MATRIX_READY_FOR_CACHE_ONLY_DRY_RUN",
+  "execution_allowed": false,
+  "baseline_rows": 8,
+  "candidate_tests": 40,
+  "gap_004_recommended": "T-DAILY-GAP-004 - Cache-only dry-run of gap backtest matrix, no candidate approval.",
+  "ibkr_allowed": false,
+  "live_allowed": false,
+  "matrix_rows": 92,
+  "no_best_threshold": true,
+  "no_edge_inference": true,
+  "paper_allowed": false,
+  "placebo_rows": 16,
+  "preview_allowed": false,
+  "signals_allowed": false,
+  "status": "ready_for_future_cache_only_dry_run",
+  "task_id": "T-DAILY-GAP-003"
+}
