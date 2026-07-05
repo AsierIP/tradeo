@@ -48,12 +48,13 @@ Completado:
 - `python3 -m py_compile scripts/validate_daily_gap_confirmatory_protocol.py backend/tradeo/modules/daily_swing/gap_confirmatory_protocol.py` exit 0.
 - `python3 -m json.tool` sobre `DSS_GAP_006_DECISION.json`, `DSS_GAP_006_CONFIRMATION_CRITERIA.json` y `dss_gap_006_confirmatory_matrix.json` exit 0.
 - `python3 scripts/validate_daily_gap_confirmatory_protocol.py` exit 0.
-- Docker pytest focal: `9 passed`.
-- Docker ruff touched files: `All checks passed`.
+- `docker build -f backend/Dockerfile -t tradeo-backend:gap006 .` exit 0.
+- Docker pytest focal with `tradeo-backend:gap006`: `9 passed`.
+- Docker ruff touched files with `tradeo-backend:gap006`: `All checks passed`.
 - `git diff --check` exit 0.
 - Security scan final sin `artifacts/runtime`, `data/cache`, `.env`, `MEMORY.md`, `memory/`, signals, previews ni orders versionados por GAP-006.
 
-Nota: `docker compose run` no fue viable en este worktree porque falta `.env`; se uso `docker run` con la imagen local `tradeo-backend:latest` y mounts read-only.
+Nota: `pytest` y `ruff` no estaban instalados en el host; se validaron dentro de la imagen Docker local.
 
 ## I. Decision GAP-006
 
