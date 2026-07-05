@@ -1,0 +1,86 @@
+{
+  "task_id": "T-DAILY-GAP-009-MERGE",
+  "generated_at": "2026-07-05T17:39:00Z",
+  "decision": "GAP_MAIN_MERGE_COMPLETE",
+  "worktree": "/tmp/tradeo-main-004k-clean",
+  "feature_branch": "feature/daily-gap-protocol-001",
+  "target_branch": "main",
+  "initial_main_sha": "cc8c42cba8889c129640f86ff077991e70f59ff5",
+  "feature_head_at_merge": "176e458e68566b2af7c7afdab7e1ccd8911d75c3",
+  "merge_sha": "ccdba51239713caee2f1332b9794666da5dd9874",
+  "origin_main_confirmed_after_merge": "ccdba51239713caee2f1332b9794666da5dd9874",
+  "final_report_commit": "this commit",
+  "merged_commits": [
+    "760beb0",
+    "fd6f9ed",
+    "4fc6ffc",
+    "6d384b7",
+    "bbc657a",
+    "ef521cf",
+    "bf76bd9",
+    "cd0343c",
+    "aa43b3b",
+    "b3a82ce",
+    "f066651",
+    "ad0af46",
+    "176e458"
+  ],
+  "security_audit": {
+    "pre_merge": "PASS",
+    "post_merge": "PASS",
+    "forbidden_paths": [],
+    "large_files_over_1mb": [],
+    "secret_or_activation_blockers": [],
+    "false_positives_reviewed": [
+      "negative candidate assertions",
+      "DSS-005 refusal statements",
+      "OBS1/OBS2 terminal labels",
+      "signal/order refusal guards",
+      "precheck keyword inventory"
+    ]
+  },
+  "validation": {
+    "py_compile": "PASS",
+    "pytest_focal_gap_daily": "162 passed",
+    "ruff_gap_modules_tests_scripts": "PASS",
+    "git_diff_check": "PASS",
+    "git_diff_cached_check": "PASS",
+    "json_validation": "PASS",
+    "docker_build_backend": "PASS"
+  },
+  "push": {
+    "main_push": "PASS",
+    "branch_protection_blocked": false,
+    "local_main_matched_origin_main_after_fetch": true
+  },
+  "terminal_gap_finding": {
+    "status": "GAP_LINE_TERMINAL_CLOSED_READY_FOR_INFRA_PR",
+    "finding": "gap same-day reversal rejected by open slippage and operability",
+    "shadow_candidate": false,
+    "paper_candidate": false,
+    "live_candidate": false,
+    "dss_005": false
+  },
+  "restrictions_confirmed": {
+    "orders": false,
+    "paper_orders": false,
+    "live_orders": false,
+    "paper_execution": false,
+    "live_execution": false,
+    "operational_preview": false,
+    "operational_signals": false,
+    "new_backtest": false,
+    "gap_004_rerun": false,
+    "gap_007_rerun": false,
+    "ibkr": false,
+    "data_downloads": false,
+    "cron": false,
+    "gh": false,
+    "real_env_modified": false,
+    "gate_relaxation": false,
+    "operational_scoring_change": false,
+    "pb_bo_co_cw_rescue": false,
+    "obs1_obs2_rescue": false
+  },
+  "recommended_next_phase": "Keep GAP closed as terminal negative evidence; continue only with a separate Director-approved search space."
+}
