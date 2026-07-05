@@ -1,0 +1,22 @@
+{
+  "confirmation_targets": 6,
+  "decision": "CONFIRMATORY_INPUT_PASS",
+  "ledger_rows": 114304,
+  "matrix_rows": 12,
+  "no_lookahead_status": "CONFIRMATORY_NO_LOOKAHEAD_PASS",
+  "safety": {
+    "no_best_threshold_selected": true,
+    "no_candidate_approval": true,
+    "no_cron": true,
+    "no_downloads": true,
+    "no_gh": true,
+    "no_ibkr": true,
+    "no_live": true,
+    "no_main_push": true,
+    "no_orders": true,
+    "no_paper": true,
+    "no_preview": true,
+    "no_signals": true
+  },
+  "schema_version": "tradeo.daily_swing.dss_gap_007.input_integrity.v1"
+}

@@ -1,0 +1,59 @@
+{
+  "decision": "CACHE_CANDIDATE_FOUND",
+  "selected_cache": {
+    "path": "/home/vboxuser/tradeo-worktrees/daily-swing-paper-probe-001/artifacts/runtime/daily_swing/daily_ohlcv_research",
+    "exists": true,
+    "file_count": 152,
+    "approx_size": "13M",
+    "symbols_sample": [
+      "AAON",
+      "AAPL",
+      "ABBV",
+      "ABNB",
+      "ACMR",
+      "ADBE",
+      "ADI",
+      "ADP",
+      "AEO",
+      "ALGM",
+      "AMAT",
+      "AMBA"
+    ],
+    "contains_SPY": true,
+    "contains_QQQ": true,
+    "format": "csv_per_symbol",
+    "modified_at": "2026-07-04T17:02:17+02:00"
+  },
+  "other_candidates": [
+    {
+      "path": "/home/vboxuser/tradeo-worktrees/daily-swing-paper-probe-001/artifacts/runtime/daily_swing/daily_ohlcv",
+      "exists": true,
+      "file_count": 52,
+      "approx_size": "4.2M",
+      "contains_SPY": true,
+      "contains_QQQ": true,
+      "format": "csv_per_symbol"
+    },
+    {
+      "path": "/home/vboxuser/tradeo-worktrees/daily-swing-paper-probe-001/artifacts/runtime/daily_swing/daily_ohlcv_mini",
+      "exists": true,
+      "file_count": 2,
+      "approx_size": "172K",
+      "contains_SPY": false,
+      "contains_QQQ": false,
+      "format": "csv_per_symbol"
+    }
+  ],
+  "selected_universe": {
+    "path": "/home/vboxuser/tradeo-worktrees/daily-swing-paper-probe-001/artifacts/runtime/daily_swing/dss_003e_research_universe_checked.csv",
+    "exists": true,
+    "rows": 152,
+    "operational_count": 150,
+    "benchmark_count": 2
+  },
+  "security": {
+    "no_ibkr": true,
+    "no_downloads": true,
+    "read_only_discovery": true
+  }
+}

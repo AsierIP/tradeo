@@ -1,0 +1,48 @@
+{
+  "generated_at": "2026-07-05T16:30:00Z",
+  "schema_version": "tradeo.daily_swing.dss_gap_006.confirmation_criteria.v1",
+  "task_id": "T-DAILY-GAP-006",
+  "future_task": "T-DAILY-GAP-007",
+  "max_future_decision_if_successful": "CONFIRMATION_SURVIVES_RESEARCH",
+  "paper_candidate_allowed": false,
+  "shadow_candidate_allowed": false,
+  "live_candidate_allowed": false,
+  "minimum_survival_requirements": [
+    "OOS x2 expectancy > 0",
+    "OOS PF x2 >= 1.2",
+    "OOS PF x3 >= 1.1 preferred",
+    "25bps adverse open slippage non-destructive",
+    "50bps adverse open slippage not negative",
+    "ONE_ACTIVE_PER_SYMBOL not destroyed",
+    "MAX_2_NEW_TRADES_PER_DAY not destroyed",
+    "symbols_OOS >= 20",
+    "top3 symbols not dominant",
+    "top5 events not dominant",
+    "last12m not negative",
+    "baselines and placebos do not dominate",
+    "FDR/WRC/SPA-light no material fail",
+    "no lookahead/open-realism issue"
+  ],
+  "hard_rejection_rules": [
+    "PF x2 < 1.0",
+    "expectancy x2 <= 0",
+    "25bps adverse open slippage destroys",
+    "50bps adverse open slippage remains negative",
+    "operable policies destroy",
+    "baseline or placebo dominates",
+    "top symbols/events explain majority",
+    "last12m negative",
+    "earnings_unknown dominates and cannot be controlled",
+    "FDR/WRC/SPA-light fail",
+    "effective sample bootstrap p05 materially negative",
+    "any lookahead/open-realism fail"
+  ],
+  "security": {
+    "execution_allowed": false,
+    "ibkr_allowed": false,
+    "live_allowed": false,
+    "paper_allowed": false,
+    "preview_allowed": false,
+    "signal_output_allowed": false
+  }
+}

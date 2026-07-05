@@ -1,0 +1,31 @@
+{
+  "candidate_approval": false,
+  "decision": "GAP_CONFIRMATORY_PROTOCOL_READY",
+  "generated_at": "2026-07-05T16:30:00Z",
+  "live_candidate": false,
+  "next_recommended_task": "T-DAILY-GAP-007 - Execute confirmatory gap research matrix cache-only, no paper.",
+  "paper_candidate": false,
+  "schema_version": "tradeo.daily_swing.dss_gap_006.decision.v1",
+  "shadow_candidate": false,
+  "task_id": "T-DAILY-GAP-006",
+  "allowed_observations": [
+    "GAP003_REVERSAL-SAME-DAY_ABS_3_0_BOTH_ALL",
+    "GAP003_REVERSAL-SAME-DAY_DESIGN_SPY_LTE_0"
+  ],
+  "future_execution_authorized": false,
+  "matrix_rows": 12,
+  "safety": {
+    ".env_real_modified": false,
+    "no_backtest": true,
+    "no_cron": true,
+    "no_downloads": true,
+    "no_gh": true,
+    "no_ibkr": true,
+    "no_live": true,
+    "no_main_push": true,
+    "no_orders": true,
+    "no_paper": true,
+    "no_preview": true,
+    "no_signals": true
+  }
+}

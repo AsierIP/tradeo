@@ -1,0 +1,61 @@
+{
+  "task_id": "T-DAILY-GAP-002A",
+  "decision": "GAP_EVENT_LEDGER_READY_FOR_RESEARCH_DESIGN",
+  "repo_path": "/tmp/tradeo-main-004k-clean",
+  "branch": "feature/daily-gap-protocol-001",
+  "cache_discovery_decision": "CACHE_CANDIDATE_FOUND",
+  "cache_compatibility_decision": "CACHE_COMPATIBLE",
+  "runtime_restore_decision": "RUNTIME_RESTORE_READY",
+  "rerun_decision": "GAP_LEDGER_RERUN_READY",
+  "product_policy": {
+    "product_classes": [
+      "ETF",
+      "STK"
+    ],
+    "operational_product_classes": [
+      "STK"
+    ],
+    "benchmark_etfs_allowed": [
+      "QQQ",
+      "SPY"
+    ],
+    "non_benchmark_etfs_blocked": true
+  },
+  "ledger": {
+    "path": "artifacts/runtime/daily_swing/gap/dss_gap_002_event_ledger.csv",
+    "versioned": false,
+    "rows": 114304,
+    "symbols_total": 152,
+    "symbols_operational": 150,
+    "date_start": "2023-07-05",
+    "date_end": "2026-07-02",
+    "events_ready": 54942
+  },
+  "no_lookahead_status": "NO_LOOKAHEAD_PASS",
+  "distribution_has_best_threshold": false,
+  "validation": {
+    "py_compile": "PASS",
+    "pytest_gap_daily": "20 passed",
+    "ruff_touched_files": "PASS",
+    "git_diff_check": "PASS",
+    "tracked_runtime_memory_env_scan": "PASS",
+    "docker_build_backend": "BLOCKED_NO_SPACE_LEFT_ON_DEVICE"
+  },
+  "security": {
+    "no_orders": true,
+    "no_paper": true,
+    "no_live": true,
+    "no_preview": true,
+    "no_signals": true,
+    "no_backtest": true,
+    "no_ibkr": true,
+    "no_downloads": true,
+    "no_cron": true,
+    "no_env_modified": true,
+    "no_gh": true,
+    "no_push_main": true,
+    "no_dss_005": true
+  },
+  "next_recommended_task": "T-DAILY-GAP-003 - Design cache-only gap research backtest matrix, no execution",
+  "execute_next_task_now": false
+}

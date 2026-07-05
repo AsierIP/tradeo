@@ -1,0 +1,23 @@
+{
+  "decision": "GAP_LEDGER_BLOCKED_CACHE_MISSING",
+  "generated_at": "2026-07-05T14:13:53Z",
+  "cache_dir": "artifacts/runtime/daily_swing/daily_ohlcv_research",
+  "universe_path": "artifacts/runtime/daily_swing/dss_003e_research_universe_checked.csv",
+  "cache_present": false,
+  "universe_gate_completed": false,
+  "calendar_gate_completed": false,
+  "blocked_reason": "OHLCV cache missing or empty: artifacts/runtime/daily_swing/daily_ohlcv_research",
+  "security": {
+    "no_orders": true,
+    "no_paper": true,
+    "no_live": true,
+    "no_preview": true,
+    "no_signals": true,
+    "no_backtest": true,
+    "no_ibkr": true,
+    "no_downloads": true,
+    "no_cron": true,
+    "no_env_real_modified": true,
+    "no_gh": true
+  }
+}

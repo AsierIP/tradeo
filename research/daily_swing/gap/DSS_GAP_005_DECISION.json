@@ -1,0 +1,36 @@
+{
+  "best_threshold_selected": false,
+  "candidate_approval": false,
+  "decision": "GAP_FORENSIC_OBSERVATIONS_READY_FOR_CONFIRMATION_DESIGN",
+  "generated_at": "2026-07-05T15:50:58Z",
+  "live_candidate": false,
+  "next_recommended_task": "T-DAILY-GAP-006 \u2014 Pre-register confirmatory gap research protocol for selected observations, no execution.",
+  "paper_candidate": false,
+  "promising_observations_for_confirmation_design_only": [
+    "GAP003_REVERSAL-SAME-DAY_ABS_3_0_BOTH_ALL",
+    "GAP003_REVERSAL-SAME-DAY_DESIGN_SPY_LTE_0"
+  ],
+  "results_integrity_decision": "RESULTS_INTEGRITY_PASS",
+  "safety": {
+    ".env_real_modified": false,
+    "no_cron": true,
+    "no_downloads": true,
+    "no_gh": true,
+    "no_ibkr": true,
+    "no_live": true,
+    "no_main_push": true,
+    "no_orders": true,
+    "no_paper": true,
+    "no_preview": true,
+    "no_signals": true
+  },
+  "schema_version": "tradeo.daily_swing.dss_gap_005.decision.v1",
+  "shadow_candidate": false,
+  "task_id": "T-DAILY-GAP-005",
+  "triage_class_counts": {
+    "OBSERVATION_PROMISING_NEEDS_CONFIRMATION": 2,
+    "REJECTED_COST_X3": 2,
+    "REJECTED_INSUFFICIENT_SAMPLE": 4,
+    "REJECTED_OOS_NEGATIVE": 84
+  }
+}

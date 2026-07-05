@@ -1,0 +1,25 @@
+{
+  "best_threshold_selected": false,
+  "candidate_approval": false,
+  "decision": "GAP_CONFIRMATION_FAIL_OPEN_SLIPPAGE",
+  "generated_at": "2026-07-05T16:56:53.049244Z",
+  "input_integrity_decision": "CONFIRMATORY_INPUT_PASS",
+  "open_realism_decision": "OPEN_REALISM_FAIL",
+  "safety": {
+    "no_best_threshold_selected": true,
+    "no_candidate_approval": true,
+    "no_cron": true,
+    "no_downloads": true,
+    "no_gh": true,
+    "no_ibkr": true,
+    "no_live": true,
+    "no_main_push": true,
+    "no_orders": true,
+    "no_paper": true,
+    "no_preview": true,
+    "no_signals": true
+  },
+  "schema_version": "tradeo.daily_swing.dss_gap_007.decision.v1",
+  "stat_baseline_decision": "STAT_BASELINE_PASS",
+  "task_id": "T-DAILY-GAP-007"
+}

@@ -1,0 +1,9 @@
+{
+  "changed_files_over_1mb": [],
+  "decision": "GAP_REPO_HYGIENE_PASS",
+  "new_operational_activation_found": false,
+  "runtime_or_cache_tracked": false,
+  "schema_version": "tradeo.daily_swing.dss_gap_008.repo_hygiene.v1",
+  "secret_scan_hits": [],
+  "tracked_forbidden_paths": []
+}

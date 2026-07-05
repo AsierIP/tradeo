@@ -1,0 +1,29 @@
+{
+  "assertions": {
+    "atr_and_prior_returns_use_t_minus_1_or_earlier": true,
+    "gap_pct_uses_open_t_and_prev_close": true,
+    "next_day_rows_can_use_after_close_t_fields": true,
+    "no_best_threshold_selected": true,
+    "no_execution_flags_enabled": true,
+    "same_day_rows_do_not_use_close_high_low_or_outcomes": true,
+    "spy_qqq_benchmark_or_regime_only": true
+  },
+  "decision": "MATRIX_NO_LOOKAHEAD_PASS",
+  "next_day_forbidden_fields": [
+    "close_to_next_open_return",
+    "next_open_to_close_return"
+  ],
+  "same_day_forbidden_fields": [
+    "close",
+    "close_to_next_open_return",
+    "gap_fill_ratio",
+    "high",
+    "intraday_gap_fill_flag",
+    "low",
+    "next_open_to_close_return",
+    "open_to_close_return",
+    "volume"
+  ],
+  "schema_version": "tradeo.daily_swing.dss_gap_003.backtest_matrix.v1",
+  "validation_decision": "GAP_BACKTEST_MATRIX_READY_FOR_CACHE_ONLY_DRY_RUN"
+}

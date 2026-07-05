@@ -1,0 +1,46 @@
+{
+  "status": "NO_LOOKAHEAD_PASS",
+  "generated_at": "2026-07-05T14:13:53Z",
+  "runtime_ledger_created": false,
+  "runtime_blocker": "GAP_EVENT_LEDGER_BLOCKED_CACHE_MISSING",
+  "known_at_open_t": [
+    "symbol",
+    "date",
+    "previous_trading_date",
+    "open",
+    "prev_close",
+    "gap_pct",
+    "abs_gap_pct",
+    "gap_direction",
+    "gap_bps",
+    "atr14_pct_prev",
+    "gap_vs_atr_prev",
+    "prior_return_5d",
+    "prior_return_20d",
+    "benchmark_spy_return_20d",
+    "benchmark_qqq_return_20d",
+    "is_stock_operational",
+    "is_benchmark",
+    "product_class"
+  ],
+  "known_after_close_t": [
+    "high",
+    "low",
+    "close",
+    "volume"
+  ],
+  "outcome_only": [
+    "open_to_close_return",
+    "close_to_next_open_return",
+    "next_open_to_close_return",
+    "intraday_gap_fill_flag",
+    "gap_fill_ratio"
+  ],
+  "assertions": {
+    "gap_pct_uses_open_and_prev_close": true,
+    "prior_returns_use_previous_bars_only": true,
+    "atr14_pct_prev_uses_t_minus_1": true,
+    "same_day_outcomes_not_known_at_open": true,
+    "distribution_reports_no_best_threshold": true
+  }
+}

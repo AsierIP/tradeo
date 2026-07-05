@@ -1,0 +1,48 @@
+{
+  "task_id": "T-DAILY-GAP-001",
+  "generated_at": "2026-07-05",
+  "decision": "DSS_GAP_001_PROTOCOL_READY",
+  "pattern_id": "DSS-GAP-001",
+  "status": "protocol_only",
+  "selected_search_space": "gap_continuation_gap_reversal",
+  "families": [
+    "GAP_CONTINUATION_SAME_DAY",
+    "GAP_REVERSAL_SAME_DAY",
+    "GAP_CONTINUATION_NEXT_DAY",
+    "GAP_REVERSAL_NEXT_DAY"
+  ],
+  "guardrails": {
+    "blocks_execute": true,
+    "no_backtest": true,
+    "no_order_surface": true,
+    "no_ibkr": true,
+    "no_signal_output": true,
+    "no_preview_output": true,
+    "no_paper_candidate": true,
+    "no_live_candidate": true,
+    "stock_only": true,
+    "spy_qqq_benchmark_only": true
+  },
+  "validation": {
+    "host_py_compile_exit": 0,
+    "host_json_tool_exit": 0,
+    "host_git_diff_check_exit": 0,
+    "docker_py_compile_exit": 0,
+    "docker_pytest_exit": 0,
+    "docker_pytest_summary": "7 passed in 0.72s",
+    "docker_ruff_exit": 0,
+    "docker_build_exit": 0,
+    "docker_image": "tradeo-backend:dssgap001-protocol",
+    "host_pytest_available": false,
+    "host_ruff_available": false
+  },
+  "terminal_prior_lines_closed": [
+    "DSS-PB-001",
+    "DSS-BO-001",
+    "DSS-CO-001",
+    "DSS-CW-001"
+  ],
+  "no_rescue_prior_lines": true,
+  "no_dss_005": true,
+  "next_task_recommended": "T-DAILY-GAP-002 - Build cache-only gap event ledger, no backtest"
+}
