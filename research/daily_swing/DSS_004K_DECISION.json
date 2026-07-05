@@ -1,0 +1,49 @@
+{
+  "task_id": "T-DAILY-SWING-004K",
+  "decision": "POST_MERGE_MAIN_VERIFIED",
+  "checked_at": "2026-07-05T13:25:00Z",
+  "path": "/tmp/tradeo-main-004k-clean",
+  "main_sha": "61b009cf1f13619e8d978c5334c2e8265d238f75",
+  "origin_main_sha": "61b009cf1f13619e8d978c5334c2e8265d238f75",
+  "daily_infra_commits_present": [
+    "d82968c",
+    "eb7f19c",
+    "435b013",
+    "61b009c"
+  ],
+  "contaminated_branch_merged": false,
+  "security_result": "CLEAN_SECURITY_PASS",
+  "validation_result": "CLEAN_VALIDATION_PASS",
+  "validations": {
+    "git_fetch_origin": 0,
+    "git_checkout_main": 0,
+    "git_pull_ff_only_origin_main": 0,
+    "git_diff_check": 0,
+    "git_diff_cached_check": 0,
+    "py_compile_daily_focal": 0,
+    "ruff_daily_focal": 0,
+    "pytest_daily_focal": {
+      "exit_code": 0,
+      "passed": 113,
+      "duration_seconds": 101.32
+    },
+    "docker_build_backend": 0
+  },
+  "branch_archival_policy": {
+    "feature/daily-research-infra-clean-001": "historical_clean_branch",
+    "feature/daily-swing-paper-probe-001": "contaminated_research_branch_no_pr_no_merge",
+    "delete_branches_without_asier_authorization": false
+  },
+  "trading_safety": {
+    "orders": false,
+    "paper": false,
+    "live": false,
+    "preview": false,
+    "signals": false,
+    "ibkr": false,
+    "downloads": false,
+    "cron": false,
+    "gh": false,
+    "force_push": false
+  }
+}

@@ -1,0 +1,49 @@
+{
+  "task_id": "T-DAILY-SWING-004K",
+  "result": "POST_MERGE_MAIN_VERIFIED",
+  "checked_at": "2026-07-05T13:25:00Z",
+  "checkout": {
+    "path": "/tmp/tradeo-main-004k-clean",
+    "branch": "main",
+    "main_sha": "61b009cf1f13619e8d978c5334c2e8265d238f75",
+    "origin_main_sha": "61b009cf1f13619e8d978c5334c2e8265d238f75",
+    "main_matches_origin_main": true
+  },
+  "commit_containment": {
+    "d82968c": ["origin/main"],
+    "eb7f19c": ["origin/main"],
+    "435b013": ["origin/main"],
+    "61b009c": ["origin/main"],
+    "contaminated_branch_contains_merge": false
+  },
+  "security_scan": {
+    "result": "CLEAN_SECURITY_PASS",
+    "blocked_tracked_paths_found": false,
+    "large_tracked_files_over_1mb": false,
+    "reviewed_false_positive_categories": [
+      "source scripts containing ohlcv in filename",
+      "secret scanner helper filename",
+      "non-trade accounting terminology",
+      "defensive live_armed documentation and errors",
+      "defensive or test placeOrder references",
+      "existing paper/live readiness settings and tests",
+      "non-order submit_order loop variable names"
+    ]
+  },
+  "validation": {
+    "result": "CLEAN_VALIDATION_PASS",
+    "git_diff_check_exit_code": 0,
+    "git_diff_cached_check_exit_code": 0,
+    "py_compile_exit_code": 0,
+    "ruff_exit_code": 0,
+    "pytest_exit_code": 0,
+    "pytest_passed": 113,
+    "pytest_duration_seconds": 101.32,
+    "docker_build_exit_code": 0,
+    "docker_image": "tradeo-backend:dss004k-postmerge"
+  },
+  "notes": [
+    "Host python was unavailable in the fresh clone; validation used the freshly built backend Docker image.",
+    "No research, backtests, signals, previews, orders, IBKR actions, cron changes, gh, force-push, rebase, or branch deletion were performed."
+  ]
+}
