@@ -1,0 +1,4 @@
+portfolio_policy,tests,events_total,events_OOS,expectancy_gross_weighted,candidate_approval
+ALL_EVENTS_RESEARCH_ONLY,84,1536492,858624,0.0,False
+MAX_2_NEW_TRADES_PER_DAY,4,6000,2992,0.0,False
+ONE_ACTIVE_PER_SYMBOL,4,118220,67500,0.0,False

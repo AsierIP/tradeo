@@ -1,0 +1,35 @@
+{
+  "decision": "INPUT_MATRIX_GATE_PASS",
+  "ledger": {
+    "date_end": "2026-07-02",
+    "date_start": "2023-07-05",
+    "exists": true,
+    "path": "artifacts/runtime/daily_swing/gap/dss_gap_002_event_ledger.csv",
+    "rows": 114304,
+    "tracked": false
+  },
+  "matrix": {
+    "candidate_tests": 40,
+    "duplicate_test_id": false,
+    "execution_allowed": false,
+    "families": [
+      "GAP_CONTINUATION_NEXT_DAY",
+      "GAP_CONTINUATION_SAME_DAY",
+      "GAP_REVERSAL_NEXT_DAY",
+      "GAP_REVERSAL_SAME_DAY"
+    ],
+    "live_allowed": false,
+    "paper_allowed": false,
+    "path": "research/daily_swing/gap/dss_gap_003_backtest_matrix.json",
+    "preview_allowed": false,
+    "rows": 92,
+    "signal_output_allowed": false,
+    "validation_decision": "GAP_BACKTEST_MATRIX_READY_FOR_CACHE_ONLY_DRY_RUN"
+  },
+  "split": {
+    "is_end": "2024-12-31",
+    "oos_end": "2026-07-02",
+    "oos_start": "2025-01-01",
+    "status": "COVERED"
+  }
+}

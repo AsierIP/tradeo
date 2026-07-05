@@ -1,0 +1,79 @@
+{
+  "baseline_groups": [
+    "CANDIDATE_PRE_REGISTERED",
+    "DELAYED_ENTRY",
+    "DESIGN_LOCKED_FILTER_OR_POLICY",
+    "DIRECTION_SENSITIVITY",
+    "EARNINGS_SENSITIVITY",
+    "MATCHED_NON_GAP",
+    "PORTFOLIO_POLICY_SENSITIVITY",
+    "RANDOM_MATCHED",
+    "SIGN_INVERTED_GAP",
+    "THRESHOLD_PERTURBATION"
+  ],
+  "best_threshold_selected": false,
+  "candidate_approval": false,
+  "decision": "GAP_DRY_RUN_COMPLETE_NO_CANDIDATE_APPROVAL",
+  "families": [
+    "GAP_CONTINUATION_NEXT_DAY",
+    "GAP_CONTINUATION_SAME_DAY",
+    "GAP_REVERSAL_NEXT_DAY",
+    "GAP_REVERSAL_SAME_DAY"
+  ],
+  "generated_at": "2026-07-05T15:30:51.968635Z",
+  "ledger_date_end": "2026-07-02",
+  "ledger_date_start": "2023-07-05",
+  "ledger_rows": 114304,
+  "matrix_validation": {
+    "baseline_rows": 8,
+    "candidate_tests": 40,
+    "cost_models": [
+      "cost_x1_10bps|cost_x2_20bps|cost_x3_30bps"
+    ],
+    "decision": "GAP_BACKTEST_MATRIX_READY_FOR_CACHE_ONLY_DRY_RUN",
+    "families": [
+      "GAP_CONTINUATION_NEXT_DAY",
+      "GAP_CONTINUATION_SAME_DAY",
+      "GAP_REVERSAL_NEXT_DAY",
+      "GAP_REVERSAL_SAME_DAY"
+    ],
+    "no_lookahead_status": "MATRIX_NO_LOOKAHEAD_PASS",
+    "placebo_rows": 16,
+    "portfolio_policies": [
+      "ALL_EVENTS_RESEARCH_ONLY",
+      "MAX_2_NEW_TRADES_PER_DAY",
+      "ONE_ACTIVE_PER_SYMBOL"
+    ],
+    "rows": 92,
+    "slippage_models": [
+      "open_adverse_10bps|open_adverse_25bps|open_adverse_50bps_stress"
+    ]
+  },
+  "no_lookahead_status": "GAP_DRY_RUN_NO_LOOKAHEAD_PASS",
+  "policies": [
+    "ALL_EVENTS_RESEARCH_ONLY",
+    "MAX_2_NEW_TRADES_PER_DAY",
+    "ONE_ACTIVE_PER_SYMBOL"
+  ],
+  "runtime_paths": {
+    "by_family": "artifacts/runtime/daily_swing/gap/dss_gap_004_results_by_family.csv",
+    "by_policy": "artifacts/runtime/daily_swing/gap/dss_gap_004_results_by_policy.csv",
+    "by_test": "artifacts/runtime/daily_swing/gap/dss_gap_004_results_by_test.csv",
+    "summary": "artifacts/runtime/daily_swing/gap/dss_gap_004_dry_run_summary.json"
+  },
+  "safety": {
+    "no_best_threshold_selected": true,
+    "no_candidate_approval": true,
+    "no_cron": true,
+    "no_downloads": true,
+    "no_gh": true,
+    "no_ibkr": true,
+    "no_live": true,
+    "no_orders": true,
+    "no_paper": true,
+    "no_preview": true,
+    "no_signals": true
+  },
+  "schema_version": "tradeo.daily_swing.dss_gap_004.matrix_dry_run.v1",
+  "tests_executed": 92
+}
