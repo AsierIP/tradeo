@@ -1,0 +1,37 @@
+{
+  "decision": "OPEN_REALISM_FAIL",
+  "earnings_unknown_rows": [
+    "GAP006_EARNINGS_SENSITIVITY_PAIR"
+  ],
+  "safety": {
+    "no_best_threshold_selected": true,
+    "no_candidate_approval": true,
+    "no_cron": true,
+    "no_downloads": true,
+    "no_gh": true,
+    "no_ibkr": true,
+    "no_live": true,
+    "no_main_push": true,
+    "no_orders": true,
+    "no_paper": true,
+    "no_preview": true,
+    "no_signals": true
+  },
+  "schema_version": "tradeo.daily_swing.dss_gap_007.open_realism.v1",
+  "target_50bps_expectancies": {
+    "GAP006_OBS1_MAX2": -0.00509933,
+    "GAP006_OBS1_ONE_ACTIVE": 0.00056055,
+    "GAP006_OBS1_REFERENCE_ALL": 0.00056055,
+    "GAP006_OBS2_MAX2": -0.00511581,
+    "GAP006_OBS2_ONE_ACTIVE": -0.00127455,
+    "GAP006_OBS2_REFERENCE_ALL": -0.00127455
+  },
+  "target_75bps_expectancies": {
+    "GAP006_OBS1_MAX2": -0.00759933,
+    "GAP006_OBS1_ONE_ACTIVE": -0.00193945,
+    "GAP006_OBS1_REFERENCE_ALL": -0.00193945,
+    "GAP006_OBS2_MAX2": -0.00761581,
+    "GAP006_OBS2_ONE_ACTIVE": -0.00377455,
+    "GAP006_OBS2_REFERENCE_ALL": -0.00377455
+  }
+}
