@@ -1,0 +1,15 @@
+{
+  "decision": "GAP_TERMINAL_EVIDENCE_COMPLETE",
+  "line_status": {
+    "GAP-001": "DSS_GAP_001_PROTOCOL_READY",
+    "GAP-002A": "GAP_EVENT_LEDGER_READY_FOR_RESEARCH_DESIGN",
+    "GAP-003": "GAP_BACKTEST_MATRIX_READY_FOR_CACHE_ONLY_DRY_RUN",
+    "GAP-004": "GAP_DRY_RUN_COMPLETE_NO_CANDIDATE_APPROVAL",
+    "GAP-005": "GAP_FORENSIC_OBSERVATIONS_READY_FOR_CONFIRMATION_DESIGN",
+    "GAP-006": "GAP_CONFIRMATORY_PROTOCOL_READY",
+    "GAP-007": "GAP_CONFIRMATION_FAIL_OPEN_SLIPPAGE"
+  },
+  "new_research_executed": false,
+  "no_candidate_approval": true,
+  "schema_version": "tradeo.daily_swing.dss_gap_008.terminal_evidence.v1"
+}

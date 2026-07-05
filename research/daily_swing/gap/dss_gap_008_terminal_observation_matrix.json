@@ -1,0 +1,22 @@
+{
+  "decision": "GAP_TERMINAL_OBSERVATIONS_CLOSED",
+  "observations": [
+    {
+      "baseline_placebo_result": "NOT_DOMINATED",
+      "confirmatory_status": "GAP_CONFIRMATION_FAIL_OPEN_SLIPPAGE",
+      "family": "GAP_REVERSAL_SAME_DAY",
+      "final_class": "REJECTED_OPERABILITY",
+      "observation_id": "GAP003_REVERSAL-SAME-DAY_ABS_3_0_BOTH_ALL",
+      "rejection_reason": "MAX_2_NEW_TRADES_PER_DAY negative and 75bps open stress negative"
+    },
+    {
+      "baseline_placebo_result": "NOT_DOMINATED",
+      "confirmatory_status": "GAP_CONFIRMATION_FAIL_OPEN_SLIPPAGE",
+      "family": "GAP_REVERSAL_SAME_DAY",
+      "final_class": "REJECTED_OPEN_SLIPPAGE",
+      "observation_id": "GAP003_REVERSAL-SAME-DAY_DESIGN_SPY_LTE_0",
+      "rejection_reason": "50bps open stress negative and MAX_2_NEW_TRADES_PER_DAY negative"
+    }
+  ],
+  "schema_version": "tradeo.daily_swing.dss_gap_008.terminal_observation_matrix.v1"
+}

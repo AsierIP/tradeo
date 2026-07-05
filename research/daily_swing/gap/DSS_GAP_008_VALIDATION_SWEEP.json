@@ -1,0 +1,9 @@
+{
+  "decision": "GAP_VALIDATION_PASS",
+  "docker_build": "PASS",
+  "new_research_executed": false,
+  "py_compile_gap": "PASS",
+  "pytest_gap_daily": "59 passed",
+  "ruff_gap": "PASS",
+  "schema_version": "tradeo.daily_swing.dss_gap_008.validation_sweep.v1"
+}
