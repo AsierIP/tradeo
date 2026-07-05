@@ -1,8 +1,8 @@
-# PAPER READINESS 002 REPORT
+# PAPER READINESS 003 REPORT
 
 ## A. Resumen ejecutivo
 
-- Preflight infra/shadow ejecutado sin señales, previews ni órdenes.
+- Safe env hardening y preflight infra/shadow reejecutados sin señales, previews ni órdenes.
 - PAPER_INFRA_READY: `GO`
 - SHADOW_NO_ORDER_READY: `GO`
 - PAPER_ORDER_READY: `NO_GO_NO_PAPER_CANDIDATE`

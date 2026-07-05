@@ -89,7 +89,7 @@
     "worker_declared": true,
     "worker_has_entry_scanner_job": true
   },
-  "generated_at": "2026-07-05T18:20:59.831632+00:00",
+  "generated_at": "2026-07-05T18:18:17.659168+00:00",
   "repo": {
     "branch": "feature/paper-readiness-002",
     "commit_sha": "ef0deacf62a852b9ca97099c1c7ec53750e3b449",
@@ -97,12 +97,15 @@
     "git_status_exit_code": 0,
     "origin_main_sha": "f47b76927d37034a239680312e212142d3f4cdd1",
     "root": "/tmp/tradeo-paper-readiness-002",
-    "tracked_changes": [],
-    "untracked_changes": [
-      "research/paper_readiness/PAPER_READINESS_003_DECISION.json",
-      "research/paper_readiness/PAPER_READINESS_003_REPORT.md",
-      "research/paper_readiness/PAPER_READINESS_003_SAFE_ENV_HARDENING.md"
-    ]
+    "tracked_changes": [
+      "research/paper_readiness/PAPER_READINESS_002_DECISION.json",
+      "research/paper_readiness/PAPER_READINESS_002_EXECUTION_SURFACE_AUDIT.json",
+      "research/paper_readiness/PAPER_READINESS_002_REPORT.md",
+      "research/paper_readiness/PAPER_READINESS_002_REPO_SAFETY_AUDIT.json",
+      "research/paper_readiness/PAPER_READINESS_002_REPO_SAFETY_AUDIT.md",
+      "research/paper_readiness/PAPER_READINESS_002_SHADOW_NO_ORDER_REHEARSAL.md"
+    ],
+    "untracked_changes": []
   },
   "safety": {
     "blockers": [],
@@ -140,7 +143,7 @@
   "schema_version": "tradeo.paper_readiness_002.v1",
   "shadow_no_order_rehearsal": {
     "candidate_gate_status": "BLOCK_NO_PAPER_CANDIDATE",
-    "generated_at": "2026-07-05T18:20:59.831632+00:00",
+    "generated_at": "2026-07-05T18:18:17.659168+00:00",
     "ibkr_state": "not_checked",
     "kill_switch_status": "configured",
     "live_allowed": false,

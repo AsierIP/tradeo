@@ -1,19 +1,19 @@
 {
-  "decision": "PAPER_INFRA_READY_NO_GO",
+  "decision": "PAPER_INFRA_READY_GO",
   "env": {
     "redaction_ok": true,
     "safety_flags": {
       "TRADEO_FOX_HUNTER_AUTO_SUBMIT_LIVE_ORDERS": "false",
       "TRADEO_IBKR_ALLOW_MARKET_ORDERS": "false",
       "TRADEO_IBKR_MAX_ORDER_VALUE_USD": "1500",
-      "TRADEO_IBKR_READONLY": "false",
+      "TRADEO_IBKR_READONLY": "true",
       "TRADEO_INTRADAY_DAILY_LOSS_LIMIT_PCT": "0.005",
       "TRADEO_INTRADAY_EOD_EMERGENCY_MARKET_ALLOWED": "false",
       "TRADEO_INTRADAY_LIVE_ENABLED": "false",
       "TRADEO_INTRADAY_MAX_TRADES_PER_DAY": "8",
       "TRADEO_INTRADAY_PAPER_ENABLED": "false",
       "TRADEO_KILL_SWITCH_ENABLED": "false",
-      "TRADEO_LABORATORY_AUTO_SUBMIT_PAPER_ORDERS": "true",
+      "TRADEO_LABORATORY_AUTO_SUBMIT_PAPER_ORDERS": "false",
       "TRADEO_LIVE_TRADING_ENABLED": "false",
       "TRADEO_MAX_POSITION_VALUE_PCT": "0.45",
       "TRADEO_RECONCILIATION_AUTO_REPAIR_PAPER_EXITS": "false",
@@ -35,25 +35,26 @@
     ],
     "source": "/home/vboxuser/tradeo/.env"
   },
-  "generated_at": "2026-07-05T17:58:23.345466+00:00",
+  "generated_at": "2026-07-05T18:20:59.831632+00:00",
   "repo": {
     "branch": "feature/paper-readiness-002",
-    "commit_sha": "ef19996acb77b538877b2d114567fdfeddceeb4d",
-    "dirty": false,
+    "commit_sha": "ef0deacf62a852b9ca97099c1c7ec53750e3b449",
+    "dirty": true,
     "git_status_exit_code": 0,
     "origin_main_sha": "f47b76927d37034a239680312e212142d3f4cdd1",
     "root": "/tmp/tradeo-paper-readiness-002",
     "tracked_changes": [],
-    "untracked_changes": []
+    "untracked_changes": [
+      "research/paper_readiness/PAPER_READINESS_003_DECISION.json",
+      "research/paper_readiness/PAPER_READINESS_003_REPORT.md",
+      "research/paper_readiness/PAPER_READINESS_003_SAFE_ENV_HARDENING.md"
+    ]
   },
   "safety": {
-    "blockers": [
-      "TRADEO_IBKR_READONLY is not true",
-      "TRADEO_LABORATORY_AUTO_SUBMIT_PAPER_ORDERS=true"
-    ],
+    "blockers": [],
     "checks": {
-      "auto_submit_disabled": false,
-      "ibkr_readonly": false,
+      "auto_submit_disabled": true,
+      "ibkr_readonly": true,
       "intraday_live_disabled": true,
       "kill_switch_control_present": true,
       "live_trading_disabled": true,

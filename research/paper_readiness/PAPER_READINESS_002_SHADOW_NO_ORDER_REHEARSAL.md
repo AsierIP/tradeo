@@ -5,4 +5,4 @@
 - signals_generated: `False`
 - preview_generated: `False`
 - orders_submitted: `False`
-- decision: `SHADOW_NO_ORDER_READY_NO_GO`
+- decision: `SHADOW_NO_ORDER_READY_GO`

@@ -38,7 +38,7 @@
     "worker_declared": true,
     "worker_has_entry_scanner_job": true
   },
-  "generated_at": "2026-07-05T17:58:23.345466+00:00",
+  "generated_at": "2026-07-05T18:20:59.831632+00:00",
   "safety_confirmations": {
     "no_cron_trading": true,
     "no_downloads": true,
