@@ -2,7 +2,7 @@
   "best_threshold_selected": false,
   "candidate_approval": false,
   "decision": "GAP_CONFIRMATION_FAIL_OPEN_SLIPPAGE",
-  "generated_at": "2026-07-05T16:47:14.166653Z",
+  "generated_at": "2026-07-05T16:56:53.049244Z",
   "input_integrity_decision": "CONFIRMATORY_INPUT_PASS",
   "open_realism_decision": "OPEN_REALISM_FAIL",
   "safety": {

@@ -1,23 +1,11 @@
-# DSS GAP-007 Statistical / Baseline / Placebo Verdict
+# DSS-GAP-007 Statistical / Baseline / Placebo
 
-Decision: `STAT_BASELINE_WARNING`.
+Decision: `STAT_BASELINE_PASS`.
 
-Baseline and placebo controls:
-
-- MATCHED_NON_GAP: expectancy x2 -0.00203712, PF x2 0.724939.
-- RANDOM_MATCHED: expectancy x2 -0.00174909, PF x2 0.815529.
-- SIGN_INVERTED_GAP: expectancy x2 -0.00371776, PF x2 0.730386.
-- DELAYED_ENTRY: expectancy x2 -0.00122391, PF x2 0.891117.
-- THRESHOLD_PERTURBATION: expectancy x2 -0.00043096, PF x2 0.963158.
-
-Stat-light verdict:
-
-- Best target: `GAP006_OBS1_REFERENCE_ALL`, expectancy x2 0.00356055.
-- Best control: `GAP006_PLACEBO_THRESHOLD_PERTURBATION_PAIR`, expectancy x2 -0.00043096.
-- Baseline/placebo dominance: false.
-- Bootstrap p05 negative: false for the best target in the lightweight check.
-- WRC/SPA-light status: PASS.
-
-Interpretation:
-
-The statistical controls do not explain away the best all-events observation. However, this does not rescue GAP-007 because operability constraints and open slippage fail before candidate approval can be considered.
+- GAP006_BASELINE_MATCHED_NON_GAP_PAIR: x2=-0.1778%, PF x2=0.778797.
+- GAP006_BASELINE_RANDOM_MATCHED_PAIR: x2=0.0332%, PF x2=1.032243.
+- GAP006_PLACEBO_SIGN_INVERTED_PAIR: x2=-0.5725%, PF x2=0.636375.
+- GAP006_PLACEBO_DELAYED_ENTRY_PAIR: x2=-0.4348%, PF x2=0.701894.
+- GAP006_PLACEBO_THRESHOLD_PERTURBATION_PAIR: x2=0.1725%, PF x2=1.145552.
+- GAP006_EARNINGS_SENSITIVITY_PAIR: x2=-0.1323%, PF x2=0.925251.
+- FDR/WRC/SPA-light: `FDR_WRC_SPA_LIGHT_PASS`, min q=0.0.

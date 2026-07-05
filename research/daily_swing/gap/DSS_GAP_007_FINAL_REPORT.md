@@ -3,44 +3,28 @@
 ## A. Resumen ejecutivo
 GAP-007 ejecutado cache-only contra la matriz cerrada GAP-006. Decision: `GAP_CONFIRMATION_FAIL_OPEN_SLIPPAGE`.
 
-La observacion OBS1 en ALL_EVENTS/ONE_ACTIVE conserva expectancy positiva a 50 bps, pero falla a 75 bps. OBS2 falla a 50 bps, y las dos politicas MAX_2_NEW_TRADES_PER_DAY quedan negativas. No hay aprobacion de candidato, no paper, no shadow, no live, no preview, no senales y no ordenes.
-
 ## B. Path real usado
 `/tmp/tradeo-main-004k-clean`.
 
-## C. Rama y commit/push si aplica
-Rama: `feature/daily-gap-protocol-001`.
-
-Commit/push: versionado y pusheado en `origin/feature/daily-gap-protocol-001`; el SHA exacto se reporta en el cierre de tarea.
+## C. Rama
+`feature/daily-gap-protocol-001`.
 
 ## D. Input integrity
-`CONFIRMATORY_INPUT_PASS`.
-
-- Matrix GAP-006 cerrada: 12 filas.
-- Confirmation targets: 6.
-- Observaciones permitidas: `GAP003_REVERSAL-SAME-DAY_ABS_3_0_BOTH_ALL` y `GAP003_REVERSAL-SAME-DAY_DESIGN_SPY_LTE_0`.
-- Ledger runtime: 114304 filas, 2023-07-05 a 2026-07-02.
-- Flags execution/paper/live/preview/signals false.
-- SPY/QQQ solo benchmark/regime; universo de trading stock-only.
-- Runtime queda en `artifacts/runtime`.
+`CONFIRMATORY_INPUT_PASS`; 12 filas, 6 targets, ledger 114304 filas.
 
 ## E. Confirmatory execution summary
-- GAP006_OBS1_REFERENCE_ALL: events OOS 3495, symbols 148, x2=0.3561%, PF x2=1.237430, 50bps=0.0561%, 75bps=-0.1939%.
-- GAP006_OBS1_ONE_ACTIVE: events OOS 3495, symbols 148, x2=0.3561%, PF x2=1.237430, 50bps=0.0561%, 75bps=-0.1939%.
+- GAP006_OBS1_REFERENCE_ALL: events OOS 3495, symbols 148, x2=0.3561%, PF x2=1.23743, 50bps=0.0561%.
+- GAP006_OBS1_ONE_ACTIVE: events OOS 3495, symbols 148, x2=0.3561%, PF x2=1.23743, 50bps=0.0561%.
 - GAP006_OBS1_MAX2: events OOS 686, symbols 107, x2=-0.2099%, PF x2=0.878991, 50bps=-0.5099%.
 - GAP006_OBS2_REFERENCE_ALL: events OOS 7362, symbols 150, x2=0.1725%, PF x2=1.145552, 50bps=-0.1275%.
 - GAP006_OBS2_ONE_ACTIVE: events OOS 7362, symbols 150, x2=0.1725%, PF x2=1.145552, 50bps=-0.1275%.
 - GAP006_OBS2_MAX2: events OOS 250, symbols 21, x2=-0.2116%, PF x2=0.846896, 50bps=-0.5116%.
 
 ## F. Open realism / operability / earnings review
-`OPEN_REALISM_FAIL`.
-
-Same-day open execution is not robust under the required adverse slippage and portfolio constraints. OBS2 is negative at 50 bps, both MAX2 rows are negative before and after slippage, and 75 bps destroys OBS1 too. Earnings sensitivity remains descriptive only because no timestamp-safe earnings calendar is available.
+`OPEN_REALISM_FAIL`. Slippage adverso de open a 50/75 bps se mantiene como gate terminal si vuelve negativo. Earnings queda `earnings_unknown=true` y solo descriptivo.
 
 ## G. Statistical / baseline / placebo verdict
-`STAT_BASELINE_PASS`.
-
-Controls do not dominate the best target in this confirmatory run. Best control is threshold perturbation at x2=0.1725% with PF x2=1.145552, below OBS1 target x2=0.3561% with PF x2=1.237430. FDR/WRC/SPA-light is `FDR_WRC_SPA_LIGHT_PASS` with min q=0.0. This does not override the open realism failure.
+`STAT_BASELINE_PASS`. FDR/WRC/SPA-light `FDR_WRC_SPA_LIGHT_PASS` con min q=0.0.
 
 ## H. Tests/validaciones
 - `python3 -m py_compile scripts/run_daily_gap_confirmatory_matrix.py backend/tradeo/modules/daily_swing/gap_confirmatory_run.py` => exit 0.
@@ -57,8 +41,8 @@ Controls do not dominate the best target in this confirmatory run. Best control 
 ## I. Decision GAP-007
 `GAP_CONFIRMATION_FAIL_OPEN_SLIPPAGE`.
 
-## J. Confirmacion restricciones
-No ordenes. No paper. No live. No preview. No senales. No IBKR. No descargas. No cron. No `.env` real modificado. No gh. No main push. No candidate approval. No DSS-005.
+## J. Seguridad
+No ordenes, no paper, no live, no preview, no senales, no IBKR, no descargas, no cron, no gh, no main push.
 
 ## K. Siguiente tarea recomendada
-Cerrar gap same-day reversal como no robusto bajo realismo de open, o volver al roadmap para elegir una familia distinta. Si Direccion insiste en gap, redisenar solo con protocolo nuevo y sin reciclar esta observacion como candidato.
+Volver a roadmap o revisar diseno next-day solo si Direccion lo autoriza; no ejecutar aqui.
