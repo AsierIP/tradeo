@@ -10,6 +10,8 @@
   "git_freshness": "GIT_FRESHNESS_PASS",
   "security_artifact_audit": "CLEAN_SECURITY_PASS",
   "validation_sweep": "CLEAN_VALIDATION_PASS",
+  "pytest_summary": "113 passed in 84.97s",
+  "docker_image": "tradeo-backend:dss-004j-audit",
   "manual_pr_ready": true,
   "opened_pr_with_gh": false,
   "merged_to_main": false,

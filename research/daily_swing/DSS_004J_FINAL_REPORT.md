@@ -47,13 +47,13 @@ False positives were limited to placeholder test account ids, defensive broker/o
 Result: `CLEAN_VALIDATION_PASS`.
 
 - `py_compile`: pass.
-- Daily focal pytest: 113 passed in 79.48s.
+- Daily focal pytest: 113 passed in 84.97s.
 - `ruff`: pass.
 - `git diff --check`: pass.
 - `git diff --cached --check`: pass.
-- Docker build `tradeo-backend:dss004j-prepr`: pass.
+- Docker build `tradeo-backend:dss-004j-audit`: pass.
 
-No research backtests, downloads, IBKR calls, paper/live execution, cron, order submission, preview execution, or signal generation were run.
+An initial Docker invocation used the wrong build context and exited 1; the corrected root-context build passed. No research backtests, downloads, IBKR calls, paper/live execution, cron, order submission, preview execution, or signal generation were run.
 
 ## I. PR Handoff Package
 
