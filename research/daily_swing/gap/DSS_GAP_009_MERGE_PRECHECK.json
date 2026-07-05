@@ -1,0 +1,101 @@
+{
+  "task_id": "T-DAILY-GAP-009-MERGE",
+  "generated_at": "2026-07-05T17:22:09Z",
+  "worktree": "/tmp/tradeo-main-004k-clean",
+  "feature_branch": "feature/daily-gap-protocol-001",
+  "target_branch": "main",
+  "feature_head": "f0666512680f8163caf887a4dc0fc226882e642d",
+  "origin_main": "cc8c42cba8889c129640f86ff077991e70f59ff5",
+  "merge_base": "cc8c42cba8889c129640f86ff077991e70f59ff5",
+  "freshness": {
+    "git_fetch_origin_exit": 0,
+    "main_pull_ff_only_exit": 0,
+    "feature_pull_ff_only_exit": 0,
+    "decision": "GAP_BRANCH_FRESHNESS_PASS"
+  },
+  "feature_commits_over_origin_main": [
+    "f066651 docs(daily): close GAP research line",
+    "b3a82ce docs(daily): refresh GAP-007 confirmation report",
+    "63bf349 docs(daily): refresh GAP-007 final report",
+    "aa43b3b feat(daily): execute GAP-007 confirmation",
+    "cd0343c docs(daily): refresh GAP-006 validation report",
+    "bf76bd9 feat(daily): preregister GAP-006 protocol",
+    "ef521cf docs(daily): add GAP-005 forensic review",
+    "faac6e4 docs(daily): add GAP-005 forensic review",
+    "954eb32 docs(daily): refresh GAP-004 dry run report",
+    "bbc657a feat(daily): run gap matrix dry run",
+    "6d384b7 feat(daily): preregister gap backtest matrix",
+    "66bd3b1 docs(daily): finalize GAP-002A validation notes",
+    "8b5792d feat(daily): restore gap ledger cache runtime",
+    "4fc6ffc feat(daily): add gap event ledger scaffold",
+    "fd6f9ed docs(daily): update gap protocol validation notes",
+    "760beb0 feat(daily): preregister gap research protocol"
+  ],
+  "security_audit": {
+    "decision": "GAP_PREMERGE_SECURITY_PASS",
+    "status_clean": true,
+    "blocked_changed_paths": [],
+    "files_over_1mb": [],
+    "secret_or_activation_blockers": [],
+    "false_positive_classes": [
+      "negative candidate assertions",
+      "DSS-005 refusal statements",
+      "OBS1/OBS2 terminal labels",
+      "signal/order refusal guards"
+    ]
+  },
+  "validation": {
+    "decision": "GAP_PREMERGE_VALIDATION_PASS",
+    "py_compile_exit": 0,
+    "git_diff_check_exit": 0,
+    "git_diff_cached_check_exit": 0,
+    "json_validation_exit": 0,
+    "docker_build": {
+      "command": "docker build -f backend/Dockerfile -t tradeo-backend:gap009-pre .",
+      "exit": 0
+    },
+    "pytest": {
+      "command": "docker run --rm -v /tmp/tradeo-main-004k-clean/research:/app/research:ro ... tradeo-backend:gap009-pre pytest -q <GAP/Daily focal tests>",
+      "exit": 0,
+      "result": "84 passed"
+    },
+    "ruff": {
+      "command": "docker run --rm tradeo-backend:gap009-pre ruff check <GAP modules/scripts/tests>",
+      "exit": 0,
+      "result": "All checks passed"
+    },
+    "notes": [
+      "Initial Docker pytest without /app/research mount failed because Dockerfile places research artifacts at /research while tests read repository-relative research/... from /app.",
+      "Corrected read-only /app/research mount passed."
+    ]
+  },
+  "terminal_gap_finding": {
+    "decision": "GAP_LINE_TERMINAL_CLOSED_READY_FOR_INFRA_PR",
+    "finding": "gap same-day reversal rejected by open slippage and operability",
+    "candidate_approval": false,
+    "shadow_candidate": false,
+    "paper_candidate": false,
+    "live_candidate": false
+  },
+  "restrictions_confirmed": {
+    "orders": false,
+    "paper": false,
+    "live": false,
+    "preview": false,
+    "signals": false,
+    "new_backtest": false,
+    "gap_004_rerun": false,
+    "gap_007_rerun": false,
+    "ibkr": false,
+    "data_downloads": false,
+    "cron": false,
+    "real_env_modified": false,
+    "gate_relaxation": false,
+    "operational_scoring_change": false,
+    "dss_005": false,
+    "gh": false,
+    "pr_created": false,
+    "main_pushed_during_precheck": false
+  },
+  "decision": "GAP_PREMERGE_READY_FOR_MAIN_MERGE"
+}
