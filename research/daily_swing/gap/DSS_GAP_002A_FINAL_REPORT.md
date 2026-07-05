@@ -14,7 +14,9 @@ Decision: GAP_EVENT_LEDGER_READY_FOR_RESEARCH_DESIGN.
 
 Rama: `feature/daily-gap-protocol-001`.
 
-Commit/push: pendiente hasta el commit final validado.
+Commit base de GAP-002A: `8b5792d feat(daily): restore gap ledger cache runtime`.
+
+Push: pendiente de cierre tras esta actualizacion de reporte.
 
 ## D. Cache discovery
 
@@ -91,11 +93,11 @@ Comandos ejecutados:
 
 - `docker run ... python scripts/build_daily_gap_event_ledger.py --cache-only --no-ibkr` => exit 0.
 - `python3 -m py_compile scripts/build_daily_gap_event_ledger.py backend/tradeo/modules/daily_swing/gap_event_ledger.py` => exit 0.
-- `docker run ... pytest -q backend/tradeo/tests/test_daily_gap_protocol.py backend/tradeo/tests/test_daily_gap_event_ledger.py` => 18 passed, exit 0.
+- `docker run ... pytest -q backend/tradeo/tests/test_daily_gap_protocol.py backend/tradeo/tests/test_daily_gap_event_ledger.py` => 20 passed, exit 0.
 - `docker run ... ruff check backend/tradeo/modules/daily_swing/gap_event_ledger.py scripts/build_daily_gap_event_ledger.py backend/tradeo/tests/test_daily_gap_event_ledger.py` => exit 0.
 - `git diff --check` => exit 0.
 - Security scan: no tracked `artifacts/runtime`, no tracked `MEMORY.md`/`memory/`, no tracked real `.env`; only `.env.example` is tracked.
-- `docker build -f backend/Dockerfile -t tradeo-backend-gap002a-test .` => exit 0.
+- `docker build -f backend/Dockerfile -t tradeo-backend-gap002a-test .` => blocked before build by local Docker/buildx disk state: `no space left on device` under `/home/vboxuser/.docker/buildx/activity`.
 
 ## K. Decision GAP-002A
 

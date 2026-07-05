@@ -33,6 +33,14 @@
   },
   "no_lookahead_status": "NO_LOOKAHEAD_PASS",
   "distribution_has_best_threshold": false,
+  "validation": {
+    "py_compile": "PASS",
+    "pytest_gap_daily": "20 passed",
+    "ruff_touched_files": "PASS",
+    "git_diff_check": "PASS",
+    "tracked_runtime_memory_env_scan": "PASS",
+    "docker_build_backend": "BLOCKED_NO_SPACE_LEFT_ON_DEVICE"
+  },
   "security": {
     "no_orders": true,
     "no_paper": true,
