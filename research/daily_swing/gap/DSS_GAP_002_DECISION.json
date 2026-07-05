@@ -1,0 +1,29 @@
+{
+  "task_id": "T-DAILY-GAP-002",
+  "decision": "GAP_EVENT_LEDGER_BLOCKED_CACHE_MISSING",
+  "generated_at": "2026-07-05T14:13:53Z",
+  "path": "/tmp/tradeo-main-004k-clean",
+  "branch": "feature/daily-gap-protocol-001",
+  "ledger_created": false,
+  "ledger_path": "artifacts/runtime/daily_swing/gap/dss_gap_002_event_ledger.csv",
+  "blocked_reason": "OHLCV cache missing or empty: artifacts/runtime/daily_swing/daily_ohlcv_research",
+  "no_lookahead_status": "NO_LOOKAHEAD_PASS",
+  "coverage_distribution_status": "blocked_cache_missing",
+  "next_recommended_task": "Restore approved local Daily OHLCV cache and rerun T-DAILY-GAP-002 cache-only; do not execute GAP-003 yet.",
+  "security": {
+    "no_orders": true,
+    "no_paper": true,
+    "no_live": true,
+    "no_preview": true,
+    "no_signals": true,
+    "no_backtest": true,
+    "no_ibkr": true,
+    "no_downloads": true,
+    "no_cron": true,
+    "no_env_real_modified": true,
+    "no_gh": true,
+    "no_merge": true,
+    "no_push_main": true,
+    "no_dss_005": true
+  }
+}
