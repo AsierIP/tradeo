@@ -14,13 +14,13 @@
 ## C. Rama/commit/push
 
 - branch: `feature/paper-readiness-002`
-- commit: `f47b76927d37034a239680312e212142d3f4cdd1`
+- commit: `ef19996acb77b538877b2d114567fdfeddceeb4d`
 - origin_main: `f47b76927d37034a239680312e212142d3f4cdd1`
 - push: pendiente hasta validacion final
 
 ## D. Estado repo/main
 
-- dirty: `True`
+- dirty: `False`
 
 ## E. IBKR paper connectivity
 
