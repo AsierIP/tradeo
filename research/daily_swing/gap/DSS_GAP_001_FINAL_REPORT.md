@@ -91,11 +91,12 @@ Validaciones ejecutadas:
 - Host `python3 -m json.tool research/daily_swing/gap/DSS_GAP_001_DECISION.json` exit 0.
 - Host `git diff --check` exit 0.
 - Docker `python -m py_compile backend/tradeo/modules/daily_swing/gap_protocol.py scripts/plan_daily_gap_research_protocol.py` exit 0.
-- Docker `PYTHONPATH=/app/backend python -m pytest backend/tradeo/tests/test_daily_gap_protocol.py` exit 0, 7 passed in 0.72s.
-- Docker `python -m ruff check backend/tradeo/modules/daily_swing/gap_protocol.py scripts/plan_daily_gap_research_protocol.py backend/tradeo/tests/test_daily_gap_protocol.py` exit 0.
-- `docker build -t tradeo-backend:dssgap001-protocol -f backend/Dockerfile .` exit 0.
+- Docker `pytest -q backend/tradeo/tests/test_daily_gap_protocol.py` exit 0, 7 passed.
+- Docker `ruff check backend/tradeo/modules/daily_swing/gap_protocol.py backend/tradeo/tests/test_daily_gap_protocol.py scripts/plan_daily_gap_research_protocol.py` exit 0.
+- Docker `python scripts/plan_daily_gap_research_protocol.py` + JSON parse exit 0.
+- `docker build -t tradeo-backend:dssgap001-protocol-verify -f backend/Dockerfile .` exit 0.
 
-Host pytest/ruff no estaban instalados; por eso pytest/ruff se ejecutaron dentro de la imagen backend existente y ademas se verifico un build nuevo.
+Host pytest/ruff no estaban instalados; por eso pytest/ruff se ejecutaron dentro de la imagen backend existente y ademas se verifico un build nuevo. `docker compose run` no se uso porque el checkout no contiene `.env` y la tarea prohibe modificar `.env` real.
 
 ## I. Decision DSS-GAP-001
 
