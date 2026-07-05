@@ -115,7 +115,14 @@ class IBKRHistoricalDataProvider:
     def __post_init__(self) -> None:
         self.settings = self.settings or get_settings()
 
-    def fetch_ohlcv(self, symbol: str, period: str = "2y", interval: str = "1d") -> pd.DataFrame:
+    def fetch_ohlcv(
+        self,
+        symbol: str,
+        period: str = "2y",
+        interval: str = "1d",
+        *,
+        timeout: float | None = None,
+    ) -> pd.DataFrame:
         _ensure_event_loop()
         from ib_insync import Stock, util
 
@@ -134,6 +141,7 @@ class IBKRHistoricalDataProvider:
                 whatToShow=self.settings.market_data_what_to_show,
                 useRTH=True,
                 formatDate=1,
+                timeout=timeout or 60,
             )
             df = util.df(bars)
             if df is None or df.empty:

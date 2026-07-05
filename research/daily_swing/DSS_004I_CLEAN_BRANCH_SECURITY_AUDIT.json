@@ -1,0 +1,27 @@
+{
+  "schema_version": "tradeo.daily_swing.dss_004i.security_audit.v1",
+  "generated_at": "2026-07-04T19:00:00Z",
+  "decision": "CLEAN_SECURITY_PASS",
+  "branch": "feature/daily-research-infra-clean-001",
+  "orders": false,
+  "paper_orders": false,
+  "paper_execution": false,
+  "live": false,
+  "preview_operational": false,
+  "signals_operational": false,
+  "ibkr_used": false,
+  "downloads": false,
+  "cron": false,
+  "merge": false,
+  "gh_used": false,
+  "blocker_scan": {
+    "tracked_memory": false,
+    "tracked_runtime_artifacts": false,
+    "tracked_reports": false,
+    "tracked_audit_bundles": false,
+    "tracked_data_or_ohlcv_cache": false,
+    "tracked_paper_preview": false,
+    "large_tracked_files_over_1mb": false,
+    "secrets_or_real_account_ids_found": false
+  }
+}

@@ -20,9 +20,8 @@ COPY research /research
 RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir -e ".[dev]"
 
-COPY data /app/data
 COPY config /app/config
-RUN mkdir -p /app/reports /app/artifacts
+RUN mkdir -p /app/data /app/reports /app/artifacts
 
 EXPOSE 8000
 CMD ["uvicorn", "tradeo.main:app", "--host", "0.0.0.0", "--port", "8000"]

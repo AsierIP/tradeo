@@ -1,6 +1,8 @@
 .env
 .env.*
 !.env.example
+MEMORY.md
+memory/
 *.key
 *.pem
 *.crt
@@ -38,6 +40,7 @@ reports/*.md
 reports/
 reports_old/
 artifacts/
+artifacts/runtime/
 backups/
 .DS_Store
 Thumbs.db

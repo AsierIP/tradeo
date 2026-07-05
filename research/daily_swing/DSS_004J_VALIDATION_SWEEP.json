@@ -1,0 +1,21 @@
+{
+  "generated_at": "2026-07-05T14:52:24+02:00",
+  "result": "CLEAN_VALIDATION_PASS",
+  "git_fetch_origin_exit": 0,
+  "git_status_clean": true,
+  "py_compile_exit": 0,
+  "pytest_daily_focal_exit": 0,
+  "pytest_daily_focal_result": "113 passed in 79.48s",
+  "ruff_exit": 0,
+  "git_diff_check_exit": 0,
+  "git_diff_cached_check_exit": 0,
+  "docker_build_exit": 0,
+  "docker_image": "tradeo-backend:dss004j-prepr",
+  "research_backtests_run": false,
+  "ibkr_calls_run": false,
+  "paper_execution_run": false,
+  "live_execution_run": false,
+  "cron_enabled": false,
+  "orders_submitted": false,
+  "signals_generated": false
+}
