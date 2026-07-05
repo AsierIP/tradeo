@@ -11,9 +11,7 @@ La observacion OBS1 en ALL_EVENTS/ONE_ACTIVE conserva expectancy positiva a 50 b
 ## C. Rama y commit/push si aplica
 Rama: `feature/daily-gap-protocol-001`.
 
-Commit: `bd0030c feat(daily): execute GAP-007 confirmation`.
-
-Push: origin/feature/daily-gap-protocol-001 tras validacion final.
+Commit/push: versionado y pusheado en `origin/feature/daily-gap-protocol-001`; el SHA exacto se reporta en el cierre de tarea.
 
 ## D. Input integrity
 `CONFIRMATORY_INPUT_PASS`.
