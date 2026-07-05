@@ -1,0 +1,16 @@
+{
+  "task_id": "T-DAILY-SWING-004J",
+  "path": "/home/vboxuser/tradeo-worktrees/daily-research-infra-clean-001",
+  "branch": "feature/daily-research-infra-clean-001",
+  "base": "origin/main",
+  "head": "eb7f19c",
+  "origin_main": "c470044",
+  "merge_base": "c470044",
+  "fetch_exit": 0,
+  "pull_exit": 0,
+  "behind_origin_main": false,
+  "merge_performed": false,
+  "conflict": false,
+  "status": "PASS",
+  "decision": "DAILY_GIT_FRESHNESS_PASS"
+}
