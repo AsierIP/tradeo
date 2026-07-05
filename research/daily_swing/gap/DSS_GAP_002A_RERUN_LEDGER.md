@@ -36,4 +36,3 @@ Event quality counts:
 - GAP_EVENT_SPLIT_ADJUSTMENT_SUSPECT: 49.
 
 No edge, strategy PnL, best threshold, continuation/reversal selection, signals, preview, paper, live, orders, IBKR, downloads, cron, or `.env` changes were produced.
-

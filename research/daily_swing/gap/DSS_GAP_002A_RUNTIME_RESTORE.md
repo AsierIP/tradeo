@@ -19,4 +19,3 @@ Git hygiene:
 Security:
 
 No IBKR, no downloads, no backtest, no signals, no preview, no orders, no paper, no live, no cron, no `.env` modification.
-

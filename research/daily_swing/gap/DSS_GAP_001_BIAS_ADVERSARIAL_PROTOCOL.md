@@ -94,4 +94,3 @@ DSS-GAP-001 cannot become paper-ready while any of these remain unresolved:
 - OOS fails costs/placebos/baselines;
 - product universe contamination;
 - operational signal or preview surface exists without explicit approval.
-

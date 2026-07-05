@@ -148,4 +148,3 @@ Future `research_pass` requires, at minimum:
 - Drawdown is portfolio-normalized and reasonable once portfolio constraints exist.
 
 These are necessary conditions, not paper approval.
-

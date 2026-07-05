@@ -28,4 +28,3 @@ Universe selected:
 - Operational symbols: 150.
 - Benchmarks: 2.
 - Selected reason: matches the GAP-002 approved universe file and pairs with the selected research cache.
-

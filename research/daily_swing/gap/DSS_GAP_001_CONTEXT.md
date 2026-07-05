@@ -44,4 +44,3 @@ The main branch preserves:
 ## Safety Position
 
 DSS-GAP-001 starts as a research protocol only. It is not a paper candidate, not a shadow candidate, not a signal source, and not an order surface.
-
