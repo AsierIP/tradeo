@@ -1,0 +1,114 @@
+{
+  "schema_version": "tradeo.lab_daily_resource.merge_fast.final_decision.v1",
+  "task": "T-LAB-DAILY-RESOURCE-003-MERGE-FAST",
+  "integrator": "Agent E",
+  "generated_at": "2026-07-06T23:10:32+02:00",
+  "decision": "LAB_DAILY_RESOURCE_MAIN_MERGE_COMPLETE",
+  "status": "complete",
+  "worktrees": {
+    "main": "/home/vboxuser/tradeo-worktrees/director-control-loop-operability",
+    "feature_reference": "/tmp/tradeo-lab-daily-resource-001"
+  },
+  "agents": {
+    "agent_a": {
+      "status": "SECURITY_PASS",
+      "artifacts": [
+        "research/lab_daily_resource/LAB_DAILY_RESOURCE_003_SECURITY_AUDIT.md",
+        "research/lab_daily_resource/LAB_DAILY_RESOURCE_003_SECURITY_AUDIT.json"
+      ]
+    },
+    "agent_b": {
+      "status": "VALIDATION_PASS_WITH_ENV_WARNING",
+      "artifacts": [
+        "research/lab_daily_resource/LAB_DAILY_RESOURCE_003_VALIDATION.md",
+        "research/lab_daily_resource/LAB_DAILY_RESOURCE_003_VALIDATION.json"
+      ]
+    },
+    "agent_c": {
+      "status": "MERGE_LOCAL_PASS",
+      "artifacts": [
+        "research/lab_daily_resource/LAB_DAILY_RESOURCE_003_MERGE_EXECUTION.md",
+        "research/lab_daily_resource/LAB_DAILY_RESOURCE_003_MERGE_EXECUTION.json"
+      ]
+    },
+    "agent_d": {
+      "status": "POSTMERGE_PASS_PUSHED",
+      "artifacts": [
+        "research/lab_daily_resource/LAB_DAILY_RESOURCE_003_POSTMERGE_VALIDATION.md",
+        "research/lab_daily_resource/LAB_DAILY_RESOURCE_003_POSTMERGE_VALIDATION.json"
+      ]
+    }
+  },
+  "git": {
+    "main_initial_sha": "f47b76927d37034a239680312e212142d3f4cdd1",
+    "feature_head_merged_sha": "2c8831f2201b2011b220444053d68359a244df24",
+    "pre_amend_merge_sha": "4088710b5fad17b6bbee7594e929eed029aeaf6b",
+    "final_merge_sha": "4d57d4f932d74d85f99c032e78582549add00dd3",
+    "head_equals_origin_main": true,
+    "origin_main_contains": [
+      "98b7329",
+      "5bf69b0",
+      "2c8831f",
+      "4d57d4f"
+    ],
+    "minimal_correction_commit": {
+      "sha": "2c8831f2201b2011b220444053d68359a244df24",
+      "summary": "Direct MarketSessionResourcePolicy.decide_job(JobType.PAPER_SUBMIT) blocks during regular market and has a focused regression test."
+    }
+  },
+  "postmerge_gates": {
+    "py_compile": "pass",
+    "focused_pytest": "pass_53_passed_1_warning",
+    "ruff": "pass",
+    "json_validation": "pass",
+    "backend_docker_build": "pass",
+    "frontend_npm_build": "pass_with_next_swc_warning",
+    "diff_check": "pass",
+    "minimal_security_scan": "pass"
+  },
+  "safety_confirmations": {
+    "no_live_orders": true,
+    "no_paper_orders": true,
+    "no_orders": true,
+    "no_submit_paths_activated": true,
+    "daily_watchlist_sends_orders": false,
+    "endpoints_read_only": true,
+    "resource_policy_unknown_session_fail_closes": true,
+    "ui_placeholder_accepted": true,
+    "real_env_touched_or_tracked": false,
+    "runtime_artifacts_versioned": false,
+    "gh_used_by_agent_e": false,
+    "timers_modified_by_agent_e": false,
+    "lab_paper_probe_timers_modified": false,
+    "live_or_paper_runtime_settings_modified": false,
+    "feature_daily_swing_paper_probe_001_touched": false,
+    "pushed_by_agent_e": false
+  },
+  "residual_risks": [
+    {
+      "id": "T-004",
+      "status": "open_follow_up",
+      "summary": "Full historical scheduler/worker wrapper rollout remains a follow-up hardening task."
+    },
+    {
+      "id": "ui_placeholder",
+      "status": "accepted_residual",
+      "summary": "Frontend Daily Setup panel is a passive placeholder and not an operational workflow."
+    },
+    {
+      "id": "next_swc_lockfile_warning",
+      "status": "accepted_residual",
+      "summary": "Frontend build passes but emits Next/SWC lockfile patch warnings."
+    },
+    {
+      "id": "npm_audit_next_postcss",
+      "status": "pre_existing_not_merge_blocker",
+      "summary": "Existing npm audit risk through next/postcss remains; package manifests were unchanged."
+    }
+  ],
+  "files_written_by_agent_e": [
+    "research/lab_daily_resource/LAB_DAILY_RESOURCE_003_FINAL_REPORT.md",
+    "research/lab_daily_resource/LAB_DAILY_RESOURCE_003_DECISION.json"
+  ],
+  "final_line": "LAB_DAILY_RESOURCE_MAIN_MERGE_COMPLETE"
+}
