@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "tradeo.live_candidate_manifest.v1",
+  "type": "object",
+  "required": [
+    "schema",
+    "taxonomy",
+    "candidate_id",
+    "foxhunter_candidate_id",
+    "foxhunter_to_live_gate_status",
+    "risk_review_passed",
+    "kill_switch_tested",
+    "live_armed_controlled",
+    "max_daily_loss",
+    "max_position_value",
+    "max_trades",
+    "paper_live_account_separation",
+    "human_review_complete",
+    "explicit_asier_or_director_authorization"
+  ],
+  "properties": {
+    "schema": {"const": "tradeo.live_candidate_manifest.v1"},
+    "taxonomy": {"const": "live_candidate"},
+    "candidate_id": {"type": "string", "minLength": 1},
+    "foxhunter_candidate_id": {"type": "string", "minLength": 1},
+    "foxhunter_to_live_gate_status": {"const": "passed"},
+    "risk_review_passed": {"const": true},
+    "kill_switch_tested": {"const": true},
+    "live_armed_controlled": {"const": true},
+    "max_daily_loss": {"type": "number", "exclusiveMinimum": 0},
+    "max_position_value": {"type": "number", "exclusiveMinimum": 0},
+    "max_trades": {"type": "integer", "minimum": 1},
+    "paper_live_account_separation": {"const": true},
+    "human_review_complete": {"const": true},
+    "explicit_asier_or_director_authorization": {"const": true}
+  },
+  "additionalProperties": true
+}
