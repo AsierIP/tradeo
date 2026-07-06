@@ -1,0 +1,22 @@
+{
+  "schema_version": "tradeo.lab_daily_resource.red_team.v1",
+  "status": "PASS_WITH_RESIDUAL_WARNINGS",
+  "cases": {
+    "research_heavy_during_regular_market": "blocked",
+    "lab_job_during_market_closed": "low_or_blocked",
+    "daily_entry_ready_direct_order": "blocked",
+    "endpoint_write_accidental": "blocked",
+    "lookahead_risk_watchlist_entry": "blocked",
+    "reward_risk_insufficient_watchlist_entry": "blocked",
+    "fast_engine_simultaneous_high": "policy_arbitrated",
+    "runtime_artifact_tracked": "not_tracked",
+    "endpoint_exposes_secrets": "not_detected",
+    "daily_metrics_mixed": "not_detected",
+    "foxhunter_auto_promotion": "blocked",
+    "paper_live_activated": "not_detected"
+  },
+  "residual_warnings": [
+    "Existing .env.example paper auto-submit default remains inherited from main.",
+    "Frontend build emitted Next SWC lockfile patch warnings but exited 0."
+  ]
+}

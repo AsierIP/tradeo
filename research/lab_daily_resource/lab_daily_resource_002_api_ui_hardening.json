@@ -1,0 +1,24 @@
+{
+  "api": {
+    "allowed_methods": [
+      "GET"
+    ],
+    "endpoints": [
+      "/api/resource-policy/status",
+      "/api/daily/setup-watchlist",
+      "/api/daily/setup-watchlist/{setup_id}",
+      "/api/daily/setup-watchlist/summary"
+    ],
+    "order_submission_allowed": false,
+    "write_endpoint_available": false
+  },
+  "decision": "UI_PLACEHOLDER_ACCEPTED",
+  "frontend": {
+    "foxhunter_promotion_button": false,
+    "live_button": false,
+    "order_submit_button": false,
+    "placeholder": true
+  },
+  "generated_at": "2026-07-06T20:30:00Z",
+  "status": "PASS_WITH_UI_PLACEHOLDER"
+}

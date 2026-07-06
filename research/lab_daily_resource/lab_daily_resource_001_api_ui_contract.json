@@ -1,0 +1,41 @@
+{
+  "schema_version": "tradeo.lab_daily_resource.api_ui_contract.v1",
+  "endpoints": [
+    {
+      "method": "GET",
+      "path": "/api/resource-policy/status",
+      "read_only": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/daily/setup-watchlist",
+      "read_only": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/daily/setup-watchlist/{setup_id}",
+      "read_only": true
+    },
+    {
+      "method": "GET",
+      "path": "/api/daily/setup-watchlist/summary",
+      "read_only": true
+    }
+  ],
+  "forbidden_ui": [
+    "live_buttons",
+    "foxhunter_auto_promotion",
+    "daily_order_submit_button"
+  ],
+  "daily_sections": [
+    "open_orders",
+    "closed_orders",
+    "cumulative_pl",
+    "watchlist_setups"
+  ],
+  "empty_states": [
+    "No open paper positions",
+    "No closed paper trades",
+    "No Daily setups in watchlist"
+  ]
+}

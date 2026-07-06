@@ -1,0 +1,61 @@
+{
+  "task": "T-LAB-DAILY-RESOURCE-003-MERGE-FAST",
+  "executor": "Agent C",
+  "status": "MERGE_LOCAL_PASS",
+  "executed_at": "2026-07-06T22:55:28+02:00",
+  "worktree": "/home/vboxuser/tradeo-worktrees/director-control-loop-operability",
+  "feature_worktree_reference": "/tmp/tradeo-lab-daily-resource-001",
+  "preconditions": {
+    "agent_a": "SECURITY_PASS",
+    "agent_b": "VALIDATION_PASS_WITH_ENV_WARNING",
+    "expected_origin_main_initial_sha": "f47b76927d37034a239680312e212142d3f4cdd1",
+    "expected_feature_sha": "2c8831f2201b2011b220444053d68359a244df24",
+    "branch_confirmed": "main",
+    "worktree_clean_before_merge": true,
+    "github_cli_used": false,
+    "rebase_used": false,
+    "force_push_used": false,
+    "push_used": false
+  },
+  "refs": {
+    "main_pre_pull_sha": "f47b76927d37034a239680312e212142d3f4cdd1",
+    "origin_main_post_fetch_sha": "f47b76927d37034a239680312e212142d3f4cdd1",
+    "main_initial_sha": "f47b76927d37034a239680312e212142d3f4cdd1",
+    "feature_ref": "origin/feature/lab-daily-resource-001",
+    "feature_sha": "2c8831f2201b2011b220444053d68359a244df24",
+    "merge_commit_sha": "4088710b5fad17b6bbee7594e929eed029aeaf6b",
+    "merge_parent_shas": [
+      "f47b76927d37034a239680312e212142d3f4cdd1",
+      "2c8831f2201b2011b220444053d68359a244df24"
+    ]
+  },
+  "commands": [
+    {
+      "command": "git fetch origin",
+      "result": "PASS"
+    },
+    {
+      "command": "git pull --ff-only origin main",
+      "result": "PASS",
+      "summary": "Already up to date."
+    },
+    {
+      "command": "git merge --no-ff origin/feature/lab-daily-resource-001 -m \"Merge Lab Daily resource policy and watchlist\"",
+      "result": "PASS",
+      "summary": "Merge made by the ort strategy; no conflicts."
+    }
+  ],
+  "scope_check": {
+    "real_env_modified": false,
+    "timer_or_scheduler_files_modified": false,
+    "lab_paper_probe_timer_files_modified": false,
+    "daily_swing_paper_probe_branch_touched": false,
+    "manual_post_merge_edits_limited_to_reports": true,
+    "validation_environment_warning_carried_forward": "The merged feature changes TRADEO_LABORATORY_AUTO_SUBMIT_PAPER_ORDERS from true to false in .env.example and changes the matching Settings default in backend/tradeo/core/config.py. No real .env file was modified."
+  },
+  "reports_written": [
+    "research/lab_daily_resource/LAB_DAILY_RESOURCE_003_MERGE_EXECUTION.md",
+    "research/lab_daily_resource/LAB_DAILY_RESOURCE_003_MERGE_EXECUTION.json"
+  ],
+  "pushed": false
+}

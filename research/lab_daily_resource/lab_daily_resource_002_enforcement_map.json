@@ -1,0 +1,34 @@
+{
+  "generated_at": "2026-07-06T20:30:00Z",
+  "items": [
+    {
+      "module": "backend/tradeo/modules/fast_chart_analysis/engine_registry.py",
+      "job_type": "daily_watchlist_reeval",
+      "owner": "daily_watchlist",
+      "resource_class": "fast_engine",
+      "enforcement_status": "ENFORCED"
+    },
+    {
+      "module": "backend/tradeo/modules/resource_policy/enforcement.py",
+      "job_type": "research_heavy",
+      "owner": "research",
+      "resource_class": "heavy_research",
+      "enforcement_status": "ENFORCED"
+    },
+    {
+      "module": "backend/tradeo/modules/resource_policy/enforcement.py",
+      "job_type": "lab_paper_probe",
+      "owner": "lab",
+      "resource_class": "lab_probe",
+      "enforcement_status": "ENFORCED"
+    },
+    {
+      "module": "scheduler_worker_wrappers",
+      "job_type": "mixed",
+      "owner": "mixed",
+      "resource_class": "scheduler",
+      "enforcement_status": "NEEDS_FOLLOWUP"
+    }
+  ],
+  "unknown_session": "fail_closed"
+}

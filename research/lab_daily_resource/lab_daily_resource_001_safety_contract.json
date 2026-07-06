@@ -1,0 +1,24 @@
+{
+  "schema_version": "tradeo.lab_daily_resource.safety_contract.v1",
+  "absolute_restrictions": {
+    "live_orders": false,
+    "real_money_orders": false,
+    "relax_gates": false,
+    "create_live_candidate": false,
+    "create_classic_paper_candidate": false,
+    "activate_paper_outside_lab_paper_probe": false,
+    "new_order_routes": false,
+    "foxhunter_auto_promotion": false
+  },
+  "new_surfaces": {
+    "resource_policy_status": "GET/read-only",
+    "daily_setup_watchlist": "GET/read-only",
+    "fast_engine_registry": "metadata/scaffold"
+  },
+  "runtime_artifacts_ignored": [
+    "artifacts/runtime/resource_policy/latest.json",
+    "artifacts/runtime/daily_swing/setup_watchlist/latest.json",
+    "artifacts/runtime/daily_swing/setup_watchlist/history/YYYY-MM-DD.json"
+  ],
+  "secret_values_exposed": false
+}

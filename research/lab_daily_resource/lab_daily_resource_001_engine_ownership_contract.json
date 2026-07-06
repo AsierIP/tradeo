@@ -1,0 +1,23 @@
+{
+  "schema_version": "tradeo.lab_daily_resource.engine_ownership_contract.v1",
+  "owners": ["lab", "research", "daily_watchlist"],
+  "rules": {
+    "REGULAR_MARKET": {
+      "high_priority_owner": "lab",
+      "research_heavy": "BLOCKED"
+    },
+    "MARKET_CLOSED": {
+      "high_priority_owner": "research",
+      "paper_submit": "BLOCKED"
+    },
+    "POST_MARKET": {
+      "high_priority_owner": "daily_watchlist",
+      "daily_watchlist_reeval": "HIGH"
+    },
+    "UNKNOWN": {
+      "fast_engine": "BLOCKED"
+    }
+  },
+  "can_submit_orders": false,
+  "deny_reason_required": true
+}

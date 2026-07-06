@@ -1,0 +1,19 @@
+{
+  "changed": [
+    ".env.example",
+    "backend/tradeo/core/config.py"
+  ],
+  "decision": "SECURITY_DEFAULTS_HARDENED",
+  "defaults": {
+    "TRADEO_FOX_HUNTER_AUTO_SUBMIT_LIVE_ORDERS": false,
+    "TRADEO_LABORATORY_AUTO_SUBMIT_PAPER_ORDERS": false,
+    "settings_laboratory_auto_submit_paper_orders": false
+  },
+  "false_positives": [
+    "defensive live_armed strings",
+    "tests that explicitly enable paper auto-submit",
+    "broker safety methods containing placeOrder"
+  ],
+  "generated_at": "2026-07-06T20:30:00Z",
+  "status": "PASS"
+}

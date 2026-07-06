@@ -1,0 +1,188 @@
+{
+  "schema_version": "tradeo.lab_daily_resource.validation.v1",
+  "task": "T-LAB-DAILY-RESOURCE-003-MERGE-FAST",
+  "branch": "feature/lab-daily-resource-001",
+  "worktree": "/tmp/tradeo-lab-daily-resource-001",
+  "base_ref": "origin/main",
+  "base_sha": "f47b76927d37034a239680312e212142d3f4cdd1",
+  "generated_at": "2026-07-06T20:48:33Z",
+  "verdict": "VALIDATION_PASS_WITH_ENV_WARNING",
+  "touched_files_vs_origin_main_count": 58,
+  "touched_files_vs_origin_main": [
+    ".env.example",
+    "backend/tradeo/core/config.py",
+    "backend/tradeo/main.py",
+    "backend/tradeo/modules/daily_swing/setup_watchlist.py",
+    "backend/tradeo/modules/fast_chart_analysis/__init__.py",
+    "backend/tradeo/modules/fast_chart_analysis/engine_registry.py",
+    "backend/tradeo/modules/resource_policy/__init__.py",
+    "backend/tradeo/modules/resource_policy/enforcement.py",
+    "backend/tradeo/modules/resource_policy/market_session.py",
+    "backend/tradeo/modules/resource_policy/market_session_resource_policy.py",
+    "backend/tradeo/routers/daily.py",
+    "backend/tradeo/routers/resource_policy.py",
+    "backend/tradeo/tests/test_daily_resource_api_contract.py",
+    "backend/tradeo/tests/test_daily_setup_watchlist.py",
+    "backend/tradeo/tests/test_fast_chart_engine_registry.py",
+    "backend/tradeo/tests/test_market_session_resource_policy.py",
+    "backend/tradeo/tests/test_resource_policy_enforcement.py",
+    "backend/tradeo/tests/test_resource_policy_market_session.py",
+    "frontend/app/page.tsx",
+    "research/daily_swing/DAILY_SETUP_WATCHLIST_001_DECISION.json",
+    "research/daily_swing/DAILY_SETUP_WATCHLIST_001_REPORT.md",
+    "research/lab_daily_resource/LAB_DAILY_RESOURCE_001_AGENT_A_DESIGN.md",
+    "research/lab_daily_resource/LAB_DAILY_RESOURCE_001_AGENT_B_DESIGN.md",
+    "research/lab_daily_resource/LAB_DAILY_RESOURCE_001_AGENT_C_DESIGN.md",
+    "research/lab_daily_resource/LAB_DAILY_RESOURCE_001_AGENT_D_DESIGN.md",
+    "research/lab_daily_resource/LAB_DAILY_RESOURCE_001_CONTEXT_SYNC.md",
+    "research/lab_daily_resource/LAB_DAILY_RESOURCE_001_CROSS_REVIEW.md",
+    "research/lab_daily_resource/LAB_DAILY_RESOURCE_001_FINAL_DECISION.md",
+    "research/lab_daily_resource/LAB_DAILY_RESOURCE_001_INTEGRATION_PLAN.md",
+    "research/lab_daily_resource/LAB_DAILY_RESOURCE_001_QA_REPORT.json",
+    "research/lab_daily_resource/LAB_DAILY_RESOURCE_001_QA_REPORT.md",
+    "research/lab_daily_resource/LAB_DAILY_RESOURCE_001_RED_TEAM.json",
+    "research/lab_daily_resource/LAB_DAILY_RESOURCE_001_RED_TEAM.md",
+    "research/lab_daily_resource/LAB_DAILY_RESOURCE_001_REVISED_DESIGN.md",
+    "research/lab_daily_resource/LAB_DAILY_RESOURCE_002_API_UI_HARDENING.md",
+    "research/lab_daily_resource/LAB_DAILY_RESOURCE_002_CROSS_REVIEW.md",
+    "research/lab_daily_resource/LAB_DAILY_RESOURCE_002_ENFORCEMENT_IMPLEMENTATION.md",
+    "research/lab_daily_resource/LAB_DAILY_RESOURCE_002_ENFORCEMENT_MAP.md",
+    "research/lab_daily_resource/LAB_DAILY_RESOURCE_002_FINAL_DECISION.md",
+    "research/lab_daily_resource/LAB_DAILY_RESOURCE_002_RED_TEAM.md",
+    "research/lab_daily_resource/LAB_DAILY_RESOURCE_002_SECURITY_DEFAULTS.json",
+    "research/lab_daily_resource/LAB_DAILY_RESOURCE_002_SECURITY_DEFAULTS.md",
+    "research/lab_daily_resource/LAB_DAILY_RESOURCE_002_WATCHLIST_HARDENING.md",
+    "research/lab_daily_resource/T-LAB-DAILY-RESOURCE-001_AGENT_A_MARKET_SESSION_RESOURCE_POLICY.md",
+    "research/lab_daily_resource/T-LAB-DAILY-RESOURCE-001_AGENT_E_QA_REPORT.md",
+    "research/lab_daily_resource/lab_daily_resource_001_api_ui_contract.json",
+    "research/lab_daily_resource/lab_daily_resource_001_cross_review.json",
+    "research/lab_daily_resource/lab_daily_resource_001_engine_ownership_contract.json",
+    "research/lab_daily_resource/lab_daily_resource_001_resource_policy_contract.json",
+    "research/lab_daily_resource/lab_daily_resource_001_safety_contract.json",
+    "research/lab_daily_resource/lab_daily_resource_001_watchlist_state_contract.json",
+    "research/lab_daily_resource/lab_daily_resource_002_api_ui_hardening.json",
+    "research/lab_daily_resource/lab_daily_resource_002_cross_review.json",
+    "research/lab_daily_resource/lab_daily_resource_002_enforcement_map.csv",
+    "research/lab_daily_resource/lab_daily_resource_002_enforcement_map.json",
+    "research/lab_daily_resource/lab_daily_resource_002_red_team.json",
+    "research/resource_policy/RESOURCE_POLICY_001_DECISION.json",
+    "research/resource_policy/RESOURCE_POLICY_001_REPORT.md"
+  ],
+  "shared_worktree_observations": {
+    "uncommitted_tracked_changes_not_authored_by_validation": [
+      {
+        "path": "backend/tradeo/modules/resource_policy/market_session_resource_policy.py",
+        "summary": "Direct PAPER_SUBMIT decision is blocked and regular-market blocked_job_types includes PAPER_SUBMIT."
+      },
+      {
+        "path": "backend/tradeo/tests/test_market_session_resource_policy.py",
+        "summary": "Adds focused test that direct paper submit is blocked during regular market."
+      }
+    ],
+    "untracked_files_observed_before_validation_reports": [
+      "research/lab_daily_resource/LAB_DAILY_RESOURCE_003_SECURITY_AUDIT.json",
+      "research/lab_daily_resource/LAB_DAILY_RESOURCE_003_SECURITY_AUDIT.md"
+    ],
+    "action": "preserved and included in final validation reruns"
+  },
+  "checks": [
+    {
+      "name": "branch_status",
+      "command": "git status --short --branch",
+      "exit_code": 0,
+      "status": "pass",
+      "evidence": "Confirmed feature/lab-daily-resource-001; shared worktree dirty from non-validation edits and report artifacts."
+    },
+    {
+      "name": "touched_files",
+      "command": "git diff --name-status origin/main",
+      "exit_code": 0,
+      "status": "pass",
+      "evidence": "58 tracked files differ from origin/main."
+    },
+    {
+      "name": "host_py_compile",
+      "command": "python3 -m py_compile <touched Python files>",
+      "exit_code": 0,
+      "status": "pass",
+      "evidence": "Host syntax compile passed before Docker runtime compile."
+    },
+    {
+      "name": "docker_py_compile_current",
+      "command": "docker run --rm -e PYTHONPYCACHEPREFIX=/tmp/pycache --mount type=bind,source=/tmp/tradeo-lab-daily-resource-001,target=/repo,readonly -w /repo tradeo-backend:lab-daily-resource-003-validation python -m py_compile <touched Python files>",
+      "exit_code": 0,
+      "status": "pass",
+      "evidence": "Python 3.12 compile passed for all touched Python modules and focused tests."
+    },
+    {
+      "name": "ruff_current",
+      "command": "docker run --rm --mount type=bind,source=/tmp/tradeo-lab-daily-resource-001,target=/repo,readonly -w /repo/backend tradeo-backend:lab-daily-resource-003-validation ruff check --no-cache <touched Python files>",
+      "exit_code": 0,
+      "status": "pass",
+      "evidence": "All checks passed."
+    },
+    {
+      "name": "pytest_focal_current",
+      "command": "docker run --rm --mount type=bind,source=/tmp/tradeo-lab-daily-resource-001,target=/repo,readonly -w /repo/backend tradeo-backend:lab-daily-resource-003-validation pytest tradeo/tests/test_resource_policy_market_session.py tradeo/tests/test_market_session_resource_policy.py tradeo/tests/test_resource_policy_enforcement.py tradeo/tests/test_daily_setup_watchlist.py tradeo/tests/test_daily_resource_api_contract.py tradeo/tests/test_fast_chart_engine_registry.py tradeo/tests/test_research_lab_fox_lifecycle.py",
+      "exit_code": 0,
+      "status": "pass",
+      "evidence": "54 passed, 2 warnings in 6.48s.",
+      "warnings": [
+        "StarletteDeprecationWarning from fastapi.testclient import path.",
+        "PytestCacheWarning because /repo was mounted read-only."
+      ]
+    },
+    {
+      "name": "json_validation_feature_reports",
+      "command": "python3 -c json.load over git diff --name-only origin/main -- *.json",
+      "exit_code": 0,
+      "status": "pass",
+      "evidence": "Validated 15 tracked JSON files."
+    },
+    {
+      "name": "json_validation_security_audit",
+      "command": "python3 -m json.tool research/lab_daily_resource/LAB_DAILY_RESOURCE_003_SECURITY_AUDIT.json",
+      "exit_code": 0,
+      "status": "pass",
+      "evidence": "Untracked security audit JSON parsed."
+    },
+    {
+      "name": "diff_check_current",
+      "command": "git diff --check",
+      "exit_code": 0,
+      "status": "pass",
+      "evidence": "No whitespace or conflict-marker errors in current worktree diff."
+    },
+    {
+      "name": "backend_docker_build_current",
+      "command": "docker build -f backend/Dockerfile -t tradeo-backend:lab-daily-resource-003-validation .",
+      "exit_code": 0,
+      "status": "pass",
+      "evidence": "Backend image rebuilt successfully after shared-worktree source/test changes."
+    },
+    {
+      "name": "frontend_build",
+      "command": "npm run build",
+      "exit_code": 0,
+      "status": "pass_with_warning",
+      "evidence": "Next.js optimized production build completed successfully.",
+      "warnings": [
+        "Next emitted SWC lockfile patch warnings.",
+        "Post-build message: Failed to patch lockfile, please try uninstalling and reinstalling next in this workspace."
+      ]
+    }
+  ],
+  "environment_warnings": [
+    "Host python3 did not have pytest or ruff installed; dependency-bound checks used the backend Docker image.",
+    "Direct pytest inside the built image at /app failed because test repo-root discovery resolved /.env.example due the Docker image's flattened backend layout. The same focal tests passed from a read-only repo-layout bind mount at /repo/backend.",
+    "py_compile against a read-only bind mount needs PYTHONPYCACHEPREFIX redirected away from source; redirected compile passed.",
+    "npm run build exited 0 but Next emitted SWC lockfile patch warnings and a post-build lockfile patch error."
+  ],
+  "security_or_logic_blocker": false,
+  "code_changes_made_by_validation": false,
+  "reports_written_by_validation": [
+    "research/lab_daily_resource/LAB_DAILY_RESOURCE_003_VALIDATION.md",
+    "research/lab_daily_resource/LAB_DAILY_RESOURCE_003_VALIDATION.json"
+  ],
+  "final_line": "VALIDATION_PASS_WITH_ENV_WARNING"
+}

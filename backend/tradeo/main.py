@@ -10,6 +10,7 @@ from tradeo.db.init_db import init_db, seed_db
 from tradeo.db.session import SessionLocal
 from tradeo.routers import (
     backtests,
+    daily,
     dashboard,
     fox_hunter,
     health,
@@ -17,6 +18,7 @@ from tradeo.routers import (
     intraday,
     laboratory,
     reports,
+    resource_policy,
     research,
     risk,
     scan,
@@ -51,6 +53,8 @@ def create_app() -> FastAPI:
     app.include_router(intraday.router, prefix=settings.api_prefix)
     app.include_router(laboratory.router, prefix=settings.api_prefix)
     app.include_router(fox_hunter.router, prefix=settings.api_prefix)
+    app.include_router(resource_policy.router, prefix=settings.api_prefix)
+    app.include_router(daily.router, prefix=settings.api_prefix)
     app.include_router(dashboard.router, prefix=settings.api_prefix)
     app.include_router(scan.router, prefix=settings.api_prefix)
     app.include_router(signals.router, prefix=settings.api_prefix)

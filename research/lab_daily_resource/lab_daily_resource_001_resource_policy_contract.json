@@ -1,0 +1,46 @@
+{
+  "schema_version": "tradeo.lab_daily_resource.resource_policy_contract.v1",
+  "timezone": "America/New_York",
+  "session_states": [
+    "PRE_MARKET",
+    "REGULAR_MARKET",
+    "POST_MARKET",
+    "MARKET_CLOSED",
+    "WEEKEND_OR_HOLIDAY",
+    "UNKNOWN"
+  ],
+  "required_budget_fields": [
+    "session_state",
+    "generated_at",
+    "timezone",
+    "lab_priority",
+    "research_priority",
+    "daily_watchlist_priority",
+    "lab_paper_probe_priority",
+    "cpu_slots_lab",
+    "cpu_slots_research",
+    "max_symbols_lab_cycle",
+    "max_symbols_research_cycle",
+    "max_process_pool_workers_lab",
+    "max_process_pool_workers_research",
+    "ibkr_read_budget",
+    "ibkr_write_allowed",
+    "market_data_budget",
+    "scanner_budget",
+    "cache_read_budget",
+    "cache_write_budget",
+    "heavy_research_allowed",
+    "lab_paper_probe_allowed",
+    "daily_watchlist_reeval_allowed",
+    "blocked_job_types",
+    "deny_reasons",
+    "reason"
+  ],
+  "hard_rules": {
+    "regular_market_research_heavy": "BLOCKED",
+    "regular_market_lab_priority": "HIGH",
+    "market_closed_research_priority": "HIGH",
+    "unknown_session": "FAIL_CLOSED",
+    "live": "BLOCKED"
+  }
+}

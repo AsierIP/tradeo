@@ -1,0 +1,14 @@
+{
+  "schema_version": "tradeo.daily_setup_watchlist.decision.v1",
+  "decision": "READY_WITH_VALIDATION_GAPS",
+  "implemented": true,
+  "daily_submits_orders": false,
+  "entry_ready_submits_orders": false,
+  "foxhunter_auto_promotion": false,
+  "runtime_artifact": "artifacts/runtime/daily_swing/setup_watchlist/latest.json",
+  "endpoints": [
+    "GET /api/daily/setup-watchlist",
+    "GET /api/daily/setup-watchlist/{setup_id}",
+    "GET /api/daily/setup-watchlist/summary"
+  ]
+}

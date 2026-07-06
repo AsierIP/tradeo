@@ -1,0 +1,9 @@
+{
+  "schema_version": "tradeo.resource_policy.decision.v1",
+  "decision": "READY_WITH_VALIDATION_GAPS",
+  "implemented": true,
+  "live_orders_enabled": false,
+  "paper_submit_paths_changed": false,
+  "runtime_artifact": "artifacts/runtime/resource_policy/latest.json",
+  "endpoint": "GET /api/resource-policy/status"
+}

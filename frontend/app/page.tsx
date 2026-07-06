@@ -371,6 +371,74 @@ type IntradayFlatPreview = {
   orders: FlatPreviewOrder[]
   reason_code: string
 }
+type ResourcePolicyStatus = {
+  schema_version: string
+  generated_at: string
+  read_only: boolean
+  policy: {
+    decision: string
+    allowed?: boolean
+    allowed_resources: string[]
+    blocked_resources: string[]
+    reason_codes: string[]
+    fail_closed: boolean
+  }
+  safety: {
+    write_endpoints_exposed: boolean
+    order_resources_prohibited: boolean
+    paper_order_submission_allowed: boolean
+    live_order_submission_allowed: boolean
+    signal_output_allowed: boolean
+    fox_hunter_promotion_allowed: boolean
+    secret_values_exposed: boolean
+  }
+}
+type DailySetupWatchlistItem = {
+  setup_id?: string
+  symbol?: string
+  side?: string
+  state?: string
+  status?: string
+  reason?: string | null
+  block_reason?: string | null
+  entry_ready?: boolean
+  updated_at?: string | null
+}
+type DailySetupWatchlistStatus = {
+  schema_version: string
+  generated_at: string
+  read_only: boolean
+  status: string
+  cadence: 'daily'
+  timeframe: '1d'
+  watchlist: {
+    state: string
+    source: string
+    symbols: string[]
+    items: DailySetupWatchlistItem[]
+    count: number
+    active_count: number
+    entry_ready_count: number
+    state_counts: Record<string, number>
+    reason?: string | null
+    orders_allowed: boolean
+    paper_allowed: boolean
+    live_allowed: boolean
+  }
+  contract: {
+    allowed_methods: string[]
+    write_endpoint_available: boolean
+    resource_policy_required: boolean
+    order_submission_allowed: boolean
+    paper_order_submission_allowed: boolean
+    live_order_submission_allowed: boolean
+    signal_output_allowed: boolean
+    fox_hunter_promotion_allowed: boolean
+    secret_values_exposed: boolean
+  }
+  resource_policy: ResourcePolicyStatus['policy']
+  blocked_actions: string[]
+}
 
 function StatCard({ label, value, suffix }: { label: string; value: string | number; suffix?: string }) {
   return (
@@ -797,6 +865,86 @@ function IntradayPanel({
   )
 }
 
+function DailySetupWatchlistPanel({
+  status,
+  resourcePolicy
+}: {
+  status?: DailySetupWatchlistStatus
+  resourcePolicy?: ResourcePolicyStatus
+}) {
+  const watchlist = status?.watchlist
+  const items = watchlist?.items || []
+  const policy = status?.resource_policy || resourcePolicy?.policy
+  const policyBlocked = policy?.blocked_resources?.length ?? 0
+  const contract = status?.contract
+  const readonlyOk = Boolean(status?.read_only && contract && !contract.write_endpoint_available)
+  return (
+    <section className="card module-card operation-lane daily-contract-card">
+      <div className="section-head module-head">
+        <div>
+          <div className="module-kicker">Daily Setup</div>
+          <h2>Setup watchlist</h2>
+          <p className="muted">
+            Contrato API read-only para setups daily antes de cualquier ruta operativa.
+          </p>
+        </div>
+        <div className="module-actions">
+          <div className="pill"><span className={`dot ${readonlyOk ? '' : 'warn'}`} />read-only {readonlyOk ? 'ok' : 'pendiente'}</div>
+          <div className="pill">{status?.status || 'cargando'}</div>
+          <div className="pill">policy: {policy?.decision || resourcePolicy?.policy?.decision || '-'}</div>
+        </div>
+      </div>
+
+      <div className="operation-metrics">
+        <div><strong>{watchlist?.active_count ?? 0}</strong><span>setups activos</span></div>
+        <div><strong>{watchlist?.entry_ready_count ?? 0}</strong><span>entry-ready</span></div>
+        <div><strong>{watchlist?.state || '-'}</strong><span>estado artifact</span></div>
+        <div><strong>{policyBlocked}</strong><span>recursos bloqueados</span></div>
+      </div>
+
+      <div className="operation-layout">
+        <section className="module-panel">
+          <h3>Contrato</h3>
+          <div className="lab-status-grid daily-contract-grid">
+            <div><strong>Métodos</strong><span>{contract?.allowed_methods?.join(', ') || 'GET'}</span></div>
+            <div><strong>Órdenes</strong><span>{contract?.order_submission_allowed ? 'permitidas' : 'bloqueadas'}</span></div>
+            <div><strong>Paper</strong><span>{contract?.paper_order_submission_allowed ? 'permitido' : 'bloqueado'}</span></div>
+            <div><strong>FoxHunter</strong><span>{contract?.fox_hunter_promotion_allowed ? 'permitido' : 'bloqueado'}</span></div>
+          </div>
+          <div className="mini-stats intraday-mini">
+            <span>source: {watchlist?.source || '-'}</span>
+            <span>symbols: {watchlist?.symbols?.length ?? 0}</span>
+            <span>secrets: {contract?.secret_values_exposed ? 'expuestos' : 'redacted'}</span>
+          </div>
+        </section>
+
+        <section className="module-panel">
+          <h3>Watchlist</h3>
+          <div className="table-scroll active-orders-scroll">
+            <table>
+              <thead>
+                <tr><th>Setup</th><th>Símbolo</th><th>Lado</th><th>Estado</th><th>Detalle</th></tr>
+              </thead>
+              <tbody>
+                {items.slice(0, 8).map((item, idx) => (
+                  <tr key={item.setup_id || `${item.symbol}-${idx}`}>
+                    <td className="mono">{item.setup_id || '-'}</td>
+                    <td>{item.symbol || '-'}</td>
+                    <td>{item.side || '-'}</td>
+                    <td><StatusBadge status={item.state || item.status || 'watchlist'} /></td>
+                    <td className="wrap-cell">{item.reason || item.block_reason || '-'}</td>
+                  </tr>
+                ))}
+                {!items.length && <tr><td colSpan={5}>Sin setups daily cargados.</td></tr>}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </div>
+    </section>
+  )
+}
+
 function OperationsModule({
   title,
   subtitle,
@@ -924,6 +1072,8 @@ export default function Page() {
   const { data: intradayStatus } = useSWR<IntradayStatus>('/intraday/status', fetcher, { refreshInterval: 5000 })
   const { data: intradayPacing } = useSWR<IntradayPacing>('/intraday/pacing', fetcher, { refreshInterval: 5000 })
   const { data: intradayFlatStatus, mutate: mutateIntradayFlatStatus } = useSWR<IntradayFlatStatus>('/intraday/flat/status', fetcher, { refreshInterval: 5000 })
+  const { data: resourcePolicyStatus } = useSWR<ResourcePolicyStatus>('/resource-policy/status', fetcher, { refreshInterval: 10000 })
+  const { data: dailySetupWatchlist } = useSWR<DailySetupWatchlistStatus>('/daily/setup-watchlist/status', fetcher, { refreshInterval: 15000 })
   const { data: webNotice } = useSWR<WebNotice>('/health/notice', fetcher, { refreshInterval: 10000 })
 
   useEffect(() => {
@@ -1120,6 +1270,11 @@ export default function Page() {
             label="Lab Daily"
             value={`${labDailyOverview?.stats.open_trades ?? 0} activas`}
             tone="good"
+          />
+          <ModeChip
+            label="Daily Setup"
+            value={`${dailySetupWatchlist?.watchlist.active_count ?? 0} watch`}
+            tone={dailySetupWatchlist?.contract.write_endpoint_available ? 'bad' : 'warn'}
           />
           <ModeChip
             label="Lab Intradía"
@@ -1388,12 +1543,15 @@ export default function Page() {
                 />
               </>
             ) : (
-              <OperationsModule
-                title="Lab Daily"
-                subtitle="Órdenes paper diarias activas y P/L acumulado de fills daily cerrados."
-                overview={labDailyOverview}
-                status={labStatus}
-              />
+              <>
+                <OperationsModule
+                  title="Lab Daily"
+                  subtitle="Órdenes paper diarias activas y P/L acumulado de fills daily cerrados."
+                  overview={labDailyOverview}
+                  status={labStatus}
+                />
+                <DailySetupWatchlistPanel status={dailySetupWatchlist} resourcePolicy={resourcePolicyStatus} />
+              </>
             )}
           </section>
         )}
