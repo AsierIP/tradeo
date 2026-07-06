@@ -216,7 +216,16 @@ class FastChartEngineRegistry:
         *,
         resources: SchedulerResourceSnapshot | Mapping[str, int] | None,
         owner: str = DAILY_WATCHLIST_OWNER,
+        now: datetime | None = None,
     ) -> EngineScheduleDecision:
+        if _normalize_engine_id(engine_id) == FAST_DAILY_WATCHLIST_ENGINE_ID:
+            return plan_daily_watchlist_scheduler_run(
+                resources=resources,
+                owner=owner,
+                registry=self,
+                resource_policy=self.resource_policy,
+                now=now,
+            )
         return plan_scheduler_run(
             engine_id,
             resources=resources,

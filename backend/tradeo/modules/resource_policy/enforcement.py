@@ -49,29 +49,42 @@ def assert_job_allowed(
 ) -> ResourcePolicyDecision:
     normalized_job = _normalize_job_type(job_type)
     normalized_owner = _normalize_owner(owner)
+    normalized_session = _normalize_session_state(session_state)
 
     if normalized_job == JobType.LIVE:
         return _blocked(
             normalized_job,
             normalized_owner,
             "live jobs are outside Daily resource policy",
-            session_state,
+            normalized_session,
         )
     if normalized_job == JobType.PAPER_SUBMIT:
         return _blocked(
             normalized_job,
             normalized_owner,
             "paper submit is blocked unless the Lab Paper Probe gate explicitly owns it",
-            session_state,
+            normalized_session,
         )
-    if session_state == SessionState.UNKNOWN:
-        return _blocked(normalized_job, normalized_owner, "session state unknown; fail closed", session_state)
+    if normalized_session == SessionState.UNKNOWN:
+        return _blocked(
+            normalized_job,
+            normalized_owner,
+            "session state unknown; fail closed",
+            normalized_session,
+        )
     if policy is None or not hasattr(policy, "decide_job"):
-        return _blocked(normalized_job, normalized_owner, "resource policy missing; fail closed", session_state)
+        return _blocked(
+            normalized_job,
+            normalized_owner,
+            "resource policy missing; fail closed",
+            normalized_session,
+        )
 
     decision = policy.decide_job(normalized_job, now=now)
     budget = getattr(decision, "budget", None)
-    effective_state = str(getattr(budget, "session_state", session_state or SessionState.UNKNOWN))
+    effective_state = _normalize_session_state(
+        str(getattr(budget, "session_state", normalized_session or SessionState.UNKNOWN))
+    )
     if effective_state == SessionState.UNKNOWN:
         return _blocked(
             normalized_job,
@@ -128,3 +141,9 @@ def _normalize_job_type(job_type: str) -> str:
 
 def _normalize_owner(owner: str) -> str:
     return str(owner or "").strip().lower()
+
+
+def _normalize_session_state(session_state: str | None) -> str | None:
+    if session_state is None:
+        return None
+    return str(session_state).strip().upper() or None

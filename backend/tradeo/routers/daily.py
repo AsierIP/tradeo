@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
@@ -38,6 +39,16 @@ DAILY_SETUP_WATCHLIST_RESOURCES = (
     RESOURCE_MARKET_DATA_REFRESH,
     RESOURCE_IBKR_HISTORICAL_DATA,
 )
+SENSITIVE_DAILY_KEY_PARTS = (
+    "secret",
+    "token",
+    "password",
+    "api_key",
+    "account",
+    "acct",
+    "username",
+)
+ACCOUNT_ID_PATTERN = re.compile(r"\b(?:DU|U|F|FA)\d{5,}\b", re.IGNORECASE)
 
 
 def _daily_settings() -> Settings:
@@ -267,14 +278,13 @@ def _redact_sensitive(value: Any) -> Any:
         out: dict[str, Any] = {}
         for key, item in value.items():
             key_text = str(key)
-            if any(
-                part in key_text.lower()
-                for part in ("secret", "token", "password", "api_key", "account", "username")
-            ):
+            if any(part in key_text.lower() for part in SENSITIVE_DAILY_KEY_PARTS):
                 out[key_text] = "<redacted>"
             else:
                 out[key_text] = _redact_sensitive(item)
         return out
     if isinstance(value, list):
         return [_redact_sensitive(item) for item in value]
+    if isinstance(value, str) and ACCOUNT_ID_PATTERN.search(value):
+        return ACCOUNT_ID_PATTERN.sub("<redacted-account>", value)
     return value

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from tradeo.core.config import Settings
 from tradeo.modules.resource_policy.enforcement import assert_job_allowed
 from tradeo.modules.resource_policy.market_session_resource_policy import (
@@ -18,10 +20,11 @@ def _policy(tmp_path, state: str) -> MarketSessionResourcePolicy:
 
 def test_settings_and_example_default_paper_auto_submit_false() -> None:
     assert Settings().laboratory_auto_submit_paper_orders is False
-    assert "TRADEO_LABORATORY_AUTO_SUBMIT_PAPER_ORDERS=false" in open(
-        ".env.example",
-        encoding="utf-8",
-    ).read()
+    repo_root = Path(__file__).resolve().parents[3]
+    env_example = repo_root / ".env.example"
+    assert "TRADEO_LABORATORY_AUTO_SUBMIT_PAPER_ORDERS=false" in env_example.read_text(
+        encoding="utf-8"
+    )
 
 
 def test_unknown_session_fails_closed(tmp_path) -> None:
@@ -34,6 +37,27 @@ def test_unknown_session_fails_closed(tmp_path) -> None:
     assert decision.allowed is False
     assert decision.session_state == SessionState.UNKNOWN
     assert decision.can_submit_orders is False
+
+
+def test_explicit_unknown_session_argument_fails_closed_before_policy(tmp_path) -> None:
+    decision = assert_job_allowed(
+        JobType.RESEARCH_HEAVY,
+        "research",
+        session_state=" unknown ",
+        policy=_policy(tmp_path, SessionState.MARKET_CLOSED),
+    )
+
+    assert decision.allowed is False
+    assert decision.session_state == SessionState.UNKNOWN
+    assert decision.deny_reason == "session state unknown; fail closed"
+
+
+def test_missing_policy_fails_closed() -> None:
+    decision = assert_job_allowed(JobType.RESEARCH_HEAVY, "research")
+
+    assert decision.allowed is False
+    assert decision.session_state == SessionState.UNKNOWN
+    assert decision.deny_reason == "resource policy missing; fail closed"
 
 
 def test_regular_market_blocks_research_heavy(tmp_path) -> None:

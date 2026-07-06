@@ -127,3 +127,22 @@ def test_scheduler_plan_requires_resource_policy() -> None:
     assert decision.allowed is False
     assert decision.deny_reason == "resource_policy_missing"
     assert decision.session_state == "UNKNOWN"
+
+
+def test_registry_plan_uses_attached_resource_policy(tmp_path) -> None:
+    registry = _registry(tmp_path, SessionState.UNKNOWN)
+
+    decision = registry.plan(
+        "daily_watchlist_fast_v1",
+        resources={
+            "max_symbols": 120,
+            "market_data_requests": 10,
+            "cpu_seconds": 30,
+            "storage_mb": 16,
+            "parallel_slots": 1,
+        },
+    )
+
+    assert decision.allowed is False
+    assert decision.deny_reason == "resource_policy:session state unknown; fail closed"
+    assert decision.session_state == "UNKNOWN"
