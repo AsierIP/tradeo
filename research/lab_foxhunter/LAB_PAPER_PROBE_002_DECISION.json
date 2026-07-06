@@ -1,0 +1,29 @@
+{
+  "task_id": "T-LAB-PAPER-PROBE-002",
+  "decision": "LAB_PAPER_PROBE_BATCH_READY_SUPERVISED_NO_BROKER_SUBMIT",
+  "batch_id": "LAB-PAPER-PROBE-002",
+  "selected_probe_ids": [
+    "LAB-GAP-REV-001",
+    "LAB-GAP-REV-002"
+  ],
+  "max_batch_probes": 2,
+  "paper_only": true,
+  "supervised_only": true,
+  "explicit_paper_probe_mode_required": true,
+  "director_approval_required": true,
+  "global_auto_submit_allowed": false,
+  "broker_submit_enabled_by_this_task": false,
+  "paper_orders_sent": false,
+  "live_orders_sent": false,
+  "order_previews_generated": false,
+  "signals_generated": false,
+  "ibkr_operational_use": false,
+  "foxhunter_candidates_created": 0,
+  "live_candidates_created": 0,
+  "foxhunter_promotion_allowed": false,
+  "live_promotion_allowed": false,
+  "candidate_decision_allowed": [
+    "stay_in_lab",
+    "stop_probe"
+  ]
+}
