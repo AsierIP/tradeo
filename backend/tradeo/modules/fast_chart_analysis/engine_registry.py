@@ -6,6 +6,7 @@ from typing import Mapping, Sequence
 
 from tradeo.modules.resource_policy import JobType, PriorityLevel
 from tradeo.modules.resource_policy import ResourceBudget as PolicyResourceBudget
+from tradeo.modules.resource_policy.enforcement import assert_job_allowed
 
 DAILY_WATCHLIST_OWNER = "lab/research/daily_watchlist"
 FAST_DAILY_WATCHLIST_ENGINE_ID = "daily_watchlist_fast_v1"
@@ -16,6 +17,7 @@ DENY_ENGINE_DISABLED = "engine_disabled"
 DENY_OWNER_MISMATCH = "owner_mismatch"
 DENY_RESOURCE_UNKNOWN = "resource_budget_unknown"
 DENY_RESOURCE_EXHAUSTED = "resource_budget_exhausted"
+DENY_POLICY_MISSING = "resource_policy_missing"
 
 _OWNER_JOB_TYPES = {
     "lab": {JobType.LAB_EXECUTION, JobType.LAB_READINESS, JobType.LAB_PAPER_PROBE},
@@ -238,14 +240,19 @@ class FastChartEngineRegistry:
         if owner not in _OWNER_JOB_TYPES or job_type not in _OWNER_JOB_TYPES[owner]:
             return _job_denied(request, DENY_OWNER_MISMATCH, priority=PriorityLevel.BLOCKED)
 
-        policy_decision = self.resource_policy.decide_job(job_type, now=now)
-        if getattr(policy_decision.budget, "session_state", "") == "UNKNOWN":
+        policy_decision = assert_job_allowed(
+            job_type,
+            owner,
+            policy=self.resource_policy,
+            now=now,
+        )
+        if policy_decision.session_state == "UNKNOWN":
             return EngineJobDecision(
                 allowed=False,
                 owner=owner,
                 job_type=job_type,
                 priority=PriorityLevel.BLOCKED,
-                deny_reason="session state unknown; fast engine fails closed",
+                deny_reason="session state unknown; fail closed",
                 budget=policy_decision.budget,
                 engine_id=request.engine_id,
                 can_submit_orders=False,
@@ -256,7 +263,7 @@ class FastChartEngineRegistry:
             owner=owner,
             job_type=job_type,
             priority=str(policy_decision.priority),
-            deny_reason=None if policy_decision.allowed else str(policy_decision.reason),
+            deny_reason=None if policy_decision.allowed else str(policy_decision.deny_reason),
             budget=policy_decision.budget,
             engine_id=request.engine_id,
             can_submit_orders=False,
@@ -355,7 +362,18 @@ def plan_daily_watchlist_scheduler_run(
         registry=active_registry,
     )
     if policy_decision is None:
-        return decision
+        descriptor = active_registry.get(FAST_DAILY_WATCHLIST_ENGINE_ID)
+        if descriptor is None:
+            return decision
+        return _deny_descriptor(
+            descriptor,
+            owner=owner,
+            resources=resources,
+            deny_reason=DENY_POLICY_MISSING,
+            resource_policy_priority=PriorityLevel.BLOCKED,
+            resource_policy_reason="resource policy missing; fail closed",
+            session_state="UNKNOWN",
+        )
     if not bool(policy_decision.allowed):
         descriptor = active_registry.get(FAST_DAILY_WATCHLIST_ENGINE_ID)
         if descriptor is None:
@@ -364,10 +382,10 @@ def plan_daily_watchlist_scheduler_run(
             descriptor,
             owner=owner,
             resources=active_resources,
-            deny_reason=f"resource_policy:{policy_decision.reason}",
+            deny_reason=f"resource_policy:{policy_decision.deny_reason}",
             resource_policy_priority=policy_decision.priority,
-            resource_policy_reason=policy_decision.reason,
-            session_state=policy_decision.budget.session_state,
+            resource_policy_reason=policy_decision.deny_reason,
+            session_state=policy_decision.session_state,
         )
     return _with_resource_policy(decision, policy_decision)
 
@@ -463,10 +481,14 @@ def _coerce_resources(
 def _decide_daily_watchlist_job(resource_policy: object | None, now: datetime | None) -> object | None:
     if resource_policy is None:
         return None
-    decide_job = getattr(resource_policy, "decide_job", None)
-    if decide_job is None:
+    if not hasattr(resource_policy, "decide_job"):
         return None
-    return decide_job(JobType.DAILY_WATCHLIST_REEVAL, now=now)
+    return assert_job_allowed(
+        JobType.DAILY_WATCHLIST_REEVAL,
+        "daily_watchlist",
+        policy=resource_policy,
+        now=now,
+    )
 
 
 def _snapshot_from_policy_budget(budget: PolicyResourceBudget) -> SchedulerResourceSnapshot:
@@ -495,8 +517,8 @@ def _with_resource_policy(
         deny_reason=decision.deny_reason,
         output_state=decision.output_state,
         resource_policy_priority=policy_decision.priority,
-        resource_policy_reason=policy_decision.reason,
-        session_state=policy_decision.budget.session_state,
+        resource_policy_reason=policy_decision.deny_reason,
+        session_state=policy_decision.session_state,
         can_submit_orders=False,
     )
 

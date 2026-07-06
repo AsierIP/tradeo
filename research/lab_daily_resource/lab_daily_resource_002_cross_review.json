@@ -1,0 +1,11 @@
+{
+  "agents": {
+    "A_security_defaults": "PASS",
+    "B_resource_enforcement": "PASS_WITH_FOLLOWUP",
+    "C_daily_watchlist": "PASS",
+    "D_api_ui_fast_engine": "PASS_WITH_UI_PLACEHOLDER",
+    "E_integrator": "PASS_WITH_KNOWN_FOLLOWUPS"
+  },
+  "decision": "PASS_WITH_KNOWN_FOLLOWUPS",
+  "generated_at": "2026-07-06T20:30:00Z"
+}

@@ -1,0 +1,15 @@
+{
+  "attacks": {
+    "auto_submit_default_true": "FIXED_BLOCKED",
+    "daily_entry_ready_submits_order": "BLOCKED",
+    "endpoint_write": "BLOCKED",
+    "lab_research_both_high_regular": "BLOCKED",
+    "metrics_mixing": "BLOCKED",
+    "research_heavy_regular_market": "BLOCKED",
+    "runtime_artifacts_tracked": "NOT_FOUND",
+    "secrets_raw_account_ids": "NOT_FOUND",
+    "unknown_session_allowed": "BLOCKED"
+  },
+  "decision": "PASS_WITH_KNOWN_FOLLOWUPS",
+  "generated_at": "2026-07-06T20:30:00Z"
+}

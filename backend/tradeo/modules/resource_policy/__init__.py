@@ -29,6 +29,11 @@ from tradeo.modules.resource_policy.market_session_resource_policy import (
     ResourceBudget,
     SessionState,
 )
+from tradeo.modules.resource_policy.enforcement import (
+    RESOURCE_POLICY_ENFORCEMENT_VERSION,
+    ResourcePolicyDecision as ResourcePolicyJobDecision,
+    assert_job_allowed,
+)
 
 __all__ = [
     "DEFAULT_CLOSED_SESSION_ALLOWLIST",
@@ -55,5 +60,8 @@ __all__ = [
     "PriorityLevel",
     "ResourceBudget",
     "ResourcePolicyDecision",
+    "RESOURCE_POLICY_ENFORCEMENT_VERSION",
+    "ResourcePolicyJobDecision",
     "SessionState",
+    "assert_job_allowed",
 ]

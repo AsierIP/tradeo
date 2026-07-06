@@ -62,7 +62,7 @@ def test_unknown_session_fails_closed(tmp_path) -> None:
     )
 
     assert decision.allowed is False
-    assert decision.deny_reason == "session state unknown; fast engine fails closed"
+    assert decision.deny_reason == "session state unknown; fail closed"
 
 
 def test_simultaneous_high_priority_contention_resolves_to_session_owner(tmp_path) -> None:
@@ -110,4 +110,20 @@ def test_scheduler_plan_carries_budget_priority_and_deny_reason(tmp_path) -> Non
     assert allowed.resource_remaining is not None
     assert allowed.as_scheduler_metadata()["resource_budget"]["max_symbols"] == 120
     assert blocked.allowed is False
-    assert blocked.deny_reason == "resource_policy:session state unknown; policy fails closed"
+    assert blocked.deny_reason == "resource_policy:session state unknown; fail closed"
+
+
+def test_scheduler_plan_requires_resource_policy() -> None:
+    decision = plan_daily_watchlist_scheduler_run(
+        resources={
+            "max_symbols": 120,
+            "market_data_requests": 10,
+            "cpu_seconds": 30,
+            "storage_mb": 16,
+            "parallel_slots": 1,
+        }
+    )
+
+    assert decision.allowed is False
+    assert decision.deny_reason == "resource_policy_missing"
+    assert decision.session_state == "UNKNOWN"

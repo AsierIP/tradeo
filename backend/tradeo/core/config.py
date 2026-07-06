@@ -352,8 +352,9 @@ class Settings(BaseSettings):
     entry_ambiguity_quality_margin: float = 0.10
 
     # Laboratory scans validated Research patterns in paper mode. Paper order
-    # submission is enabled by default, but still passes through entry/risk,
-    # paper-mode, kill-switch, live-armed and IBKR live-port safety gates.
+    # submission is disabled by default; enabling it still passes through
+    # entry/risk, paper-mode, kill-switch, live-armed and IBKR live-port safety
+    # gates.
     laboratory_scanner_enabled: bool = True
     laboratory_scan_minutes: int = 5
     # Laboratory paper validation should observe every Research opportunity by
@@ -363,7 +364,7 @@ class Settings(BaseSettings):
     laboratory_match_max_results: int = 0
     laboratory_similarity_threshold: float = 0.45
     laboratory_store_signals: bool = True
-    laboratory_auto_submit_paper_orders: bool = True
+    laboratory_auto_submit_paper_orders: bool = False
     laboratory_allow_watchlist_paper_orders: bool = False
     laboratory_market_hours_only: bool = True
 

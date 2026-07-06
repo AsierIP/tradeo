@@ -90,6 +90,9 @@ def test_setup_passes_to_entry_ready_without_sending_order(tmp_path) -> None:
     assert setup.lab_paper_probe_request["route"] == "lab_paper_probe"
     assert setup.lab_paper_probe_request["submits_order"] is False
     assert setup.lab_paper_probe_request["allow_paper_on_entry_ready"] is False
+    assert setup.to_dict()["orders_allowed"] is False
+    assert setup.to_dict()["paper_allowed"] is False
+    assert setup.to_dict()["live_allowed"] is False
 
 
 def test_entry_ready_routes_to_lab_request_when_config_allows(tmp_path) -> None:
