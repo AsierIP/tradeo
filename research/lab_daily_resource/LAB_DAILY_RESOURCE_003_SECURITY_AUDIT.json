@@ -1,0 +1,151 @@
+{
+  "schema_version": "tradeo.lab_daily_resource.security_audit.v1",
+  "task": "T-LAB-DAILY-RESOURCE-003-MERGE-FAST",
+  "branch": "feature/lab-daily-resource-001",
+  "base_ref": "origin/main",
+  "base_short_sha": "f47b769",
+  "head_short_sha": "19be618",
+  "generated_at": "2026-07-06T20:43:48Z",
+  "verdict": "SECURITY_PASS",
+  "diff_summary": {
+    "ahead_of_origin_main_commits": 3,
+    "changed_files": 58,
+    "broker_submit_paths_modified": false
+  },
+  "checks": [
+    {
+      "id": "tracked_env_real",
+      "status": "pass",
+      "evidence": "Only .env.example matched env path sweeps; no tracked real .env path found."
+    },
+    {
+      "id": "memory_files",
+      "status": "pass",
+      "evidence": "No MEMORY.md or memory/ path found in tracked files or worktree path sweep."
+    },
+    {
+      "id": "runtime_artifacts_cache",
+      "status": "pass",
+      "evidence": "No artifacts/, runtime/, data/cache, log/db/parquet/pickle/cache/order/fill runtime files added or present in the worktree sweep."
+    },
+    {
+      "id": "secrets_tokens_private_keys",
+      "status": "pass",
+      "evidence": "High-confidence token/private-key scan returned no matches in repo or feature scope."
+    },
+    {
+      "id": "raw_account_ids",
+      "status": "pass",
+      "evidence": "Changed files had no raw DU/U/F/FA account-id pattern matches; repo-wide matches are pre-existing in origin/main docs/tests only.",
+      "pre_existing_origin_main_matches": [
+        "backend/tradeo/tests/test_execution_state_transitions.py",
+        "backend/tradeo/tests/test_ibkr_broker_preflight.py",
+        "backend/tradeo/tests/test_live_readiness_gate.py",
+        "backend/tradeo/tests/test_paper_readiness.py",
+        "backend/tradeo/tests/test_pattern_entry_scanner.py",
+        "research/daily_swing/DSS_004J_SECURITY_ARTIFACT_AUDIT.md"
+      ]
+    },
+    {
+      "id": "sensitive_logs_order_fill_runtime",
+      "status": "pass",
+      "evidence": "No tracked sensitive logs, order/fill runtime files, DBs, or cache artifacts added by the branch."
+    },
+    {
+      "id": "live_enabled_auto_submit",
+      "status": "pass",
+      "evidence": "Config and .env.example keep live auto-submit false; laboratory_auto_submit_paper_orders changed to false.",
+      "references": [
+        "backend/tradeo/core/config.py:367",
+        "backend/tradeo/core/config.py:388",
+        ".env.example:257",
+        ".env.example:267"
+      ]
+    },
+    {
+      "id": "paper_live_candidate_automatic",
+      "status": "pass",
+      "evidence": "Daily setup rejects paper_candidate/live_candidate states and marks candidate_approval false.",
+      "references": [
+        "backend/tradeo/modules/daily_swing/setup_watchlist.py:48",
+        "backend/tradeo/modules/daily_swing/setup_watchlist.py:835",
+        "backend/tradeo/modules/daily_swing/setup_watchlist.py:674"
+      ]
+    },
+    {
+      "id": "dangerous_write_endpoints",
+      "status": "pass",
+      "evidence": "New Daily and Resource Policy routers expose GET routes only; static route grep found no POST/PUT/PATCH/DELETE declarations.",
+      "references": [
+        "backend/tradeo/routers/daily.py:58",
+        "backend/tradeo/routers/daily.py:87",
+        "backend/tradeo/routers/daily.py:95",
+        "backend/tradeo/routers/daily.py:112",
+        "backend/tradeo/routers/resource_policy.py:56"
+      ]
+    },
+    {
+      "id": "live_submit_foxhunter_ui_button",
+      "status": "pass",
+      "evidence": "Frontend diff adds a read-only Daily Setup contract panel and GET polling only; no new submit/live/FoxHunter action button.",
+      "references": [
+        "frontend/app/page.tsx:868",
+        "frontend/app/page.tsx:910",
+        "frontend/app/page.tsx:1075"
+      ]
+    },
+    {
+      "id": "daily_watchlist_no_orders",
+      "status": "pass",
+      "evidence": "Watchlist item/artifact/probe payloads force order/paper/live submit flags false and order_intent none.",
+      "references": [
+        "backend/tradeo/modules/daily_swing/setup_watchlist.py:483",
+        "backend/tradeo/modules/daily_swing/setup_watchlist.py:674",
+        "backend/tradeo/modules/daily_swing/setup_watchlist.py:694",
+        "backend/tradeo/modules/daily_swing/setup_watchlist.py:871"
+      ]
+    },
+    {
+      "id": "broker_submit_paths",
+      "status": "pass",
+      "evidence": "No broker submit/execution paths were modified; new policy code prohibits order preview, paper order, live order, and signal output resources.",
+      "references": [
+        "backend/tradeo/modules/resource_policy/market_session.py:24",
+        "backend/tradeo/modules/resource_policy/enforcement.py:54",
+        "backend/tradeo/modules/resource_policy/enforcement.py:61",
+        "backend/tradeo/modules/resource_policy/enforcement.py:105"
+      ]
+    },
+    {
+      "id": "sensitive_api_output",
+      "status": "pass",
+      "evidence": "Daily API redacts sensitive artifact keys and account-like values before returning data.",
+      "references": [
+        "backend/tradeo/routers/daily.py:42",
+        "backend/tradeo/routers/daily.py:51",
+        "backend/tradeo/routers/daily.py:276"
+      ]
+    }
+  ],
+  "commands_run": [
+    "git status --short --branch",
+    "git diff --name-status origin/main...HEAD",
+    "git diff --stat origin/main...HEAD",
+    "git diff --check origin/main...HEAD",
+    "git ls-files path sweeps",
+    "rg path-only high-confidence secret scans",
+    "rg raw account-id scans",
+    "static route/UI/config/watchlist inspection"
+  ],
+  "tests_executed": false,
+  "tests_note": "No tests were executed to avoid creating repo-local caches or runtime artifacts under the report-only write constraint.",
+  "working_tree_after_report": {
+    "status": "dirty",
+    "unexpected_uncommitted_paths": [
+      "backend/tradeo/modules/resource_policy/market_session_resource_policy.py",
+      "backend/tradeo/tests/test_market_session_resource_policy.py"
+    ],
+    "note": "These paths were not edited by this audit. The observed diff is defensive paper-submit blocking, but it is outside the requested report-only write scope and should be reconciled by the merge owner."
+  },
+  "final_line": "SECURITY_PASS"
+}

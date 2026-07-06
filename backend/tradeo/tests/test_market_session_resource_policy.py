@@ -79,6 +79,16 @@ def test_lab_paper_probe_allowed_only_when_policy_allows(tmp_path) -> None:
     assert closed_policy.decide_job(JobType.LAB_PAPER_PROBE).allowed is False
 
 
+def test_direct_paper_submit_decision_is_blocked_during_regular_market(tmp_path) -> None:
+    policy = _policy(tmp_path)
+
+    decision = policy.decide_job(JobType.PAPER_SUBMIT, datetime(2026, 7, 6, 10, 0, tzinfo=NY))
+
+    assert decision.allowed is False
+    assert decision.priority == "BLOCKED"
+    assert JobType.PAPER_SUBMIT in decision.budget.blocked_job_types
+
+
 def test_unknown_session_fails_closed(tmp_path) -> None:
     budget = _policy(tmp_path, SessionState.UNKNOWN).current_budget()
 

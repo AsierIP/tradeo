@@ -187,6 +187,16 @@ class MarketSessionResourcePolicy:
                 budget.reason if budget.lab_paper_probe_allowed else budget.deny_reasons.get(normalized, budget.reason),
                 budget,
             )
+        if normalized == JobType.PAPER_SUBMIT:
+            return JobDecision(
+                False,
+                PriorityLevel.BLOCKED,
+                budget.deny_reasons.get(
+                    normalized,
+                    "paper submit is blocked unless an explicit Lab Paper Probe gate allows it",
+                ),
+                budget,
+            )
         if normalized == JobType.RESEARCH_HEAVY:
             return JobDecision(
                 budget.heavy_research_allowed,
@@ -255,7 +265,13 @@ class MarketSessionResourcePolicy:
                 heavy=False,
                 lab_probe_allowed=True,
                 daily_allowed=True,
-                blocked=[JobType.RESEARCH_HEAVY, JobType.HEAVY_BACKTEST, JobType.LARGE_SCANNER, JobType.LIVE],
+                blocked=[
+                    JobType.RESEARCH_HEAVY,
+                    JobType.PAPER_SUBMIT,
+                    JobType.HEAVY_BACKTEST,
+                    JobType.LARGE_SCANNER,
+                    JobType.LIVE,
+                ],
                 reason="regular market gives Lab and Lab Paper Probe priority; Research heavy jobs are blocked",
             )
         if state == SessionState.POST_MARKET:
