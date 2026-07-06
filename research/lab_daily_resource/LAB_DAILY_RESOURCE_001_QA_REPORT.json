@@ -1,0 +1,53 @@
+{
+  "schema_version": "tradeo.lab_daily_resource.qa_report.v1",
+  "decision": "LAB_DAILY_RESOURCE_READY_WITH_UI_PLACEHOLDER",
+  "commands": [
+    {
+      "command": "python3 -m py_compile focused backend files",
+      "exit_code": 0
+    },
+    {
+      "command": "python3 -m json.tool contracts and decisions",
+      "exit_code": 0
+    },
+    {
+      "command": "git diff --check",
+      "exit_code": 0
+    },
+    {
+      "command": "docker build -t tradeo-backend-lab-daily-resource-001 -f backend/Dockerfile .",
+      "exit_code": 0
+    },
+    {
+      "command": "docker run pytest focused tests",
+      "exit_code": 0,
+      "result": "43 passed, 1 warning"
+    },
+    {
+      "command": "docker run ruff check focused files",
+      "exit_code": 0
+    },
+    {
+      "command": "npm ci",
+      "exit_code": 0,
+      "result": "2 npm audit vulnerabilities reported"
+    },
+    {
+      "command": "npm run build",
+      "exit_code": 0,
+      "result": "compiled/typechecked; Next SWC lockfile warnings"
+    }
+  ],
+  "security": {
+    "live_orders_enabled": false,
+    "paper_submit_paths_changed": false,
+    "broker_submit_calls_added": false,
+    "secrets_tracked": false,
+    "runtime_artifacts_tracked": false
+  },
+  "residual_risks": [
+    "Existing .env.example paper auto-submit default remains outside this task.",
+    "UI is a placeholder/contract panel.",
+    "Scheduler consumers still need deeper runtime enforcement wiring."
+  ]
+}

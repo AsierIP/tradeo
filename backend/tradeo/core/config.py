@@ -367,6 +367,15 @@ class Settings(BaseSettings):
     laboratory_allow_watchlist_paper_orders: bool = False
     laboratory_market_hours_only: bool = True
 
+    # Daily Setup Watchlist is a read-only/metadata layer between rejected and
+    # Lab Paper Probe. It never submits orders directly.
+    daily_setup_watchlist_enabled: bool = True
+    daily_setup_max_age_days: int = 5
+    daily_setup_reevaluate_after_close: bool = True
+    daily_setup_max_active: int = 100
+    daily_setup_allow_paper_on_entry_ready: bool = False
+    daily_setup_route_entry_ready_to_lab: bool = True
+
     # Fox Hunter scans production patterns. Live order submission requires both
     # this explicit switch and the existing live_armed safety gate.
     fox_hunter_enabled: bool = True
@@ -569,6 +578,8 @@ class Settings(BaseSettings):
         "intraday_universe_early_minute_utc",
         "intraday_eod_flat_hour_utc",
         "intraday_eod_flat_minute_utc",
+        "daily_setup_max_age_days",
+        "daily_setup_max_active",
     )
     @classmethod
     def non_negative_intraday_ints(cls, value: int) -> int:

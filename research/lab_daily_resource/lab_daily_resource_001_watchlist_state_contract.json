@@ -1,0 +1,60 @@
+{
+  "schema_version": "tradeo.lab_daily_resource.watchlist_state_contract.v1",
+  "timeframe": "1d",
+  "states": [
+    "detected",
+    "watching",
+    "waiting_for_confirmation",
+    "armed",
+    "entry_ready",
+    "entered",
+    "expired",
+    "invalidated"
+  ],
+  "allowed_transitions": [
+    ["detected", "watching"],
+    ["watching", "waiting_for_confirmation"],
+    ["waiting_for_confirmation", "armed"],
+    ["armed", "entry_ready"],
+    ["entry_ready", "entered"],
+    ["any", "expired"],
+    ["any", "invalidated"]
+  ],
+  "forbidden_transitions": [
+    ["detected", "entered"],
+    ["watching", "entered"],
+    ["waiting_for_confirmation", "entered"],
+    ["armed", "entered"]
+  ],
+  "recoverable_reasons": [
+    "weak_trigger",
+    "weak_entry_score",
+    "insufficient_volume",
+    "needs_close_confirmation",
+    "needs_follow_through",
+    "pullback_not_complete",
+    "breakout_pending_confirmation",
+    "volume_confirmation_pending",
+    "regime_pending",
+    "liquidity_confirmation_pending"
+  ],
+  "non_recoverable_reasons": [
+    "reward_risk_insufficient",
+    "risk_model_missing",
+    "pattern_not_allowed",
+    "paper_not_allowed",
+    "structural_leakage",
+    "data_quality_fail",
+    "lookahead_risk",
+    "product_policy_fail",
+    "liquidity_too_low",
+    "setup_invalidated",
+    "excessive_ambiguity",
+    "missing_exit_model"
+  ],
+  "order_policy": {
+    "daily_submits_orders": false,
+    "entry_ready_submits_orders": false,
+    "entry_ready_route": "lab_paper_probe_metadata"
+  }
+}

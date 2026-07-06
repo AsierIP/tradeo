@@ -1,0 +1,21 @@
+{
+  "task": "T-LAB-DAILY-RESOURCE-001",
+  "matrix_completed": true,
+  "reviews": {
+    "A": ["B", "D"],
+    "B": ["A", "C"],
+    "C": ["B", "D"],
+    "D": ["A", "C"],
+    "E": ["A", "B", "C", "D"]
+  },
+  "decisions": [
+    "Keep resource gate and budget policy as separate contracts.",
+    "Daily watchlist is metadata only and cannot submit orders.",
+    "All new endpoints are GET/read-only.",
+    "Fast chart engine registry denies UNKNOWN sessions."
+  ],
+  "open_risks": [
+    "Full test environment missing in parent shell.",
+    "Existing .env.example paper auto-submit default remains inherited from main."
+  ]
+}
