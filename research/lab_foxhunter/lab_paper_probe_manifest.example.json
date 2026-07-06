@@ -1,0 +1,45 @@
+{
+  "schema_version": "tradeo.lab_paper_probe_manifest.v1",
+  "probes": [
+    {
+      "probe_id": "LAB-GAP-REV-001",
+      "strategy_source_id": "GAP003_REVERSAL-SAME-DAY_ABS_3_0_BOTH_ALL",
+      "status": "proposed_lab_paper_probe",
+      "rationale": "Medir open slippage y fill realism del reversal same-day GAP abs >= 3%.",
+      "max_initial_paper_trades": 20,
+      "success_threshold": 12,
+      "net_expectancy_required": true,
+      "disabled_by_default": true,
+      "direction_approved": true,
+      "lookahead_free": true,
+      "leakage_free": true,
+      "product_policy_ok": true,
+      "data_quality_ok": true,
+      "documented_hypothesis": true,
+      "operational_risk_bounded": true,
+      "fatal_failure_reason": false,
+      "live_risk": false,
+      "reproducible": true
+    },
+    {
+      "probe_id": "LAB-GAP-REV-002",
+      "strategy_source_id": "GAP003_REVERSAL-SAME-DAY_DESIGN_SPY_LTE_0",
+      "status": "proposed_lab_paper_probe",
+      "rationale": "Medir comportamiento del reversal GAP en regimen SPY debil.",
+      "max_initial_paper_trades": 20,
+      "success_threshold": 12,
+      "net_expectancy_required": true,
+      "disabled_by_default": true,
+      "direction_approved": true,
+      "lookahead_free": true,
+      "leakage_free": true,
+      "product_policy_ok": true,
+      "data_quality_ok": true,
+      "documented_hypothesis": true,
+      "operational_risk_bounded": true,
+      "fatal_failure_reason": false,
+      "live_risk": false,
+      "reproducible": true
+    }
+  ]
+}

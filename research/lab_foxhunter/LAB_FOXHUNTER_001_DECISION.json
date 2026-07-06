@@ -1,0 +1,18 @@
+{
+  "schema_version": "tradeo.lab_foxhunter_decision.v1",
+  "task_id": "T-LAB-FOXHUNTER-001",
+  "decision": "LAB_FOXHUNTER_GATE_READY_NO_EXECUTION",
+  "paper_orders_sent": false,
+  "live_orders_sent": false,
+  "order_previews_generated": false,
+  "operational_signals_generated": false,
+  "ibkr_used": false,
+  "downloads_used": false,
+  "cron_trading_enabled": false,
+  "main_touched": false,
+  "probes_disabled_by_default": true,
+  "initial_probes": [
+    "LAB-GAP-REV-001",
+    "LAB-GAP-REV-002"
+  ]
+}
