@@ -1,131 +1,175 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 from tradeo.modules.lab_foxhunter.gates import (
-    validate_foxhunter_to_live_gate,
-    validate_lab_to_foxhunter_gate,
-    validate_manifest,
-    validate_research_to_lab_gate,
+    LabProbeMetrics,
+    LiveAuthorization,
+    ResearchLabEvidence,
+    foxhunter_to_live_gate,
+    lab_to_foxhunter_gate,
+    research_to_lab_gate,
+    validate_lab_paper_probe_manifest,
 )
 
 
-def _manifest(**overrides: object) -> dict[str, object]:
-    base: dict[str, object] = {
-        "probe_id": "LAB-GAP-REV-001",
-        "strategy_source_id": "GAP003_REVERSAL-SAME-DAY_ABS_3_0_BOTH_ALL",
-        "status": "proposed_lab_paper_probe",
-        "rationale": "measure open slippage and fill realism",
-        "max_initial_paper_trades": 20,
-        "success_threshold": 12,
-        "disabled_by_default": True,
-        "net_expectancy_required": True,
-        "direction_approved": True,
+REPO_ROOT = Path(__file__).resolve().parents[3]
+
+
+def _valid_research_evidence(**overrides: object) -> ResearchLabEvidence:
+    values = {
+        "no_lookahead": True,
+        "no_leakage": True,
+        "product_policy_ok": True,
+        "data_quality_ok": True,
+        "pattern_documented": True,
+        "hypothesis_clear": True,
+        "operational_risk_bounded": True,
+        "failure_reason_fatal": False,
+        "security_ok": True,
+        "director_approved": True,
+        "logs_available": True,
+        "reproducible": True,
+        "live_risk": False,
     }
-    base.update(overrides)
-    return base
+    values.update(overrides)
+    return ResearchLabEvidence(**values)
 
 
-def _metrics(**overrides: object) -> dict[str, object]:
-    base: dict[str, object] = {
+def _valid_lab_metrics(**overrides: object) -> LabProbeMetrics:
+    values = {
         "paper_trades_count": 20,
         "success_count": 12,
-        "expectancy_net": 0.04,
+        "expectancy_net": 0.01,
         "profit_factor": 1.2,
-        "max_drawdown_pct": 4.0,
-        "max_allowed_drawdown_pct": 10.0,
-        "operational_error_count": 0,
+        "max_drawdown": 0.05,
+        "max_drawdown_limit": 0.1,
+        "avg_slippage_bps": 12.0,
+        "slippage_destructive": False,
+        "fill_rate": 1.0,
+        "rejected_orders": 0,
+        "operational_errors": 0,
         "reconciliation_errors": 0,
-        "symbol_or_event_concentration": False,
-        "manual_overrides": False,
+        "top_symbols_events_concentrated": False,
+        "last_n_trades_degraded": False,
         "logs_complete": True,
-        "direction_approved": True,
+        "manual_overrides": 0,
+        "director_approved": True,
     }
-    base.update(overrides)
-    return base
+    values.update(overrides)
+    return LabProbeMetrics(**values)
+
+
+def _valid_live_authorization(**overrides: object) -> LiveAuthorization:
+    values = {
+        "foxhunter_gate_passed": True,
+        "risk_review_passed": True,
+        "kill_switch_tested": True,
+        "live_armed_controlled": True,
+        "max_daily_loss_configured": True,
+        "max_position_value_configured": True,
+        "max_trades_configured": True,
+        "paper_live_account_separation": True,
+        "human_review_complete": True,
+        "explicit_asier_or_director_authorization": True,
+    }
+    values.update(overrides)
+    return LiveAuthorization(**values)
 
 
 def test_lab_paper_probe_manifest_schema_valid() -> None:
-    decision = validate_manifest(_manifest())
+    manifest = json.loads(
+        (REPO_ROOT / "research/lab_foxhunter/lab_paper_probe_manifest.example.json").read_text(
+            encoding="utf-8"
+        )
+    )
 
-    assert decision.passed
-    assert not decision.orders_allowed
-    assert not decision.paper_orders_generated
-    assert not decision.live_orders_generated
+    decision = validate_lab_paper_probe_manifest(manifest)
+
+    assert decision.allowed is True
+    assert decision.blockers == ()
 
 
 def test_lab_probe_disabled_by_default() -> None:
-    decision = validate_manifest(_manifest(disabled_by_default=False))
+    manifest = json.loads(
+        (REPO_ROOT / "research/lab_foxhunter/lab_paper_probe_manifest.example.json").read_text(
+            encoding="utf-8"
+        )
+    )
 
-    assert not decision.passed
-    assert "lab_probe_must_be_disabled_by_default" in decision.blockers
+    assert manifest["disabled_by_default"] is True
+    assert manifest["execution_enabled"] is False
+    assert manifest["live_allowed"] is False
 
 
 def test_research_to_lab_blocks_lookahead() -> None:
-    decision = validate_research_to_lab_gate(_manifest(lookahead_free=False))
+    decision = research_to_lab_gate(_valid_research_evidence(no_lookahead=False))
 
-    assert not decision.passed
-    assert "lookahead_free" in decision.blockers
+    assert decision.allowed is False
+    assert "lookahead" in decision.blockers
 
 
 def test_research_to_lab_blocks_live_risk() -> None:
-    decision = validate_research_to_lab_gate(_manifest(live_risk=True))
+    decision = research_to_lab_gate(_valid_research_evidence(live_risk=True))
 
-    assert not decision.passed
+    assert decision.allowed is False
     assert "live_risk" in decision.blockers
 
 
 def test_lab_to_foxhunter_requires_20_trades() -> None:
-    decision = validate_lab_to_foxhunter_gate(_metrics(paper_trades_count=19))
+    decision = lab_to_foxhunter_gate(_valid_lab_metrics(paper_trades_count=19))
 
-    assert not decision.passed
+    assert decision.allowed is False
     assert "min_paper_trades_20_required" in decision.blockers
 
 
 def test_lab_to_foxhunter_requires_12_successes() -> None:
-    decision = validate_lab_to_foxhunter_gate(_metrics(success_count=11))
+    decision = lab_to_foxhunter_gate(_valid_lab_metrics(success_count=11))
 
-    assert not decision.passed
+    assert decision.allowed is False
     assert "min_successes_12_required" in decision.blockers
 
 
 def test_lab_to_foxhunter_requires_positive_expectancy() -> None:
-    decision = validate_lab_to_foxhunter_gate(_metrics(expectancy_net=0.0))
+    decision = lab_to_foxhunter_gate(_valid_lab_metrics(expectancy_net=0.0))
 
-    assert not decision.passed
-    assert "positive_expectancy_required" in decision.blockers
+    assert decision.allowed is False
+    assert "positive_net_expectancy_required" in decision.blockers
 
 
 def test_foxhunter_to_live_requires_explicit_approval() -> None:
-    decision = validate_foxhunter_to_live_gate(
-        {
-            "foxhunter_review_passed": True,
-            "risk_review_passed": True,
-            "kill_switch_tested": True,
-            "max_daily_loss_defined": True,
-            "max_position_value_defined": True,
-            "max_trades_defined": True,
-            "paper_live_account_separation": True,
-            "human_review_complete": True,
-        }
+    decision = foxhunter_to_live_gate(
+        _valid_live_authorization(explicit_asier_or_director_authorization=False)
     )
 
-    assert not decision.passed
-    assert "explicit_asier_authorization" in decision.blockers
-    assert "explicit_direction_authorization" in decision.blockers
+    assert decision.allowed is False
+    assert "explicit_asier_or_director_authorization" in decision.blockers
 
 
 def test_no_paper_orders_generated_by_gate_check() -> None:
-    decision = validate_research_to_lab_gate(_manifest())
+    manifest = json.loads(
+        (REPO_ROOT / "research/lab_foxhunter/lab_paper_probe_manifest.example.json").read_text(
+            encoding="utf-8"
+        )
+    )
 
-    assert decision.passed
-    assert not decision.orders_allowed
-    assert not decision.paper_orders_generated
+    decision = validate_lab_paper_probe_manifest(manifest)
+
+    assert decision.allowed is True
+    assert decision.no_execution_outputs is True
+    assert "paper_order" not in set(manifest["allowed_outputs"])
 
 
 def test_no_signal_preview_order_outputs() -> None:
-    decision = validate_lab_to_foxhunter_gate(_metrics())
+    manifest = json.loads(
+        (REPO_ROOT / "research/lab_foxhunter/lab_paper_probe_manifest.example.json").read_text(
+            encoding="utf-8"
+        )
+    )
 
-    assert decision.passed
-    assert not decision.signals_generated
-    assert not decision.previews_generated
-    assert not decision.paper_orders_generated
-    assert not decision.live_orders_generated
+    forbidden = {"signal", "order_preview", "paper_order", "live_order"}
+
+    assert forbidden.isdisjoint(set(manifest["allowed_outputs"]))
+    assert manifest["generate_signals"] is False
+    assert manifest["generate_previews"] is False

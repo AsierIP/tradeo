@@ -1,53 +1,59 @@
 # LAB_FOXHUNTER_001 Final Report
 
-## A. Resumen ejecutivo
+## A. Executive Summary
 
-`LAB_FOXHUNTER_GATE_READY_NO_EXECUTION`: se creo la capa Lab Paper Probe y los gates Research -> Lab, Lab -> FoxHunter y FoxHunter -> Live. No se ejecutaron ordenes, previews, senales, IBKR, descargas ni cron trading.
+The Lab/FoxHunter promotion framework is defined with a strict Lab to FoxHunter gate and a separate FoxHunter to live gate. This task creates policy, schemas, a pure gate module, a validation CLI, and disabled initial probe proposals. It does not execute paper or live orders.
 
-## B. Path real usado
+## B. Real Path Used
 
 `/tmp/tradeo-lab-foxhunter-001`
 
-## C. Rama
+## C. Branch/Commit/Push
 
-`feature/lab-foxhunter-gate-001`
+Branch: `feature/lab-foxhunter-gate-001`.
 
-## D. Nueva taxonomia
+Commit and push are recorded in git history and the task handoff.
 
-`research_observation`, `lab_paper_probe`, `foxhunter_candidate`, `live_candidate`.
+## D. New Lab/FoxHunter Taxonomy
 
-## E-G. Gates
+- `research_observation`.
+- `lab_paper_probe`.
+- `foxhunter_candidate`.
+- `live_candidate`.
 
-Implementados en `backend/tradeo/modules/lab_foxhunter/gates.py` y expuestos por `scripts/check_lab_foxhunter_gate.py`.
+## E. Research to Lab Gate
 
-## H. Probes iniciales propuestos
+Implemented in `research_to_lab_gate`. It blocks lookahead, leakage, product policy failures, data quality failures, missing documentation, unclear hypothesis, unbounded operational risk, fatal failure reason, security issues, missing logs, non-reproducibility, live risk, and missing Direccion approval.
 
-`LAB-GAP-REV-001` y `LAB-GAP-REV-002`, ambos `disabled_by_default=true`.
+## F. Lab to FoxHunter Gate
 
-## I. Telemetry y metricas 20-trade
+Implemented in `lab_to_foxhunter_gate`. It requires at least 20 paper trades, at least 12 successes, positive net expectancy, profit factor above 1.15, non-destructive costs/slippage, drawdown inside limit, zero operational and reconciliation errors, no concentration, no degradation, complete logs, no manual overrides, and Direccion approval.
 
-Documentadas en `LAB_FOXHUNTER_001_INITIAL_PROBES.md`.
+## G. FoxHunter to Live Gate
 
-## J. Tests/validaciones
+Implemented in `foxhunter_to_live_gate`. It requires prior FoxHunter eligibility, risk review, tested kill-switch, controlled live arming, max loss/value/trades, paper/live account separation, human review, and explicit Asier/Direccion authorization.
 
-- `PYTHONPATH=backend python3 -m py_compile scripts/check_lab_foxhunter_gate.py backend/tradeo/modules/lab_foxhunter/gates.py` - OK.
-- `python3 -m json.tool research/lab_foxhunter/lab_paper_probe_manifest.example.json` - OK.
-- `python3 -m json.tool research/lab_foxhunter/LAB_FOXHUNTER_001_DECISION.json` - OK.
-- `git diff --check` - OK.
-- `docker build -f backend/Dockerfile -t tradeo-backend:lab-foxhunter-001 .` - OK.
-- `docker run --rm tradeo-backend:lab-foxhunter-001 python -m pytest /app/tradeo/tests/test_lab_foxhunter_gates.py -q` - OK, 10 passed.
-- `docker run --rm tradeo-backend:lab-foxhunter-001 ruff check ...` - OK.
-- `docker run --rm tradeo-backend:lab-foxhunter-001 python /app/scripts/check_lab_foxhunter_gate.py --manifest /research/lab_foxhunter/lab_paper_probe_manifest.example.json` - OK, PASS.
-- touched-file security scan - OK, no `.env`, memory, runtime artifacts, obvious secrets, account ids, order outputs, signal outputs, or previews.
+## H. Initial Probes Proposed
 
-## K. Decision final
+- `LAB-GAP-REV-001`, source `GAP003_REVERSAL-SAME-DAY_ABS_3_0_BOTH_ALL`, disabled by default.
+- `LAB-GAP-REV-002`, source `GAP003_REVERSAL-SAME-DAY_DESIGN_SPY_LTE_0`, disabled by default.
 
-`LAB_FOXHUNTER_GATE_READY_NO_EXECUTION`.
+## I. Telemetry and 20-Trade Metrics
 
-## L. Confirmacion seguridad
+Telemetry and milestone metrics are defined in `LAB_FOXHUNTER_001_GATE_CRITERIA.md` and enforced for lab probe manifests by `validate_lab_paper_probe_manifest`.
 
-No live, no paper orders, no ordenes, no preview, no senales, no IBKR, no descargas, no cron, no push a main.
+## J. Tests/Validation
 
-## M. Siguiente tarea recomendada
+Validation commands are recorded in the final task response after execution.
 
-`T-LAB-PAPER-PROBE-002` - enable first supervised paper probe batch, paper-only, max 2 probes, no FoxHunter promotion.
+## K. Final Decision
+
+`LAB_FOXHUNTER_GATE_READY_NO_EXECUTION`
+
+## L. Safety Confirmation
+
+No live orders, no paper orders, no broker simulated orders, no order previews, no operational signals, no IBKR operational use, no data downloads, no cron trading, no `.env` changes, no main push, no FoxHunter promotion, and no live promotion are authorized or performed by this task.
+
+## M. Recommended Next Task
+
+`T-LAB-PAPER-PROBE-002 - Enable first supervised paper probe batch, paper-only, max 2 probes, no FoxHunter promotion.`

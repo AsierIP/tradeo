@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "tradeo.foxhunter_candidate_manifest.v1",
+  "type": "object",
+  "required": [
+    "schema",
+    "taxonomy",
+    "candidate_id",
+    "source_probe_id",
+    "lab_to_foxhunter_gate_status",
+    "paper_trades_count",
+    "success_count",
+    "expectancy_net",
+    "profit_factor",
+    "operational_error_count",
+    "reconciliation_errors",
+    "director_approved",
+    "live_allowed"
+  ],
+  "properties": {
+    "schema": {"const": "tradeo.foxhunter_candidate_manifest.v1"},
+    "taxonomy": {"const": "foxhunter_candidate"},
+    "candidate_id": {"type": "string", "minLength": 1},
+    "source_probe_id": {"type": "string", "minLength": 1},
+    "lab_to_foxhunter_gate_status": {"const": "passed"},
+    "paper_trades_count": {"type": "integer", "minimum": 20},
+    "success_count": {"type": "integer", "minimum": 12},
+    "expectancy_net": {"type": "number", "exclusiveMinimum": 0},
+    "profit_factor": {"type": "number", "exclusiveMinimum": 1.15},
+    "operational_error_count": {"const": 0},
+    "reconciliation_errors": {"const": 0},
+    "director_approved": {"const": true},
+    "live_allowed": {"const": false}
+  },
+  "additionalProperties": true
+}
