@@ -10,7 +10,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
 
+from tradeo.core.config import get_settings
 from tradeo.modules.daily_swing.dss_004c_a import SpecificityConfig, run_dss_004c_a_specificity
+from tradeo.modules.resource_policy.enforcement import blocked_job_status, decide_with_market_session_policy
+from tradeo.modules.resource_policy.market_session_resource_policy import JobType
 
 
 def main() -> int:
@@ -23,6 +26,24 @@ def main() -> int:
     parser.add_argument("--oos-start-date", default="2025-01-01")
     parser.add_argument("--output-dir", default=Path("artifacts/runtime/daily_swing"), type=Path)
     args = parser.parse_args()
+    policy_decision = decide_with_market_session_policy(
+        JobType.HEAVY_BACKTEST,
+        "research",
+        settings=get_settings(),
+    )
+    if not policy_decision.allowed:
+        print(
+            json.dumps(
+                {
+                    "decision": "blocked_resource_policy",
+                    "resource_policy": policy_decision.to_dict(),
+                    "research_result": blocked_job_status(policy_decision),
+                },
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 5
     result = run_dss_004c_a_specificity(
         SpecificityConfig(
             cache_dir=args.cache_dir,

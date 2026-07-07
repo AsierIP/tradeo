@@ -16,6 +16,12 @@ from tradeo.modules.daily_swing.gap_confirmatory_run import (  # noqa: E402
     GapConfirmatoryRunError,
     run_gap_confirmatory_matrix,
 )
+from tradeo.core.config import get_settings  # noqa: E402
+from tradeo.modules.resource_policy.enforcement import (  # noqa: E402
+    blocked_job_status,
+    decide_with_market_session_policy,
+)
+from tradeo.modules.resource_policy.market_session_resource_policy import JobType  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:
@@ -44,6 +50,24 @@ def main() -> int:
     if any((args.ibkr, args.signals, args.preview, args.orders, args.paper, args.live)):
         print("DSS-GAP-007 refuses IBKR, signals, preview, orders, paper, and live.", file=sys.stderr)
         return 2
+    policy_decision = decide_with_market_session_policy(
+        JobType.HEAVY_BACKTEST,
+        "research",
+        settings=get_settings(),
+    )
+    if not policy_decision.allowed:
+        print(
+            json.dumps(
+                {
+                    "decision": "blocked_resource_policy",
+                    "resource_policy": policy_decision.to_dict(),
+                    "research_result": blocked_job_status(policy_decision),
+                },
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 5
     config = GapConfirmatoryRunConfig(
         ledger_path=args.ledger,
         matrix_path=args.matrix,

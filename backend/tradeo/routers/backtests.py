@@ -4,6 +4,8 @@ from fastapi import APIRouter, Depends
 
 from tradeo.core.config import get_settings
 from tradeo.core.security import require_admin
+from tradeo.modules.resource_policy.market_session_resource_policy import JobType
+from tradeo.routers.resource_policy_guard import assert_route_job_allowed
 from tradeo.schemas import BacktestMetrics, BacktestRequest
 from tradeo.services.backtester import Backtester
 from tradeo.services.data_provider import pick_symbols
@@ -14,6 +16,7 @@ router = APIRouter(prefix="/backtests", tags=["backtests"])
 
 @router.post("/run", response_model=BacktestMetrics)
 def run_backtest(request: BacktestRequest, _: str = Depends(require_admin)) -> BacktestMetrics:
+    assert_route_job_allowed(JobType.HEAVY_BACKTEST, "research")
     settings = get_settings()
     symbols = request.symbols or pick_symbols(limit=request.max_symbols, interval=request.interval)
     return Backtester(provider=get_market_data_provider(), starting_equity=settings.initial_capital_usd).run(

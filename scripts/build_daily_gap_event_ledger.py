@@ -15,6 +15,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
 
+from tradeo.core.config import get_settings  # noqa: E402
 from tradeo.modules.daily_swing.gap_event_ledger import (  # noqa: E402
     CacheMissingError,
     GapLedgerConfig,
@@ -25,6 +26,11 @@ from tradeo.modules.daily_swing.gap_event_ledger import (  # noqa: E402
     validate_cache_and_universe,
     write_research_summaries,
 )
+from tradeo.modules.resource_policy.enforcement import (  # noqa: E402
+    blocked_job_status,
+    decide_with_market_session_policy,
+)
+from tradeo.modules.resource_policy.market_session_resource_policy import JobType  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:
@@ -50,6 +56,25 @@ def main() -> int:
     if args.orders or args.preview or args.signals or args.execute:
         print("DSS-GAP-002 refuses orders, previews, signals, and execute mode.", file=sys.stderr)
         return 2
+
+    policy_decision = decide_with_market_session_policy(
+        JobType.RESEARCH_HEAVY,
+        "research",
+        settings=get_settings(),
+    )
+    if not policy_decision.allowed:
+        print(
+            json.dumps(
+                {
+                    "decision": "blocked_resource_policy",
+                    "resource_policy": policy_decision.to_dict(),
+                    "research_result": blocked_job_status(policy_decision),
+                },
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 5
 
     config = GapLedgerConfig(
         cache_dir=args.cache_dir,

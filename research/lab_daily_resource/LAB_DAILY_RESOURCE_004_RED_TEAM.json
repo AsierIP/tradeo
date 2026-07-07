@@ -1,0 +1,138 @@
+{
+  "a_inventory_completeness": {
+    "core_contract": "complete",
+    "notes": [
+      "Wrapper inventory now reflects worker, route, script, capacity, intraday, GAP, and Daily Swing enforcement state.",
+      "Older T-002 enforcement-map artifacts are historical and not authoritative for this rollout."
+    ],
+    "rollout_inventory": "complete"
+  },
+  "cases": [
+    {
+      "evidence": "Direct paper_submit decision and enforcement wrapper remain blocked with can_submit_orders=false.",
+      "id": "decide_job_paper_submit",
+      "result": "PASS"
+    },
+    {
+      "evidence": "research_heavy is blocked during REGULAR_MARKET and deny_reason is persisted through blocked_job_status.",
+      "id": "direct_heavy_regular_market",
+      "result": "PASS"
+    },
+    {
+      "evidence": "research_heavy is allowed during MARKET_CLOSED with HIGH priority and can_submit_orders=false.",
+      "id": "heavy_market_closed",
+      "result": "PASS"
+    },
+    {
+      "evidence": "Worker wrapper blocks a denied heavy research job before executing its action.",
+      "id": "worker_heavy_rth",
+      "result": "PASS"
+    },
+    {
+      "evidence": "Capacity runner contains decide_with_market_session_policy and RESEARCH_HEAVY gate.",
+      "id": "capacity_runner_policy",
+      "result": "PASS"
+    },
+    {
+      "evidence": "intraday_data_sync maps to JobType.RESEARCH_HEAVY before provider sync work.",
+      "id": "intraday_data_sync_policy",
+      "result": "PASS"
+    },
+    {
+      "evidence": "Intraday wave execute path contains resource policy gate and blocked_resource_policy manifest decision.",
+      "id": "intraday_wave_policy",
+      "result": "PASS"
+    },
+    {
+      "evidence": "Daily gap dry-run and confirmatory scripts contain resource policy gates before execution.",
+      "id": "daily_gap_policy",
+      "result": "PASS"
+    },
+    {
+      "evidence": "assert_job_allowed without policy returns resource_policy_missing.",
+      "id": "missing_policy_fail_closed",
+      "result": "PASS"
+    },
+    {
+      "evidence": "UNKNOWN session returns session_state_unknown.",
+      "id": "unknown_session_fail_closed",
+      "result": "PASS"
+    },
+    {
+      "evidence": "Entry-ready Daily setup emits non-submitting Lab probe request and artifact flags remain false.",
+      "id": "daily_entry_ready_no_submit",
+      "result": "PASS"
+    },
+    {
+      "evidence": "Lab probe policy priority does not bypass paper readiness runner; report remains dry_run_only and submit_allowed=false.",
+      "id": "lab_paper_probe_own_gate",
+      "result": "PASS"
+    },
+    {
+      "evidence": "Resource policy and enforcement return blocked paper submit with can_submit_orders=false.",
+      "id": "resource_policy_cannot_authorize_paper_submit",
+      "result": "PASS"
+    },
+    {
+      "evidence": "Daily artifact excludes order submission, broker id, live trade, and intraday metric fields.",
+      "id": "mixed_daily_lab_metrics",
+      "result": "PASS"
+    },
+    {
+      "evidence": "Resource policy and Daily setup watched routes are GET-only; POST returns 405.",
+      "id": "endpoint_post",
+      "result": "PASS"
+    },
+    {
+      "evidence": "Admin heavy-launch routes contain assert_route_job_allowed guards before scanner, research, backtest, and self-improvement work.",
+      "id": "heavy_admin_api_bypass",
+      "result": "PASS"
+    },
+    {
+      "evidence": "Daily Setup panel contains no button or onClick action.",
+      "id": "ui_live_submit_foxhunter_button",
+      "result": "PASS"
+    },
+    {
+      "evidence": "git ls-files reports no tracked artifacts/runtime paths.",
+      "id": "runtime_artifacts_tracked",
+      "result": "PASS"
+    },
+    {
+      "evidence": "Focal API payload scans find no default password string or raw broker account-id pattern.",
+      "id": "secret_raw_account_id",
+      "result": "PASS"
+    },
+    {
+      "evidence": "Existing intraday registration keeps max_instances=1, coalesce=true, and jitter; no timers or one-shots were modified.",
+      "id": "automation_timer_collision",
+      "result": "PASS"
+    }
+  ],
+  "concurrent_worktree_note": "Concurrent implementation edits were present during validation; red-team changed only its focal test and this red-team report pair.",
+  "decision": "RED_TEAM_PASS",
+  "extended_test_evidence": {
+    "command": "backend/.venv/bin/python -m pytest backend/tradeo/tests/test_resource_policy_enforcement.py backend/tradeo/tests/test_lab_daily_resource_004_red_team.py backend/tradeo/tests/test_fast_chart_engine_registry.py backend/tradeo/tests/test_intraday_process_pool_benchmark_script.py backend/tradeo/tests/test_intraday_research_wave_runner.py backend/tradeo/tests/test_intraday_worker_jobs.py -q",
+    "exit_code": 0,
+    "result": "83 passed, 1 warning",
+    "warning": "Starlette/httpx deprecation warning from fastapi.testclient"
+  },
+  "generated_date": "2026-07-07",
+  "known_followups": [],
+  "schema_version": "tradeo.lab_daily_resource_004.red_team.v1",
+  "scope": [
+    "market-session resource policy enforcement",
+    "runner and worker rollout gates",
+    "Daily Setup Watchlist read-only contract",
+    "Lab Paper Probe separation",
+    "endpoint and UI write-surface audit",
+    "runtime artifact tracking audit",
+    "secret and raw account-id exposure audit"
+  ],
+  "test_evidence": {
+    "command": "cd backend && .venv/bin/python -m pytest -q tradeo/tests/test_lab_daily_resource_004_red_team.py",
+    "exit_code": 0,
+    "result": "14 passed, 1 warning",
+    "warning": "Starlette/httpx deprecation warning from fastapi.testclient"
+  }
+}

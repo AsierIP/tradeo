@@ -24,6 +24,11 @@ from tradeo.db.init_db import init_db, seed_db
 from tradeo.db.models import DiscoveryRun
 from tradeo.db.session import SessionLocal
 from tradeo.modules.intraday.flat_service import IntradayEodFlatService
+from tradeo.modules.resource_policy.enforcement import (
+    blocked_job_status,
+    decide_with_market_session_policy,
+)
+from tradeo.modules.resource_policy.market_session_resource_policy import JobType
 from tradeo.ops.false_match_metrics import (
     collect_false_match_drift_metrics,
     persist_false_match_drift_report,
@@ -92,17 +97,44 @@ _NATIVE_THREAD_ENV_VARS = (
     "NUMEXPR_NUM_THREADS",
     "VECLIB_MAXIMUM_THREADS",
 )
+_INTRADAY_RESOURCE_POLICY_JOB_TYPES = {
+    "intraday_data_sync": JobType.RESEARCH_HEAVY,
+    "intraday_research": JobType.RESEARCH_HEAVY,
+    "intraday_research_process_pool": JobType.RESEARCH_HEAVY,
+    "intraday_candidate_scan": JobType.LARGE_SCANNER,
+}
 
 
 def _record_job_failure(db, job_id: str, exc: BaseException) -> None:  # noqa: ANN001
     record_job_failure(db, job_id=job_id, exc=exc)
 
 
+def _resource_policy_blocks_job(
+    job_id: str,
+    job_type: str,
+    owner: str,
+    settings: Settings,
+) -> bool:
+    decision = decide_with_market_session_policy(job_type, owner, settings=settings)
+    if decision.allowed:
+        return False
+    logger.warning(
+        "job blocked by resource policy: job_id={} job_type={} reason={}",
+        job_id,
+        job_type,
+        decision.deny_reason,
+    )
+    return True
+
+
 def scan_job() -> None:
+    settings = get_settings()
+    if _resource_policy_blocks_job("market_scan", JobType.LARGE_SCANNER, "scanner", settings):
+        return
     db = SessionLocal()
     try:
         response = MarketScanner().run(
-            ScanRequest(limit=get_settings().scan_limit_default),
+            ScanRequest(limit=settings.scan_limit_default),
             db=db,
             store=True,
         )
@@ -127,6 +159,14 @@ def report_job() -> None:
 
 
 def self_improvement_job() -> None:
+    settings = get_settings()
+    if _resource_policy_blocks_job(
+        "weekly_self_improvement",
+        JobType.HEAVY_BACKTEST,
+        "research",
+        settings,
+    ):
+        return
     db = SessionLocal()
     try:
         result = SelfImprovementEngine().run_lab_cycle(db, max_symbols=25)
@@ -139,12 +179,19 @@ def self_improvement_job() -> None:
 
 
 def discovery_job() -> None:
+    settings = get_settings()
+    if not settings.discovery_enabled:
+        logger.info("discovery job skipped: discovery_enabled=false")
+        return
+    if _resource_policy_blocks_job(
+        "pattern_discovery_lab",
+        JobType.RESEARCH_HEAVY,
+        "research",
+        settings,
+    ):
+        return
     db = SessionLocal()
     try:
-        settings = get_settings()
-        if not settings.discovery_enabled:
-            logger.info("discovery job skipped: discovery_enabled=false")
-            return
         request = DiscoveryRunRequest(
             limit=settings.discovery_limit_default,
             period=settings.discovery_period,
@@ -195,12 +242,19 @@ def discovery_job() -> None:
 
 
 def novel_match_job() -> None:
+    settings = get_settings()
+    if not settings.discovery_match_enabled:
+        logger.info("novel pattern match job skipped: discovery_match_enabled=false")
+        return
+    if _resource_policy_blocks_job(
+        "novel_pattern_matcher",
+        JobType.LARGE_SCANNER,
+        "research",
+        settings,
+    ):
+        return
     db = SessionLocal()
     try:
-        settings = get_settings()
-        if not settings.discovery_match_enabled:
-            logger.info("novel pattern match job skipped: discovery_match_enabled=false")
-            return
         result = NovelPatternMatcher().match_current(
             db,
             limit=settings.discovery_match_symbol_limit,
@@ -217,12 +271,19 @@ def novel_match_job() -> None:
 
 
 def research_director_job() -> None:
+    settings = get_settings()
+    if not settings.research_director_enabled:
+        logger.info("research director skipped: research_director_enabled=false")
+        return
+    if _resource_policy_blocks_job(
+        "research_director",
+        JobType.RESEARCH_HEAVY,
+        "research",
+        settings,
+    ):
+        return
     db = SessionLocal()
     try:
-        settings = get_settings()
-        if not settings.research_director_enabled:
-            logger.info("research director skipped: research_director_enabled=false")
-            return
         result = ResearchDirector(settings).run(
             db,
             limit=settings.research_director_pattern_limit,
@@ -590,6 +651,22 @@ def _run_intraday_job(
             reason=f"{enabled_attr}=false",
             details={"enabled_attr": enabled_attr},
         )
+    policy_job_type = _resource_policy_job_type(job_id)
+    if policy_job_type is not None:
+        decision = decide_with_market_session_policy(
+            policy_job_type,
+            _resource_policy_owner(job_id),
+            settings=settings,
+        )
+        if not decision.allowed:
+            blocked = blocked_job_status(decision)
+            return _write_intraday_job_status(
+                job_id,
+                settings,
+                status=blocked["status"],
+                reason=blocked["reason"],
+                details={**dict(blocked["details"]), "enabled_attr": enabled_attr},
+            )
 
     lock = _INTRADAY_JOB_LOCKS.setdefault(job_id, Lock())
     if not lock.acquire(blocking=False):
@@ -638,6 +715,22 @@ def _write_intraday_job_status(
     }
     write_intraday_session_status(job_id, payload, settings)
     return payload
+
+
+def _resource_policy_job_type(job_id: str) -> str | None:
+    if job_id in _INTRADAY_RESOURCE_POLICY_JOB_TYPES:
+        return _INTRADAY_RESOURCE_POLICY_JOB_TYPES[job_id]
+    if job_id.startswith("intraday_research_"):
+        return JobType.RESEARCH_HEAVY
+    return None
+
+
+def _resource_policy_owner(job_id: str) -> str:
+    if "research" in job_id:
+        return "research"
+    if "candidate_scan" in job_id:
+        return "scanner"
+    return "worker"
 
 
 def _intraday_universe_placeholder(settings: Settings, *, bucket: str) -> dict[str, Any]:

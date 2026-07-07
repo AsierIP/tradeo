@@ -18,9 +18,11 @@ from tradeo.db.models import (
     DiscoveryRun,
 )
 from tradeo.db.session import get_db
+from tradeo.modules.resource_policy.market_session_resource_policy import JobType
 from tradeo.research.autonomous_research_director import ResearchDirector
 from tradeo.research.novel_pattern_matcher import NovelPatternMatcher
 from tradeo.research.novel_pattern_registry import NovelPatternRegistry
+from tradeo.routers.resource_policy_guard import assert_route_job_allowed
 from tradeo.services.director_review_gate import DirectorReviewGate
 from tradeo.schemas import (
     DiscoveredPatternDetailOut,
@@ -86,6 +88,7 @@ def run_discovery(
     _: str = Depends(require_admin),
     db: Session = Depends(get_db),
 ) -> DiscoveryRunResponse:
+    assert_route_job_allowed(JobType.RESEARCH_HEAVY, "research")
     return PatternDiscoveryLabAgent().run(request, db)
 
 
@@ -218,6 +221,7 @@ def match_current_patterns(
     _: str = Depends(require_admin),
     db: Session = Depends(get_db),
 ) -> NovelPatternMatchResponse:
+    assert_route_job_allowed(JobType.LARGE_SCANNER, "research")
     result = NovelPatternMatcher().match_current(
         db=db,
         symbols=request.symbols,
@@ -286,6 +290,7 @@ def run_research_director(
     _: str = Depends(require_admin),
     db: Session = Depends(get_db),
 ) -> ResearchDirectorResponse:
+    assert_route_job_allowed(JobType.RESEARCH_HEAVY, "research")
     result = ResearchDirector().run(db, run_id=run_id, limit=limit)
     return ResearchDirectorResponse(**result)
 

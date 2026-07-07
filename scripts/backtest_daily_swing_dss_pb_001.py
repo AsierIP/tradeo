@@ -10,7 +10,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
 
+from tradeo.core.config import get_settings
 from tradeo.modules.daily_swing.dss_004 import BacktestConfig, run_dss_pb_001_backtest
+from tradeo.modules.resource_policy.enforcement import blocked_job_status, decide_with_market_session_policy
+from tradeo.modules.resource_policy.market_session_resource_policy import JobType
 
 
 def main() -> int:
@@ -26,6 +29,24 @@ def main() -> int:
     args = parser.parse_args()
     if args.cost_mode != "x1,x2,x3":
         raise SystemExit("only --cost-mode x1,x2,x3 is supported for DSS-004")
+    policy_decision = decide_with_market_session_policy(
+        JobType.HEAVY_BACKTEST,
+        "research",
+        settings=get_settings(),
+    )
+    if not policy_decision.allowed:
+        print(
+            json.dumps(
+                {
+                    "decision": "blocked_resource_policy",
+                    "resource_policy": policy_decision.to_dict(),
+                    "research_result": blocked_job_status(policy_decision),
+                },
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 5
     result = run_dss_pb_001_backtest(
         BacktestConfig(
             cache_dir=args.cache_dir,

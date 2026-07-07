@@ -6,12 +6,19 @@ from typing import Any
 
 from tradeo.modules.resource_policy.market_session_resource_policy import (
     JobType,
+    MarketSessionResourcePolicy,
     PriorityLevel,
     ResourceBudget,
     SessionState,
 )
 
 RESOURCE_POLICY_ENFORCEMENT_VERSION = "tradeo.resource_policy.enforcement.v1"
+DENY_LIVE_JOB = "live_job_blocked"
+DENY_PAPER_SUBMIT = "paper_submit_blocked"
+DENY_POLICY_MISSING = "resource_policy_missing"
+DENY_SESSION_UNKNOWN = "session_state_unknown"
+DENY_POLICY_DENIED = "resource_policy_denied"
+DENY_POLICY_ERROR = "resource_policy_error"
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,32 +62,40 @@ def assert_job_allowed(
         return _blocked(
             normalized_job,
             normalized_owner,
-            "live jobs are outside Daily resource policy",
+            DENY_LIVE_JOB,
             normalized_session,
         )
     if normalized_job == JobType.PAPER_SUBMIT:
         return _blocked(
             normalized_job,
             normalized_owner,
-            "paper submit is blocked unless the Lab Paper Probe gate explicitly owns it",
+            DENY_PAPER_SUBMIT,
             normalized_session,
         )
     if normalized_session == SessionState.UNKNOWN:
         return _blocked(
             normalized_job,
             normalized_owner,
-            "session state unknown; fail closed",
+            DENY_SESSION_UNKNOWN,
             normalized_session,
         )
     if policy is None or not hasattr(policy, "decide_job"):
         return _blocked(
             normalized_job,
             normalized_owner,
-            "resource policy missing; fail closed",
+            DENY_POLICY_MISSING,
             normalized_session,
         )
 
-    decision = policy.decide_job(normalized_job, now=now)
+    try:
+        decision = policy.decide_job(normalized_job, now=now)
+    except Exception as exc:  # noqa: BLE001 - resource-policy uncertainty fails closed.
+        return _blocked(
+            normalized_job,
+            normalized_owner,
+            f"{DENY_POLICY_ERROR}:{type(exc).__name__}",
+            normalized_session or SessionState.UNKNOWN,
+        )
     budget = getattr(decision, "budget", None)
     effective_state = _normalize_session_state(
         str(getattr(budget, "session_state", normalized_session or SessionState.UNKNOWN))
@@ -89,7 +104,7 @@ def assert_job_allowed(
         return _blocked(
             normalized_job,
             normalized_owner,
-            "session state unknown; fail closed",
+            DENY_SESSION_UNKNOWN,
             effective_state,
             budget=budget,
         )
@@ -97,7 +112,7 @@ def assert_job_allowed(
         return _blocked(
             normalized_job,
             normalized_owner,
-            str(getattr(decision, "reason", "resource policy denied job")),
+            _policy_denied_reason(normalized_job, effective_state),
             effective_state,
             budget=budget,
             priority=str(getattr(decision, "priority", PriorityLevel.BLOCKED)),
@@ -112,6 +127,29 @@ def assert_job_allowed(
         budget=budget,
         can_submit_orders=False,
     )
+
+
+def decide_with_market_session_policy(
+    job_type: str,
+    owner: str,
+    *,
+    settings: Any | None = None,
+    policy: Any | None = None,
+    now: datetime | None = None,
+) -> ResourcePolicyDecision:
+    resource_policy = policy or MarketSessionResourcePolicy(settings=settings)
+    return assert_job_allowed(job_type, owner, policy=resource_policy, now=now)
+
+
+def blocked_job_status(decision: ResourcePolicyDecision) -> dict[str, Any]:
+    return {
+        "status": "skipped",
+        "reason": DENY_POLICY_DENIED,
+        "details": {
+            "resource_policy": decision.to_dict(),
+            "can_submit_orders": False,
+        },
+    }
 
 
 def _blocked(
@@ -147,3 +185,8 @@ def _normalize_session_state(session_state: str | None) -> str | None:
     if session_state is None:
         return None
     return str(session_state).strip().upper() or None
+
+
+def _policy_denied_reason(job_type: str, session_state: str | None) -> str:
+    session = str(session_state or SessionState.UNKNOWN).strip().lower() or "unknown"
+    return f"{DENY_POLICY_DENIED}:{job_type}:{session}"

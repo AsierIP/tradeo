@@ -12,10 +12,17 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from statistics import median
 from typing import Any
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
+
+from tradeo.core.config import get_settings  # noqa: E402
+from tradeo.modules.resource_policy.enforcement import decide_with_market_session_policy  # noqa: E402
+from tradeo.modules.resource_policy.market_session_resource_policy import JobType  # noqa: E402
 
 BASELINE = {
     "db_group": "2968-2979",
@@ -290,6 +297,24 @@ def main() -> int:
     parser.add_argument("--min-capacity-multiplier", type=float, default=1.25)
     parser.add_argument("--min-efficiency-ratio", type=float, default=0.65)
     args = parser.parse_args()
+
+    policy_decision = decide_with_market_session_policy(
+        JobType.RESEARCH_HEAVY,
+        "research",
+        settings=get_settings(),
+    )
+    if not policy_decision.allowed:
+        print(
+            json.dumps(
+                {
+                    "decision": "blocked_resource_policy",
+                    "resource_policy": policy_decision.to_dict(),
+                },
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 5
 
     if args.score:
         if not args.benchmark_json:

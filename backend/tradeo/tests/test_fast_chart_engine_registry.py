@@ -7,6 +7,7 @@ from tradeo.modules.fast_chart_analysis.engine_registry import (
     FastChartEngineRegistry,
     plan_daily_watchlist_scheduler_run,
 )
+from tradeo.modules.resource_policy.enforcement import DENY_SESSION_UNKNOWN
 from tradeo.modules.resource_policy.market_session_resource_policy import MarketSessionResourcePolicy, SessionState
 
 
@@ -62,7 +63,7 @@ def test_unknown_session_fails_closed(tmp_path) -> None:
     )
 
     assert decision.allowed is False
-    assert decision.deny_reason == "session state unknown; fail closed"
+    assert decision.deny_reason == DENY_SESSION_UNKNOWN
 
 
 def test_simultaneous_high_priority_contention_resolves_to_session_owner(tmp_path) -> None:
@@ -110,7 +111,7 @@ def test_scheduler_plan_carries_budget_priority_and_deny_reason(tmp_path) -> Non
     assert allowed.resource_remaining is not None
     assert allowed.as_scheduler_metadata()["resource_budget"]["max_symbols"] == 120
     assert blocked.allowed is False
-    assert blocked.deny_reason == "resource_policy:session state unknown; fail closed"
+    assert blocked.deny_reason == f"resource_policy:{DENY_SESSION_UNKNOWN}"
 
 
 def test_scheduler_plan_requires_resource_policy() -> None:
@@ -144,5 +145,5 @@ def test_registry_plan_uses_attached_resource_policy(tmp_path) -> None:
     )
 
     assert decision.allowed is False
-    assert decision.deny_reason == "resource_policy:session state unknown; fail closed"
+    assert decision.deny_reason == f"resource_policy:{DENY_SESSION_UNKNOWN}"
     assert decision.session_state == "UNKNOWN"
