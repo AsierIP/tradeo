@@ -151,6 +151,7 @@ def test_no_data_inconclusive_when_missing_runtime(tmp_path) -> None:
 
     assert result["final_decision"] == "POSTSESSION_INCONCLUSIVE"
     assert result["reason"] == "session_runtime_missing"
+    assert not (tmp_path / "artifacts/runtime/postsession/2026-07-07/postsession_final.json").exists()
 
 
 def test_auto_fix_cap_max_three(tmp_path) -> None:

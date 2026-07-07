@@ -186,7 +186,12 @@ class PostSessionImprovementAgent:
         if not allow_rth and _is_regular_trading_hours(self.now):
             return self._write_inconclusive(day, "regular_trading_hours_block", final_path)
         if require_session_runtime and not self._session_runtime_exists(session_date):
-            return self._write_inconclusive(day, "session_runtime_missing", final_path)
+            return self._write_inconclusive(
+                day,
+                "session_runtime_missing",
+                final_path,
+                write_final_marker=False,
+            )
 
         lock_path.write_text(self.now.isoformat() + "\n", encoding="utf-8")
         try:
@@ -416,7 +421,14 @@ class PostSessionImprovementAgent:
             encoding="utf-8",
         )
 
-    def _write_inconclusive(self, day: str, reason: str, final_path: Path) -> dict[str, Any]:
+    def _write_inconclusive(
+        self,
+        day: str,
+        reason: str,
+        final_path: Path,
+        *,
+        write_final_marker: bool = True,
+    ) -> dict[str, Any]:
         decision = {
             "schema_version": SCHEMA_VERSION,
             "session_date": day,
@@ -433,8 +445,9 @@ class PostSessionImprovementAgent:
                 "env_real_touched": False,
             },
         }
-        final_path.parent.mkdir(parents=True, exist_ok=True)
-        _write_json(final_path, decision)
+        if write_final_marker:
+            final_path.parent.mkdir(parents=True, exist_ok=True)
+            _write_json(final_path, decision)
         return decision
 
     def _write_validation_fail(self, day: str, reason: str) -> dict[str, Any]:
