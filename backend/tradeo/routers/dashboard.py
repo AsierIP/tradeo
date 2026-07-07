@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from typing import Literal
+
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from tradeo.core.config import get_settings
@@ -8,6 +10,7 @@ from tradeo.core.security import require_admin
 from tradeo.db.models import EquityPoint, PatternMetric, Signal, Trade, TradeStatus
 from tradeo.db.session import get_db
 from tradeo.schemas import DashboardSummary
+from tradeo.services.module_dashboard import module_overview
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
@@ -38,3 +41,15 @@ def summary(_: str = Depends(require_admin), db: Session = Depends(get_db)) -> D
             "max_drawdown_pct": 12.0,
         },
     )
+
+
+@router.get("/daily-overview")
+def daily_overview(
+    _: str = Depends(require_admin),
+    db: Session = Depends(get_db),
+    cadence: Literal["all", "daily", "intraday"] = Query(
+        default="daily",
+        pattern="^(all|daily|intraday)$",
+    ),
+) -> dict[str, object]:
+    return module_overview(db, "daily", cadence=cadence)

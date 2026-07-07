@@ -128,10 +128,16 @@ def choose_env_source(repo_root: Path, env_file: Path | None = None) -> tuple[st
     return None, None
 
 
-def collect_env(repo_root: Path, env_file: Path | None = None) -> tuple[str | None, dict[str, str]]:
+def collect_env(
+    repo_root: Path,
+    env_file: Path | None = None,
+    *,
+    include_process_env: bool = True,
+) -> tuple[str | None, dict[str, str]]:
     source, path = choose_env_source(repo_root, env_file)
     env = parse_env_file(path) if path else {}
-    env.update({key: value for key, value in os.environ.items() if key.startswith("TRADEO_")})
+    if include_process_env:
+        env.update({key: value for key, value in os.environ.items() if key.startswith("TRADEO_")})
     return source, env
 
 
@@ -323,9 +329,14 @@ def build_report(
     repo_root: Path,
     env_file: Path | None = None,
     allow_paper_enabled: bool = False,
+    include_process_env: bool = True,
 ) -> dict[str, Any]:
     repo_root = repo_root.resolve()
-    env_source, env = collect_env(repo_root, env_file)
+    env_source, env = collect_env(
+        repo_root,
+        env_file,
+        include_process_env=include_process_env,
+    )
     repo = git_repo_summary(repo_root)
     critical_files = check_critical_files(repo_root)
     compose = docker_compose_check(repo_root)

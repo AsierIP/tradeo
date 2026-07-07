@@ -17,7 +17,7 @@ from tradeo.services.evidence import (
 )
 from tradeo.services.implementation_shortfall import execution_adjusted_r_summary, trade_slippage_r
 
-EntryModule = Literal["laboratory", "fox_hunter"]
+EntryModule = Literal["laboratory", "fox_hunter", "daily"]
 EntryCadence = Literal["all", "daily", "intraday"]
 
 MODULE_DASHBOARD_QUERY_LIMIT = 500
@@ -191,6 +191,8 @@ def _signal_module(signal: Signal) -> str:
     entry_module = metadata.get("entry_module")
     if entry_module:
         return str(entry_module)
+    if signal.strategy_version.startswith("daily_"):
+        return "daily"
     if signal.strategy_version.startswith("fox_hunter_"):
         return "fox_hunter"
     purpose = str(metadata.get("purpose") or "")
@@ -207,11 +209,13 @@ def _trade_module(trade: Trade) -> str:
     if source_module:
         return str(source_module)
     reason = str(metadata.get("reason") or "")
+    execution_mode = str(metadata.get("execution_mode") or "")
+    if reason.startswith("daily") or execution_mode == "ibkr_daily_paper":
+        return "daily"
     if reason.startswith("fox_hunter"):
         return "fox_hunter"
     if reason.startswith("laboratory"):
         return "laboratory"
-    execution_mode = str(metadata.get("execution_mode") or "")
     if execution_mode == "paper":
         return "laboratory"
     if metadata.get("ibkr_mode") == "paper":

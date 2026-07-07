@@ -212,7 +212,7 @@ type ExecutionDiagnostics = {
   mean_commission_r?: number | null
 }
 type ModuleOverview = {
-  module: 'laboratory' | 'fox_hunter'
+  module: 'daily' | 'laboratory' | 'fox_hunter'
   cadence?: 'all' | 'daily' | 'intraday'
   data_scope?: string
   query_limit?: number
@@ -532,6 +532,11 @@ function formatRunTime(value?: string | null) {
 function formatMoney(value: number) {
   const sign = value > 0 ? '+' : ''
   return `${sign}$${value.toFixed(2)}`
+}
+
+function formatOptionalMoney(value?: number | null) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return '-'
+  return formatMoney(value)
 }
 
 function formatRValue(value?: number | null, digits = 2) {
@@ -958,6 +963,7 @@ function OperationsModule({
 }) {
   const trades = overview?.trades || []
   const activeTrades = trades.filter((trade) => trade.status.toLowerCase() === 'open')
+  const closedTrades = trades.filter((trade) => trade.status.toLowerCase() === 'closed')
   const pnl = overview?.pnl_points?.length ? overview.pnl_points : [{ timestamp: '', total_pnl_usd: 0, trade_pnl_usd: 0 }]
   const stats = overview?.stats || { signals: 0, trades: 0, open_trades: 0, closed_trades: 0, total_pnl_usd: 0, total_r: 0, win_rate: 0 }
   const executionDiagnostics = overview?.execution_diagnostics || stats.execution_diagnostics
@@ -1038,12 +1044,39 @@ function OperationsModule({
           </ResponsiveContainer>
         </section>
       </div>
+
+      <section className="module-panel">
+        <h3>Órdenes cerradas</h3>
+        <div className="table-scroll active-orders-scroll">
+          <table>
+            <thead>
+              <tr><th>Símbolo</th><th>Lado</th><th>Qty</th><th>Entrada</th><th>Salida</th><th>Comisión</th><th>P/L</th><th>R</th><th>Cierre</th></tr>
+            </thead>
+            <tbody>
+              {closedTrades.map((t) => (
+                <tr key={t.id}>
+                  <td>{t.symbol}</td>
+                  <td>{t.side}</td>
+                  <td>{t.qty}</td>
+                  <td>{t.entry_fill_price ?? t.entry}</td>
+                  <td>{t.exit_price ?? '-'}</td>
+                  <td>{formatOptionalMoney(t.commission_usd)}</td>
+                  <td className={(t.pnl_usd ?? 0) > 0 ? 'positive' : (t.pnl_usd ?? 0) < 0 ? 'negative' : ''}>{formatOptionalMoney(t.pnl_usd)}</td>
+                  <td>{formatRValue(t.r_multiple)}</td>
+                  <td>{shortDateTime(t.closed_at)}</td>
+                </tr>
+              ))}
+              {!closedTrades.length && <tr><td colSpan={9}>Sin órdenes cerradas.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </section>
     </section>
   )
 }
 
 export default function Page() {
-  const [activeModule, setActiveModule] = useState<'research' | 'laboratory' | 'fox_hunter'>('research')
+  const [activeModule, setActiveModule] = useState<'research' | 'daily' | 'laboratory' | 'fox_hunter'>('research')
   const [activeResearchCadence, setActiveResearchCadence] = useState<'daily' | 'intraday'>('daily')
   const [activeLabCadence, setActiveLabCadence] = useState<'daily' | 'intraday'>('intraday')
   const [activeFoxCadence, setActiveFoxCadence] = useState<'daily' | 'intraday'>('daily')
@@ -1065,6 +1098,7 @@ export default function Page() {
   const { data: intradayDiscoveryRuns, mutate: mutateIntradayRuns } = useSWR<DiscoveryRun[]>('/research/runs?cadence=intraday&limit=25', fetcher, { refreshInterval: 15000 })
   const { data: labStatus } = useSWR<ModuleStatus>('/laboratory/status', fetcher, { refreshInterval: 5000 })
   const { data: foxStatus } = useSWR<ModuleStatus>('/fox-hunter/status', fetcher, { refreshInterval: 5000 })
+  const { data: dailyOverview } = useSWR<ModuleOverview>('/dashboard/daily-overview?cadence=daily', fetcher, { refreshInterval: 15000 })
   const { data: labDailyOverview } = useSWR<ModuleOverview>('/laboratory/overview?cadence=daily', fetcher, { refreshInterval: 15000 })
   const { data: labIntradayOverview } = useSWR<ModuleOverview>('/laboratory/overview?cadence=intraday', fetcher, { refreshInterval: 15000 })
   const { data: foxDailyOverview } = useSWR<ModuleOverview>('/fox-hunter/overview?cadence=daily', fetcher, { refreshInterval: 15000 })
@@ -1267,8 +1301,8 @@ export default function Page() {
       <section className="grid">
         <ScopeDivider label="Operativa" title="Lab y Fox separados por daily / intradía">
           <ModeChip
-            label="Lab Daily"
-            value={`${labDailyOverview?.stats.open_trades ?? 0} activas`}
+            label="Daily"
+            value={`${dailyOverview?.stats.open_trades ?? 0} activas`}
             tone="good"
           />
           <ModeChip
@@ -1295,12 +1329,16 @@ export default function Page() {
 
         <StatCard label="Equity actual" value={`$${latestEquity.toFixed(2)}`} />
         <StatCard label="Research aceptados" value={acceptedResearchTotal} />
+        <StatCard label="Daily activas" value={dailyOverview?.stats.open_trades ?? 0} />
         <StatCard label="Lab activas" value={(labDailyOverview?.stats.open_trades ?? 0) + (labIntradayOverview?.stats.open_trades ?? 0)} />
         <StatCard label="Fox activas" value={(foxDailyOverview?.stats.open_trades ?? 0) + (foxIntradayOverview?.stats.open_trades ?? 0)} />
 
         <nav className="top-tabs full" aria-label="Módulos Tradeo">
           <button className={activeModule === 'research' ? 'active' : ''} onClick={() => setActiveModule('research')}>
             Research
+          </button>
+          <button className={activeModule === 'daily' ? 'active' : ''} onClick={() => setActiveModule('daily')}>
+            Daily
           </button>
           <button className={activeModule === 'laboratory' ? 'active' : ''} onClick={() => setActiveModule('laboratory')}>
             Laboratorio
@@ -1553,6 +1591,16 @@ export default function Page() {
                 <DailySetupWatchlistPanel status={dailySetupWatchlist} resourcePolicy={resourcePolicyStatus} />
               </>
             )}
+          </section>
+        )}
+
+        {activeModule === 'daily' && (
+          <section className="module-view full">
+            <OperationsModule
+              title="Daily"
+              subtitle="Órdenes paper Daily activas, cerradas y P/L acumulado."
+              overview={dailyOverview}
+            />
           </section>
         )}
 

@@ -205,7 +205,6 @@ Post-market:
 ## Files Changed
 
 - `docs/remediation/prepaper_operational_runbook_2026_06_17.md`
-- `reports/Auditoria_Tradeo_V_0_9_preLive.md`
 - `README.md`
 - `Makefile`
 - `backend/tradeo/tests/test_prepaper_release_readiness.py`

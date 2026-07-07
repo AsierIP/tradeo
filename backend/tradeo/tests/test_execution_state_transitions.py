@@ -1742,6 +1742,7 @@ class PreflightFakeIB:
     def placeOrder(self, contract, order):  # noqa: ANN001
         self.placed_orders.append(order)
         return SimpleNamespace(
+            contract=contract,
             order=order,
             orderStatus=SimpleNamespace(
                 permId=20_000 + len(self.placed_orders),
@@ -1749,6 +1750,19 @@ class PreflightFakeIB:
             ),
             log=[],
         )
+
+    def openTrades(self):  # noqa: N802
+        return [
+            SimpleNamespace(
+                contract=SimpleNamespace(symbol="AAPL"),
+                order=order,
+                orderStatus=SimpleNamespace(
+                    permId=20_000 + index,
+                    status="Submitted",
+                ),
+            )
+            for index, order in enumerate(self.placed_orders, start=1)
+        ]
 
     def cancelOrder(self, order) -> None:  # noqa: ANN001
         self.cancelled_orders.append(order)
@@ -2476,7 +2490,7 @@ def test_paper_bracket_rejects_terminal_child_status() -> None:
     assert _bracket_acknowledged(trades, paper_mode=True) is False
 
 
-def test_ibkr_submit_rejects_paper_bracket_without_any_perm_ids() -> None:
+def test_ibkr_submit_rejects_paper_bracket_without_any_visible_order() -> None:
     db = session_factory()
     signal = add_signal(db, status=SignalStatus.PAPER_APPROVED)
 
@@ -2560,7 +2574,7 @@ def test_ibkr_submit_rejects_paper_bracket_without_any_perm_ids() -> None:
 
     broker = BrokerUnderTest(settings=Settings(ibkr_readonly=False, trading_mode="paper"))
 
-    with pytest.raises(IBKRSafetyError, match="no broker perm ids"):
+    with pytest.raises(IBKRSafetyError, match="not visible"):
         broker.submit_signal_bracket(db, signal)
 
     db.refresh(signal)
@@ -2568,6 +2582,198 @@ def test_ibkr_submit_rejects_paper_bracket_without_any_perm_ids() -> None:
     assert len(fake_ib.cancelled_orders) == 3
     assert db.query(Trade).count() == 0
     assert signal.status == SignalStatus.PAPER_APPROVED
+
+
+def test_ibkr_submit_rejects_paper_bracket_when_visibility_unavailable_even_with_perm_ids() -> None:
+    db = session_factory()
+    signal = add_signal(db, status=SignalStatus.PAPER_APPROVED)
+
+    class FakeIB:
+        def __init__(self) -> None:
+            self.placed_orders = []
+            self.cancelled_orders = []
+
+        def qualifyContracts(self, contract):
+            return [contract]
+
+        def bracketOrder(self, *, action, quantity, limitPrice, takeProfitPrice, stopLossPrice):
+            return [
+                SimpleNamespace(
+                    orderId=4,
+                    parentId=0,
+                    action=action,
+                    orderType="LMT",
+                    totalQuantity=quantity,
+                    lmtPrice=limitPrice,
+                ),
+                SimpleNamespace(
+                    orderId=5,
+                    parentId=4,
+                    action="SELL",
+                    orderType="LMT",
+                    totalQuantity=quantity,
+                    lmtPrice=takeProfitPrice,
+                ),
+                SimpleNamespace(
+                    orderId=6,
+                    parentId=4,
+                    action="SELL",
+                    orderType="STP",
+                    totalQuantity=quantity,
+                    auxPrice=stopLossPrice,
+                ),
+            ]
+
+        def placeOrder(self, contract, order):
+            self.placed_orders.append(order)
+            return SimpleNamespace(
+                order=order,
+                orderStatus=SimpleNamespace(permId=1000 + order.orderId, status="Submitted"),
+                log=[],
+            )
+
+        def cancelOrder(self, order) -> None:
+            self.cancelled_orders.append(order)
+
+        def sleep(self, seconds: float) -> None:
+            return None
+
+        def isConnected(self) -> bool:
+            return True
+
+        def managedAccounts(self):
+            return ["DU123456"]
+
+        def disconnect(self) -> None:
+            return None
+
+    fake_ib = FakeIB()
+
+    class BrokerUnderTest(IBKRBroker):
+        @property
+        def order_timeout(self) -> float:
+            return 0.0
+
+        def _connect(self):
+            return fake_ib
+
+        def _stock_contract(self, symbol: str):
+            return SimpleNamespace(
+                conId=123,
+                symbol=symbol.upper(),
+                secType="STK",
+                exchange="SMART",
+                currency="USD",
+            )
+
+    broker = BrokerUnderTest(settings=Settings(ibkr_readonly=False, trading_mode="paper"))
+
+    with pytest.raises(IBKRSafetyError, match="not visible"):
+        broker.submit_signal_bracket(db, signal)
+
+    db.refresh(signal)
+    assert len(fake_ib.placed_orders) == 3
+    assert len(fake_ib.cancelled_orders) == 3
+    assert db.query(Trade).count() == 0
+    assert signal.status == SignalStatus.PAPER_APPROVED
+
+
+def test_ibkr_submit_accepts_visible_paper_bracket_without_any_perm_ids() -> None:
+    db = session_factory()
+    signal = add_signal(db, status=SignalStatus.PAPER_APPROVED)
+
+    class FakeIB:
+        def __init__(self) -> None:
+            self.placed_trades = []
+
+        def qualifyContracts(self, contract):
+            return [contract]
+
+        def bracketOrder(self, *, action, quantity, limitPrice, takeProfitPrice, stopLossPrice):
+            return [
+                SimpleNamespace(
+                    orderId=4,
+                    parentId=0,
+                    action=action,
+                    orderType="LMT",
+                    totalQuantity=quantity,
+                    lmtPrice=limitPrice,
+                ),
+                SimpleNamespace(
+                    orderId=5,
+                    parentId=4,
+                    action="SELL",
+                    orderType="LMT",
+                    totalQuantity=quantity,
+                    lmtPrice=takeProfitPrice,
+                ),
+                SimpleNamespace(
+                    orderId=6,
+                    parentId=4,
+                    action="SELL",
+                    orderType="STP",
+                    totalQuantity=quantity,
+                    auxPrice=stopLossPrice,
+                ),
+            ]
+
+        def placeOrder(self, contract, order):
+            trade = SimpleNamespace(
+                contract=contract,
+                order=order,
+                orderStatus=SimpleNamespace(permId=0, status="PendingSubmit"),
+                log=[],
+            )
+            self.placed_trades.append(trade)
+            return trade
+
+        def reqAllOpenOrders(self) -> None:
+            return None
+
+        def openTrades(self):
+            return self.placed_trades
+
+        def sleep(self, seconds: float) -> None:
+            return None
+
+        def isConnected(self) -> bool:
+            return True
+
+        def managedAccounts(self):
+            return ["DU123456"]
+
+        def disconnect(self) -> None:
+            return None
+
+    fake_ib = FakeIB()
+
+    class BrokerUnderTest(IBKRBroker):
+        @property
+        def order_timeout(self) -> float:
+            return 0.0
+
+        def _connect(self):
+            return fake_ib
+
+        def _stock_contract(self, symbol: str):
+            return SimpleNamespace(
+                conId=123,
+                symbol=symbol.upper(),
+                secType="STK",
+                exchange="SMART",
+                currency="USD",
+            )
+
+    broker = BrokerUnderTest(settings=Settings(ibkr_readonly=False, trading_mode="paper"))
+
+    trade = broker.submit_signal_bracket(db, signal)
+
+    db.refresh(signal)
+    assert trade.status == TradeStatus.OPEN
+    assert trade.metadata_json["perm_ids"] == [None, None, None]
+    assert trade.metadata_json["paper_bracket_ack_mode"] == "order_id_status_no_terminal"
+    assert trade.metadata_json["paper_visibility_snapshot"]["visible"] is True
+    assert signal.status == SignalStatus.EXECUTED
 
 
 def test_paper_short_bracket_caps_distant_target_for_ibkr_price_bands() -> None:

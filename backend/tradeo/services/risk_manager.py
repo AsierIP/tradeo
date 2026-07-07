@@ -9,6 +9,20 @@ from sqlalchemy.orm import Session
 from tradeo.core.config import Settings, get_settings
 from tradeo.db.models import RiskLedger, Signal, SignalStatus, Trade, TradeStatus
 from tradeo.schemas import PatternCandidate, RiskDecision
+from tradeo.services.evidence import (
+    EVIDENCE_IBKR_PAPER_FILL,
+    EVIDENCE_IBKR_PAPER_ORDER,
+    EVIDENCE_LIVE_FILL,
+    EVIDENCE_LIVE_ORDER,
+    SHADOW_EVIDENCE_TYPES,
+)
+
+BROKER_EXPOSURE_EVIDENCE_TYPES = {
+    EVIDENCE_IBKR_PAPER_ORDER,
+    EVIDENCE_IBKR_PAPER_FILL,
+    EVIDENCE_LIVE_ORDER,
+    EVIDENCE_LIVE_FILL,
+}
 
 
 @dataclass
@@ -31,7 +45,11 @@ class RiskManager:
         self.settings = settings or get_settings()
 
     def account_state(self, db: Session) -> AccountState:
-        open_trades = db.query(Trade).filter(Trade.status == TradeStatus.OPEN).all()
+        open_trades = [
+            trade
+            for trade in db.query(Trade).filter(Trade.status == TradeStatus.OPEN).all()
+            if self._is_broker_exposure_trade(trade)
+        ]
         open_positions = len(open_trades)
         open_risk = sum(abs(t.entry - t.stop) * t.qty for t in open_trades)
         today = datetime.now(timezone.utc).date().isoformat()
@@ -177,6 +195,8 @@ class RiskManager:
         open_trades = db.query(Trade).filter(Trade.status == TradeStatus.OPEN).all()
         count = 0
         for trade in open_trades:
+            if not cls._is_broker_exposure_trade(trade):
+                continue
             signal_metadata = trade.signal.metadata_json if trade.signal is not None else {}
             trade_metadata = trade.metadata_json or {}
             keys = {
@@ -192,6 +212,21 @@ class RiskManager:
             if family_key in keys:
                 count += 1
         return count
+
+    @staticmethod
+    def _is_broker_exposure_trade(trade: Trade) -> bool:
+        metadata = trade.metadata_json or {}
+        if bool(metadata.get("no_ibkr_order")) or bool(metadata.get("observation_only")):
+            return False
+        evidence_type = str(trade.evidence_type or metadata.get("evidence_type") or "").strip()
+        if evidence_type in SHADOW_EVIDENCE_TYPES:
+            return False
+        execution_mode = str(metadata.get("execution_mode") or "").strip()
+        if trade.broker_order_id or execution_mode == "ibkr" or evidence_type in BROKER_EXPOSURE_EVIDENCE_TYPES:
+            return True
+        # Count legacy open trades unless they are explicitly marked as no-broker
+        # observations. Unknown exposure should fail closed.
+        return True
 
     @staticmethod
     def _safe_float(value: object) -> float:

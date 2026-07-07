@@ -21,8 +21,9 @@ from tradeo.modules.daily_swing.research_bucket_matrix import (
     validation_payload,
 )
 
-MATRIX_JSON = Path("research/daily_swing/universe/daily_research_bucket_matrix.json")
-MATRIX_CSV = Path("research/daily_swing/universe/daily_research_bucket_matrix.csv")
+REPO_ROOT = Path(__file__).resolve().parents[3]
+MATRIX_JSON = REPO_ROOT / "research/daily_swing/universe/daily_research_bucket_matrix.json"
+MATRIX_CSV = REPO_ROOT / "research/daily_swing/universe/daily_research_bucket_matrix.csv"
 
 
 def _rows():

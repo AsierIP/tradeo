@@ -63,6 +63,49 @@ def test_register_intraday_jobs_is_noop_when_global_flag_disabled() -> None:
     assert scheduler.jobs == []
 
 
+def test_register_daily_paper_jobs_is_noop_by_default() -> None:
+    scheduler = FakeScheduler()
+
+    registered = worker.register_daily_paper_jobs(
+        scheduler,
+        Settings(daily_paper_execution_enabled=False),
+    )
+
+    assert registered == []
+    assert scheduler.jobs == []
+
+
+def test_register_daily_paper_jobs_uses_post_close_or_interval_schedule() -> None:
+    post_close_scheduler = FakeScheduler()
+    post_close_settings = Settings(
+        daily_paper_execution_enabled=True,
+        daily_paper_scan_minutes=1440,
+        daily_paper_post_close_hour_utc=22,
+        daily_paper_post_close_minute_utc=30,
+    )
+
+    registered = worker.register_daily_paper_jobs(post_close_scheduler, post_close_settings)
+
+    assert registered == ["daily_paper_entry_scanner"]
+    assert _job_ids(post_close_scheduler) == registered
+    assert post_close_scheduler.jobs[0]["func"] is worker.daily_paper_entry_job
+    assert post_close_scheduler.jobs[0]["trigger"].__class__.__name__ == "CronTrigger"
+    assert post_close_scheduler.jobs[0]["kwargs"]["max_instances"] == 1
+    assert post_close_scheduler.jobs[0]["kwargs"]["coalesce"] is True
+
+    interval_scheduler = FakeScheduler()
+    interval_settings = Settings(
+        daily_paper_execution_enabled=True,
+        daily_paper_scan_minutes=60,
+    )
+
+    registered = worker.register_daily_paper_jobs(interval_scheduler, interval_settings)
+
+    assert registered == ["daily_paper_entry_scanner"]
+    assert interval_scheduler.jobs[0]["trigger"] == "interval"
+    assert interval_scheduler.jobs[0]["kwargs"]["minutes"] == 60
+
+
 def test_register_intraday_jobs_only_adds_enabled_intraday_specs() -> None:
     scheduler = FakeScheduler()
     settings = Settings(

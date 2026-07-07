@@ -17,10 +17,14 @@ LEGACY_PROMOTION_STATES = {
     DiscoveredPatternStatus.PAPER_CANDIDATE,
     DiscoveredPatternStatus.PREMIUM_CANDIDATE,
 }
+DAILY_RUNTIME_STATES = {
+    DiscoveredPatternStatus.CONFIRMED_CANDIDATE,
+    DiscoveredPatternStatus.PAPER_CANDIDATE,
+    DiscoveredPatternStatus.PREMIUM_CANDIDATE,
+}
 PRODUCTION_RUNTIME_STATES = {DiscoveredPatternStatus.PRODUCTION}
 
 
 def is_legacy_promotion_state(status: DiscoveredPatternStatus | str) -> bool:
     value = status.value if hasattr(status, "value") else str(status)
     return value in {item.value for item in LEGACY_PROMOTION_STATES}
-

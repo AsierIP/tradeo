@@ -29,6 +29,7 @@ from tradeo.schemas import PatternCandidate
 from tradeo.services.evidence import EvidenceQuality, EvidenceType
 from tradeo.services.live_readiness_gate import LiveReadinessGate, LiveReadinessError
 from tradeo.services.market_session import market_session_status
+from tradeo.services.order_outcomes import mark_signal_order_submitted
 from tradeo.services.risk_manager import RiskManager
 
 EXECUTION_PREFLIGHT_QUOTE_BASIS = "ibkr_execution_preflight_quote_snapshot"
@@ -1141,16 +1142,6 @@ class IBKRBroker:
                 )
             order_ids = [t.order.orderId for t in trades]
             perm_ids = [t.orderStatus.permId or None for t in trades]
-            if self.settings.trading_mode == "paper" and not any(perm_ids):
-                status_snapshot = _bracket_status_snapshot(trades)
-                for trade_status in trades:
-                    ib.cancelOrder(trade_status.order)
-                ib.sleep(1.0)
-                raise IBKRSafetyError(
-                    "IBKR paper bracket had no broker perm ids after submit: "
-                    f"{json.dumps(status_snapshot, sort_keys=True, default=str)}"
-                )
-
             paper_visibility_snapshot = None
             if self.settings.trading_mode == "paper":
                 paper_visibility_snapshot = _paper_order_visibility_snapshot(
@@ -1159,7 +1150,10 @@ class IBKRBroker:
                     order_ids=order_ids,
                     perm_ids=perm_ids,
                 )
-                if not paper_visibility_snapshot["visible"]:
+                if (
+                    not paper_visibility_snapshot["visible"]
+                    or (not any(perm_ids) and paper_visibility_snapshot.get("visibility_unavailable"))
+                ):
                     for trade_status in trades:
                         ib.cancelOrder(trade_status.order)
                     ib.sleep(1.0)
@@ -1272,6 +1266,13 @@ class IBKRBroker:
                 "evidence_quality": EvidenceQuality.NORMAL.value,
                 "execution_observation": execution_observation,
             }
+            mark_signal_order_submitted(
+                signal,
+                broker_order_id=str(parent_order.orderId),
+                order_ids=order_ids,
+                perm_ids=perm_ids,
+                submitted_at=now,
+            )
             db.add(trade)
             db.add(
                 AuditLog(
@@ -1647,7 +1648,6 @@ def _paper_order_visibility_snapshot(
         snapshot["fills_error"] = repr(exc)
 
     if not snapshot["visibility_checks"]:
-        snapshot["visible"] = True
         snapshot["visibility_unavailable"] = True
     return snapshot
 

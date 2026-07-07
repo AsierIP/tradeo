@@ -121,7 +121,7 @@ class Settings(BaseSettings):
     market_data_incremental_intraday_max_gap_days: int = 5
     market_data_upstream_max_concurrency: int = 2
     universe_file: str = "/app/data/universe_us_mid_small.csv"
-    daily_universe_file: str = "/app/data/universe_us_mid_caps.csv"
+    daily_universe_file: str = "/app/data/universe_us_mid_small.csv"
     intraday_universe_file: str = "/app/data/universe_us_small_caps.csv"
     intraday_universe_policy: str = "stock_only"
     universe_snapshot_monthly: bool = True
@@ -378,6 +378,23 @@ class Settings(BaseSettings):
     daily_setup_max_active: int = 100
     daily_setup_allow_paper_on_entry_ready: bool = False
     daily_setup_route_entry_ready_to_lab: bool = True
+
+    # Daily execution lane. This is separate from intraday and laboratory
+    # validation: it only scans completed daily-bar patterns that Research has
+    # promoted to confirmed/paper/premium candidate states. Disabled by default
+    # so a deploy cannot start broker submission without an explicit operator
+    # switch.
+    daily_paper_execution_enabled: bool = False
+    daily_paper_scan_minutes: int = 1440
+    daily_paper_post_close_hour_utc: int = 22
+    daily_paper_post_close_minute_utc: int = 30
+    daily_paper_symbol_limit: int = 0
+    daily_paper_max_patterns: int = 0
+    daily_paper_match_max_results: int = 0
+    daily_paper_similarity_threshold: float = 0.45
+    daily_paper_store_signals: bool = True
+    daily_paper_auto_submit_orders: bool = False
+    daily_paper_market_hours_only: bool = False
 
     # Fox Hunter scans production patterns. Live order submission requires both
     # this explicit switch and the existing live_armed safety gate.

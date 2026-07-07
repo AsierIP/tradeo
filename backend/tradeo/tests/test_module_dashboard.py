@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from tradeo.db.models import Signal, SignalStatus, Trade, TradeStatus
 from tradeo.db.session import Base
+from tradeo.routers.dashboard import daily_overview
 from tradeo.routers.laboratory import laboratory_overview
 from tradeo.services.evidence import EvidenceQuality, EvidenceType, FillProvenance
 from tradeo.services.module_dashboard import module_overview
@@ -158,6 +161,238 @@ def test_module_overview_splits_daily_and_intraday_cadence() -> None:
     assert [trade["symbol"] for trade in intraday["trades"]] == ["INTR"]
     assert daily["trades"][0]["cadence"] == "daily"
     assert intraday["trades"][0]["cadence"] == "intraday"
+
+
+def test_daily_module_overview_keeps_open_and_closed_daily_orders() -> None:
+    db = session_factory()
+    signal = Signal(
+        symbol="INSP",
+        pattern="daily_pattern_282",
+        side="long",
+        entry=46.95,
+        stop=43.7154,
+        target=56.34,
+        reward_risk=2.9,
+        confidence=0.62,
+        composite_score=0.67,
+        risk_usd=29.11,
+        suggested_qty=9,
+        timeframe="1d",
+        strategy_version="daily_pattern_282",
+        status=SignalStatus.EXECUTED,
+        human_approved=True,
+        metadata_json={
+            "entry_module": "daily",
+            "execution_mode": "ibkr_daily_paper",
+            "evidence_type": EvidenceType.IBKR_PAPER_ORDER.value,
+        },
+    )
+    db.add(signal)
+    db.flush()
+    closed_signal = Signal(
+        symbol="HIMS",
+        pattern="daily_pattern_closed",
+        side="short",
+        entry=55.0,
+        stop=58.0,
+        target=49.0,
+        reward_risk=2.0,
+        confidence=0.64,
+        composite_score=0.69,
+        risk_usd=30.0,
+        suggested_qty=10,
+        timeframe="1d",
+        strategy_version="daily_pattern_closed",
+        status=SignalStatus.EXECUTED,
+        human_approved=True,
+        metadata_json={
+            "entry_module": "daily",
+            "execution_mode": "ibkr_daily_paper",
+            "evidence_type": EvidenceType.IBKR_PAPER_FILL.value,
+        },
+    )
+    db.add(closed_signal)
+    db.flush()
+    db.add(
+        Trade(
+            signal_id=signal.id,
+            symbol="INSP",
+            pattern="daily_pattern_282",
+            side="long",
+            qty=9,
+            entry=46.95,
+            stop=43.7154,
+            target=56.34,
+            status=TradeStatus.OPEN,
+            broker_order_id="4",
+            metadata_json={
+                "execution_mode": "ibkr",
+                "evidence_type": EvidenceType.IBKR_PAPER_ORDER.value,
+            },
+        )
+    )
+    db.add(
+        Trade(
+            signal_id=closed_signal.id,
+            symbol="HIMS",
+            pattern="daily_pattern_closed",
+            side="short",
+            qty=10,
+            entry=55.0,
+            stop=58.0,
+            target=49.0,
+            status=TradeStatus.CLOSED,
+            exit_price=52.0,
+            pnl_usd=30.0,
+            r_multiple=1.0,
+            closed_at=datetime(2026, 7, 6, 18, 0, tzinfo=UTC),
+            metadata_json={
+                "execution_mode": "ibkr_daily_paper",
+                "evidence_type": EvidenceType.IBKR_PAPER_FILL.value,
+                "evidence_quality": EvidenceQuality.NORMAL.value,
+                "fill_provenance": FillProvenance.BROKER_EXECUTION.value,
+                "broker_fill_id": "daily-fill-1",
+                "broker_execution_time": "2026-07-06T18:00:00+00:00",
+                "commission_usd": 1.25,
+            },
+        )
+    )
+    db.commit()
+
+    daily = module_overview(db, "daily", cadence="daily")
+    lab = module_overview(db, "laboratory", cadence="daily")
+
+    assert daily["module"] == "daily"
+    assert daily["cadence"] == "daily"
+    assert daily["stats"]["open_trades"] == 1
+    assert daily["stats"]["closed_trades"] == 1
+    assert daily["stats"]["all_closed_trades"] == 1
+    assert {trade["symbol"] for trade in daily["trades"]} == {"INSP", "HIMS"}
+    assert {trade["status"] for trade in daily["trades"]} == {"open", "closed"}
+    assert all(trade["cadence"] == "daily" for trade in daily["trades"])
+    assert {signal["status"] for signal in daily["signals"]} == {"order_submitted", "executed"}
+    assert lab["trades"] == []
+
+
+def test_daily_overview_api_uses_daily_module_by_default() -> None:
+    db = session_factory()
+    signal = Signal(
+        symbol="INSP",
+        pattern="daily_pattern_282",
+        side="long",
+        entry=46.95,
+        stop=43.7154,
+        target=56.34,
+        reward_risk=2.9,
+        confidence=0.62,
+        composite_score=0.67,
+        risk_usd=29.11,
+        suggested_qty=9,
+        timeframe="1d",
+        strategy_version="daily_pattern_282",
+        status=SignalStatus.EXECUTED,
+        human_approved=True,
+        metadata_json={"entry_module": "daily"},
+    )
+    db.add(signal)
+    db.flush()
+    db.add(
+        Trade(
+            signal_id=signal.id,
+            symbol="INSP",
+            pattern="daily_pattern_282",
+            side="long",
+            qty=9,
+            entry=46.95,
+            stop=43.7154,
+            target=56.34,
+            status=TradeStatus.OPEN,
+            metadata_json={"execution_mode": "ibkr"},
+        )
+    )
+    db.commit()
+
+    overview = daily_overview("admin", db, cadence="daily")
+
+    assert overview["module"] == "daily"
+    assert overview["cadence"] == "daily"
+    assert overview["stats"]["open_trades"] == 1
+    assert overview["trades"][0]["symbol"] == "INSP"
+    assert overview["trades"][0]["status"] == "open"
+    assert overview["trades"][0]["cadence"] == "daily"
+
+
+def test_daily_module_overview_includes_legacy_daily_signal_without_metadata() -> None:
+    db = session_factory()
+    signal = Signal(
+        symbol="INSP",
+        pattern="daily_pattern_legacy",
+        side="long",
+        entry=46.95,
+        stop=43.7154,
+        target=56.34,
+        reward_risk=2.9,
+        confidence=0.62,
+        composite_score=0.67,
+        risk_usd=29.11,
+        suggested_qty=9,
+        timeframe="1d",
+        strategy_version="daily_pattern_legacy",
+        status=SignalStatus.EXECUTED,
+        human_approved=True,
+        metadata_json={},
+    )
+    db.add(signal)
+    db.flush()
+    db.add(
+        Trade(
+            signal_id=signal.id,
+            symbol="INSP",
+            pattern="daily_pattern_legacy",
+            side="long",
+            qty=9,
+            entry=46.95,
+            stop=43.7154,
+            target=56.34,
+            status=TradeStatus.OPEN,
+            metadata_json={"execution_mode": "ibkr_daily_paper"},
+        )
+    )
+    db.commit()
+
+    daily = module_overview(db, "daily", cadence="daily")
+
+    assert daily["stats"]["open_trades"] == 1
+    assert daily["signals"][0]["symbol"] == "INSP"
+    assert daily["trades"][0]["symbol"] == "INSP"
+
+
+def test_daily_module_overview_includes_orphan_daily_trade() -> None:
+    db = session_factory()
+    db.add(
+        Trade(
+            symbol="INSP",
+            pattern="daily_orphan",
+            side="long",
+            qty=9,
+            entry=46.95,
+            stop=43.7154,
+            target=56.34,
+            status=TradeStatus.OPEN,
+            metadata_json={
+                "reason": "daily IBKR paper execution",
+                "execution_mode": "ibkr_daily_paper",
+            },
+        )
+    )
+    db.commit()
+
+    daily = module_overview(db, "daily", cadence="daily")
+    lab = module_overview(db, "laboratory", cadence="daily")
+
+    assert daily["stats"]["open_trades"] == 1
+    assert daily["trades"][0]["symbol"] == "INSP"
+    assert lab["trades"] == []
 
 
 def test_laboratory_overview_api_exposes_default_dashboard_data_scope() -> None:
