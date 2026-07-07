@@ -10,7 +10,7 @@ index 9e09f99..d52a39d 100644
 +    reconciliation_paper_order_visibility_grace_seconds: int = 90
      live_readiness_worker_max_age_seconds: int = 90
      live_readiness_reconciliation_max_age_seconds: int = 3900
- 
+
 diff --git a/backend/tradeo/modules/shared/entry_scanner.py b/backend/tradeo/modules/shared/entry_scanner.py
 index ec6afa6..983bf84 100644
 --- a/backend/tradeo/modules/shared/entry_scanner.py
@@ -62,7 +62,7 @@ index ec6afa6..983bf84 100644
              if self._signal_matches_canonical_bar(metadata, match, module=module):
                  return signal
          return None
- 
+
 +    def _expired_order_signal_blocks_same_bar_resubmit(
 +        self,
 +        signal: Signal,
@@ -153,7 +153,7 @@ index 38f04ff..7f04730 100644
 +++ b/backend/tradeo/services/reconciliation.py
 @@ -43,7 +43,7 @@ from loguru import logger
  from sqlalchemy.orm import Session
- 
+
  from tradeo.core.config import Settings, get_settings
 -from tradeo.db.models import AuditLog, Trade, TradeStatus
 +from tradeo.db.models import AuditLog, SignalStatus, Trade, TradeStatus
@@ -162,8 +162,8 @@ index 38f04ff..7f04730 100644
  from tradeo.services.ibkr_broker import IBKRBroker
 @@ -60,6 +60,77 @@ def _is_ibkr_trade(trade: Trade) -> bool:
      return str(metadata.get("execution_mode") or "") == "ibkr"
- 
- 
+
+
 +def _status_value(value: Any) -> str:
 +    return str(getattr(value, "value", value)).lower().strip()
 +
@@ -291,8 +291,8 @@ index 3f4345d..9eadc70 100644
 +++ b/backend/tradeo/tests/test_execution_state_transitions.py
 @@ -648,6 +648,75 @@ def test_reconciliation_db_trade_missing_at_broker_trips_kill_switch() -> None:
      assert "runtime_kill_switch_activated" in actions
- 
- 
+
+
 +def test_reconciliation_recent_missing_paper_order_gets_grace_warning() -> None:
 +    db = session_factory()
 +    trade = add_open_trade(
@@ -371,8 +371,8 @@ index b4a6f7a..7dfb56f 100644
 +++ b/backend/tradeo/tests/test_pattern_entry_scanner.py
 @@ -3520,6 +3520,106 @@ def test_laboratory_scanner_ignores_expired_duplicate_signal() -> None:
      assert result["signals_created"] == 1
- 
- 
+
+
 +def test_laboratory_blocks_same_bar_resubmit_after_reconciliation_auto_cancel(monkeypatch) -> None:
 +    db = session_factory()
 +    provider = FixtureProvider()
@@ -499,7 +499,7 @@ index 9c5f74f..5c4442d 100644
 +          <div className="pill" title={`${scopeNote} PnL: ${pnlBasis}`}>Fills cerrados</div>
          </div>
        </div>
- 
+
        <div className="operation-metrics">
          <div><strong>{activeTrades.length}</strong><span>órdenes activas</span></div>
 -        <div><strong>{stats.closed_trades}</strong><span>cerradas con fill</span></div>
@@ -509,7 +509,7 @@ index 9c5f74f..5c4442d 100644
            <strong>{(stats.win_rate * 100).toFixed(1)}%</strong><span>win rate</span>
 @@ -1046,7 +1048,7 @@ function OperationsModule({
        </div>
- 
+
        <section className="module-panel">
 -        <h3>Órdenes cerradas</h3>
 +        <h3>Fills cerrados</h3>
@@ -527,7 +527,7 @@ index 9c5f74f..5c4442d 100644
          </div>
 @@ -1076,7 +1078,7 @@ function OperationsModule({
  }
- 
+
  export default function Page() {
 -  const [activeModule, setActiveModule] = useState<'research' | 'daily' | 'laboratory' | 'fox_hunter'>('research')
 +  const [activeModule, setActiveModule] = useState<'research' | 'laboratory' | 'fox_hunter'>('research')
@@ -563,13 +563,13 @@ index 9c5f74f..5c4442d 100644
            <ModeChip
              label="Lab Intradía"
 @@ -1329,7 +1330,6 @@ export default function Page() {
- 
+
          <StatCard label="Equity actual" value={`$${latestEquity.toFixed(2)}`} />
          <StatCard label="Research aceptados" value={acceptedResearchTotal} />
 -        <StatCard label="Daily activas" value={dailyOverview?.stats.open_trades ?? 0} />
          <StatCard label="Lab activas" value={(labDailyOverview?.stats.open_trades ?? 0) + (labIntradayOverview?.stats.open_trades ?? 0)} />
          <StatCard label="Fox activas" value={(foxDailyOverview?.stats.open_trades ?? 0) + (foxIntradayOverview?.stats.open_trades ?? 0)} />
- 
+
 @@ -1337,9 +1337,6 @@ export default function Page() {
            <button className={activeModule === 'research' ? 'active' : ''} onClick={() => setActiveModule('research')}>
              Research
@@ -583,7 +583,7 @@ index 9c5f74f..5c4442d 100644
 @@ -1594,16 +1591,6 @@ export default function Page() {
            </section>
          )}
- 
+
 -        {activeModule === 'daily' && (
 -          <section className="module-view full">
 -            <OperationsModule
@@ -602,7 +602,7 @@ index e72918b..b01119f 100755
 --- a/scripts/notify_new_pattern_alerts.py
 +++ b/scripts/notify_new_pattern_alerts.py
 @@ -9,6 +9,7 @@ from __future__ import annotations
- 
+
  import json
  import os
 +import shutil
@@ -618,8 +618,8 @@ index e72918b..b01119f 100755
 +    or shutil.which("openclaw")
 +    or "/home/vboxuser/.npm-global/bin/openclaw"
 +)
- 
- 
+
+
  def now_iso() -> str:
 @@ -78,7 +84,7 @@ def telegram_target(chat_id: str) -> str:
  def send_visible_telegram_message(message: str) -> None:
@@ -650,6 +650,6 @@ index 659a114..31f22dd 100755
 +    OPENCLAW_BIN="openclaw"
 +  fi
 +fi
- 
+
  mkdir -p "$STATE_DIR"
  exec 9>"$LOCK_FILE"

@@ -10,4 +10,3 @@
   "materiality_formula": "severity * confidence * recurrence_factor + estimated_benefit - estimated_change_risk",
   "review_min_score": 3
 }
-

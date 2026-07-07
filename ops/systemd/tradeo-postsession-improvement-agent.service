@@ -7,4 +7,3 @@ Type=oneshot
 WorkingDirectory=/home/vboxuser/tradeo
 Environment=PYTHONPATH=/home/vboxuser/tradeo/backend
 ExecStart=/usr/bin/env python3 /home/vboxuser/tradeo/scripts/run_postsession_improvement_agent.py
-

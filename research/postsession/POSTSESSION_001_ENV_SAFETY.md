@@ -28,4 +28,3 @@ No credentials, account identifiers, limits, ports, tokens, or unrelated setting
 
 - `TRADEO_IBKR_READONLY`: `SAFE`
 - `TRADEO_LABORATORY_AUTO_SUBMIT_PAPER_ORDERS`: `SAFE`
-

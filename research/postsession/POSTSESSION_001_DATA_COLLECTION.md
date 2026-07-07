@@ -11,4 +11,3 @@ Responsibilities covered:
 - Roll up trades, fills, cancels, rejects, missing logs, and runtime completeness.
 
 Initial bootstrap run is intentionally not executed against live broker or market data.
-

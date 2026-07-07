@@ -15,4 +15,3 @@ Stop-next-session candidates include:
 - paper account mismatch;
 - unreconciled position;
 - versioned secret.
-

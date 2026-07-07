@@ -12,4 +12,3 @@ The red-team stage rejects auto-fix eligibility when a finding touches:
 - real `.env`.
 
 If a proposal is already classified as Director review, No change, or Blocker, red-team records the risk but does not convert it to an automatic patch.
-

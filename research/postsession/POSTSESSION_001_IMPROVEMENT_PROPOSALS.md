@@ -22,4 +22,3 @@ Cooldowns and caps:
 - same component max once per day;
 - same runner not two nights in a row except blockers;
 - max 3 auto-fixes per night.
-
