@@ -1,0 +1,13 @@
+{
+  "agent": "C_IMPROVEMENT_PROPOSER",
+  "auto_fix_cap_per_night": 3,
+  "auto_fix_min_score": 4,
+  "cooldowns": {
+    "same_component": "once_per_day",
+    "same_runner": "not_two_nights_in_a_row_except_blocker"
+  },
+  "implemented": true,
+  "materiality_formula": "severity * confidence * recurrence_factor + estimated_benefit - estimated_change_risk",
+  "review_min_score": 3
+}
+

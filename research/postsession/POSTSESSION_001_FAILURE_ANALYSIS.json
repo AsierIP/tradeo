@@ -1,0 +1,18 @@
+{
+  "agent": "B_FAILURE_MODE_ANALYST",
+  "implemented": true,
+  "stop_next_session_candidate_kinds": [
+    "live_risk",
+    "extra_order",
+    "reconciliation_error",
+    "raw_account_id_leak",
+    "auto_submit_unauthorized",
+    "kill_switch_failure",
+    "runtime_corrupt",
+    "duplicate_runner",
+    "paper_account_mismatch",
+    "unreconciled_position",
+    "secret_versioned"
+  ]
+}
+

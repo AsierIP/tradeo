@@ -1,0 +1,27 @@
+{
+  "backup_path": "/home/vboxuser/tradeo/.env.backup.20260707T224236.postsession-safety",
+  "decision": "ENV_HARDENED",
+  "env_path": "/home/vboxuser/tradeo/.env",
+  "redacted_diff": {
+    "TRADEO_IBKR_READONLY": {
+      "after": "true",
+      "before": "false"
+    },
+    "TRADEO_LABORATORY_AUTO_SUBMIT_PAPER_ORDERS": {
+      "after": "false",
+      "before": "true"
+    }
+  },
+  "safety_confirmation": {
+    "account_ids_printed": false,
+    "credentials_changed": false,
+    "credentials_printed": false,
+    "limits_relaxed": false,
+    "only_authorized_keys_changed": true
+  },
+  "status_after": {
+    "TRADEO_IBKR_READONLY": "SAFE",
+    "TRADEO_LABORATORY_AUTO_SUBMIT_PAPER_ORDERS": "SAFE"
+  }
+}
+

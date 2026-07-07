@@ -1,0 +1,655 @@
+diff --git a/backend/tradeo/core/config.py b/backend/tradeo/core/config.py
+index 9e09f99..d52a39d 100644
+--- a/backend/tradeo/core/config.py
++++ b/backend/tradeo/core/config.py
+@@ -432,6 +432,8 @@ class Settings(BaseSettings):
+     reconciliation_interval_minutes: int = 30
+     reconciliation_auto_kill_switch: bool = True
+     reconciliation_auto_repair_paper_exits: bool = False
++    reconciliation_auto_cancel_missing_paper_orders: bool = True
++    reconciliation_paper_order_visibility_grace_seconds: int = 90
+     live_readiness_worker_max_age_seconds: int = 90
+     live_readiness_reconciliation_max_age_seconds: int = 3900
+ 
+diff --git a/backend/tradeo/modules/shared/entry_scanner.py b/backend/tradeo/modules/shared/entry_scanner.py
+index ec6afa6..983bf84 100644
+--- a/backend/tradeo/modules/shared/entry_scanner.py
++++ b/backend/tradeo/modules/shared/entry_scanner.py
+@@ -264,6 +264,7 @@ class PatternEntryScanner:
+                 continue
+             duplicate_signal = self._duplicate_signal(db, match, module=module)
+             if duplicate_signal is not None:
++                duplicate_skip_reason = self._duplicate_signal_skip_reason(duplicate_signal)
+                 if (
+                     module in {"laboratory", "daily"}
+                     and resolved["execute_orders"]
+@@ -385,7 +386,7 @@ class PatternEntryScanner:
+                         db.commit()
+                 else:
+                     skipped_duplicates += 1
+-                    self._count_reason(order_skip_reason_counts, "duplicate_signal")
++                    self._count_reason(order_skip_reason_counts, duplicate_skip_reason)
+                     db.add(
+                         AuditLog(
+                             actor=module,
+@@ -394,7 +395,8 @@ class PatternEntryScanner:
+                             entity_id=str(match.get("pattern_id", "")),
+                             details_json={
+                                 "signal_idempotency_key": self._signal_idempotency_key(module, match),
+-                                "reason": "signal_already_exists_for_pattern_symbol_variant_bar",
++                                "reason": duplicate_skip_reason,
++                                "duplicate_signal_id": duplicate_signal.id,
+                             },
+                         )
+                     )
+@@ -1360,15 +1362,83 @@ class PatternEntryScanner:
+             .all()
+         )
+         for signal in existing:
++            metadata = signal.metadata_json or {}
+             if signal.status in {SignalStatus.EXPIRED, SignalStatus.REJECTED}:
++                if self._expired_order_signal_blocks_same_bar_resubmit(
++                    signal,
++                    metadata,
++                    match,
++                    module=module,
++                ):
++                    return signal
+                 continue
+-            metadata = signal.metadata_json or {}
+             if str(metadata.get("signal_idempotency_key") or "") in keys:
+                 return signal
+             if self._signal_matches_canonical_bar(metadata, match, module=module):
+                 return signal
+         return None
+ 
++    def _expired_order_signal_blocks_same_bar_resubmit(
++        self,
++        signal: Signal,
++        metadata: dict[str, Any],
++        match: dict[str, Any],
++        *,
++        module: EntryModule,
++    ) -> bool:
++        """Keep reconciled paper auto-cancels idempotent for the same bar.
++
++        Expired shadow/no-order signals may be replaced later, but an expired
++        signal that already submitted an IBKR paper order represents an
++        economic attempt for this exact setup. If reconciliation later cancels
++        it as missing/no-fill, Lab should not re-arm the same daily bar every
++        cycle.
++        """
++        if module not in {"laboratory", "daily"}:
++            return False
++        if not self._signal_matches_canonical_bar(metadata, match, module=module):
++            return False
++        outcome = metadata.get("execution_outcome") or {}
++        reconciliation = metadata.get("broker_reconciliation_resolution") or {}
++        outcome_reason = str(outcome.get("reason_code") or "")
++        reconciliation_source = str(reconciliation.get("source") or "")
++        if (
++            outcome_reason == "broker_order_missing_no_fill"
++            or reconciliation_source == "reconciliation_auto_cancel_missing_paper_order"
++        ):
++            return True
++        for trade in signal.trades:
++            trade_metadata = trade.metadata_json or {}
++            if (
++                trade.status == TradeStatus.CANCELLED
++                and str(trade.evidence_type or trade_metadata.get("evidence_type") or "")
++                == EvidenceType.IBKR_PAPER_ORDER.value
++                and (
++                    str(trade_metadata.get("close_reason") or "")
++                    == "broker_order_missing_no_position_no_open_order"
++                    or str(
++                        (trade_metadata.get("broker_reconciliation_resolution") or {}).get("source")
++                        or ""
++                    )
++                    == "reconciliation_auto_cancel_missing_paper_order"
++                )
++            ):
++                return True
++        return False
++
++    @staticmethod
++    def _duplicate_signal_skip_reason(signal: Signal) -> str:
++        metadata = signal.metadata_json or {}
++        outcome = metadata.get("execution_outcome") or {}
++        reconciliation = metadata.get("broker_reconciliation_resolution") or {}
++        if (
++            str(outcome.get("reason_code") or "") == "broker_order_missing_no_fill"
++            or str(reconciliation.get("source") or "")
++            == "reconciliation_auto_cancel_missing_paper_order"
++        ):
++            return "duplicate_signal_after_cancelled_broker_order"
++        return "duplicate_signal"
++
+     @classmethod
+     def _signal_matches_canonical_bar(
+         cls,
+diff --git a/backend/tradeo/services/module_dashboard.py b/backend/tradeo/services/module_dashboard.py
+index 4040a52..4549db4 100644
+--- a/backend/tradeo/services/module_dashboard.py
++++ b/backend/tradeo/services/module_dashboard.py
+@@ -62,13 +62,12 @@ def module_overview(
+     trades = _dashboard_trades(
+         [trade for trade in all_trades if _status_value(trade.status) != "cancelled"]
+     )
+-    execution_trades = [trade for trade in trades if _is_normal_fill_evidence(trade)]
+-    pnl_points = _pnl_points(list(reversed(execution_trades)))
+-    total_pnl = pnl_points[-1]["total_pnl_usd"] if pnl_points else 0.0
+     all_closed_trades = [trade for trade in trades if _status_value(trade.status) == "closed"]
+     execution_closed_trades = [
+         trade for trade in all_closed_trades if _is_normal_fill_evidence(trade)
+     ]
++    pnl_points = _pnl_points(list(reversed(execution_closed_trades)))
++    total_pnl = pnl_points[-1]["total_pnl_usd"] if pnl_points else 0.0
+     execution_diagnostics = execution_adjusted_r_summary(execution_closed_trades)
+     execution_diagnostics_summary = _execution_diagnostics_summary(execution_diagnostics)
+     execution_diagnostics_by_trade = {
+diff --git a/backend/tradeo/services/reconciliation.py b/backend/tradeo/services/reconciliation.py
+index 38f04ff..7f04730 100644
+--- a/backend/tradeo/services/reconciliation.py
++++ b/backend/tradeo/services/reconciliation.py
+@@ -43,7 +43,7 @@ from loguru import logger
+ from sqlalchemy.orm import Session
+ 
+ from tradeo.core.config import Settings, get_settings
+-from tradeo.db.models import AuditLog, Trade, TradeStatus
++from tradeo.db.models import AuditLog, SignalStatus, Trade, TradeStatus
+ from tradeo.services.evidence import EvidenceQuality, EvidenceType, FillProvenance
+ from tradeo.services.execution_quality import persist_execution_quality
+ from tradeo.services.ibkr_broker import IBKRBroker
+@@ -60,6 +60,77 @@ def _is_ibkr_trade(trade: Trade) -> bool:
+     return str(metadata.get("execution_mode") or "") == "ibkr"
+ 
+ 
++def _status_value(value: Any) -> str:
++    return str(getattr(value, "value", value)).lower().strip()
++
++
++def _paper_order_missing_resolution(
++    trade: Trade,
++    *,
++    now: datetime,
++    settings: Settings,
++) -> dict[str, Any] | None:
++    metadata = trade.metadata_json or {}
++    if str(metadata.get("ibkr_mode") or settings.trading_mode) != "paper":
++        return None
++    if _status_value(trade.evidence_type) != EvidenceType.IBKR_PAPER_ORDER.value:
++        return None
++    if metadata.get("entry_fill_id_hash") or metadata.get("entry_broker_execution_hash"):
++        return None
++    if metadata.get("fill_provenance") == FillProvenance.BROKER_EXECUTION.value:
++        return None
++
++    observation = metadata.get("execution_observation") if isinstance(metadata, dict) else {}
++    submitted_at = _parse_ts((observation or {}).get("submitted_at") or metadata.get("submitted_at"))
++    age_seconds = (now - submitted_at).total_seconds() if submitted_at else None
++    grace_seconds = max(0, int(getattr(settings, "reconciliation_paper_order_visibility_grace_seconds", 90)))
++    if age_seconds is not None and age_seconds < grace_seconds:
++        return {
++            "action": "grace",
++            "age_seconds": round(age_seconds, 3),
++            "grace_seconds": grace_seconds,
++        }
++    if not bool(getattr(settings, "reconciliation_auto_cancel_missing_paper_orders", True)):
++        return None
++    return {
++        "action": "cancel",
++        "age_seconds": round(age_seconds, 3) if age_seconds is not None else None,
++        "grace_seconds": grace_seconds,
++    }
++
++
++def _cancel_missing_paper_order_trade(trade: Trade, *, now: datetime, detail: dict[str, Any]) -> None:
++    metadata = dict(trade.metadata_json or {})
++    metadata["close_reason"] = "broker_order_missing_no_position_no_open_order"
++    metadata["broker_reconciliation_resolution"] = {
++        "resolved_at": now.isoformat(),
++        "resolution": "cancelled_db_trade_no_broker_exposure",
++        "reason": "IBKR reports no position and no open orders for this paper order",
++        "source": "reconciliation_auto_cancel_missing_paper_order",
++        "divergence_candidate": detail,
++    }
++    metadata["execution_outcome"] = {
++        "status": "order_cancelled_no_fill",
++        "reason_code": "broker_order_missing_no_fill",
++        "reason": "IBKR no longer reports this paper order and no position exists",
++        "retryable": False,
++        "next_action": "do_not_retry_same_signal",
++        "updated_at": now.isoformat(),
++    }
++    trade.status = TradeStatus.CANCELLED
++    trade.closed_at = now
++    trade.exit_price = None
++    trade.pnl_usd = 0.0
++    trade.r_multiple = 0.0
++    trade.metadata_json = metadata
++    if trade.signal is not None:
++        signal_metadata = dict(trade.signal.metadata_json or {})
++        signal_metadata["execution_outcome"] = metadata["execution_outcome"]
++        signal_metadata["broker_reconciliation_resolution"] = metadata["broker_reconciliation_resolution"]
++        trade.signal.metadata_json = signal_metadata
++        trade.signal.status = SignalStatus.EXPIRED
++
++
+ def _signed_qty(trade: Trade) -> float:
+     sign = -1.0 if str(trade.side or "").lower().strip() == "short" else 1.0
+     return sign * abs(float(trade.qty or 0))
+@@ -839,14 +910,39 @@ class ReconciliationService:
+         for trade in db_ibkr_trades:
+             symbol = trade.symbol.upper()
+             if symbol not in position_symbols and symbol not in order_symbols:
+-                divergences.append(
+-                    {
+-                        "kind": "db_open_trade_missing_at_broker",
+-                        "symbol": symbol,
+-                        "trade_id": trade.id,
+-                        "broker_order_id": trade.broker_order_id,
+-                    }
++                detail = {
++                    "kind": "db_open_trade_missing_at_broker",
++                    "symbol": symbol,
++                    "trade_id": trade.id,
++                    "broker_order_id": trade.broker_order_id,
++                }
++                paper_resolution = _paper_order_missing_resolution(
++                    trade,
++                    now=now,
++                    settings=settings,
+                 )
++                if paper_resolution and paper_resolution["action"] == "grace":
++                    warnings.append(
++                        {
++                            **detail,
++                            "kind": "recent_paper_order_not_yet_visible",
++                            "age_seconds": paper_resolution["age_seconds"],
++                            "grace_seconds": paper_resolution["grace_seconds"],
++                        }
++                    )
++                    continue
++                if paper_resolution and paper_resolution["action"] == "cancel":
++                    _cancel_missing_paper_order_trade(trade, now=now, detail=detail)
++                    warnings.append(
++                        {
++                            **detail,
++                            "kind": "missing_paper_order_auto_cancelled",
++                            "age_seconds": paper_resolution["age_seconds"],
++                            "grace_seconds": paper_resolution["grace_seconds"],
++                        }
++                    )
++                    continue
++                divergences.append(detail)
+             elif (
+                 symbol not in position_symbols
+                 and trade.broker_order_id
+diff --git a/backend/tradeo/tests/test_execution_state_transitions.py b/backend/tradeo/tests/test_execution_state_transitions.py
+index 3f4345d..9eadc70 100644
+--- a/backend/tradeo/tests/test_execution_state_transitions.py
++++ b/backend/tradeo/tests/test_execution_state_transitions.py
+@@ -648,6 +648,75 @@ def test_reconciliation_db_trade_missing_at_broker_trips_kill_switch() -> None:
+     assert "runtime_kill_switch_activated" in actions
+ 
+ 
++def test_reconciliation_recent_missing_paper_order_gets_grace_warning() -> None:
++    db = session_factory()
++    trade = add_open_trade(
++        db,
++        symbol="AAPL",
++        broker_order_id="101",
++        metadata={
++            "ibkr_mode": "paper",
++            "evidence_type": "ibkr_paper_order",
++            "execution_observation": {
++                "submitted_at": datetime.now(timezone.utc).isoformat(),
++            },
++        },
++    )
++    trade.evidence_type = EvidenceType.IBKR_PAPER_ORDER.value
++    db.commit()
++    broker = FakeBroker()
++
++    result = reconciliation_service(
++        broker,
++        reconciliation_paper_order_visibility_grace_seconds=90,
++    ).reconcile(db)
++
++    assert result["divergences"] == []
++    assert result["warnings"][0]["kind"] == "recent_paper_order_not_yet_visible"
++    assert result["warnings"][0]["trade_id"] == trade.id
++    assert result["kill_switch_activated"] is False
++    assert runtime_kill_switch_active(db) is False
++    db.refresh(trade)
++    assert trade.status == TradeStatus.OPEN
++
++
++def test_reconciliation_auto_cancels_stale_missing_paper_order_without_kill_switch() -> None:
++    db = session_factory()
++    signal = add_signal(db, status=SignalStatus.EXECUTED)
++    trade = add_open_trade(
++        db,
++        symbol="AAPL",
++        broker_order_id="101",
++        metadata={
++            "ibkr_mode": "paper",
++            "evidence_type": "ibkr_paper_order",
++            "execution_observation": {
++                "submitted_at": datetime(2026, 6, 1, 15, 0, tzinfo=timezone.utc).isoformat(),
++            },
++        },
++    )
++    trade.signal_id = signal.id
++    trade.evidence_type = EvidenceType.IBKR_PAPER_ORDER.value
++    db.commit()
++    broker = FakeBroker()
++
++    result = reconciliation_service(
++        broker,
++        reconciliation_paper_order_visibility_grace_seconds=1,
++    ).reconcile(db)
++
++    assert result["divergences"] == []
++    assert result["warnings"][0]["kind"] == "missing_paper_order_auto_cancelled"
++    assert result["warnings"][0]["trade_id"] == trade.id
++    assert result["kill_switch_activated"] is False
++    assert runtime_kill_switch_active(db) is False
++    db.refresh(trade)
++    db.refresh(signal)
++    assert trade.status == TradeStatus.CANCELLED
++    assert trade.metadata_json["close_reason"] == "broker_order_missing_no_position_no_open_order"
++    assert signal.status == SignalStatus.EXPIRED
++
++
+ def test_reconciliation_broker_position_not_in_db_trips_kill_switch() -> None:
+     db = session_factory()
+     broker = FakeBroker(positions=[{"symbol": "MSFT", "position": 3.0}])
+diff --git a/backend/tradeo/tests/test_pattern_entry_scanner.py b/backend/tradeo/tests/test_pattern_entry_scanner.py
+index b4a6f7a..7dfb56f 100644
+--- a/backend/tradeo/tests/test_pattern_entry_scanner.py
++++ b/backend/tradeo/tests/test_pattern_entry_scanner.py
+@@ -3520,6 +3520,106 @@ def test_laboratory_scanner_ignores_expired_duplicate_signal() -> None:
+     assert result["signals_created"] == 1
+ 
+ 
++def test_laboratory_blocks_same_bar_resubmit_after_reconciliation_auto_cancel(monkeypatch) -> None:
++    db = session_factory()
++    provider = FixtureProvider()
++    pattern = add_pattern(db, provider, status=DiscoveredPatternStatus.LAB_CANDIDATE)
++    match = match_payload(
++        pattern_id=pattern.id,
++        pattern_name=pattern.name,
++        pattern_key=pattern.pattern_key,
++        window_end="2026-06-10T00:00:00+00:00",
++    )
++    signal = Signal(
++        symbol=provider.symbol,
++        pattern=pattern.name,
++        side="long",
++        entry=10.0,
++        stop=9.0,
++        target=14.0,
++        reward_risk=4.0,
++        confidence=0.7,
++        composite_score=0.7,
++        risk_usd=10.0,
++        suggested_qty=1,
++        strategy_version=f"laboratory_pattern_{pattern.id}",
++        status=SignalStatus.EXPIRED,
++        metadata_json={
++            "entry_module": "laboratory",
++            "pattern_id": pattern.id,
++            "entry_variant_id": match["entry_variant_id"],
++            "bar_window_end": "2026-06-10",
++            "signal_idempotency_key": PatternEntryScanner._signal_idempotency_key(
++                "laboratory",
++                match,
++            ),
++            "evidence_type": EvidenceType.IBKR_PAPER_ORDER.value,
++            "execution_outcome": {
++                "status": "order_cancelled_no_fill",
++                "reason_code": "broker_order_missing_no_fill",
++                "retryable": False,
++                "next_action": "do_not_retry_same_signal",
++                "updated_at": "2026-06-10T15:05:00+00:00",
++            },
++            "broker_reconciliation_resolution": {
++                "source": "reconciliation_auto_cancel_missing_paper_order",
++                "resolution": "cancelled_db_trade_no_broker_exposure",
++            },
++        },
++    )
++    db.add(signal)
++    db.flush()
++    db.add(
++        Trade(
++            signal_id=signal.id,
++            symbol=provider.symbol,
++            pattern=pattern.name,
++            side="long",
++            qty=1,
++            entry=10.0,
++            stop=9.0,
++            target=14.0,
++            status=TradeStatus.CANCELLED,
++            evidence_type=EvidenceType.IBKR_PAPER_ORDER.value,
++            evidence_quality=EvidenceQuality.NORMAL.value,
++            opened_at=datetime.now(timezone.utc) - timedelta(minutes=30),
++            closed_at=datetime.now(timezone.utc) - timedelta(minutes=1),
++            broker_order_id="paper-missing",
++            metadata_json={
++                "evidence_type": EvidenceType.IBKR_PAPER_ORDER.value,
++                "close_reason": "broker_order_missing_no_position_no_open_order",
++                "broker_reconciliation_resolution": {
++                    "source": "reconciliation_auto_cancel_missing_paper_order",
++                },
++            },
++        )
++    )
++    db.commit()
++
++    class FailBroker:
++        def __init__(self, settings) -> None:
++            self.settings = settings
++
++        def submit_signal_bracket(self, db, signal, *, reason: str = "manual"):
++            raise AssertionError("same-bar auto-cancel should block broker resubmit")
++
++    monkeypatch.setattr("tradeo.modules.shared.entry_scanner.IBKRBroker", FailBroker)
++
++    result = PatternEntryScanner(
++        settings=scanner(provider, laboratory_auto_submit_paper_orders=True).settings,
++        matcher=StaticMatcher(provider, [match]),
++    ).scan(db, module="laboratory", symbols=[provider.symbol], store_signals=True)
++
++    assert result["signals_created"] == 0
++    assert result["orders_submitted"] == 0
++    assert result["skipped_duplicates"] == 1
++    assert result["order_skip_reason_counts"] == {
++        "duplicate_signal_after_cancelled_broker_order": 1
++    }
++    assert db.query(Signal).count() == 1
++    assert db.query(Trade).count() == 1
++
++
+ def test_laboratory_scanner_skips_signal_creation_when_market_closed(monkeypatch) -> None:
+     db = session_factory()
+     provider = FixtureProvider()
+diff --git a/frontend/app/page.tsx b/frontend/app/page.tsx
+index 9c5f74f..5c4442d 100644
+--- a/frontend/app/page.tsx
++++ b/frontend/app/page.tsx
+@@ -963,7 +963,9 @@ function OperationsModule({
+ }) {
+   const trades = overview?.trades || []
+   const activeTrades = trades.filter((trade) => trade.status.toLowerCase() === 'open')
+-  const closedTrades = trades.filter((trade) => trade.status.toLowerCase() === 'closed')
++  const closedTrades = trades.filter(
++    (trade) => trade.status.toLowerCase() === 'closed' && trade.counts_as_execution_fill
++  )
+   const pnl = overview?.pnl_points?.length ? overview.pnl_points : [{ timestamp: '', total_pnl_usd: 0, trade_pnl_usd: 0 }]
+   const stats = overview?.stats || { signals: 0, trades: 0, open_trades: 0, closed_trades: 0, total_pnl_usd: 0, total_r: 0, win_rate: 0 }
+   const executionDiagnostics = overview?.execution_diagnostics || stats.execution_diagnostics
+@@ -991,13 +993,13 @@ function OperationsModule({
+           {typeof status?.live_orders_allowed === 'boolean' && (
+             <div className="pill">live_orders_allowed: {status.live_orders_allowed ? 'true' : 'false'}</div>
+           )}
+-          <div className="pill" title={`${scopeNote} PnL: ${pnlBasis}`}>PnL cerradas</div>
++          <div className="pill" title={`${scopeNote} PnL: ${pnlBasis}`}>Fills cerrados</div>
+         </div>
+       </div>
+ 
+       <div className="operation-metrics">
+         <div><strong>{activeTrades.length}</strong><span>órdenes activas</span></div>
+-        <div><strong>{stats.closed_trades}</strong><span>cerradas con fill</span></div>
++        <div><strong>{closedTrades.length}</strong><span>fills cerrados</span></div>
+         <div><strong className={totalPnl > 0 ? 'positive' : totalPnl < 0 ? 'negative' : ''}>{formatMoney(totalPnl)}</strong><span>P/L cerrado</span></div>
+         <div title={`EV ${formatRValue(executionDiagnostics?.net_expectancy_r)} · cobertura coste ${((executionDiagnostics?.coverage ?? 0) * 100).toFixed(0)}%`}>
+           <strong>{(stats.win_rate * 100).toFixed(1)}%</strong><span>win rate</span>
+@@ -1046,7 +1048,7 @@ function OperationsModule({
+       </div>
+ 
+       <section className="module-panel">
+-        <h3>Órdenes cerradas</h3>
++        <h3>Fills cerrados</h3>
+         <div className="table-scroll active-orders-scroll">
+           <table>
+             <thead>
+@@ -1066,7 +1068,7 @@ function OperationsModule({
+                   <td>{shortDateTime(t.closed_at)}</td>
+                 </tr>
+               ))}
+-              {!closedTrades.length && <tr><td colSpan={9}>Sin órdenes cerradas.</td></tr>}
++              {!closedTrades.length && <tr><td colSpan={9}>Sin fills cerrados.</td></tr>}
+             </tbody>
+           </table>
+         </div>
+@@ -1076,7 +1078,7 @@ function OperationsModule({
+ }
+ 
+ export default function Page() {
+-  const [activeModule, setActiveModule] = useState<'research' | 'daily' | 'laboratory' | 'fox_hunter'>('research')
++  const [activeModule, setActiveModule] = useState<'research' | 'laboratory' | 'fox_hunter'>('research')
+   const [activeResearchCadence, setActiveResearchCadence] = useState<'daily' | 'intraday'>('daily')
+   const [activeLabCadence, setActiveLabCadence] = useState<'daily' | 'intraday'>('intraday')
+   const [activeFoxCadence, setActiveFoxCadence] = useState<'daily' | 'intraday'>('daily')
+@@ -1098,7 +1100,6 @@ export default function Page() {
+   const { data: intradayDiscoveryRuns, mutate: mutateIntradayRuns } = useSWR<DiscoveryRun[]>('/research/runs?cadence=intraday&limit=25', fetcher, { refreshInterval: 15000 })
+   const { data: labStatus } = useSWR<ModuleStatus>('/laboratory/status', fetcher, { refreshInterval: 5000 })
+   const { data: foxStatus } = useSWR<ModuleStatus>('/fox-hunter/status', fetcher, { refreshInterval: 5000 })
+-  const { data: dailyOverview } = useSWR<ModuleOverview>('/dashboard/daily-overview?cadence=daily', fetcher, { refreshInterval: 15000 })
+   const { data: labDailyOverview } = useSWR<ModuleOverview>('/laboratory/overview?cadence=daily', fetcher, { refreshInterval: 15000 })
+   const { data: labIntradayOverview } = useSWR<ModuleOverview>('/laboratory/overview?cadence=intraday', fetcher, { refreshInterval: 15000 })
+   const { data: foxDailyOverview } = useSWR<ModuleOverview>('/fox-hunter/overview?cadence=daily', fetcher, { refreshInterval: 15000 })
+@@ -1301,14 +1302,14 @@ export default function Page() {
+       <section className="grid">
+         <ScopeDivider label="Operativa" title="Lab y Fox separados por daily / intradía">
+           <ModeChip
+-            label="Daily"
+-            value={`${dailyOverview?.stats.open_trades ?? 0} activas`}
++            label="Research"
++            value={`${acceptedResearchTotal} verdes`}
+             tone="good"
+           />
+           <ModeChip
+-            label="Daily Setup"
+-            value={`${dailySetupWatchlist?.watchlist.active_count ?? 0} watch`}
+-            tone={dailySetupWatchlist?.contract.write_endpoint_available ? 'bad' : 'warn'}
++            label="Lab Daily"
++            value={`${labDailyOverview?.stats.open_trades ?? 0} activas`}
++            tone={labStatus?.paper_orders_allowed ? 'good' : 'warn'}
+           />
+           <ModeChip
+             label="Lab Intradía"
+@@ -1329,7 +1330,6 @@ export default function Page() {
+ 
+         <StatCard label="Equity actual" value={`$${latestEquity.toFixed(2)}`} />
+         <StatCard label="Research aceptados" value={acceptedResearchTotal} />
+-        <StatCard label="Daily activas" value={dailyOverview?.stats.open_trades ?? 0} />
+         <StatCard label="Lab activas" value={(labDailyOverview?.stats.open_trades ?? 0) + (labIntradayOverview?.stats.open_trades ?? 0)} />
+         <StatCard label="Fox activas" value={(foxDailyOverview?.stats.open_trades ?? 0) + (foxIntradayOverview?.stats.open_trades ?? 0)} />
+ 
+@@ -1337,9 +1337,6 @@ export default function Page() {
+           <button className={activeModule === 'research' ? 'active' : ''} onClick={() => setActiveModule('research')}>
+             Research
+           </button>
+-          <button className={activeModule === 'daily' ? 'active' : ''} onClick={() => setActiveModule('daily')}>
+-            Daily
+-          </button>
+           <button className={activeModule === 'laboratory' ? 'active' : ''} onClick={() => setActiveModule('laboratory')}>
+             Laboratorio
+           </button>
+@@ -1594,16 +1591,6 @@ export default function Page() {
+           </section>
+         )}
+ 
+-        {activeModule === 'daily' && (
+-          <section className="module-view full">
+-            <OperationsModule
+-              title="Daily"
+-              subtitle="Órdenes paper Daily activas, cerradas y P/L acumulado."
+-              overview={dailyOverview}
+-            />
+-          </section>
+-        )}
+-
+         {activeModule === 'fox_hunter' && (
+           <section className="module-view full">
+             <div className="sub-tabs" aria-label="Cadencia Fox Hunter">
+diff --git a/scripts/notify_new_pattern_alerts.py b/scripts/notify_new_pattern_alerts.py
+index e72918b..b01119f 100755
+--- a/scripts/notify_new_pattern_alerts.py
++++ b/scripts/notify_new_pattern_alerts.py
+@@ -9,6 +9,7 @@ from __future__ import annotations
+ 
+ import json
+ import os
++import shutil
+ import subprocess
+ import sys
+ from datetime import datetime, timezone
+@@ -23,6 +24,11 @@ DB_NAME = os.environ.get("TRADEO_NOTIFY_DB_NAME", "tradeo")
+ MESSAGE_ACCOUNT_ID = "tradeo"
+ MESSAGE_CHANNEL = "telegram"
+ MESSAGE_CHAT_ID = "telegram:1600299362"
++OPENCLAW_BIN = (
++    os.environ.get("OPENCLAW_BIN")
++    or shutil.which("openclaw")
++    or "/home/vboxuser/.npm-global/bin/openclaw"
++)
+ 
+ 
+ def now_iso() -> str:
+@@ -78,7 +84,7 @@ def telegram_target(chat_id: str) -> str:
+ def send_visible_telegram_message(message: str) -> None:
+     proc = subprocess.run(
+         [
+-            "openclaw",
++            OPENCLAW_BIN,
+             "message",
+             "send",
+             "--account",
+diff --git a/scripts/notify_tradeo_orders.sh b/scripts/notify_tradeo_orders.sh
+index 659a114..31f22dd 100755
+--- a/scripts/notify_tradeo_orders.sh
++++ b/scripts/notify_tradeo_orders.sh
+@@ -11,7 +11,17 @@ DB_USER="${TRADEO_NOTIFY_DB_USER:-tradeo}"
+ DB_NAME="${TRADEO_NOTIFY_DB_NAME:-tradeo}"
+ TELEGRAM_ACCOUNT="${TRADEO_NOTIFY_TELEGRAM_ACCOUNT:-tradeo}"
+ TELEGRAM_TARGET="${TRADEO_NOTIFY_TELEGRAM_TARGET:-1600299362}"
+-OPENCLAW_BIN="${OPENCLAW_BIN:-openclaw}"
++OPENCLAW_BIN="${OPENCLAW_BIN:-}"
++
++if [[ -z "$OPENCLAW_BIN" ]]; then
++  if command -v openclaw >/dev/null 2>&1; then
++    OPENCLAW_BIN="$(command -v openclaw)"
++  elif [[ -x "/home/vboxuser/.npm-global/bin/openclaw" ]]; then
++    OPENCLAW_BIN="/home/vboxuser/.npm-global/bin/openclaw"
++  else
++    OPENCLAW_BIN="openclaw"
++  fi
++fi
+ 
+ mkdir -p "$STATE_DIR"
+ exec 9>"$LOCK_FILE"
