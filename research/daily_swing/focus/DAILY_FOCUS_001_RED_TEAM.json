@@ -1,0 +1,28 @@
+{
+  "schema_version": "tradeo.daily_swing.focus.daily_focus_001_red_team.v1",
+  "task_id": "T-DAILY-FOCUS-UNIVERSE-001",
+  "agent": "E",
+  "date": "2026-07-07",
+  "decision": "PASS_AFTER_FIXES",
+  "attack_cases": [
+    {"id": "intraday_heavy_daily_only", "status": "PASS"},
+    {"id": "intraday_lab_paper", "status": "PASS"},
+    {"id": "global_aggregate_approval", "status": "PASS"},
+    {"id": "entry_ready_direct_order", "status": "PASS"},
+    {"id": "etf_mixed_with_stock", "status": "PASS"},
+    {"id": "market_cap_proxy_as_real", "status": "PASS"},
+    {"id": "low_liquidity_smallcap_eligible_no_warning", "status": "PASS"},
+    {"id": "missing_bucket", "status": "PASS"},
+    {"id": "daily_lab_foxhunter_metrics_mixed", "status": "PASS"},
+    {"id": "live_paper_submit_appears", "status": "PASS"},
+    {"id": "runtime_artifact_tracked", "status": "PASS"}
+  ],
+  "blockers": [],
+  "residual_risks": [
+    "Daily Universe v2 uses proxy buckets until a verified point-in-time market-cap source is wired."
+  ],
+  "merge_push": {
+    "merged": false,
+    "pushed": false
+  }
+}

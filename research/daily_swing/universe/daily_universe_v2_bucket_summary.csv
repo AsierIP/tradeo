@@ -1,0 +1,9 @@
+bucket,bucket_version,total_rows,eligible_count,selected_count,rejected_count,etf_count,stock_count,market_cap_source,market_cap_method,survivorship_warning
+mega_large_cap,daily_focus_universe_v2,4,4,4,0,0,4,unavailable,proxy,True
+large_cap_core,daily_focus_universe_v2,4,4,4,0,0,4,unavailable,proxy,True
+liquid_mid_cap,daily_focus_universe_v2,4,4,4,0,0,4,unavailable,proxy,True
+liquid_small_cap,daily_focus_universe_v2,4,4,4,0,0,4,unavailable,proxy,True
+high_beta_growth,daily_focus_universe_v2,4,4,4,0,0,4,unavailable,proxy,True
+defensive_quality,daily_focus_universe_v2,4,4,4,0,0,4,unavailable,proxy,True
+sector_leaders,daily_focus_universe_v2,4,4,4,0,0,4,unavailable,proxy,True
+etf_macro,daily_focus_universe_v2,6,6,6,0,6,0,unavailable,proxy,True

@@ -1,0 +1,28 @@
+{
+  "agent": "Agent B",
+  "decision": "LOCAL_PROXY_UNIVERSE_READY_WITH_BUCKET_GUARDS",
+  "generated_at": "2026-07-07",
+  "market_cap_point_in_time": {
+    "method": "proxy",
+    "source": "unavailable",
+    "survivorship_warning": true
+  },
+  "required_buckets": [
+    "mega_large_cap",
+    "large_cap_core",
+    "liquid_mid_cap",
+    "liquid_small_cap",
+    "high_beta_growth",
+    "defensive_quality",
+    "sector_leaders",
+    "etf_macro"
+  ],
+  "runtime_artifact": "artifacts/runtime/daily_swing/universe_daily_swing_v2.csv",
+  "schema_version": "tradeo.daily_swing.universe_v2.decision.v1",
+  "task_id": "T-DAILY-FOCUS-UNIVERSE-001",
+  "warnings": [
+    "No verified point-in-time market-cap source is available; bucket labels are proxy research labels.",
+    "ETFs are accepted only in etf_macro.",
+    "Low-liquidity liquid_small_cap rows are rejected with explicit warning reasons."
+  ]
+}

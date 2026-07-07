@@ -8,6 +8,7 @@ from tradeo.modules.resource_policy import (
     MarketSessionResourcePolicy as ExportedMarketSessionResourcePolicy,
 )
 from tradeo.modules.resource_policy.market_session import (
+    DAILY_FOCUS_RESOURCE_ALLOWLIST,
     RESOURCE_ARTIFACT_WRITE,
     RESOURCE_IBKR_HISTORICAL_DATA,
     RESOURCE_LAB_BACKTEST,
@@ -21,6 +22,7 @@ from tradeo.modules.resource_policy.market_session import (
     MarketSessionResourcePolicy,
 )
 from tradeo.modules.resource_policy.market_session_resource_policy import (
+    DENY_INTRADAY_FROZEN_DAILY_FOCUS,
     MarketSessionResourcePolicy as BudgetMarketSessionResourcePolicy,
 )
 
@@ -54,7 +56,7 @@ def test_resource_policy_package_exports_gate_and_budget_policy() -> None:
 
 
 def test_market_session_policy_open_session_allows_only_safe_local_resources() -> None:
-    policy = MarketSessionResourcePolicy(session_provider=None)
+    policy = MarketSessionResourcePolicy(session_provider=None, focus_mode="all")
 
     decision = policy.evaluate(
         [
@@ -81,7 +83,7 @@ def test_market_session_policy_open_session_allows_only_safe_local_resources() -
 
 
 def test_market_session_policy_closed_session_allows_offline_lab_resources() -> None:
-    policy = MarketSessionResourcePolicy(session_provider=None)
+    policy = MarketSessionResourcePolicy(session_provider=None, focus_mode="all")
 
     decision = policy.evaluate(
         [
@@ -110,11 +112,43 @@ def test_market_session_policy_closed_session_allows_offline_lab_resources() -> 
     assert f"prohibited_resource:{RESOURCE_LIVE_ORDER}" in decision.block_reasons[RESOURCE_LIVE_ORDER]
 
 
+def test_daily_focus_resource_policy_allows_reports_and_cache_inspection_only() -> None:
+    policy = MarketSessionResourcePolicy(session_provider=None)
+
+    decision = policy.evaluate(
+        [
+            RESOURCE_LOCAL_CACHE_READ,
+            RESOURCE_LOCAL_CACHE_WRITE,
+            RESOURCE_ARTIFACT_WRITE,
+            RESOURCE_REPORT_WRITE,
+            RESOURCE_LAB_BACKTEST,
+            RESOURCE_IBKR_HISTORICAL_DATA,
+            RESOURCE_PAPER_ORDER,
+        ],
+        market_session=_closed_session(),
+    )
+
+    assert decision.focus_mode == "daily_only"
+    assert decision.intraday_freeze_active is True
+    assert decision.allowed_resources == (
+        RESOURCE_ARTIFACT_WRITE,
+        RESOURCE_LOCAL_CACHE_READ,
+        RESOURCE_REPORT_WRITE,
+    )
+    assert RESOURCE_LOCAL_CACHE_WRITE in decision.blocked_resources
+    assert RESOURCE_LAB_BACKTEST in decision.blocked_resources
+    assert RESOURCE_IBKR_HISTORICAL_DATA in decision.blocked_resources
+    assert RESOURCE_PAPER_ORDER in decision.blocked_resources
+    assert DENY_INTRADAY_FROZEN_DAILY_FOCUS in decision.reason_codes
+    assert DENY_INTRADAY_FROZEN_DAILY_FOCUS in decision.block_reasons[RESOURCE_LAB_BACKTEST]
+    assert set(DAILY_FOCUS_RESOURCE_ALLOWLIST).issuperset(decision.allowed_resources)
+
+
 def test_market_session_policy_fail_closed_when_session_provider_fails() -> None:
     def broken_provider(now: datetime | None) -> dict[str, object]:
         raise RuntimeError("calendar unavailable")
 
-    policy = MarketSessionResourcePolicy(session_provider=broken_provider)
+    policy = MarketSessionResourcePolicy(session_provider=broken_provider, focus_mode="all")
 
     decision = policy.evaluate(
         [RESOURCE_LOCAL_CACHE_READ, RESOURCE_LAB_BACKTEST],
@@ -129,7 +163,7 @@ def test_market_session_policy_fail_closed_when_session_provider_fails() -> None
 
 
 def test_market_session_policy_fail_closed_on_inconsistent_open_state() -> None:
-    policy = MarketSessionResourcePolicy(session_provider=None)
+    policy = MarketSessionResourcePolicy(session_provider=None, focus_mode="all")
 
     decision = policy.evaluate(
         [RESOURCE_LOCAL_CACHE_READ],
@@ -143,7 +177,7 @@ def test_market_session_policy_fail_closed_on_inconsistent_open_state() -> None:
 
 
 def test_market_session_policy_blocks_unknown_resources_without_fail_open() -> None:
-    policy = MarketSessionResourcePolicy(session_provider=None)
+    policy = MarketSessionResourcePolicy(session_provider=None, focus_mode="all")
 
     decision = policy.evaluate(
         [RESOURCE_LOCAL_CACHE_READ, "gpu.cluster.write"],

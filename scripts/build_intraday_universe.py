@@ -56,7 +56,7 @@ def main() -> int:
     settings = get_settings()
     policy_decision = decide_with_market_session_policy(
         JobType.LARGE_SCANNER,
-        "scanner",
+        "intraday_scanner",
         settings=settings,
     )
     if not policy_decision.allowed:

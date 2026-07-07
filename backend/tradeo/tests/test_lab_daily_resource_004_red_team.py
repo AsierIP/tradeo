@@ -38,7 +38,7 @@ ACCOUNT_ID = re.compile(r"\b(?:DU|U|F|FA)\d{5,}\b", re.IGNORECASE)
 
 def _policy(tmp_path: Path, state: str) -> MarketSessionResourcePolicy:
     return MarketSessionResourcePolicy(
-        settings=Settings(artifacts_dir=str(tmp_path)),
+        settings=Settings(artifacts_dir=str(tmp_path), focus_mode="all"),
         forced_session_state=state,
     )
 

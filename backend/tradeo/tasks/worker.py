@@ -98,10 +98,13 @@ _NATIVE_THREAD_ENV_VARS = (
     "VECLIB_MAXIMUM_THREADS",
 )
 _INTRADAY_RESOURCE_POLICY_JOB_TYPES = {
+    "intraday_universe_premarket": JobType.LARGE_SCANNER,
+    "intraday_universe_early": JobType.LARGE_SCANNER,
     "intraday_data_sync": JobType.RESEARCH_HEAVY,
     "intraday_research": JobType.RESEARCH_HEAVY,
     "intraday_research_process_pool": JobType.RESEARCH_HEAVY,
     "intraday_candidate_scan": JobType.LARGE_SCANNER,
+    "intraday_observation_closer": JobType.INTRADAY_LAB,
 }
 
 
@@ -727,10 +730,14 @@ def _resource_policy_job_type(job_id: str) -> str | None:
 
 def _resource_policy_owner(job_id: str) -> str:
     if "research" in job_id:
-        return "research"
+        return "intraday_research"
     if "candidate_scan" in job_id:
-        return "scanner"
-    return "worker"
+        return "intraday_scanner"
+    if "universe" in job_id:
+        return "intraday_scanner"
+    if "observation" in job_id:
+        return "intraday_lab"
+    return "intraday_worker"
 
 
 def _intraday_universe_placeholder(settings: Settings, *, bucket: str) -> dict[str, Any]:

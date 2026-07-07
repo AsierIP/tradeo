@@ -1,0 +1,67 @@
+{
+  "schema_version": "tradeo.daily_swing.focus.lab_watchlist_integration.v1",
+  "task_id": "T-DAILY-FOCUS-UNIVERSE-001",
+  "agent": "D",
+  "date": "2026-07-07",
+  "decision": "IMPLEMENTED_METADATA_ONLY",
+  "changed_files": [
+    "backend/tradeo/modules/daily_swing/setup_watchlist.py",
+    "backend/tradeo/tests/test_daily_setup_watchlist.py",
+    "research/daily_swing/focus/DAILY_FOCUS_001_LAB_WATCHLIST_INTEGRATION.md",
+    "research/daily_swing/focus/DAILY_FOCUS_001_LAB_WATCHLIST_INTEGRATION.json"
+  ],
+  "metadata_fields": [
+    "universe_bucket",
+    "bucket_reason",
+    "bucket_version",
+    "pattern_family",
+    "lab_probe_allowed",
+    "lab_probe_id",
+    "route_to_lab_reason",
+    "bucket_specific_gate_status"
+  ],
+  "bucket_specific_gate_status_allowed_values": [
+    "pass",
+    "pending",
+    "blocked",
+    "unknown"
+  ],
+  "lab_probe_metadata_route": {
+    "requires_entry_ready": true,
+    "requires_daily_setup_route_entry_ready_to_lab": true,
+    "requires_bucket_specific_gate_status": "pass",
+    "submits_order": false,
+    "paper_allowed": false,
+    "live_allowed": false
+  },
+  "safety": {
+    "orders_allowed": false,
+    "paper_orders_allowed": false,
+    "live_orders_allowed": false,
+    "broker_submit_allowed": false,
+    "foxhunter_auto_promotion": false,
+    "timers_changed": false,
+    "cron_changed": false,
+    "entry_ready_submits_orders": false
+  },
+  "validation": [
+    {
+      "command": "backend/.venv/bin/python -m pytest backend/tradeo/tests/test_daily_setup_watchlist.py",
+      "result": "20 passed, 1 existing Starlette/httpx deprecation warning"
+    },
+    {
+      "command": "backend/.venv/bin/ruff check backend/tradeo/modules/daily_swing/setup_watchlist.py backend/tradeo/tests/test_daily_setup_watchlist.py",
+      "result": "passed"
+    },
+    {
+      "command": "backend/.venv/bin/python -m pytest backend/tradeo/tests/test_lab_daily_resource_004_red_team.py backend/tradeo/tests/test_daily_resource_api_contract.py",
+      "result": "18 passed, 1 existing Starlette/httpx deprecation warning"
+    }
+  ],
+  "host_validation_notes": [
+    "python -m pytest backend/tradeo/tests/test_daily_setup_watchlist.py failed because python was not installed as a shell command.",
+    "python3 -m pytest backend/tradeo/tests/test_daily_setup_watchlist.py failed because pytest is not installed in the host interpreter.",
+    "Focused validation passed through backend/.venv."
+  ],
+  "blockers": []
+}

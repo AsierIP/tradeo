@@ -1,0 +1,53 @@
+{
+  "schema_version": "tradeo.daily_swing.focus.daily_focus_001.decision.v1",
+  "task_id": "T-DAILY-FOCUS-UNIVERSE-001",
+  "date": "2026-07-07",
+  "decision": "DAILY_FOCUS_UNIVERSE_READY_FOR_MERGE",
+  "focus_mode_default": "daily_only",
+  "intraday_freeze": {
+    "heavy_research_blocked": true,
+    "lab_blocked": true,
+    "paper_shadow_blocked": true,
+    "scanner_capacity_blocked": true,
+    "read_only_reports_allowed": true,
+    "deny_reason": "INTRADAY_FROZEN_DAILY_FOCUS"
+  },
+  "daily_universe_v2": {
+    "bucket_version": "daily_focus_universe_v2",
+    "required_buckets": [
+      "mega_large_cap",
+      "large_cap_core",
+      "liquid_mid_cap",
+      "liquid_small_cap",
+      "high_beta_growth",
+      "defensive_quality",
+      "sector_leaders",
+      "etf_macro"
+    ],
+    "market_cap_source": "unavailable",
+    "market_cap_bucket_method": "proxy",
+    "survivorship_warning": true,
+    "runtime_artifact_tracked": false
+  },
+  "research_matrix": {
+    "bucket_test_rows": 160,
+    "summary_rows": 1,
+    "bucket_level_metrics_required": true,
+    "fdr_wrc_spa_required": true,
+    "global_aggregate_can_approve": false
+  },
+  "lab_watchlist": {
+    "bucket_metadata_enabled": true,
+    "entry_ready_submits_order": false,
+    "foxhunter_auto_route": false
+  },
+  "safety": {
+    "no_live": true,
+    "no_paper_orders": true,
+    "no_order_submit_paths_added": true,
+    "no_gh": true,
+    "no_timers_modified": true,
+    "no_env_real_modified": true
+  },
+  "recommended_next_task": "T-DAILY-UNIVERSE-V2-CACHE-AUDIT"
+}

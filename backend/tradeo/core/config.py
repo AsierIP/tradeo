@@ -8,6 +8,7 @@ from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 TradingMode = Literal["research", "paper", "live"]
+TradeoFocusMode = Literal["daily_only", "all"]
 
 SENSITIVE_ENV_KEY_PARTS = (
     "ACCOUNT",
@@ -74,6 +75,7 @@ class Settings(BaseSettings):
     admin_password: str = "change-me"
 
     trading_mode: TradingMode = "paper"
+    focus_mode: TradeoFocusMode = "daily_only"
     live_trading_enabled: bool = False
     live_trading_confirmation_phrase: str = "I_ACCEPT_LIVE_MARKET_RISK"
     live_trading_confirmation_value: str = ""
@@ -507,6 +509,21 @@ class Settings(BaseSettings):
             raise ValueError("Tradeo only permits IBKR market data; non-IBKR providers are disabled")
         return "ibkr"
 
+    @field_validator("focus_mode", mode="before")
+    @classmethod
+    def known_focus_mode(cls, value: str) -> str:
+        mode = str(value or "daily_only").strip().lower().replace("-", "_")
+        aliases = {
+            "daily": "daily_only",
+            "daily_only": "daily_only",
+            "all": "all",
+            "full": "all",
+            "unrestricted": "all",
+        }
+        if mode not in aliases:
+            raise ValueError("focus_mode must be daily_only or all")
+        return aliases[mode]
+
     @field_validator("allow_synthetic_market_data")
     @classmethod
     def synthetic_market_data_disabled(cls, value: bool) -> bool:
@@ -659,6 +676,10 @@ class Settings(BaseSettings):
     @property
     def intraday_live_armed(self) -> bool:
         return self.intraday_live_enabled and not self.intraday_live_config_blockers
+
+    @property
+    def daily_focus_only(self) -> bool:
+        return self.focus_mode == "daily_only"
 
     def redacted_config_snapshot(self) -> dict[str, Any]:
         snapshot: dict[str, Any] = {}
