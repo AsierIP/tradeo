@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 from tradeo.core.config import Settings
 from tradeo.core.security import require_admin
 from tradeo.modules.resource_policy.market_session_resource_policy import (
+    DENY_INTRADAY_FROZEN_DAILY_FOCUS,
     JobType,
     MarketSessionResourcePolicy,
     SessionState,
@@ -18,11 +19,23 @@ from tradeo.routers.resource_policy import router as resource_policy_router
 NY = ZoneInfo("America/New_York")
 
 
-def _policy(tmp_path, state: str | None = None) -> MarketSessionResourcePolicy:
+def _policy(
+    tmp_path,
+    state: str | None = None,
+    *,
+    focus_mode: str = "all",
+) -> MarketSessionResourcePolicy:
     return MarketSessionResourcePolicy(
-        settings=Settings(artifacts_dir=str(tmp_path)),
+        settings=Settings(artifacts_dir=str(tmp_path), focus_mode=focus_mode),
         forced_session_state=state,
     )
+
+
+def test_settings_default_focus_mode_is_daily_only() -> None:
+    settings = Settings()
+
+    assert settings.focus_mode == "daily_only"
+    assert settings.daily_focus_only is True
 
 
 def test_pre_market_assigns_lab_readiness_priority(tmp_path) -> None:
@@ -53,6 +66,27 @@ def test_market_closed_assigns_research_high(tmp_path) -> None:
     assert budget.research_priority == "HIGH"
     assert budget.heavy_research_allowed is True
     assert budget.ibkr_write_allowed is False
+
+
+def test_daily_focus_freezes_intraday_heavy_work_even_after_close(tmp_path) -> None:
+    policy = _policy(tmp_path, SessionState.MARKET_CLOSED, focus_mode="daily_only")
+
+    heavy = policy.decide_job(JobType.RESEARCH_HEAVY)
+    lab = policy.decide_job(JobType.LAB_EXECUTION)
+    paper = policy.decide_job(JobType.PAPER_SUBMIT)
+    report = policy.decide_job(JobType.INTRADAY_READ_ONLY_REPORT)
+
+    assert heavy.allowed is False
+    assert lab.allowed is False
+    assert paper.allowed is False
+    assert heavy.reason == DENY_INTRADAY_FROZEN_DAILY_FOCUS
+    assert lab.reason == DENY_INTRADAY_FROZEN_DAILY_FOCUS
+    assert paper.reason == DENY_INTRADAY_FROZEN_DAILY_FOCUS
+    assert report.allowed is True
+    assert heavy.budget.focus_mode == "daily_only"
+    assert heavy.budget.heavy_research_allowed is False
+    assert heavy.budget.lab_paper_probe_allowed is False
+    assert heavy.budget.scanner_budget == "intraday_frozen_daily_focus"
 
 
 def test_post_market_assigns_daily_reevaluation_high(tmp_path) -> None:
@@ -128,4 +162,7 @@ def test_resource_policy_endpoint_read_only_without_secrets() -> None:
         "reason",
     }.issubset(set(payload))
     assert payload["safety"]["secret_values_exposed"] is False
+    assert payload["focus_mode"] == "daily_only"
+    assert payload["budgets"]["scanner_budget"] == "intraday_frozen_daily_focus"
+    assert payload["policy"]["intraday_freeze_active"] is True
     assert "change-me" not in str(payload).lower()

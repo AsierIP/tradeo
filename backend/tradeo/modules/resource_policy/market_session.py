@@ -4,6 +4,11 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Callable, Iterable, Mapping
 
+from tradeo.modules.resource_policy.market_session_resource_policy import (
+    DENY_INTRADAY_FROZEN_DAILY_FOCUS,
+    FOCUS_MODE_ALL,
+    FOCUS_MODE_DAILY_ONLY,
+)
 from tradeo.services.market_session import market_session_status
 
 RESOURCE_POLICY_EVALUATE = "resource_policy.evaluate"
@@ -54,9 +59,33 @@ DEFAULT_CLOSED_SESSION_ALLOWLIST = frozenset(
         RESOURCE_IBKR_HISTORICAL_DATA,
     }
 )
+DAILY_FOCUS_RESOURCE_ALLOWLIST = frozenset(
+    {
+        RESOURCE_POLICY_EVALUATE,
+        RESOURCE_MARKET_SESSION_STATUS,
+        RESOURCE_LOCAL_CACHE_READ,
+        RESOURCE_ARTIFACT_WRITE,
+        RESOURCE_REPORT_WRITE,
+    }
+)
+DAILY_FOCUS_FROZEN_RESOURCES = frozenset(
+    {
+        RESOURCE_LOCAL_CACHE_WRITE,
+        RESOURCE_LAB_BACKTEST,
+        RESOURCE_MARKET_DATA_REFRESH,
+        RESOURCE_IBKR_HISTORICAL_DATA,
+        RESOURCE_REALTIME_MARKET_DATA,
+        RESOURCE_ORDER_PREVIEW,
+        RESOURCE_PAPER_ORDER,
+        RESOURCE_LIVE_ORDER,
+        RESOURCE_SIGNAL_OUTPUT,
+    }
+)
 KNOWN_RESOURCES = (
     DEFAULT_OPEN_SESSION_ALLOWLIST
     | DEFAULT_CLOSED_SESSION_ALLOWLIST
+    | DAILY_FOCUS_RESOURCE_ALLOWLIST
+    | DAILY_FOCUS_FROZEN_RESOURCES
     | PROHIBITED_RESOURCES
     | SESSION_SENSITIVE_RESOURCES
 )
@@ -77,6 +106,8 @@ class ResourcePolicyDecision:
     block_reasons: dict[str, tuple[str, ...]]
     market_session: dict[str, object]
     fail_closed: bool
+    focus_mode: str
+    intraday_freeze_active: bool
 
     @property
     def allowed(self) -> bool:
@@ -92,6 +123,8 @@ class ResourcePolicyDecision:
             "block_reasons": {key: list(value) for key, value in self.block_reasons.items()},
             "market_session": dict(self.market_session),
             "fail_closed": self.fail_closed,
+            "focus_mode": self.focus_mode,
+            "intraday_freeze_active": self.intraday_freeze_active,
         }
 
 
@@ -109,11 +142,18 @@ class MarketSessionResourcePolicy:
         open_session_allowlist: Iterable[str] = DEFAULT_OPEN_SESSION_ALLOWLIST,
         closed_session_allowlist: Iterable[str] = DEFAULT_CLOSED_SESSION_ALLOWLIST,
         prohibited_resources: Iterable[str] = PROHIBITED_RESOURCES,
+        settings: Any | None = None,
+        focus_mode: str | None = None,
     ) -> None:
         self.session_provider = session_provider
         self.open_session_allowlist = _normalize_static_resources(open_session_allowlist)
         self.closed_session_allowlist = _normalize_static_resources(closed_session_allowlist)
         self.prohibited_resources = _normalize_static_resources(prohibited_resources)
+        self.focus_mode = _normalize_focus_mode(
+            focus_mode
+            if focus_mode is not None
+            else getattr(settings, "focus_mode", FOCUS_MODE_DAILY_ONLY)
+        )
         self.known_resources = (
             KNOWN_RESOURCES
             | self.open_session_allowlist
@@ -130,6 +170,7 @@ class MarketSessionResourcePolicy:
     ) -> ResourcePolicyDecision:
         resources, resource_errors = _normalize_requested_resources(requested_resources)
         session, session_errors = self._resolve_session(market_session, now)
+        intraday_freeze_active = self.focus_mode == FOCUS_MODE_DAILY_ONLY
         if resource_errors or session_errors:
             reasons = tuple([*resource_errors, *session_errors, "fail_closed"])
             return _decision(
@@ -140,16 +181,29 @@ class MarketSessionResourcePolicy:
                 block_reasons={resource: reasons for resource in resources},
                 market_session=session,
                 fail_closed=True,
+                focus_mode=self.focus_mode,
+                intraday_freeze_active=intraday_freeze_active,
             )
 
         session_open = session["regular_session_open"] is True
-        allowlist = self.open_session_allowlist if session_open else self.closed_session_allowlist
+        allowlist = (
+            DAILY_FOCUS_RESOURCE_ALLOWLIST
+            if intraday_freeze_active
+            else self.open_session_allowlist
+            if session_open
+            else self.closed_session_allowlist
+        )
         allowed: list[str] = []
         blocked: list[str] = []
         block_reasons: dict[str, tuple[str, ...]] = {}
 
         for resource in resources:
-            reasons = self._block_reasons(resource, allowlist, session_open)
+            reasons = self._block_reasons(
+                resource,
+                allowlist,
+                session_open,
+                intraday_freeze_active,
+            )
             if reasons:
                 blocked.append(resource)
                 block_reasons[resource] = reasons
@@ -173,6 +227,8 @@ class MarketSessionResourcePolicy:
             block_reasons=block_reasons,
             market_session=session,
             fail_closed=False,
+            focus_mode=self.focus_mode,
+            intraday_freeze_active=intraday_freeze_active,
         )
 
     def _resolve_session(
@@ -197,12 +253,15 @@ class MarketSessionResourcePolicy:
         resource: str,
         allowlist: frozenset[str],
         session_open: bool,
+        intraday_freeze_active: bool,
     ) -> tuple[str, ...]:
         reasons: list[str] = []
         if resource not in self.known_resources:
             reasons.append(f"unknown_resource:{resource}")
         if resource in self.prohibited_resources:
             reasons.append(f"prohibited_resource:{resource}")
+        if intraday_freeze_active and resource in DAILY_FOCUS_FROZEN_RESOURCES:
+            reasons.append(DENY_INTRADAY_FROZEN_DAILY_FOCUS)
         if session_open and resource in SESSION_SENSITIVE_RESOURCES:
             reasons.append("regular_session_resource_protected")
         if resource not in allowlist:
@@ -219,6 +278,8 @@ def _decision(
     block_reasons: dict[str, tuple[str, ...]],
     market_session: Mapping[str, object],
     fail_closed: bool,
+    focus_mode: str,
+    intraday_freeze_active: bool,
 ) -> ResourcePolicyDecision:
     return ResourcePolicyDecision(
         decision=decision,
@@ -228,6 +289,8 @@ def _decision(
         block_reasons={key: tuple(value) for key, value in sorted(block_reasons.items())},
         market_session=dict(market_session),
         fail_closed=fail_closed,
+        focus_mode=focus_mode,
+        intraday_freeze_active=intraday_freeze_active,
     )
 
 
@@ -282,6 +345,15 @@ def _normalize_static_resources(resources: Iterable[str]) -> frozenset[str]:
     if errors:
         raise ValueError(";".join(errors))
     return frozenset(normalized)
+
+
+def _normalize_focus_mode(value: object) -> str:
+    mode = str(value or FOCUS_MODE_DAILY_ONLY).strip().lower().replace("-", "_")
+    if mode in {"daily", FOCUS_MODE_DAILY_ONLY}:
+        return FOCUS_MODE_DAILY_ONLY
+    if mode in {"full", "unrestricted", FOCUS_MODE_ALL}:
+        return FOCUS_MODE_ALL
+    return FOCUS_MODE_DAILY_ONLY
 
 
 def _dedupe_reason_codes(block_reasons: Mapping[str, tuple[str, ...]]) -> tuple[str, ...]:

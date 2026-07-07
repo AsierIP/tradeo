@@ -4,6 +4,7 @@ from pathlib import Path
 
 from tradeo.core.config import Settings
 from tradeo.modules.resource_policy.enforcement import (
+    DENY_INTRADAY_FROZEN_DAILY_FOCUS,
     DENY_PAPER_SUBMIT,
     DENY_POLICY_DENIED,
     DENY_POLICY_MISSING,
@@ -17,15 +18,16 @@ from tradeo.modules.resource_policy.market_session_resource_policy import (
 )
 
 
-def _policy(tmp_path, state: str) -> MarketSessionResourcePolicy:
+def _policy(tmp_path, state: str, *, focus_mode: str = "all") -> MarketSessionResourcePolicy:
     return MarketSessionResourcePolicy(
-        settings=Settings(artifacts_dir=str(tmp_path)),
+        settings=Settings(artifacts_dir=str(tmp_path), focus_mode=focus_mode),
         forced_session_state=state,
     )
 
 
 def test_settings_and_example_default_paper_auto_submit_false() -> None:
     assert Settings().laboratory_auto_submit_paper_orders is False
+    assert Settings().focus_mode == "daily_only"
     repo_root = Path(__file__).resolve().parents[3]
     env_example = repo_root / ".env.example"
     assert "TRADEO_LABORATORY_AUTO_SUBMIT_PAPER_ORDERS=false" in env_example.read_text(
@@ -87,6 +89,27 @@ def test_market_closed_allows_research_heavy(tmp_path) -> None:
 
     assert decision.allowed is True
     assert decision.priority == "HIGH"
+
+
+def test_daily_focus_freeze_reason_propagates_through_enforcement(tmp_path) -> None:
+    decision = assert_job_allowed(
+        JobType.RESEARCH_HEAVY,
+        "research",
+        policy=_policy(tmp_path, SessionState.MARKET_CLOSED, focus_mode="daily_only"),
+    )
+    paper = assert_job_allowed(
+        JobType.PAPER_SUBMIT,
+        "daily_watchlist",
+        policy=_policy(tmp_path, SessionState.REGULAR_MARKET, focus_mode="daily_only"),
+    )
+
+    assert decision.allowed is False
+    assert decision.deny_reason == DENY_INTRADAY_FROZEN_DAILY_FOCUS
+    assert decision.session_state == SessionState.MARKET_CLOSED
+    assert decision.to_dict()["focus_mode"] == "daily_only"
+    assert decision.to_dict()["intraday_freeze_active"] is True
+    assert paper.allowed is False
+    assert paper.deny_reason == DENY_INTRADAY_FROZEN_DAILY_FOCUS
 
 
 def test_paper_submit_is_never_authorized_by_resource_policy(tmp_path) -> None:

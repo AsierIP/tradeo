@@ -8,12 +8,20 @@ from typing import Any, Literal, Mapping
 import hashlib
 import json
 import math
+import re
 
 SCHEMA_VERSION = "tradeo.daily_swing.setup_watchlist.v1"
 EVALUATION_SCHEMA_VERSION = "tradeo.daily_swing.setup_watchlist_evaluation.v1"
 ARTIFACT_SCHEMA_VERSION = "tradeo.daily_swing.setup_watchlist_artifact.v1"
 DAILY_SETUP_ARTIFACT_SCHEMA_VERSION = "tradeo.daily_swing.setup_watchlist.status.v1"
 LAB_PAPER_PROBE_REQUEST_SCHEMA_VERSION = "tradeo.daily_swing.lab_paper_probe_request.v1"
+FOCUS_METADATA_SCHEMA_VERSION = "tradeo.daily_swing.focus_watchlist_metadata.v1"
+FOCUS_BUCKET_VERSION = "daily_focus_universe_v1"
+DEFAULT_UNIVERSE_BUCKET = "daily_setup_watchlist"
+DEFAULT_BUCKET_REASON = "daily_setup_watchlist_metadata"
+DEFAULT_PATTERN_FAMILY = "daily_setup"
+BUCKET_SPECIFIC_GATE_STATUSES = frozenset({"pass", "pending", "blocked", "unknown"})
+FOCUS_TOKEN_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,127}$")
 
 WatchlistState = Literal[
     "watchlist",
@@ -138,6 +146,14 @@ class DailySetup:
     stop: float | None = None
     target: float | None = None
     lab_paper_probe_request: dict[str, Any] | None = None
+    universe_bucket: str = DEFAULT_UNIVERSE_BUCKET
+    bucket_reason: str = DEFAULT_BUCKET_REASON
+    bucket_version: str = FOCUS_BUCKET_VERSION
+    pattern_family: str = DEFAULT_PATTERN_FAMILY
+    lab_probe_allowed: bool = False
+    lab_probe_id: str | None = None
+    route_to_lab_reason: str = "not_entry_ready"
+    bucket_specific_gate_status: str = "unknown"
     invalidation_reason: str | None = None
     last_evaluated_at: str | None = None
     next_evaluation_at: str | None = None
@@ -167,6 +183,38 @@ class DailySetup:
             raise ValueError(f"unsupported setup side: {self.side}")
         self.side = side  # type: ignore[assignment]
         self.timeframe = "1d"
+        self.universe_bucket = _focus_token(
+            self.universe_bucket,
+            default=DEFAULT_UNIVERSE_BUCKET,
+            field_name="universe_bucket",
+        )
+        self.bucket_reason = _focus_reason(self.bucket_reason, default=DEFAULT_BUCKET_REASON)
+        self.bucket_version = _focus_token(
+            self.bucket_version,
+            default=FOCUS_BUCKET_VERSION,
+            field_name="bucket_version",
+        )
+        self.pattern_family = _focus_token(
+            self.pattern_family,
+            default=DEFAULT_PATTERN_FAMILY,
+            field_name="pattern_family",
+        )
+        self.bucket_specific_gate_status = _validate_bucket_specific_gate_status(
+            self.bucket_specific_gate_status
+        )
+        self.route_to_lab_reason = _focus_reason(
+            self.route_to_lab_reason,
+            default="not_entry_ready",
+        )
+        self.lab_probe_allowed = bool(self.lab_probe_allowed)
+        if self.lab_probe_id is not None:
+            self.lab_probe_id = _focus_token(
+                self.lab_probe_id,
+                default="lab_probe_unset",
+                field_name="lab_probe_id",
+            )
+        if self.lab_probe_allowed and not self.lab_probe_id:
+            raise ValueError("lab_probe_id is required when lab_probe_allowed is true")
 
     def transition_to(
         self,
@@ -232,6 +280,15 @@ class DailySetup:
                 "entry_gate_version": self.entry_gate_version,
                 "risk_gate_version": self.risk_gate_version,
                 "created_by": self.created_by,
+                "focus_metadata_schema_version": FOCUS_METADATA_SCHEMA_VERSION,
+                "universe_bucket": self.universe_bucket,
+                "bucket_reason": self.bucket_reason,
+                "bucket_version": self.bucket_version,
+                "pattern_family": self.pattern_family,
+                "lab_probe_allowed": self.lab_probe_allowed,
+                "lab_probe_id": self.lab_probe_id,
+                "route_to_lab_reason": self.route_to_lab_reason,
+                "bucket_specific_gate_status": self.bucket_specific_gate_status,
                 "lab_paper_probe_request": self.lab_paper_probe_request,
                 "invalidation_reason": self.invalidation_reason,
                 "next_action": self.next_action,
@@ -273,6 +330,7 @@ class DailySetupWatchlist:
         status: DailySetupStatus = "entry_ready" if evaluation.entry_gate_passed else "watching"
         detected_at = _safe_optional_text(source.get("detected_at")) or generated_at
         max_age_days = int(_setting(self.settings, "daily_setup_max_age_days", 5) or 5)
+        focus_metadata = _focus_metadata_from_source(source, evaluation)
         setup = DailySetup(
             setup_id=_setup_id(source, generated_at),
             symbol=str(source.get("symbol", "")).strip().upper(),
@@ -293,6 +351,11 @@ class DailySetupWatchlist:
             or _optional_float(source.get("entry")),
             source_evidence_hash=stable_source_evidence_hash(source),
             lab_paper_probe_request=None,
+            universe_bucket=focus_metadata["universe_bucket"],
+            bucket_reason=focus_metadata["bucket_reason"],
+            bucket_version=focus_metadata["bucket_version"],
+            pattern_family=focus_metadata["pattern_family"],
+            bucket_specific_gate_status=focus_metadata["bucket_specific_gate_status"],
             last_evaluated_at=generated_at,
             next_evaluation_at=_iso(_parse_datetime(generated_at) + _one_day()),
             expires_at=_iso(_parse_datetime(detected_at) + _days(max_age_days)),
@@ -305,6 +368,7 @@ class DailySetupWatchlist:
             updated_at=generated_at,
             source_payload=source,
         )
+        self._refresh_lab_probe_metadata(setup)
         if setup.status == "entry_ready":
             setup.lab_paper_probe_request = self._lab_paper_probe_request(setup, generated_at)
         return setup
@@ -331,17 +395,24 @@ class DailySetupWatchlist:
         setup.trigger_score = evaluation.trigger_score
         setup.recoverable_reasons = evaluation.recoverable_reasons
         setup.non_recoverable_reasons = evaluation.non_recoverable_reasons
+        setup.bucket_specific_gate_status = _bucket_specific_gate_status(evaluation)
 
         if evaluation.stop_context_broken or evaluation.invalidation_reason:
             setup.invalidation_reason = evaluation.invalidation_reason or "setup_context_broken"
             setup.transition_to("invalidated", reason=setup.invalidation_reason, now=now)
+            self._refresh_lab_probe_metadata(setup)
+            setup.lab_paper_probe_request = None
             return setup
         if evaluation.non_recoverable_reasons or not _reward_risk_ok(evaluation.reward_risk):
             setup.invalidation_reason = "non_recoverable_or_reward_risk_failed"
             setup.transition_to("invalidated", reason=setup.invalidation_reason, now=now)
+            self._refresh_lab_probe_metadata(setup)
+            setup.lab_paper_probe_request = None
             return setup
         if self._is_expired(setup, now):
             setup.transition_to("expired", reason="max_age_days_exceeded", now=now)
+            self._refresh_lab_probe_metadata(setup)
+            setup.lab_paper_probe_request = None
             return setup
         if evaluation.entry_gate_passed:
             if setup.status in {"watching"}:
@@ -354,7 +425,12 @@ class DailySetupWatchlist:
                 setup.transition_to("armed", reason="entry_gate_progressing", now=now)
             if setup.status == "armed":
                 setup.transition_to("entry_ready", reason="entry_gate_passed", now=now)
+            self._refresh_lab_probe_metadata(setup)
             setup.lab_paper_probe_request = self._lab_paper_probe_request(setup, generated_at)
+        else:
+            self._refresh_lab_probe_metadata(setup)
+            if setup.status != "entry_ready":
+                setup.lab_paper_probe_request = None
         return setup
 
     def enforce_max_active(self, setups: list[DailySetup], *, now: datetime | None = None) -> None:
@@ -480,6 +556,16 @@ class DailySetupWatchlist:
             current = current.replace(tzinfo=timezone.utc)
         return (current.astimezone(timezone.utc) - detected).days >= max_age
 
+    def _refresh_lab_probe_metadata(self, setup: DailySetup) -> None:
+        route_enabled = bool(_setting(self.settings, "daily_setup_route_entry_ready_to_lab", False))
+        setup.lab_probe_allowed = (
+            setup.status == "entry_ready"
+            and route_enabled
+            and setup.bucket_specific_gate_status == "pass"
+        )
+        setup.lab_probe_id = _lab_probe_id(setup) if setup.lab_probe_allowed else None
+        setup.route_to_lab_reason = _route_to_lab_reason(setup, route_enabled=route_enabled)
+
     def _lab_paper_probe_request(self, setup: DailySetup, generated_at: str) -> dict[str, Any]:
         return {
             "schema_version": LAB_PAPER_PROBE_REQUEST_SCHEMA_VERSION,
@@ -489,6 +575,15 @@ class DailySetupWatchlist:
             "side": setup.side,
             "route": "lab_paper_probe",
             "enabled": bool(_setting(self.settings, "daily_setup_route_entry_ready_to_lab", False)),
+            "focus_metadata_schema_version": FOCUS_METADATA_SCHEMA_VERSION,
+            "universe_bucket": setup.universe_bucket,
+            "bucket_reason": setup.bucket_reason,
+            "bucket_version": setup.bucket_version,
+            "pattern_family": setup.pattern_family,
+            "lab_probe_allowed": setup.lab_probe_allowed,
+            "lab_probe_id": setup.lab_probe_id,
+            "route_to_lab_reason": setup.route_to_lab_reason,
+            "bucket_specific_gate_status": setup.bucket_specific_gate_status,
             "submits_order": False,
             "allow_paper_on_entry_ready": False,
             "orders_allowed": False,
@@ -673,10 +768,13 @@ def entry_ready_gates(observation: SetupReevaluationInput) -> dict[str, bool]:
 
 def watchlist_item_record(item: SetupWatchlistItem) -> dict[str, Any]:
     record = asdict(item)
+    focus_metadata = _focus_metadata_from_watchlist_item(item)
     record.update(
         {
             "schema_version": SCHEMA_VERSION,
             "entry_ready": item.state == "entry_ready",
+            "focus_metadata_schema_version": FOCUS_METADATA_SCHEMA_VERSION,
+            **focus_metadata,
             "order_intent": "none",
             "orders_allowed": False,
             "paper_allowed": False,
@@ -810,6 +908,10 @@ def _evaluation_record(
             "transitioned": transitioned,
             "entry_ready": after.state == "entry_ready",
             "reason": reason,
+            "bucket_specific_gate_status": _bucket_gate_status_from_watchlist_observation(
+                observation,
+                gates,
+            ),
             "gates": {name: bool(gates[name]) for name in ENTRY_READY_GATE_ORDER},
             "gate_failures": list(gate_failures),
             "observation": {
@@ -850,6 +952,262 @@ def _validate_daily_setup_status(status: str) -> DailySetupStatus:
     if normalized not in DAILY_SETUP_ALLOWED_TRANSITIONS:
         raise ValueError(f"unsupported daily setup status: {status}")
     return normalized  # type: ignore[return-value]
+
+
+def _focus_metadata_from_source(
+    source: Mapping[str, Any],
+    evaluation: SetupEvaluation,
+) -> dict[str, str]:
+    return {
+        "universe_bucket": _focus_token(
+            _first_source_value(
+                source,
+                (
+                    "universe_bucket",
+                    "focus_universe_bucket",
+                    "daily_focus_bucket",
+                    "bucket",
+                    "universe_name",
+                ),
+            ),
+            default=DEFAULT_UNIVERSE_BUCKET,
+            field_name="universe_bucket",
+        ),
+        "bucket_reason": _focus_reason(
+            _first_source_value(
+                source,
+                ("bucket_reason", "focus_bucket_reason", "universe_reason"),
+            ),
+            default=DEFAULT_BUCKET_REASON,
+        ),
+        "bucket_version": _focus_token(
+            _first_source_value(
+                source,
+                ("bucket_version", "focus_bucket_version", "universe_bucket_version"),
+            ),
+            default=FOCUS_BUCKET_VERSION,
+            field_name="bucket_version",
+        ),
+        "pattern_family": _focus_token(
+            _first_source_value(
+                source,
+                (
+                    "pattern_family",
+                    "pattern_family_key",
+                    "canonical_pattern_key",
+                    "research_family_key",
+                    "family_id",
+                    "pattern_key",
+                    "setup_family",
+                    "pattern_id",
+                ),
+            ),
+            default=DEFAULT_PATTERN_FAMILY,
+            field_name="pattern_family",
+        ),
+        "bucket_specific_gate_status": _bucket_specific_gate_status(evaluation, source),
+    }
+
+
+def _focus_metadata_from_watchlist_item(item: SetupWatchlistItem) -> dict[str, Any]:
+    metadata = item.metadata if isinstance(item.metadata, Mapping) else {}
+    gate_status = _validate_bucket_specific_gate_status(
+        _first_source_value(metadata, ("bucket_specific_gate_status", "gate_status"))
+        or ("pass" if item.state == "entry_ready" else "pending")
+    )
+    raw_lab_probe_allowed = _optional_bool(metadata.get("lab_probe_allowed"))
+    lab_probe_allowed = (
+        bool(raw_lab_probe_allowed)
+        and item.state == "entry_ready"
+        and gate_status == "pass"
+    )
+    return {
+        "universe_bucket": _focus_token(
+            _first_source_value(
+                metadata,
+                (
+                    "universe_bucket",
+                    "focus_universe_bucket",
+                    "daily_focus_bucket",
+                    "bucket",
+                    "universe_name",
+                ),
+            ),
+            default=DEFAULT_UNIVERSE_BUCKET,
+            field_name="universe_bucket",
+        ),
+        "bucket_reason": _focus_reason(
+            _first_source_value(
+                metadata,
+                ("bucket_reason", "focus_bucket_reason", "universe_reason"),
+            ),
+            default=DEFAULT_BUCKET_REASON,
+        ),
+        "bucket_version": _focus_token(
+            _first_source_value(
+                metadata,
+                ("bucket_version", "focus_bucket_version", "universe_bucket_version"),
+            ),
+            default=FOCUS_BUCKET_VERSION,
+            field_name="bucket_version",
+        ),
+        "pattern_family": _focus_token(
+            _first_source_value(
+                metadata,
+                (
+                    "pattern_family",
+                    "pattern_family_key",
+                    "canonical_pattern_key",
+                    "research_family_key",
+                    "family_id",
+                    "pattern_key",
+                    "setup_family",
+                ),
+            ),
+            default=item.setup_family,
+            field_name="pattern_family",
+        ),
+        "lab_probe_allowed": lab_probe_allowed,
+        "lab_probe_id": (
+            _focus_token(
+                metadata.get("lab_probe_id") or _watchlist_lab_probe_id(item),
+                default=_watchlist_lab_probe_id(item),
+                field_name="lab_probe_id",
+            )
+            if lab_probe_allowed
+            else None
+        ),
+        "route_to_lab_reason": _focus_reason(
+            metadata.get("route_to_lab_reason") or _watchlist_route_to_lab_reason(item, gate_status, lab_probe_allowed),
+            default=_watchlist_route_to_lab_reason(item, gate_status, lab_probe_allowed),
+        ),
+        "bucket_specific_gate_status": gate_status,
+    }
+
+
+def _first_source_value(source: Mapping[str, Any], keys: tuple[str, ...]) -> Any:
+    for key in keys:
+        value = source.get(key)
+        if value not in (None, ""):
+            return value
+    return None
+
+
+def _focus_token(value: Any, *, default: str, field_name: str) -> str:
+    text = _safe_optional_text(value) or default
+    normalized = "_".join(text.strip().split())
+    if not normalized:
+        normalized = default
+    if not FOCUS_TOKEN_PATTERN.fullmatch(normalized):
+        raise ValueError(f"invalid {field_name}: {normalized}")
+    return normalized
+
+
+def _focus_reason(value: Any, *, default: str) -> str:
+    text = _safe_optional_text(value) or default
+    normalized = " ".join(text.strip().split())
+    if not normalized:
+        normalized = default
+    if len(normalized) > 240:
+        raise ValueError("focus metadata reason exceeds 240 characters")
+    return normalized
+
+
+def _bucket_specific_gate_status(
+    evaluation: SetupEvaluation,
+    source: Mapping[str, Any] | None = None,
+) -> str:
+    explicit = (
+        _first_source_value(source, ("bucket_specific_gate_status", "gate_status"))
+        if source is not None
+        else None
+    )
+    if explicit not in (None, ""):
+        return _validate_bucket_specific_gate_status(explicit)
+    if evaluation.entry_gate_passed:
+        return "pass"
+    if evaluation.non_recoverable_reasons or not _reward_risk_ok(evaluation.reward_risk):
+        return "blocked"
+    if evaluation.recoverable_reasons:
+        return "pending"
+    return "unknown"
+
+
+def _validate_bucket_specific_gate_status(value: Any) -> str:
+    normalized = str(value or "unknown").strip().lower()
+    if normalized not in BUCKET_SPECIFIC_GATE_STATUSES:
+        raise ValueError(f"unsupported bucket_specific_gate_status: {value}")
+    return normalized
+
+
+def _route_to_lab_reason(setup: DailySetup, *, route_enabled: bool) -> str:
+    if setup.status != "entry_ready":
+        return f"not_entry_ready:{setup.status}"
+    if setup.bucket_specific_gate_status != "pass":
+        return f"bucket_gate_not_passed:{setup.bucket_specific_gate_status}"
+    if not route_enabled:
+        return "daily_setup_route_entry_ready_to_lab_disabled"
+    return "entry_ready_lab_paper_probe_metadata"
+
+
+def _watchlist_route_to_lab_reason(
+    item: SetupWatchlistItem,
+    gate_status: str,
+    lab_probe_allowed: bool,
+) -> str:
+    if item.state != "entry_ready":
+        return f"not_entry_ready:{item.state}"
+    if gate_status != "pass":
+        return f"bucket_gate_not_passed:{gate_status}"
+    if lab_probe_allowed:
+        return "entry_ready_lab_paper_probe_metadata"
+    return "lab_probe_route_not_enabled"
+
+
+def _lab_probe_id(setup: DailySetup) -> str:
+    digest = hashlib.sha256(
+        f"{setup.setup_id}|{setup.universe_bucket}|{setup.bucket_version}".encode("utf-8")
+    ).hexdigest()[:12]
+    return _focus_token(
+        f"lab_probe:{setup.symbol}:{setup.side}:{digest}",
+        default=f"lab_probe:{digest}",
+        field_name="lab_probe_id",
+    )
+
+
+def _watchlist_lab_probe_id(item: SetupWatchlistItem) -> str:
+    digest = hashlib.sha256(
+        f"{item.setup_id}|{item.symbol}|{item.side}".encode("utf-8")
+    ).hexdigest()[:12]
+    return _focus_token(
+        f"lab_probe:{item.symbol}:{item.side}:{digest}",
+        default=f"lab_probe:{digest}",
+        field_name="lab_probe_id",
+    )
+
+
+def _bucket_gate_status_from_watchlist_observation(
+    observation: SetupReevaluationInput,
+    gates: Mapping[str, bool],
+) -> str:
+    if observation.safety_block_reason or observation.invalidated or observation.stale:
+        return "blocked"
+    if all(bool(value) for value in gates.values()):
+        return "pass"
+    return "pending"
+
+
+def _optional_bool(value: Any) -> bool | None:
+    if value in (None, ""):
+        return None
+    if isinstance(value, bool):
+        return value
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "y", "on"}:
+        return True
+    if text in {"0", "false", "no", "n", "off"}:
+        return False
+    return None
 
 
 def stable_source_evidence_hash(source: Mapping[str, Any]) -> str:

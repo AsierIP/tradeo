@@ -12,6 +12,9 @@ from tradeo.core.config import Settings, get_settings
 
 MARKET_SESSION_POLICY_VERSION = "tradeo.resource_policy.market_session.v1"
 NEW_YORK_TZ = ZoneInfo("America/New_York")
+FOCUS_MODE_DAILY_ONLY = "daily_only"
+FOCUS_MODE_ALL = "all"
+DENY_INTRADAY_FROZEN_DAILY_FOCUS = "INTRADAY_FROZEN_DAILY_FOCUS"
 
 
 class SessionState:
@@ -44,7 +47,36 @@ class JobType:
     FAST_ENGINE = "fast_engine"
     LARGE_SCANNER = "large_scanner"
     HEAVY_BACKTEST = "heavy_backtest"
+    INTRADAY_LAB = "intraday_lab"
+    INTRADAY_SHADOW = "intraday_shadow"
+    INTRADAY_CAPACITY = "intraday_capacity"
+    INTRADAY_READ_ONLY_REPORT = "intraday_read_only_report"
+    INTRADAY_MAINTENANCE_TEST = "intraday_maintenance_test"
+    INTRADAY_CACHE_INSPECTION = "intraday_cache_inspection"
     LIVE = "live"
+
+
+DAILY_FOCUS_FROZEN_JOB_TYPES = frozenset(
+    {
+        JobType.LAB_EXECUTION,
+        JobType.LAB_READINESS,
+        JobType.LAB_PAPER_PROBE,
+        JobType.PAPER_SUBMIT,
+        JobType.RESEARCH_HEAVY,
+        JobType.LARGE_SCANNER,
+        JobType.HEAVY_BACKTEST,
+        JobType.INTRADAY_LAB,
+        JobType.INTRADAY_SHADOW,
+        JobType.INTRADAY_CAPACITY,
+    }
+)
+DAILY_FOCUS_ALLOWED_INTRADAY_JOB_TYPES = frozenset(
+    {
+        JobType.INTRADAY_READ_ONLY_REPORT,
+        JobType.INTRADAY_MAINTENANCE_TEST,
+        JobType.INTRADAY_CACHE_INSPECTION,
+    }
+)
 
 
 class HolidayProvider(Protocol):
@@ -84,6 +116,7 @@ class ResourceBudget:
     blocked_job_types: list[str]
     deny_reasons: dict[str, str]
     reason: str
+    focus_mode: str = FOCUS_MODE_DAILY_ONLY
     policy_version: str = MARKET_SESSION_POLICY_VERSION
 
     def to_dict(self) -> dict[str, object]:
@@ -119,6 +152,7 @@ class ResourceBudget:
             "generated_at": self.generated_at,
             "timezone": self.timezone,
             "reason": self.reason,
+            "focus_mode": self.focus_mode,
         }
 
 
@@ -171,6 +205,8 @@ class MarketSessionResourcePolicy:
     def decide_job(self, job_type: str, now: datetime | None = None) -> JobDecision:
         budget = self.current_budget(now)
         normalized = str(job_type).strip().lower()
+        if normalized in DAILY_FOCUS_ALLOWED_INTRADAY_JOB_TYPES:
+            return JobDecision(True, PriorityLevel.LOW, "intraday frozen read-only maintenance is allowed", budget)
         if normalized in budget.blocked_job_types:
             return JobDecision(
                 allowed=False,
@@ -394,6 +430,29 @@ class MarketSessionResourcePolicy:
         if JobType.PAPER_SUBMIT in blocked:
             deny[JobType.PAPER_SUBMIT] = "paper submit is blocked unless an explicit Lab Paper Probe gate allows it"
         deny[JobType.LIVE] = "live orders are never allowed by this policy"
+        focus_mode = self.focus_mode
+        if focus_mode == FOCUS_MODE_DAILY_ONLY and state != SessionState.UNKNOWN:
+            blocked = sorted({*blocked, *DAILY_FOCUS_FROZEN_JOB_TYPES})
+            deny.update(
+                {job: DENY_INTRADAY_FROZEN_DAILY_FOCUS for job in DAILY_FOCUS_FROZEN_JOB_TYPES}
+            )
+            lab = PriorityLevel.BLOCKED
+            lab_probe = PriorityLevel.BLOCKED
+            if heavy:
+                research = PriorityLevel.BLOCKED
+            cpu_lab = 0
+            max_lab = 0
+            workers_lab = 0
+            cpu_research = min(cpu_research, 1)
+            max_research = min(max_research, 20)
+            workers_research = min(workers_research, 1)
+            ibkr_write = False
+            heavy = False
+            lab_probe_allowed = False
+            reason = (
+                "daily focus mode freezes intraday heavy research, lab, paper, "
+                "shadow, scanner and capacity work"
+            )
         return ResourceBudget(
             session_state=state,
             generated_at=generated,
@@ -410,16 +469,33 @@ class MarketSessionResourcePolicy:
             max_process_pool_workers_research=workers_research,
             ibkr_read_budget="limited" if state == SessionState.UNKNOWN else "normal",
             ibkr_write_allowed=ibkr_write,
-            market_data_budget="blocked" if state == SessionState.UNKNOWN else "session_scoped",
-            scanner_budget="blocked" if state == SessionState.UNKNOWN else "session_scoped",
+            market_data_budget=(
+                "blocked"
+                if state == SessionState.UNKNOWN
+                else "intraday_frozen_daily_focus"
+                if focus_mode == FOCUS_MODE_DAILY_ONLY
+                else "session_scoped"
+            ),
+            scanner_budget=(
+                "blocked"
+                if state == SessionState.UNKNOWN
+                else "intraday_frozen_daily_focus"
+                if focus_mode == FOCUS_MODE_DAILY_ONLY
+                else "session_scoped"
+            ),
             cache_read_budget="blocked" if state == SessionState.UNKNOWN else "normal",
-            cache_write_budget="blocked" if state == SessionState.UNKNOWN else "normal",
+            cache_write_budget=(
+                "blocked"
+                if state == SessionState.UNKNOWN or focus_mode == FOCUS_MODE_DAILY_ONLY
+                else "normal"
+            ),
             heavy_research_allowed=heavy,
             lab_paper_probe_allowed=lab_probe_allowed,
             daily_watchlist_reeval_allowed=daily_allowed,
             blocked_job_types=blocked,
             deny_reasons=deny,
             reason=reason,
+            focus_mode=focus_mode,
         )
 
     def _coerce_now(self, now: datetime | None) -> datetime:
@@ -433,3 +509,16 @@ class MarketSessionResourcePolicy:
 
     def _settings(self) -> Settings:
         return self.settings or get_settings()
+
+    @property
+    def focus_mode(self) -> str:
+        return _normalize_focus_mode(getattr(self._settings(), "focus_mode", FOCUS_MODE_DAILY_ONLY))
+
+
+def _normalize_focus_mode(value: object) -> str:
+    mode = str(value or FOCUS_MODE_DAILY_ONLY).strip().lower().replace("-", "_")
+    if mode in {"daily", FOCUS_MODE_DAILY_ONLY}:
+        return FOCUS_MODE_DAILY_ONLY
+    if mode in {"full", "unrestricted", FOCUS_MODE_ALL}:
+        return FOCUS_MODE_ALL
+    return FOCUS_MODE_DAILY_ONLY

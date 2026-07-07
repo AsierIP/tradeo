@@ -5,6 +5,8 @@ from datetime import datetime
 from typing import Any
 
 from tradeo.modules.resource_policy.market_session_resource_policy import (
+    DENY_INTRADAY_FROZEN_DAILY_FOCUS,
+    FOCUS_MODE_DAILY_ONLY,
     JobType,
     MarketSessionResourcePolicy,
     PriorityLevel,
@@ -34,6 +36,7 @@ class ResourcePolicyDecision:
     policy_version: str = RESOURCE_POLICY_ENFORCEMENT_VERSION
 
     def to_dict(self) -> dict[str, object]:
+        focus_mode = getattr(self.budget, "focus_mode", None)
         return {
             "policy_version": self.policy_version,
             "allowed": self.allowed,
@@ -43,6 +46,8 @@ class ResourcePolicyDecision:
             "deny_reason": self.deny_reason,
             "session_state": self.session_state,
             "can_submit_orders": self.can_submit_orders,
+            "focus_mode": focus_mode,
+            "intraday_freeze_active": focus_mode == FOCUS_MODE_DAILY_ONLY,
         }
 
 
@@ -65,18 +70,20 @@ def assert_job_allowed(
             DENY_LIVE_JOB,
             normalized_session,
         )
-    if normalized_job == JobType.PAPER_SUBMIT:
-        return _blocked(
-            normalized_job,
-            normalized_owner,
-            DENY_PAPER_SUBMIT,
-            normalized_session,
-        )
     if normalized_session == SessionState.UNKNOWN:
         return _blocked(
             normalized_job,
             normalized_owner,
             DENY_SESSION_UNKNOWN,
+            normalized_session,
+        )
+    if normalized_job == JobType.PAPER_SUBMIT and (
+        policy is None or not hasattr(policy, "decide_job")
+    ):
+        return _blocked(
+            normalized_job,
+            normalized_owner,
+            DENY_PAPER_SUBMIT,
             normalized_session,
         )
     if policy is None or not hasattr(policy, "decide_job"):
@@ -112,7 +119,11 @@ def assert_job_allowed(
         return _blocked(
             normalized_job,
             normalized_owner,
-            _policy_denied_reason(normalized_job, effective_state),
+            _policy_denied_reason(
+                normalized_job,
+                effective_state,
+                str(getattr(decision, "reason", "")),
+            ),
             effective_state,
             budget=budget,
             priority=str(getattr(decision, "priority", PriorityLevel.BLOCKED)),
@@ -142,9 +153,14 @@ def decide_with_market_session_policy(
 
 
 def blocked_job_status(decision: ResourcePolicyDecision) -> dict[str, Any]:
+    reason = (
+        DENY_INTRADAY_FROZEN_DAILY_FOCUS
+        if decision.deny_reason == DENY_INTRADAY_FROZEN_DAILY_FOCUS
+        else DENY_POLICY_DENIED
+    )
     return {
         "status": "skipped",
-        "reason": DENY_POLICY_DENIED,
+        "reason": reason,
         "details": {
             "resource_policy": decision.to_dict(),
             "can_submit_orders": False,
@@ -187,6 +203,10 @@ def _normalize_session_state(session_state: str | None) -> str | None:
     return str(session_state).strip().upper() or None
 
 
-def _policy_denied_reason(job_type: str, session_state: str | None) -> str:
+def _policy_denied_reason(job_type: str, session_state: str | None, policy_reason: str) -> str:
+    if policy_reason == DENY_INTRADAY_FROZEN_DAILY_FOCUS:
+        return DENY_INTRADAY_FROZEN_DAILY_FOCUS
+    if job_type == JobType.PAPER_SUBMIT:
+        return DENY_PAPER_SUBMIT
     session = str(session_state or SessionState.UNKNOWN).strip().lower() or "unknown"
     return f"{DENY_POLICY_DENIED}:{job_type}:{session}"

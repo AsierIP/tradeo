@@ -10,6 +10,8 @@ from tradeo.core.security import require_admin
 from tradeo.modules.resource_policy import (
     DEFAULT_CLOSED_SESSION_ALLOWLIST,
     DEFAULT_OPEN_SESSION_ALLOWLIST,
+    DAILY_FOCUS_FROZEN_RESOURCES,
+    DAILY_FOCUS_RESOURCE_ALLOWLIST,
     PROHIBITED_RESOURCES,
     RESOURCE_ARTIFACT_WRITE,
     RESOURCE_IBKR_HISTORICAL_DATA,
@@ -66,7 +68,7 @@ def build_resource_policy_status(
     *,
     policy: MarketSessionResourcePolicy | None = None,
 ) -> dict[str, object]:
-    resource_policy = policy or MarketSessionResourcePolicy()
+    resource_policy = policy or MarketSessionResourcePolicy(settings=settings)
     decision = resource_policy.evaluate(RESOURCE_POLICY_STATUS_RESOURCES)
     budget = _resource_budget_status(settings)
     return {
@@ -86,6 +88,8 @@ def build_resource_policy_status(
             "evaluated": list(RESOURCE_POLICY_STATUS_RESOURCES),
             "open_session_allowlist": sorted(DEFAULT_OPEN_SESSION_ALLOWLIST),
             "closed_session_allowlist": sorted(DEFAULT_CLOSED_SESSION_ALLOWLIST),
+            "daily_focus_allowlist": sorted(DAILY_FOCUS_RESOURCE_ALLOWLIST),
+            "daily_focus_frozen": sorted(DAILY_FOCUS_FROZEN_RESOURCES),
             "always_prohibited": sorted(PROHIBITED_RESOURCES),
         },
         "pacing": _pacing_snapshot(),

@@ -14,7 +14,7 @@ from tradeo.modules.resource_policy.market_session_resource_policy import Market
 def _registry(tmp_path, state: str) -> FastChartEngineRegistry:
     return FastChartEngineRegistry(
         MarketSessionResourcePolicy(
-            settings=Settings(artifacts_dir=str(tmp_path)),
+            settings=Settings(artifacts_dir=str(tmp_path), focus_mode="all"),
             forced_session_state=state,
         )
     )
@@ -95,11 +95,11 @@ def test_unknown_engine_id_fails_closed(tmp_path) -> None:
 
 def test_scheduler_plan_carries_budget_priority_and_deny_reason(tmp_path) -> None:
     allowed_policy = MarketSessionResourcePolicy(
-        settings=Settings(artifacts_dir=str(tmp_path)),
+        settings=Settings(artifacts_dir=str(tmp_path), focus_mode="all"),
         forced_session_state=SessionState.POST_MARKET,
     )
     blocked_policy = MarketSessionResourcePolicy(
-        settings=Settings(artifacts_dir=str(tmp_path)),
+        settings=Settings(artifacts_dir=str(tmp_path), focus_mode="all"),
         forced_session_state=SessionState.UNKNOWN,
     )
 

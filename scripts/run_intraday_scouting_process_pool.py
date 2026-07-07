@@ -62,7 +62,7 @@ def main() -> int:
     settings = get_settings()
     policy_decision = decide_with_market_session_policy(
         JobType.RESEARCH_HEAVY,
-        "research",
+        "intraday_research",
         settings=settings,
     )
     if not policy_decision.allowed:

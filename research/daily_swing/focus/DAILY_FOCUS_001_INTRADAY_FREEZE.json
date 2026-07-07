@@ -1,0 +1,70 @@
+{
+  "schema_version": "tradeo.daily_focus.intraday_freeze.v1",
+  "date": "2026-07-07",
+  "status": "PASS",
+  "focus_mode": {
+    "env_key": "TRADEO_FOCUS_MODE",
+    "default": "daily_only",
+    "compatible_non_freeze_mode": "all",
+    "aliases": {
+      "daily": "daily_only",
+      "full": "all",
+      "unrestricted": "all"
+    }
+  },
+  "deny_reason": "INTRADAY_FROZEN_DAILY_FOCUS",
+  "frozen_job_types": [
+    "research_heavy",
+    "heavy_backtest",
+    "large_scanner",
+    "lab_execution",
+    "lab_readiness",
+    "lab_paper_probe",
+    "paper_submit",
+    "intraday_lab",
+    "intraday_shadow",
+    "intraday_capacity"
+  ],
+  "allowed_job_types": [
+    "intraday_read_only_report",
+    "intraday_maintenance_test",
+    "intraday_cache_inspection",
+    "daily_watchlist_reeval",
+    "daily_watchlist_prep",
+    "nightly_report"
+  ],
+  "allowed_resources": [
+    "resource_policy.evaluate",
+    "market_session.status",
+    "local_cache.read",
+    "artifact.write",
+    "report.write"
+  ],
+  "frozen_resources": [
+    "local_cache.write",
+    "lab.backtest",
+    "market_data.refresh",
+    "ibkr.historical_data",
+    "market_data.realtime",
+    "order.preview",
+    "order.paper",
+    "order.live",
+    "signal.output"
+  ],
+  "validation": [
+    {
+      "command": "backend/.venv/bin/python -m pytest backend/tradeo/tests/test_resource_policy_enforcement.py backend/tradeo/tests/test_market_session_resource_policy.py backend/tradeo/tests/test_resource_policy_market_session.py backend/tradeo/tests/test_daily_focus_001_red_team.py backend/tradeo/tests/test_fast_chart_engine_registry.py backend/tradeo/tests/test_lab_daily_resource_004_red_team.py",
+      "result": "57 passed, 1 warning"
+    },
+    {
+      "command": "backend/.venv/bin/python -m ruff check backend/tradeo/core/config.py backend/tradeo/modules/resource_policy backend/tradeo/routers/resource_policy.py backend/tradeo/tests/test_resource_policy_enforcement.py backend/tradeo/tests/test_market_session_resource_policy.py backend/tradeo/tests/test_resource_policy_market_session.py backend/tradeo/tests/test_fast_chart_engine_registry.py backend/tradeo/tests/test_lab_daily_resource_004_red_team.py backend/tradeo/tests/test_daily_focus_001_red_team.py",
+      "result": "all checks passed"
+    }
+  ],
+  "safety": {
+    "live_orders": false,
+    "paper_orders": false,
+    "env_files_changed": false,
+    "timers_changed": false
+  }
+}
