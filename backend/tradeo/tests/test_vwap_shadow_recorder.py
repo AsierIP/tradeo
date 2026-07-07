@@ -13,6 +13,11 @@ from tradeo.modules.laboratory.vwap_shadow_recorder import (
 )
 
 
+def _forget_broker_modules() -> None:
+    sys.modules.pop("tradeo.services.ibkr_broker", None)
+    sys.modules.pop("tradeo.services.paper_broker", None)
+
+
 def _bars(closes: list[float]) -> pd.DataFrame:
     timestamps = pd.date_range("2026-07-02 09:30", periods=len(closes), freq="1min", tz="America/New_York")
     return pd.DataFrame(
@@ -164,6 +169,8 @@ def test_blocked_safety_for_runtime_kill_switch_and_live_ibkr_port() -> None:
 
 
 def test_recorder_does_not_import_broker_or_paper_paths() -> None:
+    _forget_broker_modules()
+
     build_vwap_shadow_record(
         symbol="AAPL",
         side="long",

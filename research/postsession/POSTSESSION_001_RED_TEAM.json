@@ -1,0 +1,16 @@
+{
+  "agent": "D_RED_TEAM_SAFETY_REVIEWER",
+  "implemented": true,
+  "rejects_auto_fix_for": [
+    "live_behavior",
+    "submit",
+    "broker_submit",
+    "order_path",
+    "gates",
+    "scoring",
+    "thresholds",
+    "reconciliation_risk",
+    "env_real"
+  ]
+}
+

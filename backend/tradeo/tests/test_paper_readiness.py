@@ -6,6 +6,11 @@ from tradeo.core.config import Settings
 from tradeo.modules.laboratory.paper_readiness import build_paper_readiness_report
 
 
+def _forget_broker_modules() -> None:
+    sys.modules.pop("tradeo.services.ibkr_broker", None)
+    sys.modules.pop("tradeo.services.paper_broker", None)
+
+
 def _safe_settings(**overrides):
     base = {
         "trading_mode": "paper",
@@ -91,6 +96,8 @@ def test_paper_readiness_requires_limits() -> None:
 
 
 def test_paper_readiness_redacts_secrets_and_does_not_import_brokers() -> None:
+    _forget_broker_modules()
+
     report = build_paper_readiness_report(settings=_safe_settings(ibkr_account="DU123456"))
 
     assert report["redacted"] is True

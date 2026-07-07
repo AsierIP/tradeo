@@ -1,0 +1,17 @@
+{
+  "agent": "A_SESSION_DATA_COLLECTOR",
+  "implemented": true,
+  "ibkr_used": false,
+  "market_data_used": false,
+  "orders_allowed": false,
+  "outputs": [
+    "research/postsession/reports/POSTSESSION_REPORT_YYYY-MM-DD.md",
+    "research/postsession/reports/POSTSESSION_DECISION_YYYY-MM-DD.json",
+    "artifacts/runtime/postsession/YYYY-MM-DD/postsession_final.json"
+  ],
+  "redaction": {
+    "account_id_patterns": true,
+    "sensitive_key_names": true
+  }
+}
+

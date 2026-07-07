@@ -16,7 +16,8 @@ from tradeo.modules.daily_swing.gap_confirmatory_protocol import (
     validate_confirmatory_matrix,
 )
 
-MATRIX_PATH = Path("research/daily_swing/gap/dss_gap_006_confirmatory_matrix.json")
+REPO_ROOT = Path(__file__).resolve().parents[3]
+MATRIX_PATH = REPO_ROOT / "research/daily_swing/gap/dss_gap_006_confirmatory_matrix.json"
 
 
 def _rows():

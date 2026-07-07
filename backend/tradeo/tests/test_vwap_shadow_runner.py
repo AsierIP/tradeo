@@ -15,6 +15,11 @@ from tradeo.modules.laboratory.vwap_shadow_runner import (
 )
 
 
+def _forget_broker_modules() -> None:
+    sys.modules.pop("tradeo.services.ibkr_broker", None)
+    sys.modules.pop("tradeo.services.paper_broker", None)
+
+
 def test_load_symbols_from_inline_and_universe_file(tmp_path: Path) -> None:
     universe = tmp_path / "universe.csv"
     universe.write_text("symbol,name\nmsft,Microsoft\nNVDA,Nvidia\n", encoding="utf-8")
@@ -95,6 +100,8 @@ def test_shadow_batch_blocks_unsafe_settings() -> None:
 
 
 def test_runner_does_not_import_broker_or_paper_paths() -> None:
+    _forget_broker_modules()
+
     request = ShadowBatchRequest(
         symbols=("AAPL",),
         side="long",

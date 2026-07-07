@@ -78,3 +78,36 @@ def mark_signal_order_failure(signal: Signal, error: str) -> dict[str, Any]:
     }:
         signal.status = SignalStatus.REJECTED
     return outcome
+
+
+def mark_signal_order_submitted(
+    signal: Signal,
+    *,
+    broker_order_id: str | None = None,
+    order_ids: list[int | str | None] | None = None,
+    perm_ids: list[int | str | None] | None = None,
+    submitted_at: datetime | None = None,
+) -> dict[str, Any]:
+    submitted_at = submitted_at or datetime.now(timezone.utc)
+    outcome: dict[str, Any] = {
+        "status": "order_submitted",
+        "reason_code": "ibkr_order_submitted_waiting_fill",
+        "reason": "IBKR bracket was accepted; fill status still needs broker reconciliation",
+        "retryable": False,
+        "next_action": "monitor_order_fill",
+        "submitted_at": submitted_at.isoformat(),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    if broker_order_id:
+        outcome["broker_order_id"] = str(broker_order_id)
+    if order_ids is not None:
+        outcome["order_ids"] = order_ids
+    if perm_ids is not None:
+        outcome["perm_ids"] = perm_ids
+
+    metadata = dict(signal.metadata_json or {})
+    metadata["execution_outcome"] = outcome
+    metadata.pop("last_order_error", None)
+    signal.metadata_json = metadata
+    signal.status = SignalStatus.EXECUTED
+    return outcome

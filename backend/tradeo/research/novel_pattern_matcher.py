@@ -39,7 +39,7 @@ from tradeo.modules.fox_hunter.production_manifest import (
     production_manifest_is_active,
 )
 from tradeo.services.market_session import REGULAR_CLOSE, US_EQUITY_TZ
-from tradeo.services.state_policy import LAB_RUNTIME_STATES, PRODUCTION_RUNTIME_STATES
+from tradeo.services.state_policy import DAILY_RUNTIME_STATES, LAB_RUNTIME_STATES, PRODUCTION_RUNTIME_STATES
 from tradeo.services.technical_indicators import atr, normalize_ohlcv
 
 
@@ -66,7 +66,7 @@ class NovelPatternMatcher:
         max_patterns: int | None = None,
         max_results: int | None = None,
         similarity_threshold: float | None = None,
-        module: Literal["laboratory", "fox_hunter"] = "laboratory",
+        module: Literal["laboratory", "fox_hunter", "daily"] = "laboratory",
         store: bool = True,
     ) -> dict[str, Any]:
         settings = self.settings
@@ -275,6 +275,8 @@ class NovelPatternMatcher:
                         match_status = (
                             "production_entry_candidate"
                             if module == "fox_hunter"
+                            else "daily_entry_candidate"
+                            if module == "daily"
                             else "lab_entry_candidate"
                         )
                         for variant in variants:
@@ -403,7 +405,7 @@ class NovelPatternMatcher:
 
     def _result_limit(
         self,
-        module: Literal["laboratory", "fox_hunter"],
+        module: Literal["laboratory", "fox_hunter", "daily"],
         max_results: int | None,
     ) -> int | None:
         settings = self.settings
@@ -485,6 +487,8 @@ class NovelPatternMatcher:
     def _statuses_for_module(module: str) -> list[DiscoveredPatternStatus]:
         if module == "fox_hunter":
             return list(PRODUCTION_RUNTIME_STATES)
+        if module == "daily":
+            return list(DAILY_RUNTIME_STATES)
         return list(LAB_RUNTIME_STATES)
 
     @staticmethod
@@ -493,6 +497,11 @@ class NovelPatternMatcher:
             return (
                 "Match de patrón de Producción; requiere live_armed "
                 "y auditoría continua de Director."
+            )
+        if module == "daily":
+            return (
+                "Match de patrón Daily aprobado por Research; requiere "
+                "paper execution gates, riesgo y broker paper."
             )
         return (
             "Match de patrón de Laboratorio; requiere paper validation "

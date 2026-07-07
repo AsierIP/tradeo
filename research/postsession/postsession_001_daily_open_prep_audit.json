@@ -1,0 +1,106 @@
+{
+  "branch": "feature/daily-open-prep",
+  "clean_commit": "713e43deb2a9048f13702f1fda6eb1c6c2a00a5c",
+  "confirmed_commit_subject": "Harden daily paper open prep",
+  "decision": "DAILY_OPEN_PREP_NEEDS_REVIEW",
+  "dirty_changes_isolated": true,
+  "dirty_files": [
+    {
+      "classification": "ORDER_PATH_RISK",
+      "decision": "isolate_review_before_integration",
+      "file": "backend/tradeo/core/config.py",
+      "impact_orders": "Adds default-enabled paper missing-order auto-cancel setting.",
+      "impact_paper_readiness": "Potentially useful only if reconciliation behavior is approved.",
+      "impact_safety": "Sensitive default behavior change.",
+      "probable_intent": "Configure paper order visibility grace and auto-cancel."
+    },
+    {
+      "classification": "ORDER_PATH_RISK",
+      "decision": "director_review_required",
+      "file": "backend/tradeo/services/reconciliation.py",
+      "impact_orders": "Can cancel DB paper trades after broker no longer reports order or position.",
+      "impact_paper_readiness": "May reduce false paper blockers but can mask visibility races.",
+      "impact_safety": "Changes reconciliation divergence handling and kill-switch behavior.",
+      "probable_intent": "Resolve stale missing paper orders as no-fill cancellations."
+    },
+    {
+      "classification": "ORDER_PATH_RISK",
+      "decision": "review_with_reconciliation_patch",
+      "file": "backend/tradeo/modules/shared/entry_scanner.py",
+      "impact_orders": "Blocks same-bar resubmit after reconciliation auto-cancel.",
+      "impact_paper_readiness": "Improves idempotency if paired behavior is accepted.",
+      "impact_safety": "Safety-positive intent but tied to sensitive order-state semantics.",
+      "probable_intent": "Avoid repeated paper attempts for same bar."
+    },
+    {
+      "classification": "TEST_UPDATE",
+      "decision": "keep_only_with_reviewed_behavior",
+      "file": "backend/tradeo/tests/test_execution_state_transitions.py",
+      "impact_orders": "Covers new cancel/no-fill path.",
+      "impact_paper_readiness": "Improves validation for proposed behavior.",
+      "impact_safety": "Positive coverage.",
+      "probable_intent": "Test grace warning and auto-cancel."
+    },
+    {
+      "classification": "TEST_UPDATE",
+      "decision": "keep_only_with_reviewed_behavior",
+      "file": "backend/tradeo/tests/test_pattern_entry_scanner.py",
+      "impact_orders": "Verifies no broker resubmit for duplicate same-bar signal.",
+      "impact_paper_readiness": "Improves validation for idempotency.",
+      "impact_safety": "Positive coverage.",
+      "probable_intent": "Test duplicate block after paper auto-cancel."
+    },
+    {
+      "classification": "SAFE_FIX",
+      "decision": "safe_to_integrate_separately",
+      "file": "backend/tradeo/services/module_dashboard.py",
+      "impact_orders": "None.",
+      "impact_paper_readiness": "Improves reporting clarity.",
+      "impact_safety": "Positive observability fix.",
+      "probable_intent": "Compute P/L from closed execution fills."
+    },
+    {
+      "classification": "NEEDS_REVIEW",
+      "decision": "isolate_for_product_review",
+      "file": "frontend/app/page.tsx",
+      "impact_orders": "None.",
+      "impact_paper_readiness": "Could hide Daily visibility in UI.",
+      "impact_safety": "Mostly observability; needs UX review.",
+      "probable_intent": "Relabel closed orders as fills and remove Daily tab."
+    },
+    {
+      "classification": "SAFE_FIX",
+      "decision": "safe_to_integrate_if_notification_target_approved",
+      "file": "scripts/notify_new_pattern_alerts.py",
+      "impact_orders": "None.",
+      "impact_paper_readiness": "Improves notification reliability.",
+      "impact_safety": "Low.",
+      "probable_intent": "Resolve openclaw binary robustly."
+    },
+    {
+      "classification": "SAFE_FIX",
+      "decision": "safe_to_integrate_if_notification_target_approved",
+      "file": "scripts/notify_tradeo_orders.sh",
+      "impact_orders": "No order creation; order telemetry notification only.",
+      "impact_paper_readiness": "Improves notification reliability.",
+      "impact_safety": "Low-to-medium observability path.",
+      "probable_intent": "Resolve openclaw binary robustly."
+    }
+  ],
+  "git_diff_stat": {
+    "files_changed": 9,
+    "insertions": 381,
+    "deletions": 42
+  },
+  "partial_decisions": [
+    "DAILY_OPEN_PREP_NEEDS_REVIEW"
+  ],
+  "patch_path": "research/postsession/patches/POSTSESSION_001_DAILY_OPEN_PREP_DIRTY_CHANGES.patch",
+  "resolution": "dirty_tracked_files_restored_to_713e43d_after_patch_capture",
+  "safety_confirmation": {
+    "broker_submit_paths_added": false,
+    "orders_launched": false,
+    "paper_orders_launched": false,
+    "live_orders_launched": false
+  }
+}

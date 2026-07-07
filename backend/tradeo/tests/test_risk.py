@@ -134,6 +134,76 @@ def test_rejects_when_pattern_family_position_cap_reached() -> None:
     assert "pattern_family_position_cap_1_reached" in decision.hard_rejections
 
 
+def test_shadow_observations_do_not_count_as_open_risk_exposure() -> None:
+    engine = create_engine("sqlite:///:memory:", future=True)
+    Base.metadata.create_all(bind=engine)
+    db = sessionmaker(bind=engine, future=True)()
+    for idx in range(4):
+        signal = Signal(
+            symbol=f"SHADOW{idx}",
+            pattern="PATTERN_A",
+            side="long",
+            entry=10.0,
+            stop=9.0,
+            target=14.0,
+            reward_risk=4.0,
+            confidence=0.8,
+            composite_score=0.8,
+            risk_usd=10.0,
+            suggested_qty=1,
+            strategy_version="laboratory_pattern_1",
+            status=SignalStatus.PAPER_APPROVED,
+            metadata_json={"pattern_family_key": "family-a"},
+        )
+        db.add(signal)
+        db.flush()
+        db.add(
+            Trade(
+                signal_id=signal.id,
+                symbol=signal.symbol,
+                pattern="PATTERN_A",
+                side="long",
+                qty=1,
+                entry=10.0,
+                stop=9.0,
+                target=14.0,
+                status=TradeStatus.OPEN,
+                opened_at=datetime.now(timezone.utc),
+                evidence_type="near_miss_shadow",
+                metadata_json={
+                    "execution_mode": "lab_shadow_observation",
+                    "no_ibkr_order": True,
+                    "observation_only": True,
+                    "pattern_family_key": "family-a",
+                },
+            )
+        )
+    db.commit()
+    candidate = PatternCandidate(
+        symbol="DAILY",
+        entry=10.0,
+        stop=9.5,
+        target=12.0,
+        reward_risk=4.0,
+        confidence=0.8,
+        rule_score=0.8,
+        ml_score=0.8,
+        vision_score=0.8,
+        composite_score=0.8,
+        features={"avg_dollar_volume": 10_000_000, "atr_pct": 0.04, "pattern_family_key": "family-a"},
+    )
+
+    manager = RiskManager(Settings(max_open_positions=4, max_open_positions_per_pattern_family=1))
+    state = manager.account_state(db)
+    decision = manager.validate_candidate(candidate, db)
+
+    assert state.open_positions == 0
+    assert state.open_risk == 0
+    assert decision.approved
+    assert "max_open_positions_reached" not in decision.hard_rejections
+    assert "pattern_family_position_cap_1_reached" not in decision.hard_rejections
+
+
 def test_laboratory_context_does_not_apply_research_collection_limits() -> None:
     engine = create_engine("sqlite:///:memory:", future=True)
     Base.metadata.create_all(bind=engine)

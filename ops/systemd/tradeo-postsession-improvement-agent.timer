@@ -1,0 +1,11 @@
+[Unit]
+Description=Run Tradeo post-session improvement agent after US close
+
+[Timer]
+OnCalendar=Mon..Fri 16:45:00 America/New_York
+Persistent=true
+Unit=tradeo-postsession-improvement-agent.service
+
+[Install]
+WantedBy=timers.target
+

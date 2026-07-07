@@ -223,6 +223,56 @@ def test_laboratory_matcher_routes_automatic_symbols_by_pattern_timeframe(
     assert any(symbol == "SML1" and interval == "5m" for symbol, _, interval in provider.fetch_calls)
 
 
+def test_daily_matcher_only_uses_research_approved_daily_patterns() -> None:
+    db = session_factory()
+    provider = FixtureProvider()
+    lab_pattern = add_pattern(
+        db,
+        provider,
+        status=DiscoveredPatternStatus.LAB_CANDIDATE,
+        key_suffix="_lab",
+    )
+    approved_patterns = [
+        add_pattern(
+            db,
+            provider,
+            status=DiscoveredPatternStatus.CONFIRMED_CANDIDATE,
+            key_suffix="_confirmed",
+        ),
+        add_pattern(
+            db,
+            provider,
+            status=DiscoveredPatternStatus.PAPER_CANDIDATE,
+            key_suffix="_paper",
+        ),
+        add_pattern(
+            db,
+            provider,
+            status=DiscoveredPatternStatus.PREMIUM_CANDIDATE,
+            key_suffix="_premium",
+        ),
+    ]
+    settings = Settings(
+        discovery_match_complete_bars_only=False,
+        discovery_match_max_patterns=10,
+        discovery_match_max_results=10,
+        discovery_match_ambiguity_hard_gate_enabled=False,
+        entry_gate_enabled=False,
+    )
+
+    result = NovelPatternMatcher(provider=provider, settings=settings).match_current(
+        db,
+        symbols=[provider.symbol],
+        module="daily",
+        store=False,
+    )
+
+    matched_ids = {match["pattern_id"] for match in result["matches"]}
+    assert matched_ids == {pattern.id for pattern in approved_patterns}
+    assert lab_pattern.id not in matched_ids
+    assert {match["status"] for match in result["matches"]} == {"daily_entry_candidate"}
+
+
 def production_gate_evidence_packet(
     *,
     paper_fills: int = 30,
@@ -473,6 +523,8 @@ def scanner(provider: FixtureProvider, **settings_overrides) -> PatternEntryScan
         "laboratory_auto_submit_paper_orders": False,
         "laboratory_allow_watchlist_paper_orders": False,
         "laboratory_market_hours_only": False,
+        "daily_paper_execution_enabled": False,
+        "daily_paper_auto_submit_orders": False,
         "ibkr_readonly": False,
         "ibkr_port": 7497,
         "fox_hunter_enabled": False,
@@ -489,6 +541,67 @@ def scanner(provider: FixtureProvider, **settings_overrides) -> PatternEntryScan
     settings = Settings(**defaults)
     matcher = NovelPatternMatcher(provider=provider, settings=settings)
     return PatternEntryScanner(settings=settings, matcher=matcher)
+
+
+def test_daily_paper_lane_is_double_opt_in_by_default() -> None:
+    cfg = scanner(FixtureProvider()).settings
+
+    assert cfg.daily_paper_execution_enabled is False
+    assert cfg.daily_paper_auto_submit_orders is False
+
+
+def test_daily_auto_submit_requires_execution_enabled_switch(monkeypatch) -> None:
+    db = session_factory()
+    provider = FixtureProvider()
+    pattern = add_pattern(db, provider, status=DiscoveredPatternStatus.CONFIRMED_CANDIDATE)
+    match = match_payload(
+        module="daily",
+        pattern_id=pattern.id,
+        pattern_name=pattern.name,
+        pattern_key=pattern.pattern_key,
+        pattern_status=pattern.status.value,
+        pattern_promotion_status=pattern.promotion_status,
+        status="daily_entry_candidate",
+    )
+
+    class FailBroker:
+        def __init__(self, settings) -> None:
+            self.settings = settings
+
+        def submit_signal_bracket(self, db, signal, *, reason: str = "manual"):
+            raise AssertionError("Daily auto-submit needs daily_paper_execution_enabled=true")
+
+    monkeypatch.setattr("tradeo.modules.shared.entry_scanner.IBKRBroker", FailBroker)
+
+    cfg = scanner(
+        provider,
+        daily_paper_execution_enabled=False,
+        daily_paper_auto_submit_orders=True,
+        intraday_enabled=False,
+        trading_mode="paper",
+        live_armed=False,
+        ibkr_readonly=False,
+        ibkr_port=7497,
+    ).settings
+
+    result = PatternEntryScanner(settings=cfg, matcher=StaticMatcher(provider, [match])).scan(
+        db,
+        module="daily",
+        symbols=[provider.symbol],
+        store_signals=True,
+    )
+
+    assert result["requested_execute_orders"] is True
+    assert result["execute_orders"] is False
+    assert result["execution_degraded_to_no_order"] is True
+    assert result["execution_degrade_reason"] == "daily_paper_execution_disabled"
+    assert result["orders_submitted"] == 0
+    signal = db.get(Signal, result["signal_ids"][0])
+    assert signal.metadata_json["evidence_type"] == EvidenceType.SHADOW_NO_ORDER.value
+    assert signal.metadata_json["execution_mode"] == "daily_no_order"
+    assert signal.metadata_json["no_ibkr_order"] is True
+    assert signal.metadata_json["observation_only"] is True
+    assert signal.metadata_json["order_decision"]["submitted_to_broker"] is False
 
 
 def test_laboratory_scanner_creates_paper_signal_for_validated_lab_pattern() -> None:
@@ -687,6 +800,621 @@ def test_laboratory_open_market_default_auto_submits_paper_order_for_director(
     assert pattern.metrics_json["lab_execution"]["closed_lab_trades"] == 1
     assert pattern.metrics_json["lab_execution"]["paper_fill_trades"] == 1
     assert pattern.metrics_json["lab_execution"]["excluded_lab_evidence_trades"] == 0
+
+
+def test_daily_execution_refuses_when_intraday_is_enabled() -> None:
+    db = session_factory()
+    provider = FixtureProvider()
+    daily_scanner = scanner(
+        provider,
+        daily_paper_execution_enabled=True,
+        daily_paper_auto_submit_orders=True,
+        intraday_enabled=True,
+        trading_mode="paper",
+        live_armed=False,
+        ibkr_readonly=False,
+        ibkr_port=7497,
+    )
+
+    try:
+        daily_scanner.scan(
+            db,
+            module="daily",
+            symbols=[provider.symbol],
+            store_signals=True,
+        )
+    except PatternEntryScannerSafetyError as exc:
+        assert "intraday_enabled=false" in str(exc)
+    else:
+        raise AssertionError("Daily paper execution must be blocked while intraday is enabled")
+
+
+def test_daily_readonly_scans_approved_pattern_without_order(monkeypatch) -> None:
+    db = session_factory()
+    provider = FixtureProvider()
+    pattern = add_pattern(db, provider, status=DiscoveredPatternStatus.CONFIRMED_CANDIDATE)
+    match = match_payload(
+        module="daily",
+        pattern_id=pattern.id,
+        pattern_name=pattern.name,
+        pattern_key=pattern.pattern_key,
+        pattern_status=pattern.status.value,
+        pattern_promotion_status=pattern.promotion_status,
+        status="daily_entry_candidate",
+    )
+
+    class FailBroker:
+        def __init__(self, settings) -> None:
+            self.settings = settings
+
+        def submit_signal_bracket(self, db, signal, *, reason: str = "manual"):
+            raise AssertionError("readonly Daily scans must not call IBKR")
+
+    monkeypatch.setattr("tradeo.modules.shared.entry_scanner.IBKRBroker", FailBroker)
+
+    cfg = scanner(
+        provider,
+        daily_paper_execution_enabled=True,
+        daily_paper_auto_submit_orders=True,
+        intraday_enabled=False,
+        trading_mode="paper",
+        live_armed=False,
+        ibkr_readonly=True,
+        ibkr_port=7497,
+    ).settings
+
+    result = PatternEntryScanner(settings=cfg, matcher=StaticMatcher(provider, [match])).scan(
+        db,
+        module="daily",
+        symbols=[provider.symbol],
+        store_signals=True,
+    )
+
+    assert result["requested_execute_orders"] is True
+    assert result["execute_orders"] is False
+    assert result["execution_mode"] == "daily_no_order"
+    assert result["execution_degraded_to_no_order"] is True
+    assert result["execution_degrade_reason"] == "ibkr_readonly"
+    assert result["orders_submitted"] == 0
+    signal = db.get(Signal, result["signal_ids"][0])
+    assert signal.status == SignalStatus.PAPER_APPROVED
+    assert signal.human_approved is False
+    assert signal.strategy_version == f"daily_pattern_{pattern.id}"
+    assert signal.metadata_json["entry_module"] == "daily"
+    assert signal.metadata_json["evidence_type"] == EvidenceType.SHADOW_NO_ORDER.value
+    assert signal.metadata_json["execution_mode"] == "daily_no_order"
+    assert signal.metadata_json["no_ibkr_order"] is True
+    assert signal.metadata_json["observation_only"] is True
+    assert signal.metadata_json["paper_order_requested"] is False
+    assert signal.metadata_json["order_decision"]["no_order_reason"] == "ibkr_readonly"
+    assert signal.metadata_json["execution_outcome"]["reason_code"] == "ibkr_readonly"
+
+
+def test_daily_auto_submits_paper_order_for_research_approved_pattern(monkeypatch) -> None:
+    db = session_factory()
+    provider = FixtureProvider()
+    pattern = add_pattern(db, provider, status=DiscoveredPatternStatus.PAPER_CANDIDATE)
+    match = match_payload(
+        module="daily",
+        pattern_id=pattern.id,
+        pattern_name=pattern.name,
+        pattern_key=pattern.pattern_key,
+        pattern_status=pattern.status.value,
+        pattern_promotion_status=pattern.promotion_status,
+        status="daily_entry_candidate",
+    )
+    submitted_reasons: list[str] = []
+    submitted_metadata: list[dict] = []
+
+    class PaperBroker:
+        def __init__(self, settings) -> None:
+            self.settings = settings
+
+        def submit_signal_bracket(self, db, signal, *, reason: str = "manual"):
+            submitted_reasons.append(reason)
+            submitted_metadata.append(dict(signal.metadata_json or {}))
+            trade = Trade(
+                signal_id=signal.id,
+                symbol=signal.symbol,
+                pattern=signal.pattern,
+                side=signal.side,
+                qty=signal.suggested_qty,
+                entry=signal.entry,
+                stop=signal.stop,
+                target=signal.target,
+                status=TradeStatus.OPEN,
+                opened_at=datetime(2026, 6, 9, 22, 31, tzinfo=timezone.utc),
+                broker_order_id="daily-paper-parent-1",
+                evidence_type=EvidenceType.IBKR_PAPER_ORDER.value,
+                evidence_quality=EvidenceQuality.NORMAL.value,
+                metadata_json={
+                    "execution_mode": "ibkr_daily_paper",
+                    "ibkr_mode": "paper",
+                    "evidence_type": EvidenceType.IBKR_PAPER_ORDER.value,
+                    "evidence_quality": EvidenceQuality.NORMAL.value,
+                    "reason": reason,
+                },
+            )
+            signal.status = SignalStatus.EXECUTED
+            db.add(signal)
+            db.add(trade)
+            db.commit()
+            db.refresh(trade)
+            return trade
+
+    monkeypatch.setattr("tradeo.modules.shared.entry_scanner.IBKRBroker", PaperBroker)
+
+    cfg = scanner(
+        provider,
+        daily_paper_execution_enabled=True,
+        daily_paper_auto_submit_orders=True,
+        daily_paper_market_hours_only=False,
+        intraday_enabled=False,
+        trading_mode="paper",
+        live_armed=False,
+        ibkr_readonly=False,
+        ibkr_port=7497,
+    ).settings
+
+    result = PatternEntryScanner(settings=cfg, matcher=StaticMatcher(provider, [match])).scan(
+        db,
+        module="daily",
+        symbols=[provider.symbol],
+        store_signals=True,
+    )
+
+    assert result["requested_execute_orders"] is True
+    assert result["execute_orders"] is True
+    assert result["execution_mode"] == "ibkr_daily_paper"
+    assert result["orders_submitted"] == 1
+    assert result["paper_observations_opened"] == 0
+    assert submitted_reasons == ["daily IBKR paper execution"]
+    signal = db.get(Signal, result["signal_ids"][0])
+    assert signal.status == SignalStatus.EXECUTED
+    assert signal.human_approved is True
+    assert signal.metadata_json["entry_module"] == "daily"
+    assert signal.metadata_json["evidence_type"] == EvidenceType.IBKR_PAPER_ORDER.value
+    assert signal.metadata_json["execution_mode"] == "ibkr_daily_paper"
+    assert signal.metadata_json["paper_order_requested"] is True
+    assert signal.metadata_json["order_decision"]["submitted_to_broker"] is True
+    assert submitted_metadata[0]["entry_module"] == "daily"
+    assert submitted_metadata[0]["pattern_status"] == DiscoveredPatternStatus.PAPER_CANDIDATE.value
+    trade = db.get(Trade, result["trade_ids"][0])
+    assert trade.evidence_type == EvidenceType.IBKR_PAPER_ORDER.value
+    assert trade.metadata_json["reason"] == "daily IBKR paper execution"
+
+
+def test_daily_resubmits_retryable_duplicate_signal_without_trade(monkeypatch) -> None:
+    db = session_factory()
+    provider = FixtureProvider()
+    pattern = add_pattern(db, provider, status=DiscoveredPatternStatus.PAPER_CANDIDATE)
+    match = match_payload(
+        module="daily",
+        pattern_id=pattern.id,
+        pattern_name=pattern.name,
+        pattern_key=pattern.pattern_key,
+        pattern_status=pattern.status.value,
+        pattern_promotion_status=pattern.promotion_status,
+        status="daily_entry_candidate",
+    )
+    signal = Signal(
+        symbol=match["symbol"],
+        pattern=match["pattern_name"],
+        side="long",
+        timeframe=match["timeframe"],
+        entry=10.0,
+        stop=9.0,
+        target=14.0,
+        reward_risk=4.0,
+        confidence=0.8,
+        composite_score=0.8,
+        risk_usd=10.0,
+        suggested_qty=1,
+        strategy_version=f"daily_pattern_{pattern.id}",
+        status=SignalStatus.PAPER_APPROVED,
+        metadata_json={
+            "entry_module": "daily",
+            "pattern_id": pattern.id,
+            "pattern_status": pattern.status.value,
+            "signal_idempotency_key": PatternEntryScanner._signal_idempotency_key("daily", match),
+            "entry_variant_id": match["entry_variant_id"],
+            "bar_window_end": PatternEntryScanner._canonical_bar_window_end(match),
+            "execution_outcome": {
+                "reason_code": "broker_submission_failed",
+                "retryable": True,
+                "updated_at": "2026-06-09T14:31:00+00:00",
+            },
+        },
+    )
+    db.add(signal)
+    db.commit()
+    submitted_metadata: list[dict] = []
+
+    class PaperBroker:
+        def __init__(self, settings) -> None:
+            self.settings = settings
+
+        def submit_signal_bracket(self, db, signal, *, reason: str = "manual"):
+            submitted_metadata.append(dict(signal.metadata_json or {}))
+            trade = Trade(
+                signal_id=signal.id,
+                symbol=signal.symbol,
+                pattern=signal.pattern,
+                side=signal.side,
+                qty=signal.suggested_qty,
+                entry=signal.entry,
+                stop=signal.stop,
+                target=signal.target,
+                status=TradeStatus.OPEN,
+                opened_at=datetime(2026, 6, 9, 22, 31, tzinfo=timezone.utc),
+                broker_order_id="daily-paper-duplicate",
+                evidence_type=EvidenceType.IBKR_PAPER_ORDER.value,
+                evidence_quality=EvidenceQuality.NORMAL.value,
+                metadata_json={"reason": reason, "execution_mode": "ibkr_daily_paper"},
+            )
+            signal.status = SignalStatus.EXECUTED
+            db.add(signal)
+            db.add(trade)
+            db.commit()
+            db.refresh(trade)
+            return trade
+
+    monkeypatch.setattr("tradeo.modules.shared.entry_scanner.IBKRBroker", PaperBroker)
+    cfg = scanner(
+        provider,
+        daily_paper_execution_enabled=True,
+        daily_paper_auto_submit_orders=True,
+        intraday_enabled=False,
+        trading_mode="paper",
+        live_armed=False,
+        ibkr_readonly=False,
+        ibkr_port=7497,
+    ).settings
+
+    result = PatternEntryScanner(settings=cfg, matcher=StaticMatcher(provider, [match])).scan(
+        db,
+        module="daily",
+        symbols=[provider.symbol],
+        store_signals=True,
+    )
+
+    assert result["signals_created"] == 0
+    assert result["orders_submitted"] == 1
+    assert result["skipped_duplicates"] == 0
+    assert submitted_metadata[0]["entry_module"] == "daily"
+    assert submitted_metadata[0]["execution_mode"] == "ibkr_daily_paper"
+    assert submitted_metadata[0]["paper_order_requested"] is True
+    db.refresh(signal)
+    assert signal.status == SignalStatus.EXECUTED
+    assert signal.metadata_json["execution_outcome"]["status"] == "order_submitted"
+    assert signal.metadata_json["execution_outcome"]["reason_code"] == "ibkr_order_submitted_waiting_fill"
+
+
+def test_daily_duplicate_retry_rechecks_current_pattern_status(monkeypatch) -> None:
+    db = session_factory()
+    provider = FixtureProvider()
+    pattern = add_pattern(db, provider, status=DiscoveredPatternStatus.LAB_CANDIDATE)
+    match = match_payload(
+        module="daily",
+        pattern_id=pattern.id,
+        pattern_name=pattern.name,
+        pattern_key=pattern.pattern_key,
+        pattern_status=pattern.status.value,
+        pattern_promotion_status=pattern.promotion_status,
+        status="daily_entry_candidate",
+    )
+    signal = Signal(
+        symbol=match["symbol"],
+        pattern=match["pattern_name"],
+        side="long",
+        timeframe=match["timeframe"],
+        entry=10.0,
+        stop=9.0,
+        target=14.0,
+        reward_risk=4.0,
+        confidence=0.8,
+        composite_score=0.8,
+        risk_usd=10.0,
+        suggested_qty=1,
+        strategy_version=f"daily_pattern_{pattern.id}",
+        status=SignalStatus.PAPER_APPROVED,
+        metadata_json={
+            "entry_module": "daily",
+            "pattern_id": pattern.id,
+            "pattern_status": DiscoveredPatternStatus.PAPER_CANDIDATE.value,
+            "signal_idempotency_key": PatternEntryScanner._signal_idempotency_key("daily", match),
+            "entry_variant_id": match["entry_variant_id"],
+            "bar_window_end": PatternEntryScanner._canonical_bar_window_end(match),
+            "execution_outcome": {
+                "reason_code": "broker_submission_failed",
+                "retryable": True,
+                "updated_at": "2026-06-09T14:31:00+00:00",
+            },
+        },
+    )
+    db.add(signal)
+    db.commit()
+
+    class FailBroker:
+        def __init__(self, settings) -> None:
+            self.settings = settings
+
+        def submit_signal_bracket(self, db, signal, *, reason: str = "manual"):
+            raise AssertionError("duplicate retry must recheck current Daily pattern status")
+
+    monkeypatch.setattr("tradeo.modules.shared.entry_scanner.IBKRBroker", FailBroker)
+    cfg = scanner(
+        provider,
+        daily_paper_execution_enabled=True,
+        daily_paper_auto_submit_orders=True,
+        intraday_enabled=False,
+        trading_mode="paper",
+        live_armed=False,
+        ibkr_readonly=False,
+        ibkr_port=7497,
+    ).settings
+
+    result = PatternEntryScanner(settings=cfg, matcher=StaticMatcher(provider, [match])).scan(
+        db,
+        module="daily",
+        symbols=[provider.symbol],
+        store_signals=True,
+    )
+
+    assert result["signals_created"] == 0
+    assert result["orders_submitted"] == 0
+    assert result["skipped_duplicates"] == 1
+    assert result["order_skip_reason_counts"] == {"daily_pattern_not_research_approved": 1}
+    db.refresh(signal)
+    assert signal.status == SignalStatus.PAPER_APPROVED
+
+
+def test_daily_duplicate_retry_rechecks_current_risk(monkeypatch) -> None:
+    db = session_factory()
+    provider = FixtureProvider()
+    pattern = add_pattern(db, provider, status=DiscoveredPatternStatus.PAPER_CANDIDATE)
+    match = match_payload(
+        module="daily",
+        pattern_id=pattern.id,
+        pattern_name=pattern.name,
+        pattern_key=pattern.pattern_key,
+        pattern_status=pattern.status.value,
+        pattern_promotion_status=pattern.promotion_status,
+        status="daily_entry_candidate",
+    )
+    signal = Signal(
+        symbol=match["symbol"],
+        pattern=match["pattern_name"],
+        side="long",
+        timeframe=match["timeframe"],
+        entry=10.0,
+        stop=9.0,
+        target=14.0,
+        reward_risk=4.0,
+        confidence=0.8,
+        composite_score=0.8,
+        risk_usd=10.0,
+        suggested_qty=1,
+        strategy_version=f"daily_pattern_{pattern.id}",
+        status=SignalStatus.PAPER_APPROVED,
+        metadata_json={
+            "entry_module": "daily",
+            "pattern_id": pattern.id,
+            "pattern_status": pattern.status.value,
+            "signal_idempotency_key": PatternEntryScanner._signal_idempotency_key("daily", match),
+            "entry_variant_id": match["entry_variant_id"],
+            "bar_window_end": PatternEntryScanner._canonical_bar_window_end(match),
+            "execution_outcome": {
+                "reason_code": "broker_submission_failed",
+                "retryable": True,
+                "updated_at": "2026-06-09T14:31:00+00:00",
+            },
+        },
+    )
+    db.add(signal)
+    db.commit()
+
+    class FailBroker:
+        def __init__(self, settings) -> None:
+            self.settings = settings
+
+        def submit_signal_bracket(self, db, signal, *, reason: str = "manual"):
+            raise AssertionError("duplicate retry must recheck current risk")
+
+    monkeypatch.setattr("tradeo.modules.shared.entry_scanner.IBKRBroker", FailBroker)
+    cfg = scanner(
+        provider,
+        daily_paper_execution_enabled=True,
+        daily_paper_auto_submit_orders=True,
+        intraday_enabled=False,
+        trading_mode="paper",
+        live_armed=False,
+        ibkr_readonly=False,
+        ibkr_port=7497,
+        max_open_positions=0,
+    ).settings
+
+    result = PatternEntryScanner(settings=cfg, matcher=StaticMatcher(provider, [match])).scan(
+        db,
+        module="daily",
+        symbols=[provider.symbol],
+        store_signals=True,
+    )
+
+    assert result["signals_created"] == 0
+    assert result["orders_submitted"] == 0
+    assert result["rejected_by_risk"] == 1
+    assert result["order_skip_reason_counts"] == {"risk": 1}
+    db.refresh(signal)
+    assert signal.status == SignalStatus.PAPER_APPROVED
+
+
+def test_daily_duplicate_retry_rechecks_active_exposure(monkeypatch) -> None:
+    db = session_factory()
+    provider = FixtureProvider()
+    pattern = add_pattern(db, provider, status=DiscoveredPatternStatus.PAPER_CANDIDATE)
+    match = match_payload(
+        module="daily",
+        pattern_id=pattern.id,
+        pattern_name=pattern.name,
+        pattern_key=pattern.pattern_key,
+        pattern_status=pattern.status.value,
+        pattern_promotion_status=pattern.promotion_status,
+        status="daily_entry_candidate",
+    )
+    duplicate_signal = Signal(
+        symbol=match["symbol"],
+        pattern=match["pattern_name"],
+        side="long",
+        timeframe=match["timeframe"],
+        entry=10.0,
+        stop=9.0,
+        target=14.0,
+        reward_risk=4.0,
+        confidence=0.8,
+        composite_score=0.8,
+        risk_usd=10.0,
+        suggested_qty=1,
+        strategy_version=f"daily_pattern_{pattern.id}",
+        status=SignalStatus.PAPER_APPROVED,
+        metadata_json={
+            "entry_module": "daily",
+            "pattern_id": pattern.id,
+            "pattern_status": pattern.status.value,
+            "signal_idempotency_key": PatternEntryScanner._signal_idempotency_key("daily", match),
+            "entry_variant_id": match["entry_variant_id"],
+            "bar_window_end": PatternEntryScanner._canonical_bar_window_end(match),
+            "execution_outcome": {
+                "reason_code": "broker_submission_failed",
+                "retryable": True,
+                "updated_at": "2026-06-09T14:31:00+00:00",
+            },
+        },
+    )
+    active_signal = Signal(
+        symbol=match["symbol"],
+        pattern=match["pattern_name"],
+        side="long",
+        timeframe=match["timeframe"],
+        entry=10.0,
+        stop=9.0,
+        target=14.0,
+        reward_risk=4.0,
+        confidence=0.8,
+        composite_score=0.8,
+        risk_usd=10.0,
+        suggested_qty=1,
+        strategy_version=f"daily_pattern_{pattern.id}",
+        status=SignalStatus.EXECUTED,
+        metadata_json={
+            "entry_module": "daily",
+            "pattern_id": pattern.id,
+            "pattern_status": pattern.status.value,
+        },
+    )
+    db.add_all([duplicate_signal, active_signal])
+    db.flush()
+    db.add(
+        Trade(
+            signal_id=active_signal.id,
+            symbol=match["symbol"],
+            pattern=match["pattern_name"],
+            side="long",
+            qty=1,
+            entry=10.0,
+            stop=9.0,
+            target=14.0,
+            status=TradeStatus.OPEN,
+            opened_at=datetime(2026, 6, 9, 22, 31, tzinfo=timezone.utc),
+            broker_order_id="daily-active-exposure",
+            evidence_type=EvidenceType.IBKR_PAPER_ORDER.value,
+            evidence_quality=EvidenceQuality.NORMAL.value,
+            metadata_json={"reason": "daily IBKR paper execution"},
+        )
+    )
+    db.commit()
+
+    class FailBroker:
+        def __init__(self, settings) -> None:
+            self.settings = settings
+
+        def submit_signal_bracket(self, db, signal, *, reason: str = "manual"):
+            raise AssertionError("duplicate retry must respect active exposure")
+
+    monkeypatch.setattr("tradeo.modules.shared.entry_scanner.IBKRBroker", FailBroker)
+    cfg = scanner(
+        provider,
+        daily_paper_execution_enabled=True,
+        daily_paper_auto_submit_orders=True,
+        intraday_enabled=False,
+        trading_mode="paper",
+        live_armed=False,
+        ibkr_readonly=False,
+        ibkr_port=7497,
+    ).settings
+
+    result = PatternEntryScanner(settings=cfg, matcher=StaticMatcher(provider, [match])).scan(
+        db,
+        module="daily",
+        symbols=[provider.symbol],
+        store_signals=True,
+    )
+
+    assert result["signals_created"] == 0
+    assert result["orders_submitted"] == 0
+    assert result["skipped_duplicates"] == 1
+    assert result["order_skip_reason_counts"] == {"active_exposure": 1}
+    db.refresh(duplicate_signal)
+    assert duplicate_signal.status == SignalStatus.PAPER_APPROVED
+
+
+def test_daily_degrades_unapproved_research_pattern_to_no_order(monkeypatch) -> None:
+    db = session_factory()
+    provider = FixtureProvider()
+    pattern = add_pattern(db, provider, status=DiscoveredPatternStatus.LAB_CANDIDATE)
+    match = match_payload(
+        module="daily",
+        pattern_id=pattern.id,
+        pattern_name=pattern.name,
+        pattern_key=pattern.pattern_key,
+        pattern_status=pattern.status.value,
+        pattern_promotion_status=pattern.promotion_status,
+        status="daily_entry_candidate",
+    )
+
+    class FailBroker:
+        def __init__(self, settings) -> None:
+            self.settings = settings
+
+        def submit_signal_bracket(self, db, signal, *, reason: str = "manual"):
+            raise AssertionError("unapproved Daily patterns must not call IBKR")
+
+    monkeypatch.setattr("tradeo.modules.shared.entry_scanner.IBKRBroker", FailBroker)
+
+    cfg = scanner(
+        provider,
+        daily_paper_execution_enabled=True,
+        daily_paper_auto_submit_orders=True,
+        intraday_enabled=False,
+        trading_mode="paper",
+        live_armed=False,
+        ibkr_readonly=False,
+        ibkr_port=7497,
+    ).settings
+
+    result = PatternEntryScanner(settings=cfg, matcher=StaticMatcher(provider, [match])).scan(
+        db,
+        module="daily",
+        symbols=[provider.symbol],
+        store_signals=True,
+    )
+
+    assert result["orders_submitted"] == 0
+    assert result["order_skip_reason_counts"] == {"daily_pattern_not_research_approved": 1}
+    signal = db.get(Signal, result["signal_ids"][0])
+    assert signal.status == SignalStatus.PAPER_APPROVED
+    assert signal.metadata_json["order_decision"]["no_order_reason"] == "daily_pattern_not_research_approved"
+    assert signal.metadata_json["paper_order_requested"] is False
 
 
 def test_laboratory_status_allows_paper_when_auto_submit_is_disabled() -> None:

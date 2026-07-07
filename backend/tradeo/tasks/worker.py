@@ -319,6 +319,24 @@ def laboratory_entry_job() -> None:
         db.close()
 
 
+def daily_paper_entry_job() -> None:
+    db = SessionLocal()
+    try:
+        settings = get_settings()
+        if not settings.daily_paper_execution_enabled:
+            logger.info("daily paper entry scanner skipped: daily_paper_execution_enabled=false")
+            return
+        result = PatternEntryScanner(settings=settings).scan(db, module="daily")
+        logger.info("daily paper entry scanner result: {}", result)
+    except PatternEntryScannerSafetyError as exc:
+        logger.warning("daily paper entry scanner blocked by safety gate: {}", exc)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("daily paper entry scanner failed: {}", exc)
+        _record_job_failure(db, "daily_paper_entry_scanner", exc)
+    finally:
+        db.close()
+
+
 def fox_hunter_entry_job() -> None:
     db = SessionLocal()
     try:
@@ -591,6 +609,36 @@ def register_intraday_jobs(scheduler: BackgroundScheduler, settings: Settings) -
         _add_intraday_job(scheduler, spec, settings)
         registered.append(spec.job_id)
     return registered
+
+
+def register_daily_paper_jobs(scheduler: BackgroundScheduler, settings: Settings) -> list[str]:
+    if not settings.daily_paper_execution_enabled:
+        return []
+
+    job_id = "daily_paper_entry_scanner"
+    common = {
+        "id": job_id,
+        "max_instances": 1,
+        "coalesce": True,
+    }
+    if settings.daily_paper_scan_minutes >= 1440:
+        scheduler.add_job(
+            daily_paper_entry_job,
+            CronTrigger(
+                hour=settings.daily_paper_post_close_hour_utc,
+                minute=settings.daily_paper_post_close_minute_utc,
+                day_of_week="mon-fri",
+            ),
+            **common,
+        )
+    else:
+        scheduler.add_job(
+            daily_paper_entry_job,
+            "interval",
+            minutes=settings.daily_paper_scan_minutes,
+            **common,
+        )
+    return [job_id]
 
 
 def _add_intraday_job(
@@ -1889,6 +1937,7 @@ def main() -> None:
                 max_instances=1,
                 coalesce=True,
             )
+        register_daily_paper_jobs(scheduler, settings)
         if settings.fox_hunter_enabled:
             scheduler.add_job(
                 fox_hunter_entry_job,

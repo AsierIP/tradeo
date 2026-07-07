@@ -23,13 +23,13 @@ from tradeo.services.live_readiness_gate import LiveReadinessGate
 from tradeo.services.market_quotes import QuoteSnapshotProvider, capture_signal_spread_snapshot
 from tradeo.modules.laboratory.paper_observations import LAB_SHADOW_EXECUTION_MODE, LabPaperObservationService
 from tradeo.services.market_session import market_session_status
-from tradeo.services.order_outcomes import mark_signal_order_failure
+from tradeo.services.order_outcomes import mark_signal_order_failure, mark_signal_order_submitted
 from tradeo.services.opportunity_ranking import entry_match_rank_key, rank_entry_matches
 from tradeo.modules.fox_hunter.production_manifest import production_manifest_status
 from tradeo.services.risk_manager import RiskManager
 from tradeo.services.signal_quality import build_entry_quality, build_signal_snapshot
 
-EntryModule = Literal["laboratory", "fox_hunter"]
+EntryModule = Literal["laboratory", "fox_hunter", "daily"]
 LAB_NEAR_MISS_VOLUME_REASONS = {"insufficient_volume", "weak_volume_confirmation"}
 LAB_NEAR_MISS_HARD_REASONS = {
     "weak_trigger",
@@ -105,15 +105,24 @@ class PatternEntryScanner:
         if module == "fox_hunter" and resolved["execute_orders"]:
             resolved["execute_orders"] = False
             execution_degrade_reason = "needs_human_signal_approval"
-        if module == "laboratory" and resolved["execute_orders"]:
+        if module in {"laboratory", "daily"} and resolved["execute_orders"]:
             from tradeo.services.system_controls import runtime_kill_switch_active
 
-            if runtime_kill_switch_active(db):
+            if module == "daily" and not settings.daily_paper_execution_enabled:
+                resolved["execute_orders"] = False
+                execution_degrade_reason = "daily_paper_execution_disabled"
+            elif module == "daily" and not settings.daily_paper_auto_submit_orders:
+                resolved["execute_orders"] = False
+                execution_degrade_reason = "daily_paper_auto_submit_disabled"
+            elif runtime_kill_switch_active(db):
                 resolved["execute_orders"] = False
                 execution_degrade_reason = "runtime_kill_switch_enabled"
             elif settings.ibkr_readonly:
                 resolved["execute_orders"] = False
                 execution_degrade_reason = "ibkr_readonly"
+            elif module == "daily" and settings.intraday_enabled:
+                resolved["execute_orders"] = False
+                execution_degrade_reason = "intraday_enabled_blocks_daily_execution"
         observation_lifecycle = self._close_lab_observations(db, module)
         session = market_session_status()
         if self._requires_market_hours(module) and not bool(session["regular_session_open"]):
@@ -256,18 +265,84 @@ class PatternEntryScanner:
             duplicate_signal = self._duplicate_signal(db, match, module=module)
             if duplicate_signal is not None:
                 if (
-                    module == "laboratory"
+                    module in {"laboratory", "daily"}
                     and resolved["execute_orders"]
-                    and self._can_submit_duplicate_lab_signal(db, duplicate_signal)
+                    and self._can_submit_duplicate_signal(db, duplicate_signal, module=module)
                 ):
+                    order_status_block = self._order_status_block_reason(module, match)
+                    if order_status_block is not None:
+                        skipped_duplicates += 1
+                        self._count_reason(order_skip_reason_counts, order_status_block)
+                        db.add(
+                            AuditLog(
+                                actor=module,
+                                action="duplicate_entry_signal_order_retry_blocked_by_status",
+                                entity_type="signal",
+                                entity_id=str(duplicate_signal.id),
+                                details_json={
+                                    "match": match,
+                                    "reason": order_status_block,
+                                },
+                            )
+                        )
+                        db.commit()
+                        continue
+                    duplicate_candidate = self._candidate_from_match(match)
+                    duplicate_risk = RiskManager(settings).validate_candidate(
+                        duplicate_candidate,
+                        db,
+                        execution_context="laboratory" if module == "laboratory" else "live",
+                    )
+                    if not duplicate_risk.approved:
+                        rejected_by_risk += 1
+                        self._count_reason(order_skip_reason_counts, "risk")
+                        db.add(
+                            AuditLog(
+                                actor=module,
+                                action="duplicate_entry_signal_order_retry_rejected_by_risk",
+                                entity_type="signal",
+                                entity_id=str(duplicate_signal.id),
+                                details_json={
+                                    "match": match,
+                                    "risk": duplicate_risk.model_dump(mode="json"),
+                                },
+                            )
+                        )
+                        db.commit()
+                        continue
+                    if self._has_active_exposure(
+                        db,
+                        match,
+                        module=module,
+                        ignore_lab_shadow_observations=module == "laboratory",
+                        retryable_failure_cooldown_minutes=max(60, int(settings.entry_cooldown_minutes)),
+                        exclude_signal_id=duplicate_signal.id,
+                    ):
+                        skipped_duplicates += 1
+                        self._count_reason(order_skip_reason_counts, "active_exposure")
+                        db.add(
+                            AuditLog(
+                                actor=module,
+                                action="duplicate_entry_signal_order_retry_blocked_by_active_exposure",
+                                entity_type="signal",
+                                entity_id=str(duplicate_signal.id),
+                                details_json={
+                                    "match": match,
+                                    "reason": "active_signal_or_trade_for_pattern_symbol",
+                                },
+                            )
+                        )
+                        db.commit()
+                        continue
                     try:
-                        self._prepare_lab_signal_for_order_submission(duplicate_signal, match)
+                        self._prepare_signal_for_order_submission(duplicate_signal, match, module=module)
                         self._cancel_shadow_observations_for_order_submission(db, duplicate_signal)
                         trade = IBKRBroker(settings).submit_signal_bracket(
                             db,
                             duplicate_signal,
                             reason=self._execution_reason(module),
                         )
+                        self._mark_signal_order_submission_success(duplicate_signal, trade)
                         orders_submitted += 1
                         trade_ids.append(trade.id)
                         db.add(
@@ -349,7 +424,7 @@ class PatternEntryScanner:
                 )
                 db.commit()
                 continue
-            if module != "laboratory" and self._has_recent_signal(db, match, module=module):
+            if module not in {"laboratory", "daily"} and self._has_recent_signal(db, match, module=module):
                 skipped_cooldown += 1
                 self._count_reason(order_skip_reason_counts, "cooldown")
                 db.add(
@@ -460,16 +535,11 @@ class PatternEntryScanner:
 
             match_execute_orders = bool(resolved["execute_orders"])
             match_execution_degrade_reason = execution_degrade_reason
-            if module == "laboratory" and match_execute_orders:
-                pattern_status = str(
-                    match.get("pattern_status") or match.get("pattern_promotion_status") or ""
-                ).lower()
-                paper_allowed_statuses = {"lab_candidate"}
-                if settings.laboratory_allow_watchlist_paper_orders:
-                    paper_allowed_statuses.add("lab_watchlist")
-                if pattern_status not in paper_allowed_statuses:
+            if match_execute_orders:
+                order_status_block = self._order_status_block_reason(module, match)
+                if order_status_block is not None:
                     match_execute_orders = False
-                    match_execution_degrade_reason = "lab_status_shadow_only"
+                    match_execution_degrade_reason = order_status_block
 
             signal = self._store_signal(
                 db,
@@ -518,6 +588,7 @@ class PatternEntryScanner:
                     signal,
                     reason=self._execution_reason(module),
                 )
+                self._mark_signal_order_submission_success(signal, trade)
                 orders_submitted += 1
                 trade_ids.append(trade.id)
             except Exception as exc:  # noqa: BLE001
@@ -833,6 +904,8 @@ class PatternEntryScanner:
         return (
             settings.laboratory_market_hours_only
             if module == "laboratory"
+            else settings.daily_paper_market_hours_only
+            if module == "daily"
             else settings.fox_hunter_market_hours_only
         )
 
@@ -904,6 +977,11 @@ class PatternEntryScanner:
                 and requested_execute_orders
                 and not execute_orders
             ),
+            "execution_degraded_to_no_order": (
+                module == "daily"
+                and requested_execute_orders
+                and not execute_orders
+            ),
             "execution_degraded_to_approval_queue": (
                 module == "fox_hunter"
                 and requested_execute_orders
@@ -916,6 +994,8 @@ class PatternEntryScanner:
     def _scan_execution_mode(module: EntryModule, *, execute_orders: bool) -> str | None:
         if module == "laboratory":
             return "ibkr_paper" if execute_orders else LAB_SHADOW_EXECUTION_MODE
+        if module == "daily":
+            return "ibkr_daily_paper" if execute_orders else "daily_no_order"
         if module == "fox_hunter" and execute_orders:
             return "ibkr_live"
         return None
@@ -924,6 +1004,29 @@ class PatternEntryScanner:
     def _count_reason(reason_counts: dict[str, int], reason: str | None) -> None:
         reason_key = str(reason or "unknown").strip() or "unknown"
         reason_counts[reason_key] = reason_counts.get(reason_key, 0) + 1
+
+    def _order_status_block_reason(self, module: EntryModule, match: dict[str, Any]) -> str | None:
+        settings = self.settings
+        assert settings is not None
+        if module == "laboratory":
+            pattern_status = str(
+                match.get("pattern_status") or match.get("pattern_promotion_status") or ""
+            ).lower()
+            paper_allowed_statuses = {"lab_candidate"}
+            if settings.laboratory_allow_watchlist_paper_orders:
+                paper_allowed_statuses.add("lab_watchlist")
+            return None if pattern_status in paper_allowed_statuses else "lab_status_shadow_only"
+        if module == "daily":
+            pattern_status = str(
+                match.get("pattern_status") or match.get("pattern_promotion_status") or ""
+            ).lower()
+            daily_allowed_statuses = {
+                "confirmed_candidate",
+                "paper_candidate",
+                "premium_candidate",
+            }
+            return None if pattern_status in daily_allowed_statuses else "daily_pattern_not_research_approved"
+        return None
 
     @staticmethod
     def _no_order_reason(
@@ -936,6 +1039,14 @@ class PatternEntryScanner:
     ) -> str | None:
         if module == "fox_hunter" and requested_execute_orders and not execute_orders:
             return execution_degrade_reason or "needs_human_signal_approval"
+        if module == "daily":
+            if execute_orders:
+                return None
+            return (
+                execution_degrade_reason
+                if requested_execute_orders and execution_degrade_reason
+                else "daily_paper_order_submission_disabled"
+            )
         if module != "laboratory" or execute_orders:
             return None
         if execution_degrade_reason:
@@ -994,6 +1105,15 @@ class PatternEntryScanner:
                 "store_signals": settings.fox_hunter_store_signals,
                 "execute_orders": settings.fox_hunter_auto_submit_live_orders,
             }
+        elif module == "daily":
+            defaults = {
+                "limit": settings.daily_paper_symbol_limit,
+                "max_patterns": settings.daily_paper_max_patterns,
+                "max_results": settings.daily_paper_match_max_results,
+                "similarity_threshold": settings.daily_paper_similarity_threshold,
+                "store_signals": settings.daily_paper_store_signals,
+                "execute_orders": settings.daily_paper_auto_submit_orders,
+            }
         else:
             defaults = {
                 "limit": settings.laboratory_symbol_limit,
@@ -1018,6 +1138,8 @@ class PatternEntryScanner:
             execute = (
                 settings.fox_hunter_auto_submit_live_orders
                 if module == "fox_hunter"
+                else settings.daily_paper_auto_submit_orders
+                if module == "daily"
                 else settings.laboratory_auto_submit_paper_orders
             )
         if not execute:
@@ -1031,6 +1153,18 @@ class PatternEntryScanner:
                 )
             if int(settings.ibkr_port) in {7496, 4001}:
                 raise PatternEntryScannerSafetyError("Laboratory refuses live IBKR ports")
+            return
+        if module == "daily":
+            if settings.intraday_enabled:
+                raise PatternEntryScannerSafetyError(
+                    "Daily paper execution requires intraday_enabled=false"
+                )
+            if settings.trading_mode != "paper" or settings.live_armed:
+                raise PatternEntryScannerSafetyError(
+                    "Daily can only auto-submit orders in paper mode"
+                )
+            if int(settings.ibkr_port) in {7496, 4001}:
+                raise PatternEntryScannerSafetyError("Daily refuses live IBKR ports")
             return
         if not settings.live_armed:
             raise PatternEntryScannerSafetyError(
@@ -1105,8 +1239,9 @@ class PatternEntryScanner:
         module: EntryModule,
         ignore_lab_shadow_observations: bool = False,
         retryable_failure_cooldown_minutes: int = 60,
+        exclude_signal_id: int | None = None,
     ) -> bool:
-        active_signals = (
+        active_signal_query = (
             db.query(Signal)
             .filter(Signal.symbol == str(match["symbol"]))
             .filter(Signal.pattern == str(match["pattern_name"]))
@@ -1120,8 +1255,10 @@ class PatternEntryScanner:
                     ]
                 )
             )
-            .all()
         )
+        if exclude_signal_id is not None:
+            active_signal_query = active_signal_query.filter(Signal.id != exclude_signal_id)
+        active_signals = active_signal_query.all()
         if any(
             cls._signal_counts_as_active_exposure(
                 signal,
@@ -1132,14 +1269,16 @@ class PatternEntryScanner:
             for signal in active_signals
         ):
             return True
-        active_trades = (
+        active_trade_query = (
             db.query(Trade)
             .options(joinedload(Trade.signal))
             .filter(Trade.symbol == str(match["symbol"]))
             .filter(Trade.pattern == str(match["pattern_name"]))
             .filter(Trade.status == TradeStatus.OPEN)
-            .all()
         )
+        if exclude_signal_id is not None:
+            active_trade_query = active_trade_query.filter(Trade.signal_id != exclude_signal_id)
+        active_trades = active_trade_query.all()
         return any(
             cls._trade_belongs_to_module(trade, module)
             and not (
@@ -1250,11 +1389,13 @@ class PatternEntryScanner:
             stored_window = stored_key.rsplit("|", 1)[-1] if "|" in stored_key else ""
         return bool(stored_window) and cls._canonical_bar_value(stored_window) == cls._canonical_bar_window_end(match)
 
-    def _can_submit_duplicate_lab_signal(self, db: Session, signal: Signal) -> bool:
+    def _can_submit_duplicate_signal(self, db: Session, signal: Signal, *, module: EntryModule) -> bool:
         metadata = signal.metadata_json or {}
         if signal.status != SignalStatus.PAPER_APPROVED:
             return False
         if metadata.get("near_miss") or metadata.get("near_miss_shadow"):
+            return False
+        if module == "daily" and self._is_daily_no_order_signal(signal):
             return False
         outcome = metadata.get("execution_outcome") or {}
         if isinstance(outcome, dict):
@@ -1284,6 +1425,8 @@ class PatternEntryScanner:
         if not cls._signal_belongs_to_module(signal, module):
             return False
         if ignore_lab_shadow_observations and cls._is_lab_shadow_no_order_signal(signal):
+            return False
+        if module == "daily" and cls._is_daily_no_order_signal(signal):
             return False
         if module != "laboratory":
             return True
@@ -1325,6 +1468,20 @@ class PatternEntryScanner:
             }
             or execution_mode == LAB_SHADOW_EXECUTION_MODE
             or bool(metadata.get("no_ibkr_order"))
+        )
+
+    @staticmethod
+    def _is_daily_no_order_signal(signal: Signal) -> bool:
+        metadata = signal.metadata_json or {}
+        if str(metadata.get("entry_module") or "") != "daily":
+            return False
+        order_decision = metadata.get("order_decision") or {}
+        execution_mode = str(metadata.get("execution_mode") or "")
+        return (
+            bool(metadata.get("no_ibkr_order"))
+            or bool(metadata.get("observation_only"))
+            or execution_mode == "daily_no_order"
+            or order_decision.get("submitted_to_broker") is False
         )
 
     @staticmethod
@@ -1396,20 +1553,33 @@ class PatternEntryScanner:
             return parsed.replace(tzinfo=timezone.utc)
         return parsed.astimezone(timezone.utc)
 
+    @classmethod
+    def _mark_signal_order_submission_success(cls, signal: Signal, trade: Trade) -> None:
+        trade_metadata = trade.metadata_json or {}
+        mark_signal_order_submitted(
+            signal,
+            broker_order_id=trade.broker_order_id,
+            order_ids=trade_metadata.get("order_ids"),
+            perm_ids=trade_metadata.get("perm_ids"),
+            submitted_at=cls._parse_datetime(trade_metadata.get("submitted_at")),
+        )
+
     @staticmethod
-    def _prepare_lab_signal_for_order_submission(signal: Signal, match: dict[str, Any]) -> None:
+    def _prepare_signal_for_order_submission(signal: Signal, match: dict[str, Any], *, module: EntryModule) -> None:
         metadata = dict(signal.metadata_json or {})
         for key in ("no_ibkr_order", "observation_only", "paper_only"):
             metadata.pop(key, None)
+        execution_mode = "ibkr_daily_paper" if module == "daily" else "ibkr"
+        execution_request_mode = "ibkr_daily_paper" if module == "daily" else "ibkr_paper"
         metadata.update(
             {
                 "evidence_type": EvidenceType.IBKR_PAPER_ORDER.value,
                 "evidence_quality": EvidenceQuality.NORMAL.value,
-                "execution_mode": "ibkr",
+                "execution_mode": execution_mode,
                 "execution_requested": True,
                 "paper_order_requested": True,
-                "execution_request_mode": "ibkr_paper",
-                "entry_module": "laboratory",
+                "execution_request_mode": execution_request_mode,
+                "entry_module": module,
                 "entry_variant_id": metadata.get("entry_variant_id") or match.get("entry_variant_id"),
                 "entry_variant": metadata.get("entry_variant") or match.get("entry_variant"),
                 "entry_audit": metadata.get("entry_audit") or match.get("entry_audit"),
@@ -1491,6 +1661,8 @@ class PatternEntryScanner:
             return str(entry_module) == module
         if module == "fox_hunter":
             return signal.strategy_version.startswith("fox_hunter_")
+        if module == "daily":
+            return signal.strategy_version.startswith("daily_")
         purpose = str(metadata.get("purpose") or "")
         return signal.strategy_version.startswith(("laboratory_", "ibkr_paper_", "ibkr_smoke_")) or (
             purpose.startswith("ibkr_paper_")
@@ -1507,6 +1679,8 @@ class PatternEntryScanner:
         reason = str(metadata.get("reason") or "")
         if module == "fox_hunter":
             return reason.startswith("fox_hunter")
+        if module == "daily":
+            return reason.startswith("daily")
         execution_mode = str(metadata.get("execution_mode") or "")
         return reason.startswith("laboratory") or execution_mode in {"paper", "lab_shadow_observation"}
 
@@ -2056,18 +2230,23 @@ class PatternEntryScanner:
                 "reason": (
                     "Fox Hunter requires explicit human approval before live submission."
                     if module == "fox_hunter"
+                    else "Daily did not submit an IBKR Paper order for this signal."
+                    if module == "daily"
                     else "Lab did not submit an IBKR Paper order for this signal."
                 ),
                 "retryable": False,
                 "next_action": (
                     "review_and_approve_signal"
                     if module == "fox_hunter"
+                    else "fix_daily_execution_blocker"
+                    if module == "daily"
                     else "collect_shadow_outcome"
                 ),
             }
         elif no_order_reason and execution_outcome is not None:
             execution_outcome["reason_code"] = no_order_reason
             execution_outcome["no_order_reason"] = no_order_reason
+        no_ibkr_order = module in {"laboratory", "daily"} and not execute_orders
         signal = Signal(
             symbol=candidate.symbol,
             pattern=candidate.pattern,
@@ -2120,7 +2299,7 @@ class PatternEntryScanner:
                 ),
                 "execution_degrade_reason": execution_degrade_reason,
                 "order_decision": order_decision,
-                "paper_order_requested": module == "laboratory" and execute_orders,
+                "paper_order_requested": module in {"laboratory", "daily"} and execute_orders,
                 "match": match,
                 "entry_gate": match.get("metrics", {}).get("entry_gate"),
                 "near_miss": bool(match.get("near_miss")),
@@ -2130,10 +2309,10 @@ class PatternEntryScanner:
                 "entry_gate_rejection_reasons": match.get("entry_gate_rejection_reasons") or [],
                 "entry_gate_reason": match.get("entry_gate_reason"),
                 "would_have_failed_entry_gate": bool(match.get("would_have_failed_entry_gate")),
-                "observation_only": module == "laboratory" and not execute_orders,
+                "observation_only": no_ibkr_order,
                 "execution_mode": self._signal_execution_mode(module, execute_orders=execute_orders),
                 "paper_only": module == "laboratory" and not execute_orders,
-                "no_ibkr_order": module == "laboratory" and not execute_orders,
+                "no_ibkr_order": no_ibkr_order,
                 "no_order_reason": no_order_reason,
                 "execution_outcome": execution_outcome,
                 "risk": risk.model_dump(mode="json"),
@@ -2157,6 +2336,10 @@ class PatternEntryScanner:
     def _signal_execution_mode(module: EntryModule, *, execute_orders: bool) -> str | None:
         if module == "laboratory" and not execute_orders:
             return LAB_SHADOW_EXECUTION_MODE
+        if module == "daily" and execute_orders:
+            return "ibkr_daily_paper"
+        if module == "daily":
+            return "daily_no_order"
         if execute_orders:
             return "ibkr"
         return None
@@ -2174,6 +2357,12 @@ class PatternEntryScanner:
             if not execute_orders:
                 return EvidenceType.SHADOW_NO_ORDER.value
             return EvidenceType.IBKR_PAPER_ORDER.value
+        if module == "daily":
+            return (
+                EvidenceType.IBKR_PAPER_ORDER.value
+                if execute_orders
+                else EvidenceType.SHADOW_NO_ORDER.value
+            )
         if execute_orders:
             return EvidenceType.LIVE_ORDER.value
         return None
@@ -2182,6 +2371,8 @@ class PatternEntryScanner:
     def _execution_reason(module: EntryModule) -> str:
         if module == "fox_hunter":
             return "fox_hunter production live execution"
+        if module == "daily":
+            return "daily IBKR paper execution"
         return "laboratory IBKR paper validation"
 
     def _observation_service(self) -> LabPaperObservationService:

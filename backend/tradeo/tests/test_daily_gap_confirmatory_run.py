@@ -11,8 +11,9 @@ from tradeo.modules.daily_swing.gap_confirmatory_run import (
     run_gap_confirmatory_matrix,
 )
 
-MATRIX_PATH = Path("research/daily_swing/gap/dss_gap_006_confirmatory_matrix.json")
-CRITERIA_PATH = Path("research/daily_swing/gap/DSS_GAP_006_CONFIRMATION_CRITERIA.json")
+REPO_ROOT = Path(__file__).resolve().parents[3]
+MATRIX_PATH = REPO_ROOT / "research/daily_swing/gap/dss_gap_006_confirmatory_matrix.json"
+CRITERIA_PATH = REPO_ROOT / "research/daily_swing/gap/DSS_GAP_006_CONFIRMATION_CRITERIA.json"
 
 
 def test_gap_confirmatory_run_requires_cache_only(tmp_path: Path) -> None:

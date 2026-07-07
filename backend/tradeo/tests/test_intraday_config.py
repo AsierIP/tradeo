@@ -8,6 +8,13 @@ from pydantic import ValidationError
 from tradeo.core.config import Settings
 
 
+def _repo_path_for_container_path(path_value: str) -> Path:
+    path = Path(path_value)
+    if path.is_absolute() and path.parts[:2] == ("/", "app"):
+        return Path(__file__).resolve().parents[3] / Path(*path.parts[2:])
+    return path
+
+
 def test_intraday_defaults_are_off_and_live_blocked() -> None:
     settings = Settings()
 
@@ -18,6 +25,14 @@ def test_intraday_defaults_are_off_and_live_blocked() -> None:
     assert settings.intraday_live_armed is False
     assert "intraday_disabled" in settings.intraday_live_config_blockers
     assert settings.intraday_timeframe_list == ["15m", "5m"]
+
+
+def test_daily_universe_default_points_to_versioned_file() -> None:
+    settings = Settings(_env_file=None)
+    daily_universe = _repo_path_for_container_path(settings.daily_universe_file)
+
+    assert daily_universe.name == "universe_us_mid_small.csv"
+    assert daily_universe.is_file()
 
 
 def test_intraday_live_fails_closed_without_required_gates() -> None:

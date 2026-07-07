@@ -83,6 +83,7 @@ def build_report(tmp_path, monkeypatch, env_lines: list[str] | None = None, **kw
     module = load_preflight_module()
     write_minimal_repo(tmp_path, env_lines=env_lines)
     patch_external_checks(monkeypatch, module)
+    kwargs.setdefault("include_process_env", False)
     return module, module.build_report(tmp_path, **kwargs)
 
 
