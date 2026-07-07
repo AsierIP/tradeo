@@ -9,6 +9,8 @@ import time
 from typing import Any
 
 from tradeo.core.config import get_settings
+from tradeo.modules.resource_policy.enforcement import blocked_job_status, decide_with_market_session_policy
+from tradeo.modules.resource_policy.market_session_resource_policy import JobType
 from tradeo.tasks import worker
 
 _BENCHMARK_REPORT_MODE_ENV = "TRADEO_DISCOVERY_BENCHMARK_REPORT_MODE"
@@ -92,6 +94,25 @@ def main() -> int:
         worker._shutdown_intraday_research_process_pool()
 
     settings = get_settings()
+    policy_decision = decide_with_market_session_policy(
+        JobType.RESEARCH_HEAVY,
+        "research",
+        settings=settings,
+    )
+    if not policy_decision.allowed:
+        print(
+            json.dumps(
+                {
+                    "runs": [],
+                    "resource_policy": policy_decision.to_dict(),
+                    "research_result": blocked_job_status(policy_decision),
+                    "decision": "blocked_resource_policy",
+                },
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 5
     summaries = []
     ok = True
     for index in range(max(1, int(args.repeat))):

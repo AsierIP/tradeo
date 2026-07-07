@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 
 def _load_benchmark_module():
@@ -39,6 +41,43 @@ def test_benchmark_summary_marks_zero_window_runs_invalid() -> None:
         "zero_clusters"
     )
     assert benchmark._invalid_benchmark_reason({"runs": 10, "windows": 20, "clusters": 12}) is None
+
+
+def test_benchmark_blocks_when_resource_policy_denies(monkeypatch, capsys) -> None:
+    benchmark = _load_benchmark_module()
+    calls: list[bool] = []
+    decision = SimpleNamespace(
+        allowed=False,
+        deny_reason="resource_policy_denied:regular_market",
+        to_dict=lambda: {
+            "allowed": False,
+            "deny_reason": "resource_policy_denied:research_heavy:regular_market",
+            "can_submit_orders": False,
+        },
+    )
+
+    monkeypatch.setattr(sys, "argv", ["run_intraday_process_pool_benchmark.py"])
+    monkeypatch.setattr(benchmark, "get_settings", lambda: SimpleNamespace())
+    monkeypatch.setattr(benchmark, "decide_with_market_session_policy", lambda *args, **kwargs: decision)
+    monkeypatch.setattr(
+        benchmark.worker,
+        "_run_intraday_research_process_pool",
+        lambda *args, **kwargs: calls.append(True),
+    )
+
+    code = benchmark.main()
+    payload = json.loads(capsys.readouterr().out)
+
+    assert code == 5
+    assert payload["decision"] == "blocked_resource_policy"
+    assert payload["resource_policy"]["allowed"] is False
+    assert payload["research_result"]["status"] == "skipped"
+    assert payload["research_result"]["reason"] == "resource_policy_denied"
+    assert (
+        payload["research_result"]["details"]["resource_policy"]["deny_reason"]
+        == "resource_policy_denied:research_heavy:regular_market"
+    )
+    assert calls == []
 
 
 def test_diagnose_auto_recent_groups_consecutive_valid_repeats() -> None:

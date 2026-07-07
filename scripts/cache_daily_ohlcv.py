@@ -13,7 +13,10 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
+from tradeo.core.config import get_settings
 from tradeo.modules.daily_swing.dss_003 import build_daily_universes, cache_daily_ohlcv
+from tradeo.modules.resource_policy.enforcement import blocked_job_status, decide_with_market_session_policy
+from tradeo.modules.resource_policy.market_session_resource_policy import JobType
 
 
 def main() -> int:
@@ -40,6 +43,20 @@ def main() -> int:
     parser.add_argument("--build-universes", action="store_true")
     parser.add_argument("--json-only", action="store_true")
     args = parser.parse_args()
+
+    policy_decision = decide_with_market_session_policy(
+        JobType.RESEARCH_HEAVY,
+        "research",
+        settings=get_settings(),
+    )
+    if not policy_decision.allowed:
+        payload = {
+            "decision": "blocked_resource_policy",
+            "resource_policy": policy_decision.to_dict(),
+            "research_result": blocked_job_status(policy_decision),
+        }
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 5
 
     if args.build_universes:
         build_daily_universes()

@@ -6,7 +6,11 @@ from typing import Mapping, Sequence
 
 from tradeo.modules.resource_policy import JobType, PriorityLevel
 from tradeo.modules.resource_policy import ResourceBudget as PolicyResourceBudget
-from tradeo.modules.resource_policy.enforcement import assert_job_allowed
+from tradeo.modules.resource_policy.enforcement import (
+    DENY_POLICY_MISSING,
+    DENY_SESSION_UNKNOWN,
+    assert_job_allowed,
+)
 
 DAILY_WATCHLIST_OWNER = "lab/research/daily_watchlist"
 FAST_DAILY_WATCHLIST_ENGINE_ID = "daily_watchlist_fast_v1"
@@ -17,7 +21,6 @@ DENY_ENGINE_DISABLED = "engine_disabled"
 DENY_OWNER_MISMATCH = "owner_mismatch"
 DENY_RESOURCE_UNKNOWN = "resource_budget_unknown"
 DENY_RESOURCE_EXHAUSTED = "resource_budget_exhausted"
-DENY_POLICY_MISSING = "resource_policy_missing"
 
 _OWNER_JOB_TYPES = {
     "lab": {JobType.LAB_EXECUTION, JobType.LAB_READINESS, JobType.LAB_PAPER_PROBE},
@@ -261,7 +264,7 @@ class FastChartEngineRegistry:
                 owner=owner,
                 job_type=job_type,
                 priority=PriorityLevel.BLOCKED,
-                deny_reason="session state unknown; fail closed",
+                deny_reason=DENY_SESSION_UNKNOWN,
                 budget=policy_decision.budget,
                 engine_id=request.engine_id,
                 can_submit_orders=False,
@@ -380,7 +383,7 @@ def plan_daily_watchlist_scheduler_run(
             resources=resources,
             deny_reason=DENY_POLICY_MISSING,
             resource_policy_priority=PriorityLevel.BLOCKED,
-            resource_policy_reason="resource policy missing; fail closed",
+            resource_policy_reason=DENY_POLICY_MISSING,
             session_state="UNKNOWN",
         )
     if not bool(policy_decision.allowed):

@@ -1,0 +1,136 @@
+{
+  "blockers": [],
+  "branch": "feature/lab-daily-resource-004-enforcement-rollout",
+  "checks": [
+    {
+      "evidence": [
+        "backend/tradeo/modules/daily_swing/setup_watchlist.py:680",
+        "backend/tradeo/modules/daily_swing/setup_watchlist.py:492",
+        "backend/tradeo/routers/daily.py:149",
+        "backend/tradeo/tests/test_daily_setup_watchlist.py:91"
+      ],
+      "finding": "Daily Watchlist emits watchlist metadata only and does not submit orders.",
+      "id": "daily_watchlist_orderless",
+      "result": "PASS"
+    },
+    {
+      "evidence": [
+        "backend/tradeo/modules/resource_policy/market_session_resource_policy.py:190",
+        "backend/tradeo/modules/resource_policy/enforcement.py:62",
+        "backend/tradeo/modules/daily_swing/setup_watchlist.py:483",
+        "backend/tradeo/tests/test_market_session_resource_policy.py:74"
+      ],
+      "finding": "Resource Policy can assign Lab Paper Probe priority, but does not grant paper/live submit authority; paper_submit is independently blocked.",
+      "id": "lab_paper_probe_no_resource_policy_submit_authority",
+      "result": "PASS"
+    },
+    {
+      "finding": "Budget policy blocks Research heavy in REGULAR_MARKET and final T-004 guards worker, route, and script heavy launch surfaces before heavy work.",
+      "id": "research_heavy_regular_market",
+      "pass_evidence": [
+        "backend/tradeo/modules/resource_policy/market_session_resource_policy.py:250",
+        "backend/tradeo/modules/resource_policy/market_session_resource_policy.py:269",
+        "backend/tradeo/tests/test_market_session_resource_policy.py:41",
+        "backend/tradeo/tests/test_resource_policy_enforcement.py:63",
+        "backend/tradeo/tasks/worker.py:603",
+        "backend/tradeo/tasks/worker.py:781",
+        "scripts/run_intraday_research_wave.py:137",
+        "scripts/intraday_history_capacity_loop.py:301"
+      ],
+      "result": "PASS"
+    },
+    {
+      "evidence": [
+        "backend/tradeo/modules/resource_policy/market_session_resource_policy.py:298",
+        "backend/tradeo/tests/test_market_session_resource_policy.py:52",
+        "backend/tradeo/tests/test_market_session_resource_policy.py:74"
+      ],
+      "finding": "MARKET_CLOSED keeps separate Lab and Research budgets, with Research HIGH and Lab LOW; Lab Paper Probe is blocked. No explicit maintenance-only job type is present for generic Lab execution.",
+      "id": "lab_market_closed_budget_separation",
+      "result": "PASS_WITH_NOTE"
+    },
+    {
+      "evidence": [
+        "backend/tradeo/modules/resource_policy/market_session_resource_policy.py:277",
+        "backend/tradeo/modules/resource_policy/market_session_resource_policy.py:298",
+        "backend/tradeo/tests/test_market_session_resource_policy.py:61",
+        "backend/tradeo/tests/test_fast_chart_engine_registry.py:50"
+      ],
+      "finding": "Daily after-close reevaluation is allowed and prioritized in POST_MARKET and MARKET_CLOSED.",
+      "id": "daily_after_close_reevaluation",
+      "result": "PASS"
+    },
+    {
+      "evidence": [
+        "backend/tradeo/modules/fox_hunter/production_manifest.py:58",
+        "backend/tradeo/modules/fox_hunter/production_manifest.py:149",
+        "backend/tradeo/modules/fox_hunter/production_manifest.py:250",
+        "backend/tradeo/modules/shared/entry_scanner.py:1987",
+        "backend/tradeo/tests/test_pattern_entry_scanner.py:2826",
+        "backend/tradeo/tests/test_pattern_entry_scanner.py:2930"
+      ],
+      "finding": "FoxHunter only consumes production patterns with valid DirectorProductionGate manifest evidence, and signals remain pending human approval.",
+      "id": "foxhunter_no_auto_promotion",
+      "result": "PASS"
+    },
+    {
+      "evidence": [
+        "backend/tradeo/modules/resource_policy/market_session.py:19",
+        "backend/tradeo/modules/resource_policy/market_session.py:24",
+        "backend/tradeo/routers/resource_policy.py:56",
+        "backend/tradeo/routers/resource_policy.py:92",
+        "backend/tradeo/routers/daily.py:149"
+      ],
+      "finding": "Daily and Resource Policy surfaces are read-only and prohibit order preview, paper order, live order, and signal output resources. No new output path was present in an empty T-004 diff.",
+      "id": "no_new_signal_preview_order_output",
+      "result": "PASS"
+    },
+    {
+      "evidence": [
+        "backend/tradeo/services/module_dashboard.py:27",
+        "backend/tradeo/services/module_dashboard.py:157",
+        "backend/tradeo/modules/intraday/work_queue.py:32",
+        "backend/tradeo/modules/intraday/work_queue.py:239",
+        "frontend/app/page.tsx:1062"
+      ],
+      "finding": "Daily, Lab, Intraday, and FoxHunter metrics are separated by watchlist contract, module filter, cadence filter, and intraday queue scope/lane metrics.",
+      "id": "metrics_separated",
+      "result": "PASS"
+    }
+  ],
+  "concurrent_artifact_cross_check": {
+    "effect_on_this_audit": "Supports SEPARATION_PASS.",
+    "red_team_decision": "RED_TEAM_PASS",
+    "wrapper_inventory_decision": "INVENTORY_COMPLETE"
+  },
+  "cross_review_b_risks": {
+    "description": "B risks are closed for rollout scope by worker, route, script, fast-chart, and red-team coverage.",
+    "does_not_affect_observed": [
+      "Daily orderlessness",
+      "Lab Paper Probe submit authority",
+      "FoxHunter auto-promotion",
+      "Daily/Resource Policy order/signal output"
+    ],
+    "status": "PASS"
+  },
+  "decision": "SEPARATION_PASS",
+  "generated_at": "2026-07-07",
+  "git_observation": {
+    "note": "Final audit reviewed the integrated T-004 worktree after implementation, red-team, and validation reconciliation.",
+    "status": "final_integrated_worktree_reviewed"
+  },
+  "repo": "/home/vboxuser/tradeo-worktrees/director-control-loop-operability",
+  "schema_version": "tradeo.lab_daily_resource_004.separation_audit.v1",
+  "summary": "Separation passes for Daily orderlessness, Lab Paper Probe authority, Research heavy RTH blocking, Daily after-close reevaluation, FoxHunter promotion safety, output safety, and metric separation.",
+  "task": "T-LAB-DAILY-RESOURCE-004",
+  "validation_mode": {
+    "result": "83 passed, 1 warning",
+    "tests_run": true,
+    "type": "static_and_focal_tests"
+  },
+  "warnings": [],
+  "write_scope": [
+    "research/lab_daily_resource/LAB_DAILY_RESOURCE_004_SEPARATION_AUDIT.md",
+    "research/lab_daily_resource/LAB_DAILY_RESOURCE_004_SEPARATION_AUDIT.json"
+  ]
+}

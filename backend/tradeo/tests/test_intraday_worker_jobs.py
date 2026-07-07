@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from concurrent.futures import Future
 import json
+from types import SimpleNamespace
 
 from tradeo.core.config import Settings
+from tradeo.modules.resource_policy.market_session_resource_policy import SessionState
 from tradeo.tasks import worker
 
 
@@ -24,6 +26,25 @@ class FakeScheduler:
 
 def _job_ids(scheduler: FakeScheduler) -> list[str]:
     return [str(job["kwargs"]["id"]) for job in scheduler.jobs]
+
+
+def _policy_decision(
+    *,
+    allowed: bool,
+    reason: str = "resource_policy_denied:research_heavy:regular_market",
+):
+    return SimpleNamespace(
+        allowed=allowed,
+        deny_reason=None if allowed else reason,
+        to_dict=lambda: {
+            "allowed": allowed,
+            "deny_reason": None if allowed else reason,
+            "job_type": "research_heavy",
+            "owner": "research",
+            "session_state": SessionState.REGULAR_MARKET if not allowed else SessionState.MARKET_CLOSED,
+            "can_submit_orders": False,
+        },
+    )
 
 
 def test_register_intraday_jobs_is_noop_when_global_flag_disabled() -> None:
@@ -174,6 +195,34 @@ def test_intraday_research_process_pool_job_uses_runner(monkeypatch) -> None:
             worker._run_intraday_research_process_pool,
         )
     ]
+
+
+def test_intraday_worker_blocks_heavy_research_when_resource_policy_denies(monkeypatch) -> None:
+    statuses: list[dict[str, object]] = []
+    settings = Settings(intraday_enabled=True, intraday_research_enabled=True)
+    action_called = False
+
+    def action(_settings: Settings) -> dict[str, object]:
+        nonlocal action_called
+        action_called = True
+        return {"status": "ok", "reason": "should_not_run", "details": {}}
+
+    monkeypatch.setattr(worker, "get_settings", lambda: settings)
+    monkeypatch.setattr(worker, "decide_with_market_session_policy", lambda *args, **kwargs: _policy_decision(allowed=False))
+    monkeypatch.setattr(
+        worker,
+        "write_intraday_session_status",
+        lambda job_id, payload, _settings: statuses.append({"job_id": job_id, **payload}),
+    )
+
+    payload = worker._run_intraday_job("intraday_research", "intraday_research_enabled", action)
+
+    assert action_called is False
+    assert payload["status"] == "skipped"
+    assert payload["reason"] == "resource_policy_denied"
+    assert payload["details"]["resource_policy"]["deny_reason"] == "resource_policy_denied:research_heavy:regular_market"
+    assert payload["details"]["resource_policy"]["allowed"] is False
+    assert statuses[-1]["job_id"] == "intraday_research"
 
 
 def test_intraday_research_process_jobs_precompute_symbols_in_chunk_major_order(monkeypatch) -> None:
@@ -702,6 +751,7 @@ def test_intraday_research_process_pool_reuses_executor_and_records_workers(monk
     )
 
     monkeypatch.setattr(worker, "ProcessPoolExecutor", FakeProcessExecutor)
+    monkeypatch.setattr(worker, "decide_with_market_session_policy", lambda *args, **kwargs: _policy_decision(allowed=True))
     monkeypatch.setattr(
         worker,
         "_intraday_research_process_symbol_chunks",

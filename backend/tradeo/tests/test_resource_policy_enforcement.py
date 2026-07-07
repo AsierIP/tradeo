@@ -3,7 +3,13 @@ from __future__ import annotations
 from pathlib import Path
 
 from tradeo.core.config import Settings
-from tradeo.modules.resource_policy.enforcement import assert_job_allowed
+from tradeo.modules.resource_policy.enforcement import (
+    DENY_PAPER_SUBMIT,
+    DENY_POLICY_DENIED,
+    DENY_POLICY_MISSING,
+    DENY_SESSION_UNKNOWN,
+    assert_job_allowed,
+)
 from tradeo.modules.resource_policy.market_session_resource_policy import (
     JobType,
     MarketSessionResourcePolicy,
@@ -37,6 +43,7 @@ def test_unknown_session_fails_closed(tmp_path) -> None:
     assert decision.allowed is False
     assert decision.session_state == SessionState.UNKNOWN
     assert decision.can_submit_orders is False
+    assert decision.deny_reason == DENY_SESSION_UNKNOWN
 
 
 def test_explicit_unknown_session_argument_fails_closed_before_policy(tmp_path) -> None:
@@ -49,7 +56,7 @@ def test_explicit_unknown_session_argument_fails_closed_before_policy(tmp_path) 
 
     assert decision.allowed is False
     assert decision.session_state == SessionState.UNKNOWN
-    assert decision.deny_reason == "session state unknown; fail closed"
+    assert decision.deny_reason == DENY_SESSION_UNKNOWN
 
 
 def test_missing_policy_fails_closed() -> None:
@@ -57,7 +64,7 @@ def test_missing_policy_fails_closed() -> None:
 
     assert decision.allowed is False
     assert decision.session_state == SessionState.UNKNOWN
-    assert decision.deny_reason == "resource policy missing; fail closed"
+    assert decision.deny_reason == DENY_POLICY_MISSING
 
 
 def test_regular_market_blocks_research_heavy(tmp_path) -> None:
@@ -68,7 +75,7 @@ def test_regular_market_blocks_research_heavy(tmp_path) -> None:
     )
 
     assert decision.allowed is False
-    assert "Research heavy" in decision.deny_reason or "Research" in decision.deny_reason
+    assert str(decision.deny_reason).startswith(f"{DENY_POLICY_DENIED}:")
 
 
 def test_market_closed_allows_research_heavy(tmp_path) -> None:
@@ -91,4 +98,4 @@ def test_paper_submit_is_never_authorized_by_resource_policy(tmp_path) -> None:
 
     assert decision.allowed is False
     assert decision.can_submit_orders is False
-    assert "paper submit is blocked" in str(decision.deny_reason)
+    assert decision.deny_reason == DENY_PAPER_SUBMIT

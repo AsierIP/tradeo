@@ -10,11 +10,17 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
 
+from tradeo.core.config import get_settings  # noqa: E402
 from tradeo.modules.daily_swing.dss_004c_r import (  # noqa: E402
     ReconciliationConfig,
     run_dss_004c_r_reconciliation,
     write_markdown_reports,
 )
+from tradeo.modules.resource_policy.enforcement import (  # noqa: E402
+    blocked_job_status,
+    decide_with_market_session_policy,
+)
+from tradeo.modules.resource_policy.market_session_resource_policy import JobType  # noqa: E402
 
 
 def main() -> int:
@@ -29,6 +35,24 @@ def main() -> int:
     parser.add_argument("--research-dir", default=Path("research/daily_swing"), type=Path)
     parser.add_argument("--repo-root", default=Path("."), type=Path)
     args = parser.parse_args()
+    policy_decision = decide_with_market_session_policy(
+        JobType.HEAVY_BACKTEST,
+        "research",
+        settings=get_settings(),
+    )
+    if not policy_decision.allowed:
+        print(
+            json.dumps(
+                {
+                    "decision": "blocked_resource_policy",
+                    "resource_policy": policy_decision.to_dict(),
+                    "research_result": blocked_job_status(policy_decision),
+                },
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 5
     result = run_dss_004c_r_reconciliation(
         ReconciliationConfig(
             cache_dir=args.cache_dir,

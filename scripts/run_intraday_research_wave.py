@@ -18,6 +18,11 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 from tradeo.core.config import get_settings  # noqa: E402
+from tradeo.modules.resource_policy.enforcement import (  # noqa: E402
+    blocked_job_status,
+    decide_with_market_session_policy,
+)
+from tradeo.modules.resource_policy.market_session_resource_policy import JobType  # noqa: E402
 from tradeo.research.intraday_context_filters import (  # noqa: E402
     COST_FILTER_CHOICES,
     SESSION_FILTER_CHOICES,
@@ -129,43 +134,56 @@ def main() -> int:
         }
         status_code = 3
     else:
-        lock = _acquire_execute_lock(
+        policy_decision = decide_with_market_session_policy(
+            JobType.RESEARCH_HEAVY,
+            "research",
             settings=settings,
-            execution_spec=execution_spec,
-            execution_spec_hash=execution_spec_hash,
-            manifest_path=args.manifest_path,
-            stale_lock_minutes=args.stale_lock_minutes,
         )
-        if lock is None:
-            wave_result["decision"] = "blocked_concurrent_wave"
-            wave_result["concurrency_lock"] = {
-                "path": str(_execute_lock_path(settings)),
-                "active": True,
-            }
-            status_code = 4
+        if not policy_decision.allowed:
+            wave_result["decision"] = "blocked_resource_policy"
+            wave_result["resource_policy"] = policy_decision.to_dict()
+            status_code = 5
         else:
-            release_lock = False
-            started = time.monotonic()
-            try:
-                result = worker._run_intraday_research_process_pool(
-                    settings,
-                    allow_recent_duplicates=bool(args.allow_recent_duplicates),
-                    store_rejected=bool(args.store_rejected),
-                )
-                release_lock = True
-            except Exception as exc:  # pragma: no cover - defensive manifest preservation
-                result = {
-                    "status": "error",
-                    "error": f"{type(exc).__name__}: {exc}",
-                    "lock_retained": True,
+            wave_result["resource_policy"] = policy_decision.to_dict()
+            lock = _acquire_execute_lock(
+                settings=settings,
+                execution_spec=execution_spec,
+                execution_spec_hash=execution_spec_hash,
+                manifest_path=args.manifest_path,
+                stale_lock_minutes=args.stale_lock_minutes,
+            )
+            if lock is None:
+                wave_result["decision"] = "blocked_concurrent_wave"
+                wave_result["concurrency_lock"] = {
+                    "path": str(_execute_lock_path(settings)),
+                    "active": True,
                 }
-            finally:
-                wave_result["elapsed_wall_s"] = round(time.monotonic() - started, 3)
-                if release_lock:
-                    _release_execute_lock(lock)
-            wave_result["research_result"] = result
-            wave_result["decision"] = "executed"
-            status_code = 0 if result.get("status") in {"ok", "degraded"} else 1
+                status_code = 4
+            else:
+                release_lock = False
+                started = time.monotonic()
+                try:
+                    result = worker._run_intraday_research_process_pool(
+                        settings,
+                        allow_recent_duplicates=bool(args.allow_recent_duplicates),
+                        store_rejected=bool(args.store_rejected),
+                    )
+                    release_lock = True
+                except Exception as exc:  # pragma: no cover - defensive manifest preservation
+                    result = {
+                        "status": "error",
+                        "error": f"{type(exc).__name__}: {exc}",
+                        "lock_retained": True,
+                    }
+                finally:
+                    wave_result["elapsed_wall_s"] = round(time.monotonic() - started, 3)
+                    if release_lock:
+                        _release_execute_lock(lock)
+                wave_result["research_result"] = result
+                wave_result["decision"] = "executed"
+                status_code = 0 if result.get("status") in {"ok", "degraded"} else 1
+    if wave_result.get("decision") == "blocked_resource_policy":
+        wave_result["research_result"] = blocked_job_status(policy_decision)
 
     manifest_hash = readiness.manifest_hash
     manifest_path = Path(

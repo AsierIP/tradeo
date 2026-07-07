@@ -41,6 +41,25 @@ def _load_runner_module():
     return module
 
 
+def _resource_policy_decision(
+    *,
+    allowed: bool,
+    reason: str = "resource_policy_denied:research_heavy:regular_market",
+):
+    return SimpleNamespace(
+        allowed=allowed,
+        deny_reason=None if allowed else reason,
+        to_dict=lambda: {
+            "allowed": allowed,
+            "can_submit_orders": False,
+            "deny_reason": None if allowed else reason,
+            "job_type": "research_heavy",
+            "owner": "research",
+            "session_state": "MARKET_CLOSED" if allowed else "REGULAR_MARKET",
+        },
+    )
+
+
 class _FakeSettings:
     def __init__(
         self,
@@ -163,6 +182,11 @@ def test_cli_arguments_apply_exact_env_before_settings_and_worker(monkeypatch, t
 
     monkeypatch.setattr(runner, "get_settings", fake_get_settings)
     monkeypatch.setattr(runner, "IntradayResearchReadinessGate", _FakeReadinessGate)
+    monkeypatch.setattr(
+        runner,
+        "decide_with_market_session_policy",
+        lambda *args, **kwargs: _resource_policy_decision(allowed=True),
+    )
     monkeypatch.setattr(runner.worker, "_run_intraday_research_process_pool", fake_worker)
 
     try:
@@ -628,6 +652,11 @@ def test_wave_runner_blocks_execute_when_lock_active(monkeypatch, tmp_path: Path
     monkeypatch.setattr(runner, "get_settings", lambda: settings)
     monkeypatch.setattr(runner, "IntradayResearchReadinessGate", _FakeReadinessGate)
     monkeypatch.setattr(
+        runner,
+        "decide_with_market_session_policy",
+        lambda *args, **kwargs: _resource_policy_decision(allowed=True),
+    )
+    monkeypatch.setattr(
         runner.worker,
         "_run_intraday_research_process_pool",
         lambda *args, **kwargs: worker_calls.append(True),
@@ -642,6 +671,43 @@ def test_wave_runner_blocks_execute_when_lock_active(monkeypatch, tmp_path: Path
     manifest = json.loads((tmp_path / "blocked.json").read_text(encoding="utf-8"))
     assert code == 4
     assert manifest["decision"] == "blocked_concurrent_wave"
+    assert worker_calls == []
+
+
+def test_wave_runner_blocks_execute_when_resource_policy_denies(monkeypatch, tmp_path: Path) -> None:
+    runner = _load_runner_module()
+    settings = _FakeSettings(artifacts_path=tmp_path / "artifacts")
+    worker_calls: list[bool] = []
+    monkeypatch.setattr(runner, "get_settings", lambda: settings)
+    monkeypatch.setattr(runner, "IntradayResearchReadinessGate", _FakeReadinessGate)
+    monkeypatch.setattr(
+        runner,
+        "decide_with_market_session_policy",
+        lambda *args, **kwargs: _resource_policy_decision(allowed=False),
+    )
+    monkeypatch.setattr(
+        runner.worker,
+        "_run_intraday_research_process_pool",
+        lambda *args, **kwargs: worker_calls.append(True),
+    )
+
+    code = _run_main(
+        monkeypatch,
+        runner,
+        ["--execute", "--manifest-path", str(tmp_path / "policy_blocked.json"), "--json-only"],
+    )
+
+    manifest = json.loads((tmp_path / "policy_blocked.json").read_text(encoding="utf-8"))
+    assert code == 5
+    assert manifest["decision"] == "blocked_resource_policy"
+    assert manifest["resource_policy"]["allowed"] is False
+    assert manifest["research_result"]["status"] == "skipped"
+    assert manifest["research_result"]["reason"] == "resource_policy_denied"
+    assert (
+        manifest["research_result"]["details"]["resource_policy"]["deny_reason"]
+        == "resource_policy_denied:research_heavy:regular_market"
+    )
+    assert runner._execute_lock_path(settings).exists() is False
     assert worker_calls == []
 
 
@@ -668,6 +734,11 @@ def test_wave_runner_releases_lock_after_worker_ok(monkeypatch, tmp_path: Path) 
     monkeypatch.setattr(runner, "get_settings", lambda: settings)
     monkeypatch.setattr(runner, "IntradayResearchReadinessGate", _FakeReadinessGate)
     monkeypatch.setattr(
+        runner,
+        "decide_with_market_session_policy",
+        lambda *args, **kwargs: _resource_policy_decision(allowed=True),
+    )
+    monkeypatch.setattr(
         runner.worker,
         "_run_intraday_research_process_pool",
         lambda *args, **kwargs: {"status": "ok"},
@@ -688,6 +759,11 @@ def test_wave_runner_retains_lock_after_worker_exception(monkeypatch, tmp_path: 
 
     monkeypatch.setattr(runner, "get_settings", lambda: settings)
     monkeypatch.setattr(runner, "IntradayResearchReadinessGate", _FakeReadinessGate)
+    monkeypatch.setattr(
+        runner,
+        "decide_with_market_session_policy",
+        lambda *args, **kwargs: _resource_policy_decision(allowed=True),
+    )
     monkeypatch.setattr(runner.worker, "_run_intraday_research_process_pool", raise_worker)
 
     code = _run_main(

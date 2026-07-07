@@ -7,6 +7,8 @@ import json
 from pathlib import Path
 
 from tradeo.core.config import get_settings
+from tradeo.modules.resource_policy.enforcement import blocked_job_status, decide_with_market_session_policy
+from tradeo.modules.resource_policy.market_session_resource_policy import JobType
 from tradeo.services.intraday_universe_builder import (
     IntradayUniverseBuilder,
     IntradayUniverseThresholds,
@@ -52,6 +54,20 @@ def main() -> int:
     args = parser.parse_args()
 
     settings = get_settings()
+    policy_decision = decide_with_market_session_policy(
+        JobType.LARGE_SCANNER,
+        "scanner",
+        settings=settings,
+    )
+    if not policy_decision.allowed:
+        payload = {
+            "decision": "blocked_resource_policy",
+            "resource_policy": policy_decision.to_dict(),
+            "research_result": blocked_job_status(policy_decision),
+        }
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 5
+
     seed_files = args.seed_file or [
         "/app/data/universe_us_small_caps.csv",
         "/app/data/universe_us_mid_caps.csv",

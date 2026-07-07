@@ -17,12 +17,13 @@ from concurrent.futures import ProcessPoolExecutor, TimeoutError
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 import json
-import os
 from pathlib import Path
 import time
 from typing import Any
 
 from tradeo.core.config import get_settings
+from tradeo.modules.resource_policy.enforcement import blocked_job_status, decide_with_market_session_policy
+from tradeo.modules.resource_policy.market_session_resource_policy import JobType
 from tradeo.services.data_provider import (
     UNIVERSE_POLICY_CHOICES,
     normalize_universe_policy,
@@ -77,6 +78,20 @@ def main() -> int:
     args = parser.parse_args()
 
     settings = get_settings()
+    policy_decision = decide_with_market_session_policy(
+        JobType.RESEARCH_HEAVY,
+        "research",
+        settings=settings,
+    )
+    if not policy_decision.allowed:
+        payload = {
+            "decision": "blocked_resource_policy",
+            "resource_policy": policy_decision.to_dict(),
+            "research_result": blocked_job_status(policy_decision),
+        }
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 5
+
     period = str(args.period or settings.intraday_research_period)
     limit = int(args.limit or settings.intraday_research_limit_default)
     product_policy = normalize_universe_policy(
