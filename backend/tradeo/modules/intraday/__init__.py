@@ -27,6 +27,12 @@ from tradeo.modules.intraday.research_validation_stack import (
     IntradayValidationStack,
     IntradayValidationThresholds,
 )
+from tradeo.modules.intraday.work_ids import IntradayWorkDescriptor, stable_work_fingerprint
+from tradeo.modules.intraday.work_queue import (
+    IntradayDistributedWorkQueue,
+    IntradayEnqueueResult,
+    IntradayQueueMetrics,
+)
 
 __all__ = [
     "INTRADAY_RESEARCH_CORE_VERSION",
@@ -48,4 +54,9 @@ __all__ = [
     "MultiScaleIntradaySample",
     "MultiScaleIntradaySampler",
     "MultiScaleSamplerConfig",
+    "IntradayDistributedWorkQueue",
+    "IntradayEnqueueResult",
+    "IntradayQueueMetrics",
+    "IntradayWorkDescriptor",
+    "stable_work_fingerprint",
 ]

@@ -58,6 +58,7 @@ test-safety:
 		tradeo/tests/test_intraday_lab_bridge.py \
 		tradeo/tests/test_intraday_research.py \
 		tradeo/tests/test_intraday_research_validation_stack.py \
+		tradeo/tests/test_intraday_work_queue.py \
 		tradeo/tests/test_intraday_worker_jobs.py
 
 scan:
