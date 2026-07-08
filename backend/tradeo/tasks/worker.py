@@ -36,7 +36,7 @@ from tradeo.ops.false_match_metrics import (
 from tradeo.research.intraday_context_filters import normalize_context_filter_spec
 from tradeo.research.autonomous_research_director import ResearchDirector
 from tradeo.research.novel_pattern_matcher import NovelPatternMatcher
-from tradeo.schemas import DiscoveryRunRequest, ScanRequest
+from tradeo.schemas import DailyUniverseDiscoveryRunRequest, DiscoveryRunRequest, ScanRequest
 from tradeo.services.intraday_calendar import IntradayMarketCalendar
 from tradeo.modules.shared.entry_scanner import (
     PatternEntryScanner,
@@ -44,10 +44,12 @@ from tradeo.modules.shared.entry_scanner import (
 )
 from tradeo.services.director_review_gate import DirectorReviewGate
 from tradeo.services.data_provider import (
+    is_daily_interval,
     pick_symbols,
     universe_file_for_interval,
     universe_scope_for_interval,
 )
+from tradeo.services.daily_discovery_orchestrator import DailyDiscoveryOrchestrator
 from tradeo.services.reports import ReportService
 from tradeo.services.runtime_status import write_intraday_session_status, write_worker_heartbeat
 from tradeo.services.scanner import MarketScanner
@@ -192,6 +194,20 @@ def discovery_job() -> None:
         "research",
         settings,
     ):
+        return
+    if is_daily_interval(settings.discovery_interval):
+        request = DailyUniverseDiscoveryRunRequest(
+            limit=settings.discovery_limit_default,
+            period=settings.discovery_period,
+            interval=settings.discovery_interval,
+            max_total_windows=settings.discovery_max_total_windows,
+            max_windows_per_symbol=settings.discovery_max_windows_per_symbol,
+            daily_cap_segments=settings.daily_universe_cap_segment_list,
+            parallel=False,
+            skip_recent_seconds=max(60, int(settings.discovery_scan_minutes) * 60),
+        )
+        result = DailyDiscoveryOrchestrator(settings=settings).run(request)
+        logger.info("daily universe discovery result: {}", result.model_dump())
         return
     db = SessionLocal()
     try:

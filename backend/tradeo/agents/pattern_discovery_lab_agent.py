@@ -25,7 +25,6 @@ from tradeo.research.autonomous_research_director import (
 )
 from tradeo.research.determinism import CONTENT_HASH_ALGO, DEFAULT_VOLATILE_KEYS, content_hash
 from tradeo.research.global_experiment_registry import GlobalExperimentRegistry
-from tradeo.research.intraday_context_filters import normalize_context_filter_spec
 from tradeo.research.novel_pattern_registry import NovelPatternRegistry
 from tradeo.research.pattern_committee import PatternResearchCommittee
 from tradeo.research.quant_validation import (
@@ -35,14 +34,17 @@ from tradeo.research.quant_validation import (
 )
 from tradeo.research.research_director import ResearchDirector as CandidateResearchDirector
 from tradeo.research.validation_gate import ValidationGate
-from tradeo.research.intraday_vwap_conditions import expected_side_from_vwap_condition
 from tradeo.research.window_sampler import WindowSampler
 from tradeo.schemas import DiscoveryRunRequest, DiscoveryRunResponse
 from tradeo.services.data_provider import (
     MarketDataProvider,
     load_universe,
     pick_symbols,
-    resolve_universe_for_interval,
+)
+from tradeo.services.discovery_params import (
+    discovery_universe_key,
+    file_sha256,
+    resolve_discovery_run_params,
 )
 from tradeo.services.data_quality import assess_ohlcv_quality_from_settings
 from tradeo.services.market_regime import MarketRegimeService
@@ -52,6 +54,7 @@ from tradeo.services.universe_snapshot import UniverseSnapshotService
 _BENCHMARK_CONTEXT_LOCK = Lock()
 _BENCHMARK_FRAMES_CACHE: dict[tuple[str, str], dict[str, Any]] = {}
 _BENCHMARK_REGIME_CACHE: dict[str, Any] = {}
+_DISCOVERY_GLOBAL_PERSISTENCE_LOCK = Lock()
 _BENCHMARK_REPORT_MODE_ENV = "TRADEO_DISCOVERY_BENCHMARK_REPORT_MODE"
 _BENCHMARK_JSON_ONLY_REPORT_VALUES = frozenset({"1", "true", "yes", "json", "json_only"})
 _CLUSTER_PROFILE_ENV = "TRADEO_DISCOVERY_CLUSTER_PROFILE"
@@ -567,37 +570,53 @@ class PatternDiscoveryLabAgent:
                 candidate.metrics["survivorship_biased"] = not bool(
                     candidate.metrics["universe_point_in_time"]
                 )
-            phase_started = timer.mark()
+            global_persistence_wait_started = timer.mark()
+            _DISCOVERY_GLOBAL_PERSISTENCE_LOCK.acquire()
+            timer.add("global_persistence_lock_wait_s", global_persistence_wait_started)
             try:
-                self._apply_run_level_inference(raw_candidates)
+                phase_started = timer.mark()
+                try:
+                    self._apply_run_level_inference(raw_candidates)
+                finally:
+                    timer.add("run_level_inference_s", phase_started)
+                phase_started = timer.mark()
+                try:
+                    candidates = ValidationGate(settings).evaluate_many(raw_candidates)
+                finally:
+                    timer.add("validation_s", phase_started)
+                timer.increment("validated_candidates", len(candidates))
+                accepted = [c for c in candidates if c.validation_passed]
+                rejected = [c for c in candidates if not c.validation_passed]
+                timer.increment("accepted_candidates", len(accepted))
+                timer.increment("rejected_candidates", len(rejected))
+                phase_started = timer.mark()
+                try:
+                    ledger_artifacts = self._write_event_ledgers(run.id, candidates)
+                finally:
+                    timer.add("event_ledgers_s", phase_started)
+                timer.increment("event_ledgers_written", ledger_artifacts)
+                phase_started = timer.mark()
+                try:
+                    global_registry = self._register_global_experiments(
+                        candidates,
+                        accepted=accepted,
+                        run_id=run.id,
+                        params=params,
+                    )
+                finally:
+                    timer.add("global_registry_s", phase_started)
+                phase_started = timer.mark()
+                try:
+                    stored = NovelPatternRegistry().store_candidates(
+                        db,
+                        candidates,
+                        run_id=run.id,
+                        store_rejected=params["store_rejected"],
+                    )
+                finally:
+                    timer.add("novel_registry_s", phase_started)
             finally:
-                timer.add("run_level_inference_s", phase_started)
-            phase_started = timer.mark()
-            try:
-                candidates = ValidationGate(settings).evaluate_many(raw_candidates)
-            finally:
-                timer.add("validation_s", phase_started)
-            timer.increment("validated_candidates", len(candidates))
-            accepted = [c for c in candidates if c.validation_passed]
-            rejected = [c for c in candidates if not c.validation_passed]
-            timer.increment("accepted_candidates", len(accepted))
-            timer.increment("rejected_candidates", len(rejected))
-            phase_started = timer.mark()
-            try:
-                ledger_artifacts = self._write_event_ledgers(run.id, candidates)
-            finally:
-                timer.add("event_ledgers_s", phase_started)
-            timer.increment("event_ledgers_written", ledger_artifacts)
-            phase_started = timer.mark()
-            try:
-                global_registry = self._register_global_experiments(
-                    candidates,
-                    accepted=accepted,
-                    run_id=run.id,
-                    params=params,
-                )
-            finally:
-                timer.add("global_registry_s", phase_started)
+                _DISCOVERY_GLOBAL_PERSISTENCE_LOCK.release()
             candidate_director_summary: dict[str, Any] = {}
             if settings.research_director_enabled and accepted:
                 phase_started = timer.mark()
@@ -633,16 +652,6 @@ class PatternDiscoveryLabAgent:
                     )
                 finally:
                     timer.add("research_committee_s", phase_started)
-            phase_started = timer.mark()
-            try:
-                stored = NovelPatternRegistry().store_candidates(
-                    db,
-                    candidates,
-                    run_id=run.id,
-                    store_rejected=params["store_rejected"],
-                )
-            finally:
-                timer.add("novel_registry_s", phase_started)
             timer.increment("stored_patterns", len(stored))
             director_result: dict[str, Any] | None = None
             if settings.research_director_enabled and accepted:
@@ -1137,110 +1146,15 @@ class PatternDiscoveryLabAgent:
     def _resolve_params(self, request: DiscoveryRunRequest) -> dict[str, Any]:
         s = self.settings
         assert s is not None
-        max_total_windows = min(request.max_total_windows or s.discovery_max_total_windows, 80_000)
-        universe_selection = resolve_universe_for_interval(
-            s,
-            request.interval or s.discovery_interval,
-            daily_cap_segment=request.daily_cap_segment,
-        )
-        universe_scope = universe_selection.scope
-        universe_file = universe_selection.universe_file
-        is_intraday = universe_selection.daily_cap_segment is None
-        context_spec = normalize_context_filter_spec(
-            session_filter=request.session_filter,
-            cost_filter=request.cost_filter,
-            max_execution_cost_r=request.max_execution_cost_r,
-        )
-        return {
-            "limit": request.limit or s.discovery_limit_default,
-            "period": request.period or s.discovery_period,
-            "interval": request.interval or s.discovery_interval,
-            "cadence": "intraday" if is_intraday else "daily",
-            "universe_scope": universe_scope,
-            "universe_file": universe_file,
-            "daily_cap_segment": universe_selection.daily_cap_segment,
-            "universe_hash": self._file_sha256(universe_file),
-            "universe_key": self._universe_key(
-                scope=universe_scope,
-                universe_file=universe_file,
-            ),
-            "symbols": [symbol.upper().strip() for symbol in request.symbols if symbol.strip()]
-            if request.symbols
-            else None,
-            "window_sizes": request.window_sizes or s.discovery_window_size_list,
-            "forward_bars": request.forward_bars or s.discovery_forward_bar_list,
-            "stride": max(1, request.stride or s.discovery_stride),
-            "max_total_windows": max(100, max_total_windows),
-            "max_windows_per_symbol": max(
-                50, request.max_windows_per_symbol or s.discovery_max_windows_per_symbol
-            ),
-            "min_cluster_size": max(20, request.min_cluster_size or s.discovery_min_cluster_size),
-            "max_clusters_per_window": max(
-                2, min(request.max_clusters_per_window or s.discovery_max_clusters_per_window, 40)
-            ),
-            "store_rejected": s.discovery_store_rejected
-            if request.store_rejected is None
-            else request.store_rejected,
-            "daily_event_min_gain_pct": 0.0
-            if is_intraday
-            else (
-                max(0.0, float(request.daily_event_min_gain_pct))
-                if request.daily_event_min_gain_pct is not None
-                else max(0.0, float(s.discovery_daily_event_min_gain_pct))
-            ),
-            "vwap_condition": (request.vwap_condition or "none").strip().lower() or "none",
-            "vwap_side_bias": (request.vwap_side_bias or "").strip().lower() or None,
-            "vwap_expected_side": expected_side_from_vwap_condition(request.vwap_condition, request.vwap_side_bias),
-            "vwap_max_distance_bps": request.vwap_max_distance_bps,
-            "vwap_min_slope_bps": request.vwap_min_slope_bps,
-            "session_filter": context_spec.session_filter,
-            "cost_filter": context_spec.cost_filter,
-            "max_execution_cost_r": context_spec.max_execution_cost_r,
-            "rr_levels": s.discovery_rr_level_list,
-            "min_reward_risk": s.discovery_min_reward_risk,
-            "candidate_reward_risk": s.discovery_candidate_reward_risk,
-            "premium_reward_risk": s.discovery_premium_reward_risk,
-            "max_drawdown_r": s.discovery_max_drawdown_r,
-            "walk_forward_folds": s.discovery_walk_forward_folds,
-            "walk_forward_embargo_samples": s.discovery_walk_forward_embargo_samples,
-            "cost_stress_multipliers": s.discovery_cost_stress_multiplier_list,
-            "required_cost_stress_multiplier": s.discovery_required_cost_stress_multiplier,
-            "min_samples": s.intraday_research_min_samples
-            if is_intraday
-            else s.discovery_min_samples,
-            "min_effective_samples": (
-                s.intraday_research_min_effective_samples
-                if is_intraday
-                else s.discovery_min_effective_samples
-            ),
-            "min_symbols": s.intraday_research_min_symbols
-            if is_intraday
-            else s.discovery_min_symbols,
-            "min_years": s.intraday_research_min_years if is_intraday else s.discovery_min_years,
-        }
+        return resolve_discovery_run_params(s, request)
 
     @staticmethod
     def _file_sha256(path: str | os.PathLike[str]) -> str:
-        try:
-            with open(path, "rb") as handle:
-                digest = hashlib.sha256()
-                for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-                    digest.update(chunk)
-                return digest.hexdigest()
-        except OSError:
-            return ""
+        return file_sha256(path)
 
     @classmethod
     def _universe_key(cls, *, scope: str, universe_file: str) -> str:
-        payload = {
-            "scope": scope,
-            "file": str(universe_file),
-            "sha256": cls._file_sha256(universe_file),
-        }
-        digest = hashlib.sha256(
-            json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
-        ).hexdigest()[:24]
-        return f"{scope}:{digest}"
+        return discovery_universe_key(scope=scope, universe_file=universe_file)
 
     def _resolve_symbols(self, request: DiscoveryRunRequest, params: dict[str, Any]) -> list[str]:
         if request.symbols:

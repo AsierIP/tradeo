@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from tradeo.research.intraday_context_filters import normalize_context_filter_spec
 from tradeo.research.intraday_vwap_conditions import normalize_vwap_condition_spec
-from tradeo.services.data_provider import normalize_daily_cap_segment
+from tradeo.services.data_provider import is_daily_interval, normalize_daily_cap_segment
 
 
 class PatternFeatures(BaseModel):
@@ -261,6 +261,61 @@ class DiscoveryRunResponse(BaseModel):
     actual_resolved_params: dict[str, Any] = Field(default_factory=dict)
     top_patterns: list[dict[str, Any]] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+
+
+class DailyUniverseDiscoveryRunRequest(DiscoveryRunRequest):
+    daily_cap_segments: list[str] | None = None
+    parallel: bool = True
+    max_workers: int | None = Field(default=None, ge=1, le=3)
+    skip_running: bool = True
+    skip_recent_seconds: int | None = Field(default=None, ge=1)
+
+    @field_validator("interval")
+    @classmethod
+    def daily_interval_only(cls, value: str | None) -> str | None:
+        if value is not None and not is_daily_interval(value):
+            raise ValueError("daily universe discovery requires a daily interval")
+        return value
+
+    @field_validator("daily_cap_segments")
+    @classmethod
+    def known_daily_cap_segments(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return None
+        normalized = [
+            normalize_daily_cap_segment(segment) for segment in value if str(segment).strip()
+        ]
+        return list(dict.fromkeys(normalized))
+
+
+class DailyUniverseDiscoverySegmentResult(BaseModel):
+    daily_cap_segment: str
+    status: str
+    run_id: int | None = None
+    duration_seconds: float = 0.0
+    symbols_scanned: int = 0
+    windows_sampled: int = 0
+    clusters_evaluated: int = 0
+    accepted_patterns: int = 0
+    rejected_patterns: int = 0
+    stored_patterns: int = 0
+    report_path: str | None = None
+    error: str | None = None
+
+
+class DailyUniverseDiscoveryRunResponse(BaseModel):
+    status: str
+    parallel: bool
+    daily_cap_segments: list[str]
+    duration_seconds: float
+    run_ids: list[int] = Field(default_factory=list)
+    symbols_scanned: int = 0
+    windows_sampled: int = 0
+    clusters_evaluated: int = 0
+    accepted_patterns: int = 0
+    rejected_patterns: int = 0
+    stored_patterns: int = 0
+    segment_results: list[DailyUniverseDiscoverySegmentResult] = Field(default_factory=list)
 
 
 class DiscoveredPatternOut(BaseModel):

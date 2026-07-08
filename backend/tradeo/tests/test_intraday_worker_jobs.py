@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 from tradeo.core.config import Settings
 from tradeo.modules.resource_policy.market_session_resource_policy import SessionState
+from tradeo.schemas import DailyUniverseDiscoveryRunResponse
 from tradeo.tasks import worker
 
 
@@ -26,6 +27,41 @@ class FakeScheduler:
 
 def _job_ids(scheduler: FakeScheduler) -> list[str]:
     return [str(job["kwargs"]["id"]) for job in scheduler.jobs]
+
+
+def test_daily_discovery_job_delegates_to_segment_orchestrator(monkeypatch) -> None:
+    settings = Settings(
+        discovery_enabled=True,
+        discovery_interval="1d",
+        discovery_scan_minutes=7,
+        daily_universe_cap_segments="mega,large,mid",
+    )
+    calls: list[object] = []
+
+    class FakeOrchestrator:
+        def __init__(self, *, settings):  # noqa: ANN001
+            self.settings = settings
+
+        def run(self, request):  # noqa: ANN001, ANN201
+            calls.append(request)
+            return DailyUniverseDiscoveryRunResponse(
+                status="completed",
+                parallel=request.parallel,
+                daily_cap_segments=request.daily_cap_segments or [],
+                duration_seconds=0.0,
+            )
+
+    monkeypatch.setattr(worker, "get_settings", lambda: settings)
+    monkeypatch.setattr(worker, "_resource_policy_blocks_job", lambda *args, **kwargs: False)
+    monkeypatch.setattr(worker, "DailyDiscoveryOrchestrator", FakeOrchestrator)
+
+    worker.discovery_job()
+
+    assert len(calls) == 1
+    request = calls[0]
+    assert request.daily_cap_segments == ["mega", "large", "mid"]
+    assert request.parallel is False
+    assert request.skip_recent_seconds == 420
 
 
 def _policy_decision(

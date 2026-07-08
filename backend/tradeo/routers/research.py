@@ -25,7 +25,10 @@ from tradeo.research.novel_pattern_matcher import NovelPatternMatcher
 from tradeo.research.novel_pattern_registry import NovelPatternRegistry
 from tradeo.routers.resource_policy_guard import assert_route_job_allowed
 from tradeo.services.director_review_gate import DirectorReviewGate
+from tradeo.services.daily_discovery_orchestrator import DailyDiscoveryOrchestrator
 from tradeo.schemas import (
+    DailyUniverseDiscoveryRunRequest,
+    DailyUniverseDiscoveryRunResponse,
     DiscoveredPatternDetailOut,
     DiscoveredPatternExampleOut,
     DiscoveredPatternMetricOut,
@@ -91,6 +94,15 @@ def run_discovery(
 ) -> DiscoveryRunResponse:
     assert_route_job_allowed(JobType.RESEARCH_HEAVY, "research")
     return PatternDiscoveryLabAgent().run(request, db)
+
+
+@router.post("/run-daily-universe-discovery", response_model=DailyUniverseDiscoveryRunResponse)
+def run_daily_universe_discovery(
+    request: DailyUniverseDiscoveryRunRequest,
+    _: str = Depends(require_admin),
+) -> DailyUniverseDiscoveryRunResponse:
+    assert_route_job_allowed(JobType.RESEARCH_HEAVY, "research")
+    return DailyDiscoveryOrchestrator().run(request)
 
 
 @router.get("/discovered-patterns", response_model=list[DiscoveredPatternOut])
