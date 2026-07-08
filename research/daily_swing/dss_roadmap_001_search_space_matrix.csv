@@ -1,0 +1,7 @@
+search_space,research_value,data_dependency,leakage_risk,implementation_cost,auditability,infra_compatibility,future_paper_difficulty,decision
+earnings_post_earnings_drift,5,5,5,5,2,3,4,BLOCKED_UNTIL_TIMESTAMPED_EARNINGS_DATA_DECISION
+gap_continuation_gap_reversal,4,1,3,2,4,5,3,RECOMMENDED_NEXT_SEARCHSPACE
+sector_relative_strength,4,4,4,4,3,3,3,DEFER_UNTIL_POINT_IN_TIME_SECTOR_DATA
+market_breadth_pullback,4,4,4,4,3,3,3,DEFER_UNTIL_BREADTH_DATA_POLICY
+daily_to_intraday_hybrid_entry,4,3,4,5,2,2,5,DEFER_UNTIL_DAILY_ONLY_EDGE_EXISTS
+etf_macro_separate,3,2,3,3,4,2,3,NEEDS_EXPLICIT_ETF_MACRO_POLICY_DECISION
