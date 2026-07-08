@@ -1,0 +1,32 @@
+{
+  "allowed_experiments_after_director_authorizes_capacity_002": [
+    "RC-002-A"
+  ],
+  "decision": "RESEARCH_CAPACITY_BASELINE_READY",
+  "gates_relaxed": false,
+  "live_allowed": false,
+  "next_task": "T-RESEARCH-CAPACITY-002 - Execute prioritized cache-only capacity plan, no candidate approval",
+  "order_code_changed": false,
+  "orders_allowed": false,
+  "paper_allowed": false,
+  "ready": true,
+  "requires_director_approval": [
+    "RC-002-B",
+    "RC-002-C",
+    "RC-002-D",
+    "RC-002-E",
+    "RC-002-F"
+  ],
+  "safety_flags": {
+    "cache_only": true,
+    "dry_run": true,
+    "no_candidate_approval": true,
+    "no_downloads": true,
+    "no_ibkr": true,
+    "no_orders": true,
+    "no_preview": true,
+    "no_signals": true
+  },
+  "schema_version": "tradeo.research_capacity.capacity_001.v1",
+  "task_id": "T-RESEARCH-CAPACITY-001"
+}

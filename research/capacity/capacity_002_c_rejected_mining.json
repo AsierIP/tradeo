@@ -1,0 +1,218 @@
+{
+  "blocker_rows": [
+    {
+      "blocker": "drawdown",
+      "blocker_type": "costs_or_risk",
+      "count": 47,
+      "experiment_id": "RC-002-C"
+    },
+    {
+      "blocker": "placebo",
+      "blocker_type": "methodology",
+      "count": 45,
+      "experiment_id": "RC-002-C"
+    },
+    {
+      "blocker": "fdr",
+      "blocker_type": "methodology",
+      "count": 39,
+      "experiment_id": "RC-002-C"
+    },
+    {
+      "blocker": "wrc",
+      "blocker_type": "methodology",
+      "count": 39,
+      "experiment_id": "RC-002-C"
+    },
+    {
+      "blocker": "oos",
+      "blocker_type": "methodology",
+      "count": 37,
+      "experiment_id": "RC-002-C"
+    },
+    {
+      "blocker": "cost_x2",
+      "blocker_type": "costs_or_risk",
+      "count": 31,
+      "experiment_id": "RC-002-C"
+    },
+    {
+      "blocker": "edge",
+      "blocker_type": "costs_or_risk",
+      "count": 25,
+      "experiment_id": "RC-002-C"
+    },
+    {
+      "blocker": "market_replay",
+      "blocker_type": "methodology",
+      "count": 25,
+      "experiment_id": "RC-002-C"
+    },
+    {
+      "blocker": "deflated_sharpe_d\u00e9bil",
+      "blocker_type": "other",
+      "count": 24,
+      "experiment_id": "RC-002-C"
+    },
+    {
+      "blocker": "purged_combinatorial_cv_inestable",
+      "blocker_type": "other",
+      "count": 20,
+      "experiment_id": "RC-002-C"
+    },
+    {
+      "blocker": "regime",
+      "blocker_type": "data_or_regime",
+      "count": 16,
+      "experiment_id": "RC-002-C"
+    },
+    {
+      "blocker": "bootstrap",
+      "blocker_type": "methodology",
+      "count": 15,
+      "experiment_id": "RC-002-C"
+    },
+    {
+      "blocker": "cost_dominated",
+      "blocker_type": "other",
+      "count": 15,
+      "experiment_id": "RC-002-C"
+    },
+    {
+      "blocker": "concentration",
+      "blocker_type": "data_or_regime",
+      "count": 12,
+      "experiment_id": "RC-002-C"
+    },
+    {
+      "blocker": "statistical_datamined",
+      "blocker_type": "other",
+      "count": 11,
+      "experiment_id": "RC-002-C"
+    },
+    {
+      "blocker": "overfit",
+      "blocker_type": "methodology",
+      "count": 10,
+      "experiment_id": "RC-002-C"
+    },
+    {
+      "blocker": "concentration_risk",
+      "blocker_type": "other",
+      "count": 7,
+      "experiment_id": "RC-002-C"
+    },
+    {
+      "blocker": "spa",
+      "blocker_type": "methodology",
+      "count": 6,
+      "experiment_id": "RC-002-C"
+    },
+    {
+      "blocker": "sin_expectancy_positiva_en_ning\u00fan_r",
+      "blocker_type": "other",
+      "count": 3,
+      "experiment_id": "RC-002-C"
+    },
+    {
+      "blocker": "no_demuestra_edge_positivo_en_4r",
+      "blocker_type": "other",
+      "count": 3,
+      "experiment_id": "RC-002-C"
+    },
+    {
+      "blocker": "baja_probabilidad_de_fill_estimada",
+      "blocker_type": "other",
+      "count": 3,
+      "experiment_id": "RC-002-C"
+    },
+    {
+      "blocker": "challenge_score_bajo",
+      "blocker_type": "other",
+      "count": 2,
+      "experiment_id": "RC-002-C"
+    },
+    {
+      "blocker": "estabilidad_insuficiente",
+      "blocker_type": "other",
+      "count": 2,
+      "experiment_id": "RC-002-C"
+    }
+  ],
+  "candidate_count": 25,
+  "decision": "REJECTED_MINING_READY",
+  "evidence_path": "/home/vboxuser/tradeo/artifacts/runtime/research_evidence/_summary.json",
+  "experiment_id": "RC-002-C",
+  "forensic_count": 25,
+  "forensics_path": "/home/vboxuser/tradeo/artifacts/runtime/research_forensics/_forensics.json",
+  "promising_search_spaces": [
+    {
+      "blocker_count": 270,
+      "cost_risk_blockers": 63,
+      "methodology_blockers": 126,
+      "priority_score": 81,
+      "timeframe": "30m",
+      "window": "W100"
+    }
+  ],
+  "safety_flags": {
+    "cache_only": true,
+    "dry_run": true,
+    "no_candidate_approval": true,
+    "no_downloads": true,
+    "no_ibkr": true,
+    "no_orders": true,
+    "no_preview": true,
+    "no_signals": true
+  },
+  "top_co_occurrences": [
+    {
+      "count": 22,
+      "pair": "deflated_sharpe_d\u00e9bil+edge"
+    },
+    {
+      "count": 21,
+      "pair": "deflated_sharpe_d\u00e9bil+drawdown"
+    },
+    {
+      "count": 20,
+      "pair": "deflated_sharpe_d\u00e9bil+purged_combinatorial_cv_inestable"
+    },
+    {
+      "count": 19,
+      "pair": "drawdown+edge"
+    },
+    {
+      "count": 18,
+      "pair": "drawdown+purged_combinatorial_cv_inestable"
+    },
+    {
+      "count": 18,
+      "pair": "edge+purged_combinatorial_cv_inestable"
+    },
+    {
+      "count": 17,
+      "pair": "deflated_sharpe_d\u00e9bil+placebo"
+    },
+    {
+      "count": 17,
+      "pair": "edge+placebo"
+    },
+    {
+      "count": 17,
+      "pair": "deflated_sharpe_d\u00e9bil+fdr"
+    },
+    {
+      "count": 17,
+      "pair": "deflated_sharpe_d\u00e9bil+wrc"
+    },
+    {
+      "count": 17,
+      "pair": "fdr+wrc"
+    },
+    {
+      "count": 16,
+      "pair": "deflated_sharpe_d\u00e9bil+oos"
+    }
+  ]
+}

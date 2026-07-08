@@ -1,0 +1,77 @@
+{
+  "decision": "RESEARCH_CAPACITY_PLAN_EXECUTED_READY_FOR_BATCH",
+  "partial_decisions": {
+    "RC-002-A": "INTRADAY_CACHE_READY_FOR_PLANNED_WAVE",
+    "RC-002-B": "MATRIX_PLAN_READY_FOR_SMALL_BATCH",
+    "RC-002-C": "REJECTED_MINING_READY"
+  },
+  "ready_for_batch": true,
+  "recommended_next_batch": [
+    {
+      "classification": "READY",
+      "estimated_windows": 84149,
+      "forward_set": "fast",
+      "regime": "no_filter",
+      "requires_separate_authorization": true,
+      "timeframe": "30m",
+      "window": "W20"
+    },
+    {
+      "classification": "READY",
+      "estimated_windows": 83096,
+      "forward_set": "standard",
+      "regime": "no_filter",
+      "requires_separate_authorization": true,
+      "timeframe": "30m",
+      "window": "W20"
+    },
+    {
+      "classification": "READY",
+      "estimated_windows": 82160,
+      "forward_set": "slow",
+      "regime": "no_filter",
+      "requires_separate_authorization": true,
+      "timeframe": "30m",
+      "window": "W20"
+    },
+    {
+      "classification": "READY",
+      "estimated_windows": 80639,
+      "forward_set": "fast",
+      "regime": "no_filter",
+      "requires_separate_authorization": true,
+      "timeframe": "30m",
+      "window": "W50"
+    },
+    {
+      "classification": "READY",
+      "estimated_windows": 79586,
+      "forward_set": "standard",
+      "regime": "no_filter",
+      "requires_separate_authorization": true,
+      "timeframe": "30m",
+      "window": "W50"
+    },
+    {
+      "classification": "READY",
+      "estimated_windows": 78650,
+      "forward_set": "slow",
+      "regime": "no_filter",
+      "requires_separate_authorization": true,
+      "timeframe": "30m",
+      "window": "W50"
+    }
+  ],
+  "safety_flags": {
+    "cache_only": true,
+    "dry_run": true,
+    "no_candidate_approval": true,
+    "no_downloads": true,
+    "no_ibkr": true,
+    "no_orders": true,
+    "no_preview": true,
+    "no_signals": true
+  },
+  "schema_version": "tradeo.research_capacity.capacity_002.v1",
+  "task_id": "T-RESEARCH-CAPACITY-002"
+}

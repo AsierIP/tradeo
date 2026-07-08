@@ -1,0 +1,29 @@
+path,surface,family,research_only,dry_run_capable,cache_only_capable,ibkr_required,can_generate_candidates,can_generate_signals,can_generate_preview_or_orders,notes,blocked_for_capacity_001,capacity_001_blockers
+scripts/run_daily_gap_matrix_dry_run.py,GAP dry-run matrix,gap,True,True,True,False,False,False,False,Safe parser/matrix baseline for capacity microbench.,False,
+scripts/run_daily_gap_confirmatory_matrix.py,GAP confirmatory matrix,gap,True,True,True,False,True,False,False,Research matrix only; candidate approval remains outside CAPACITY-001.,False,
+backend/tradeo/modules/daily_swing/gap_backtest_matrix.py,GAP backtest matrix module,gap,True,True,True,False,True,False,False,Backtest matrix implementation; must keep no-lookahead/cost gates.,False,
+scripts/validate_daily_gap_backtest_matrix.py,GAP matrix validation,gap,True,True,True,False,False,False,False,Validation-only surface.,False,
+scripts/backtest_daily_swing_dss_pb_001.py,Daily PB research runner,daily,True,False,True,False,True,False,False,Historical rejected family; not a rescue lane for CAPACITY-001.,False,
+scripts/backtest_daily_swing_dss_bo_001.py,Daily BO research runner,daily,True,False,True,False,True,False,False,Historical rejected family; not a rescue lane for CAPACITY-001.,False,
+scripts/backtest_daily_swing_dss_co_001.py,Daily CO research runner,daily,True,False,True,False,True,False,False,Historical rejected family; not a rescue lane for CAPACITY-001.,False,
+scripts/backtest_daily_swing_dss_cw_001.py,Daily CW research runner,daily,True,False,True,False,True,False,False,Historical rejected family; not a rescue lane for CAPACITY-001.,False,
+scripts/run_intraday_research_wave.py,Intraday wave runner,intraday,True,False,True,False,True,False,False,Heavy research runner; blocked from productive execution in CAPACITY-001.,False,
+scripts/plan_intraday_research_next.py,Intraday planner,intraday,True,True,True,False,False,False,False,Planning-only surface for experiment queue design.,False,
+scripts/check_intraday_research_readiness.py,Intraday readiness,intraday,True,True,True,False,False,False,False,Readiness check; safe for baseline diagnostics.,False,
+scripts/diagnose_intraday_pattern_funnel.py,Intraday funnel diagnostics,intraday,True,True,True,False,False,False,False,Rejected/blocker diagnostics.,False,
+scripts/analyze_intraday_research_forensics.py,Intraday forensics,intraday,True,True,True,False,False,False,False,Rejected/near-miss mining input.,False,
+backend/tradeo/modules/intraday/research_validation_stack.py,Intraday validation stack,intraday,True,True,True,False,False,False,False,"FDR/WRC/SPA-light, OOS, cost and blocker validation surface.",False,
+scripts/run_vwap_shadow_once.py,VWAP shadow once,laboratory,False,False,False,False,False,True,False,Explicitly excluded from CAPACITY-001.,True,"can_generate_signals,not_research_only,not_cache_only_capable"
+scripts/run_lab_shadow_scheduled_once.sh,Scheduled lab shadow,laboratory,False,False,False,False,False,True,False,Explicitly excluded from CAPACITY-001.,True,"can_generate_signals,not_research_only,not_cache_only_capable"
+scripts/fetch_ibkr_intraday_candidates.py,IBKR candidate fetch,data,False,False,False,True,True,False,False,IBKR path; blocked for CAPACITY-001.,True,"ibkr_required,not_research_only,not_cache_only_capable"
+scripts/notify_tradeo_orders.sh,Order notification,execution,False,False,False,False,False,False,True,Execution-adjacent; blocked for CAPACITY-001.,True,"can_generate_preview_or_orders,not_research_only,not_cache_only_capable"
+backend/tradeo/routers/research.py,Research API/core,research_api,True,False,False,False,True,False,False,Broker-safe but may write DB/artifacts; not used by CAPACITY-001 microbench.,True,not_cache_only_capable
+backend/tradeo/tasks/worker.py,Intraday background research worker,intraday,True,False,False,False,True,False,False,Background DB write path; excluded from CAPACITY-001.,True,not_cache_only_capable
+backend/tradeo/research/quant_validation.py,Quant validation FDR/WRC/SPA gates,validation,True,True,True,False,False,False,False,Validation gates used by research scoring.,False,
+backend/tradeo/research/novel_pattern_registry.py,Rejected/near-miss persistence,forensics,True,False,True,False,True,False,False,DB persistence surface; CAPACITY-001 reads artifacts only.,False,
+scripts/warm_intraday_cache_resilient.py,Intraday cache warming,data,False,False,False,True,False,False,False,Read-only market data path but requires IBKR/downloads; blocked for CAPACITY-001.,True,"ibkr_required,not_research_only,not_cache_only_capable"
+scripts/cache_daily_ohlcv.py,Daily cache fill,data,False,False,False,True,False,False,False,Read-only market data path but requires IBKR/downloads; blocked for CAPACITY-001.,True,"ibkr_required,not_research_only,not_cache_only_capable"
+backend/tradeo/routers/backtests.py,Backtest API,backtest_api,True,False,False,False,True,False,False,Provider may refresh data; excluded from CAPACITY-001 microbench.,True,not_cache_only_capable
+backend/tradeo/routers/laboratory.py,Laboratory scanner API,laboratory,False,False,False,False,False,True,True,Execution perimeter; blocked for CAPACITY-001.,True,"can_generate_signals,can_generate_preview_or_orders,not_research_only,not_cache_only_capable"
+backend/tradeo/routers/signals.py,Signals API,execution,False,False,False,True,False,True,True,Execution perimeter; blocked for CAPACITY-001.,True,"ibkr_required,can_generate_signals,can_generate_preview_or_orders,not_research_only,not_cache_only_capable"
+backend/tradeo/routers/ibkr.py,IBKR API,execution,False,False,False,True,False,True,True,Broker/API perimeter; blocked for CAPACITY-001.,True,"ibkr_required,can_generate_signals,can_generate_preview_or_orders,not_research_only,not_cache_only_capable"
