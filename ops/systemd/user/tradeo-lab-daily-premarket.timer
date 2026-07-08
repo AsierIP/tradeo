@@ -1,0 +1,10 @@
+[Unit]
+Description=Tradeo Lab daily premarket timer
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* 09:00:00 America/New_York
+Persistent=false
+Unit=tradeo-lab-daily-premarket.service
+
+[Install]
+WantedBy=timers.target

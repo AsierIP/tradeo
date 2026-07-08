@@ -1,0 +1,18 @@
+{
+  "backup_path": null,
+  "blockers": [],
+  "cause": "PAPER_ACCOUNT_MATCH",
+  "changed_keys": [],
+  "configured_account": {
+    "du_paper": true,
+    "hash": "sha256:f063c8992334f0f3",
+    "suffix": "631"
+  },
+  "managed_account": {
+    "du_paper": true,
+    "hash": "sha256:f063c8992334f0f3",
+    "suffix": "631"
+  },
+  "redacted": true,
+  "status": "PASS"
+}

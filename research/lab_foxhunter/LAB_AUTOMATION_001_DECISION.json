@@ -1,0 +1,12 @@
+{
+  "schema": "tradeo.lab_automation.decision.v1",
+  "task_id": "T-LAB-AUTOMATION-001",
+  "decision": "LAB_AUTOMATION_READY",
+  "live_orders_allowed": false,
+  "real_money_orders_allowed": false,
+  "foxhunter_auto_promotion": false,
+  "gh": false,
+  "push_main": false,
+  "requires_director_before_timer_enable": true,
+  "redacted": true
+}

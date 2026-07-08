@@ -1,0 +1,10 @@
+[Unit]
+Description=Tradeo Lab Automation 001 premarket check
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* 09:00:00 America/New_York
+Persistent=false
+Unit=tradeo-lab-automation-001@premarket.service
+
+[Install]
+WantedBy=timers.target

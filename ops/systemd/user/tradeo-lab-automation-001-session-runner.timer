@@ -1,0 +1,10 @@
+[Unit]
+Description=Tradeo Lab Automation 001 session runner
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* 09:35:00 America/New_York
+Persistent=false
+Unit=tradeo-lab-automation-001@session-runner.service
+
+[Install]
+WantedBy=timers.target

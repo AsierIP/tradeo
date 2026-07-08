@@ -1,0 +1,9 @@
+[Unit]
+Description=Tradeo Lab daily nightly_report
+
+[Service]
+Type=oneshot
+WorkingDirectory=/tmp/tradeo-lab-foxhunter-001
+Environment=TRADEO_LAB_AUTOMATION_ONLY=1
+Environment=TRADEO_NO_LIVE=1
+ExecStart=/tmp/tradeo-lab-foxhunter-001/.venv/bin/python /tmp/tradeo-lab-foxhunter-001/scripts/build_lab_nightly_report.py --phase post-close

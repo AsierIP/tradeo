@@ -1,0 +1,10 @@
+[Unit]
+Description=Tradeo Lab Automation 001 mid-session collector
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* 09:45:00 America/New_York
+Persistent=false
+Unit=tradeo-lab-automation-001@mid-collector.service
+
+[Install]
+WantedBy=timers.target

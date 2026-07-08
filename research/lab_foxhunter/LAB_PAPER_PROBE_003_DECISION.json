@@ -1,0 +1,31 @@
+{
+  "base_env_path": "/home/vboxuser/tradeo/.env",
+  "blockers": [
+    "paper_account:BLOCKED",
+    "paper_account:configured_account_not_managed",
+    "canary:SKIPPED",
+    "canary:paper_account_gate_not_pass"
+  ],
+  "canary": "CANARY_BLOCKED_PAPER_ACCOUNT",
+  "decision": "LAB_PAPER_PROBE_BLOCKED_PAPER_ACCOUNT",
+  "env_overlay_gate": "PASS",
+  "foxhunter_promotion": false,
+  "generated_at": "2026-07-06T08:22:44.423272+00:00",
+  "live_candidate_created": false,
+  "live_orders_executed": 0,
+  "mode": "LAB_PAPER_PROBE_ONLY",
+  "no_trade_reason": "LAB_PAPER_PROBE_BLOCKED_PAPER_ACCOUNT",
+  "overlay_path": "/tmp/tradeo_lab_paper_write_overlay_20260706.env",
+  "overlay_removed_after_run": true,
+  "overlay_tracked": false,
+  "paper_account_gate": "BLOCKED",
+  "paper_candidate_classic_created": false,
+  "paper_orders_executed": 0,
+  "path_used": "/tmp/tradeo-lab-foxhunter-001",
+  "previews_generated": false,
+  "redacted": true,
+  "runner": "LAB_PAPER_PROBE_NO_TRADE_NO_TRIGGER",
+  "schema": "tradeo.lab_paper_probe_003.decision.v1",
+  "signals_generated": false,
+  "task_id": "T-LAB-PAPER-PROBE-003"
+}

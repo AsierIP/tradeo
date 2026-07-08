@@ -1,0 +1,18 @@
+{
+  "blockers": [],
+  "connected": true,
+  "error": null,
+  "live_port": false,
+  "managed_accounts": [
+    {
+      "du_paper": true,
+      "hash": "sha256:f063c8992334f0f3",
+      "suffix": "631"
+    }
+  ],
+  "managed_accounts_count": 1,
+  "port_class": "paper_proxy",
+  "redacted": true,
+  "status": "PASS",
+  "trading_mode": "paper"
+}

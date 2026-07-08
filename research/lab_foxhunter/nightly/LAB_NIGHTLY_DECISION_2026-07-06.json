@@ -1,0 +1,51 @@
+{
+  "daily_state": "POST_CLOSE_ANALYZED",
+  "decision": "LAB_AUTOMATION_READY",
+  "dry_run": true,
+  "foxhunter_promotion": false,
+  "generated_at": "2026-07-06T12:59:30.749134+00:00",
+  "live_candidate_created": false,
+  "live_orders": 0,
+  "mode": "LAB_AUTOMATION_ONLY",
+  "no_trade_reasons": [],
+  "orders_attempted": 0,
+  "orders_cancelled": 0,
+  "orders_filled": 0,
+  "orders_rejected": 0,
+  "orders_submitted": 0,
+  "paper_candidate_classic_created": false,
+  "probes": {
+    "LAB-GAP-REV-001": {
+      "blocked_until_director_review": false,
+      "eligible_for_lab_to_foxhunter_review": false,
+      "latency_ms_avg": null,
+      "net_expectancy_after_costs": null,
+      "operational_errors": 0,
+      "paper_profit_factor": null,
+      "reconciliation_errors": 0,
+      "slippage_avg": null,
+      "slippage_max": null,
+      "successes": 0,
+      "total_trades_toward_20": 0,
+      "trades_today": 0
+    },
+    "LAB-GAP-REV-002": {
+      "blocked_until_director_review": false,
+      "eligible_for_lab_to_foxhunter_review": false,
+      "latency_ms_avg": null,
+      "net_expectancy_after_costs": null,
+      "operational_errors": 0,
+      "paper_profit_factor": null,
+      "reconciliation_errors": 0,
+      "slippage_avg": null,
+      "slippage_max": null,
+      "successes": 0,
+      "total_trades_toward_20": 0,
+      "trades_today": 0
+    }
+  },
+  "redacted": true,
+  "schema": "tradeo.lab_automation_001.nightly_decision.v1",
+  "task_id": "T-LAB-AUTOMATION-001",
+  "trading_day": "2026-07-06"
+}

@@ -1,0 +1,88 @@
+{
+  "blockers": [],
+  "config_account_audit": {
+    "account_keys_present": [
+      "TRADEO_IBKR_ACCOUNT",
+      "TRADEO_IBKR_BLOCKED_ACCOUNTS"
+    ],
+    "adapter_uses": [
+      "TRADEO_IBKR_ACCOUNT"
+    ],
+    "aliases_found": [
+      "TRADEO_IBKR_ACCOUNT",
+      "TRADEO_IBKR_ACCOUNT_ID",
+      "ibkr_account"
+    ],
+    "blockers": [],
+    "configured_accounts": {
+      "TRADEO_IBKR_ACCOUNT": {
+        "du_paper": true,
+        "hash": "sha256:f063c8992334f0f3",
+        "suffix": "631"
+      }
+    },
+    "env_path": "/home/vboxuser/tradeo/.env",
+    "redacted": true,
+    "settings_account_field": "ibkr_account",
+    "status": "PASS"
+  },
+  "decision": "SAFETY_ACCOUNT_GATE_PASS",
+  "env_overlay_gate": {
+    "base_checks": {
+      "fox_live_auto_submit_false": true,
+      "ibkr_port_not_live": true,
+      "ibkr_readonly_true": true,
+      "intraday_live_disabled": true,
+      "lab_auto_submit_general_false": true,
+      "live_trading_disabled": true,
+      "market_orders_disabled": true,
+      "trading_mode_paper": true
+    },
+    "blockers": [],
+    "overlay_file_created": true,
+    "overlay_keys": [
+      "TRADEO_IBKR_READONLY",
+      "TRADEO_LABORATORY_AUTO_SUBMIT_PAPER_ORDERS",
+      "TRADEO_LAB_PAPER_PROBE_WRITE_ENABLED",
+      "TRADEO_LIVE_ARMED"
+    ],
+    "overlay_mode": "0o600",
+    "redacted": true,
+    "status": "PASS"
+  },
+  "live_risk": {
+    "blockers": [],
+    "checks": {
+      "general_auto_submit_false": true,
+      "ibkr_port_not_live": true,
+      "intraday_live_disabled": true,
+      "live_armed_false": true,
+      "live_trading_disabled": true,
+      "market_orders_disabled": true,
+      "paper_probe_write_enabled": true,
+      "trading_mode_paper": true
+    },
+    "redacted": true,
+    "status": "PASS"
+  },
+  "paper_account_gate": {
+    "blockers": [],
+    "connected": true,
+    "error": null,
+    "live_port": false,
+    "managed_accounts_count": 1,
+    "port_class": "paper_proxy",
+    "redacted": true,
+    "selected_account": {
+      "du_paper": true,
+      "hash": "sha256:f063c8992334f0f3",
+      "suffix": "631"
+    },
+    "selected_account_du_paper": true,
+    "selected_account_present": true,
+    "status": "PASS",
+    "trading_mode": "paper"
+  },
+  "redacted": true,
+  "status": "PASS"
+}

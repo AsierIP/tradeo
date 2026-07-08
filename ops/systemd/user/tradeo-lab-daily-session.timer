@@ -1,0 +1,10 @@
+[Unit]
+Description=Tradeo Lab daily session timer
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* 09:35:00 America/New_York
+Persistent=false
+Unit=tradeo-lab-daily-session.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,10 @@
+[Unit]
+Description=Tradeo Lab Automation 001 nightly Director report
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* 16:20:00 America/New_York
+Persistent=false
+Unit=tradeo-lab-automation-001@nightly-report.service
+
+[Install]
+WantedBy=timers.target

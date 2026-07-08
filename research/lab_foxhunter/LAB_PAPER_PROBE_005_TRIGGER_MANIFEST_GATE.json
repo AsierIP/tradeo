@@ -1,0 +1,16 @@
+{
+  "blockers": [],
+  "decision": "TRIGGER_MANIFEST_GATE_PASS",
+  "lab_paper_probe_only": true,
+  "no_candidate_promotion": true,
+  "probe_ids": [
+    "LAB-GAP-REV-001",
+    "LAB-GAP-REV-002"
+  ],
+  "redacted": true,
+  "status": "PASS",
+  "strategy_source_ids": [
+    "GAP003_REVERSAL-SAME-DAY_ABS_3_0_BOTH_ALL",
+    "GAP003_REVERSAL-SAME-DAY_DESIGN_SPY_LTE_0"
+  ]
+}

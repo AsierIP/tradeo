@@ -1,0 +1,12 @@
+{
+  "schema": "tradeo.lab_automation.safety_monitor.v1",
+  "decision": "LAB_AUTOMATION_SAFETY_CONTROLS_DEFINED",
+  "live_orders_allowed": false,
+  "real_money_orders_allowed": false,
+  "foxhunter_auto_promotion": false,
+  "live_candidate": false,
+  "paper_candidate_classic": false,
+  "duplicate_launch_lock": "artifacts/runtime/lab_paper_probe/YYYY-MM-DD/session_runner_YYYY-MM-DD.lockdir",
+  "circuit_breaker_phase": "NEEDS_DIRECTOR_REVIEW",
+  "redacted": true
+}

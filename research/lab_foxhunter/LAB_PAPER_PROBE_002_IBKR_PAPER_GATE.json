@@ -1,0 +1,26 @@
+{
+  "schema": "tradeo.lab_paper_probe_002.ibkr_paper_gate.v1",
+  "generated_at": "2026-07-06T07:50:22Z",
+  "status": "BLOCKED_READONLY_WRITE_REQUIRED",
+  "trading_mode": "paper",
+  "ibkr_port_class": "paper_non_live",
+  "paper_account_verified": "mode_port_only_no_sensitive_account_logging",
+  "live_armed": false,
+  "live_trading_enabled": false,
+  "intraday_live_enabled": false,
+  "ibkr_readonly": true,
+  "general_lab_auto_submit": false,
+  "paper_orders_sent": 0,
+  "live_orders_sent": 0,
+  "account_ids_logged": false,
+  "secrets_logged": false,
+  "env_backup_created": "/home/vboxuser/tradeo/.env.lab_paper_probe_backup_20260706_0749",
+  "hardened_env_changes": {
+    "TRADEO_IBKR_READONLY": "true",
+    "TRADEO_LABORATORY_AUTO_SUBMIT_PAPER_ORDERS": "false"
+  },
+  "blockers": [
+    "readonly_write_required_for_paper_submit"
+  ],
+  "redacted": true
+}

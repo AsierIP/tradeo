@@ -1,0 +1,12 @@
+{
+  "blockers": [],
+  "decision": "RECONCILIATION_NO_ORDERS",
+  "extra_orders_detected": false,
+  "fills": [],
+  "latency_ms": null,
+  "live_orders_seen": 0,
+  "paper_orders_seen": 0,
+  "redacted": true,
+  "slippage_bps": null,
+  "status": "PASS"
+}

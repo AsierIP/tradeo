@@ -1,0 +1,17 @@
+{
+  "schema": "tradeo.lab_automation.scheduler.v1",
+  "decision": "LAB_DAILY_SYSTEMD_UNITS_DEFINED",
+  "scheduler": "systemd_user_timers",
+  "cron": false,
+  "times_new_york": {
+    "premarket": "09:00",
+    "session_runner": "09:35",
+    "mid_session_collector": "09:45",
+    "end_session_collector": "16:05",
+    "post_close_director_report": "16:20"
+  },
+  "live_allowed": false,
+  "foxhunter_auto_promotion": false,
+  "gh": false,
+  "push_main": false
+}

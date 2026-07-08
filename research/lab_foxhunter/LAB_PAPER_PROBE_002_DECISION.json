@@ -1,0 +1,36 @@
+{
+  "schema": "tradeo.lab_paper_probe_002.decision.v1",
+  "generated_at": "2026-07-06T07:50:22Z",
+  "task_id": "T-LAB-PAPER-PROBE-002",
+  "decision": "LAB_PAPER_PROBE_BLOCKED_READONLY_WRITE_REQUIRED",
+  "mode": "LAB_PAPER_PROBE_ONLY",
+  "path_used": "/tmp/tradeo-lab-foxhunter-001",
+  "branch": "feature/lab-foxhunter-gate-001",
+  "head": "f0d2cc284548647ea1d2dcd807f842e9cf14a436",
+  "pushed": true,
+  "paper_orders_sent": 0,
+  "live_orders_sent": 0,
+  "foxhunter_promotion": false,
+  "live_candidate_created": false,
+  "paper_candidate_classic_created": false,
+  "gh_used": false,
+  "main_touched": false,
+  "premarket_safety_gate": "READY_FOR_DIRECTOR_PAPER_REVIEW",
+  "manifest_gate": "PASS",
+  "ibkr_paper_gate": "BLOCKED_READONLY_WRITE_REQUIRED",
+  "runner_dry_run": "LAB_PAPER_PROBE_BLOCKED_READONLY_WRITE_REQUIRED",
+  "no_trade_reason": "BLOCKED_READONLY_WRITE_REQUIRED",
+  "blockers": [
+    "readonly_write_required_for_paper_submit"
+  ],
+  "runtime_artifact": "artifacts/runtime/lab_paper_probe/lab_paper_probe_2026-07-06.json",
+  "validations": {
+    "py_compile": "PASS",
+    "pytest_focal": "PASS_29",
+    "ruff_touched_files": "PASS",
+    "git_diff_check": "PASS",
+    "json_validation": "PASS",
+    "tracked_path_security_scan": "PASS"
+  },
+  "redacted": true
+}

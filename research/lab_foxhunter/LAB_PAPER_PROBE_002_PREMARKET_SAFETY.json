@@ -1,0 +1,129 @@
+{
+  "blockers": [],
+  "bracket_order_preview": {
+    "dry_run_only": true,
+    "entry": 100.0,
+    "order_type": "limit_bracket_preview",
+    "quantity": 1,
+    "side": "long",
+    "stop": 98.5,
+    "submit_allowed": false,
+    "symbol": "AAPL",
+    "target": 106.0,
+    "what_if_enabled": false
+  },
+  "checks": [
+    {
+      "name": "trading_mode_not_live",
+      "observed": "paper",
+      "passed": true,
+      "severity": "blocker"
+    },
+    {
+      "name": "live_trading_disabled",
+      "observed": false,
+      "passed": true,
+      "severity": "blocker"
+    },
+    {
+      "name": "live_not_armed",
+      "observed": false,
+      "passed": true,
+      "severity": "blocker"
+    },
+    {
+      "name": "intraday_live_disabled",
+      "observed": false,
+      "passed": true,
+      "severity": "blocker"
+    },
+    {
+      "name": "intraday_paper_disabled_for_tlab002",
+      "observed": false,
+      "passed": true,
+      "severity": "blocker"
+    },
+    {
+      "name": "ibkr_readonly",
+      "observed": true,
+      "passed": true,
+      "severity": "blocker"
+    },
+    {
+      "name": "ibkr_not_live_port",
+      "observed": 14002,
+      "passed": true,
+      "severity": "blocker"
+    },
+    {
+      "name": "market_orders_disabled",
+      "observed": false,
+      "passed": true,
+      "severity": "blocker"
+    },
+    {
+      "name": "lab_auto_submit_paper_disabled",
+      "observed": false,
+      "passed": true,
+      "severity": "blocker"
+    },
+    {
+      "name": "fox_auto_submit_live_disabled",
+      "observed": false,
+      "passed": true,
+      "severity": "blocker"
+    },
+    {
+      "name": "reconciliation_auto_repair_paper_exits_disabled",
+      "observed": false,
+      "passed": true,
+      "severity": "blocker"
+    },
+    {
+      "name": "kill_switch_clear",
+      "observed": false,
+      "passed": true,
+      "severity": "gap"
+    },
+    {
+      "name": "max_trades_per_day_defined",
+      "observed": 8,
+      "passed": true,
+      "severity": "gap"
+    },
+    {
+      "name": "max_daily_loss_defined",
+      "observed": 0.005,
+      "passed": true,
+      "severity": "gap"
+    },
+    {
+      "name": "max_position_value_defined",
+      "observed": 0.45,
+      "passed": true,
+      "severity": "gap"
+    },
+    {
+      "name": "ibkr_max_order_value_defined",
+      "observed": 1500,
+      "passed": true,
+      "severity": "gap"
+    }
+  ],
+  "dry_run_only": true,
+  "gaps": [],
+  "generated_at": "2026-07-06T07:50:22.381157+00:00",
+  "ibkr_used": false,
+  "live_allowed": false,
+  "live_orders_sent": false,
+  "orders_allowed": false,
+  "paper_allowed_actual": false,
+  "paper_orders_sent": false,
+  "paper_readiness_decision": "READY_FOR_DIRECTOR_PAPER_REVIEW",
+  "redacted": true,
+  "schema_version": "tradeo.lab_paper_readiness.v1",
+  "status": "READY_FOR_DIRECTOR_PAPER_REVIEW",
+  "submit_allowed": false,
+  "submit_order_called": false,
+  "wave_executed": false
+}

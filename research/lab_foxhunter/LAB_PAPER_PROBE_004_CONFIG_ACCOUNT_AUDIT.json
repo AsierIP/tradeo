@@ -1,0 +1,26 @@
+{
+  "account_keys_present": [
+    "TRADEO_IBKR_ACCOUNT",
+    "TRADEO_IBKR_BLOCKED_ACCOUNTS"
+  ],
+  "adapter_uses": [
+    "TRADEO_IBKR_ACCOUNT"
+  ],
+  "aliases_found": [
+    "TRADEO_IBKR_ACCOUNT",
+    "TRADEO_IBKR_ACCOUNT_ID",
+    "ibkr_account"
+  ],
+  "blockers": [],
+  "configured_accounts": {
+    "TRADEO_IBKR_ACCOUNT": {
+      "du_paper": true,
+      "hash": "sha256:f063c8992334f0f3",
+      "suffix": "631"
+    }
+  },
+  "env_path": "/home/vboxuser/tradeo/.env",
+  "redacted": true,
+  "settings_account_field": "ibkr_account",
+  "status": "PASS"
+}

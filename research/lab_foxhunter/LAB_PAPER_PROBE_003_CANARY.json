@@ -1,0 +1,9 @@
+{
+  "blockers": [
+    "paper_account_gate_not_pass"
+  ],
+  "decision": "CANARY_BLOCKED_PAPER_ACCOUNT",
+  "orders": [],
+  "redacted": true,
+  "status": "SKIPPED"
+}

@@ -1,0 +1,29 @@
+{
+  "base_env_path": "/home/vboxuser/tradeo/.env",
+  "blockers": [
+    "outside_regular_us_session",
+    "outside_regular_us_session"
+  ],
+  "decision": "LAB_PAPER_PROBE_BLOCKED_SPREAD_OR_MARKET_DATA",
+  "foxhunter_promotion": false,
+  "generated_at": "2026-07-06T09:01:44.712811+00:00",
+  "live_candidate_created": false,
+  "live_orders_executed": 0,
+  "mode": "LAB_PAPER_PROBE_ONLY",
+  "no_trade_reason": "NO_TRADE_SPREAD_OR_MARKET_DATA",
+  "overlay_path": "/tmp/tradeo_lab_paper_write_overlay_20260706_probe005.env",
+  "overlay_removed_after_run": true,
+  "paper_candidate_classic_created": false,
+  "paper_orders_executed": 0,
+  "path_used": "/tmp/tradeo-lab-foxhunter-001",
+  "previews_generated": false,
+  "probe_ids": [
+    "LAB-GAP-REV-001",
+    "LAB-GAP-REV-002"
+  ],
+  "redacted": true,
+  "schema": "tradeo.lab_paper_probe_005.decision.v1",
+  "signals_generated": false,
+  "strategy_paper_orders_executed": 0,
+  "task_id": "T-LAB-PAPER-PROBE-005"
+}

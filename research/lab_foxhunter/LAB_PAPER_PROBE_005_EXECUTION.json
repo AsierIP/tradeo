@@ -1,0 +1,10 @@
+{
+  "blockers": [
+    "outside_regular_us_session"
+  ],
+  "decision": "LAB_PAPER_PROBE_BLOCKED_SPREAD_OR_MARKET_DATA",
+  "no_trade_reason": "NO_TRADE_SPREAD_OR_MARKET_DATA",
+  "paper_orders_executed": 0,
+  "redacted": true,
+  "status": "BLOCKED"
+}

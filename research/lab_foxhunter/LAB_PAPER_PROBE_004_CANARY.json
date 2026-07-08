@@ -1,0 +1,26 @@
+{
+  "blockers": [],
+  "decision": "CANARY_PASS",
+  "orders": [
+    {
+      "account": {
+        "du_paper": true,
+        "hash": "sha256:f063c8992334f0f3",
+        "suffix": "631"
+      },
+      "action": "BUY",
+      "created_status": "PreSubmitted",
+      "event": "canary_order_created_cancel_requested",
+      "filled": 0.0,
+      "final_status": "Cancelled",
+      "limit_price": 1.0,
+      "live": false,
+      "order_type": "LMT",
+      "paper_only": true,
+      "quantity": 1,
+      "symbol": "AAPL"
+    }
+  ],
+  "redacted": true,
+  "status": "PASS"
+}

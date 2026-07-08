@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "tradeo.lab_paper_probe_manifest.v1",
+  "type": "object",
+  "required": [
+    "schema",
+    "taxonomy",
+    "probe_id",
+    "strategy_source_id",
+    "status",
+    "rationale",
+    "max_initial_paper_trades",
+    "success_threshold",
+    "disabled_by_default",
+    "execution_enabled",
+    "generate_signals",
+    "generate_previews",
+    "live_allowed",
+    "allowed_outputs",
+    "telemetry_required",
+    "milestone_metrics_required"
+  ],
+  "properties": {
+    "schema": {"const": "tradeo.lab_paper_probe_manifest.v1"},
+    "taxonomy": {"const": "lab_paper_probe"},
+    "probe_id": {"type": "string", "minLength": 1},
+    "strategy_source_id": {"type": "string", "minLength": 1},
+    "status": {"enum": ["proposed_lab_paper_probe", "disabled_lab_paper_probe", "enabled_lab_paper_probe"]},
+    "rationale": {"type": "string", "minLength": 1},
+    "max_initial_paper_trades": {"type": "integer", "minimum": 1, "maximum": 20},
+    "success_threshold": {"type": "integer", "minimum": 12, "maximum": 20},
+    "extra_requirements": {"type": "array", "items": {"type": "string"}},
+    "disabled_by_default": {"type": "boolean"},
+    "execution_enabled": {"type": "boolean"},
+    "generate_signals": {"const": false},
+    "generate_previews": {"const": false},
+    "live_allowed": {"const": false},
+    "foxhunter_candidate": {"const": false},
+    "live_candidate": {"const": false},
+    "paper_candidate": {"const": false},
+    "max_today_orders": {"type": "integer", "minimum": 0, "maximum": 1},
+    "max_order_notional_usd": {"type": "number", "minimum": 0, "maximum": 100},
+    "allowed_outputs": {
+      "type": "array",
+      "items": {"enum": ["manifest_validation", "gate_report", "lab_paper_probe_order"]},
+      "minItems": 1
+    },
+    "telemetry_required": {"type": "array", "items": {"type": "string"}},
+    "milestone_metrics_required": {"type": "array", "items": {"type": "string"}}
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {"status": {"const": "enabled_lab_paper_probe"}}
+      },
+      "then": {
+        "required": [
+          "foxhunter_candidate",
+          "live_candidate",
+          "paper_candidate",
+          "max_today_orders",
+          "max_order_notional_usd"
+        ],
+        "properties": {
+          "disabled_by_default": {"const": false},
+          "execution_enabled": {"const": true}
+        }
+      },
+      "else": {
+        "properties": {
+          "disabled_by_default": {"const": true},
+          "execution_enabled": {"const": false}
+        }
+      }
+    }
+  ],
+  "additionalProperties": false
+}

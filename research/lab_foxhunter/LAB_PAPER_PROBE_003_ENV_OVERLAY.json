@@ -1,0 +1,23 @@
+{
+  "base_checks": {
+    "fox_live_auto_submit_false": true,
+    "ibkr_port_not_live": true,
+    "ibkr_readonly_true": true,
+    "intraday_live_disabled": true,
+    "lab_auto_submit_general_false": true,
+    "live_trading_disabled": true,
+    "market_orders_disabled": true,
+    "trading_mode_paper": true
+  },
+  "blockers": [],
+  "overlay_file_created": true,
+  "overlay_keys": [
+    "TRADEO_IBKR_READONLY",
+    "TRADEO_LABORATORY_AUTO_SUBMIT_PAPER_ORDERS",
+    "TRADEO_LAB_PAPER_PROBE_WRITE_ENABLED",
+    "TRADEO_LIVE_ARMED"
+  ],
+  "overlay_mode": "0o600",
+  "redacted": true,
+  "status": "PASS"
+}

@@ -1,0 +1,9 @@
+[Unit]
+Description=Tradeo Lab daily premarket
+
+[Service]
+Type=oneshot
+WorkingDirectory=/tmp/tradeo-lab-foxhunter-001
+Environment=TRADEO_LAB_AUTOMATION_ONLY=1
+Environment=TRADEO_NO_LIVE=1
+ExecStart=/tmp/tradeo-lab-foxhunter-001/.venv/bin/python /tmp/tradeo-lab-foxhunter-001/scripts/check_lab_paper_readiness.py

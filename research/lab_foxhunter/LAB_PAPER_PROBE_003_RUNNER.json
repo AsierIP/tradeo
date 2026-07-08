@@ -1,0 +1,28 @@
+{
+  "blockers": [],
+  "decision": "LAB_PAPER_PROBE_NO_TRADE_NO_TRIGGER",
+  "dry_run": false,
+  "generated_at": "2026-07-06T08:22:45.507177+00:00",
+  "max_orders_total": 2,
+  "mode": "LAB_PAPER_PROBE_ONLY",
+  "no_live": true,
+  "no_trade_reason": "LAB_PAPER_PROBE_NO_TRADE_NO_TRIGGER",
+  "orders": [],
+  "paper_only": true,
+  "probe_ids": [
+    "LAB-GAP-REV-001",
+    "LAB-GAP-REV-002"
+  ],
+  "redacted": true,
+  "safety": {
+    "auto_submit_general": false,
+    "ibkr_readonly": false,
+    "kill_switch_ready": true,
+    "live_armed": false,
+    "paper_account_verified": true
+  },
+  "schema": "tradeo.lab_paper_probe_batch.v1",
+  "warnings": [
+    "submit_adapter_not_connected"
+  ]
+}
