@@ -201,6 +201,7 @@ class DiscoveryRunRequest(BaseModel):
     min_cluster_size: int | None = None
     max_clusters_per_window: int | None = None
     store_rejected: bool | None = None
+    daily_event_min_gain_pct: float | None = Field(default=None, ge=0.0, le=1.0)
     vwap_condition: str | None = None
     vwap_side_bias: str | None = None
     vwap_max_distance_bps: float | None = None

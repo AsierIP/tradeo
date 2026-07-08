@@ -2,14 +2,17 @@
 
 ## Objetivo
 
-El `PatternDiscoveryLabAgent` amplía Tradeo para buscar patrones no definidos previamente en acciones USA mid/small cap. No intenta reconocer una figura conocida como cup/base; extrae millones de ventanas OHLCV, las transforma en fingerprints numéricos, agrupa formas parecidas y mide qué ocurrió después de cada grupo.
+El `PatternDiscoveryLabAgent` amplía Tradeo para buscar patrones no definidos previamente en acciones USA mid/small cap. En Daily ya no empieza por ventanas genéricas: primero exige que el futuro de la ventana contenga un evento favorable bruto de al menos 7% en long o short, y sólo entonces transforma esa ventana previa en fingerprint numérico para buscar patrones repetibles.
 
 El laboratorio es pionero, pero está aislado del motor operativo. Su salida máxima es un patrón en estado `LAB`. Ningún patrón descubierto puede operar dinero real automáticamente.
 
 ## Pipeline
 
-1. **WindowSampler**
+1. **WindowSampler / Daily event-first**
    - Extrae ventanas de 20, 50, 100 y 200 velas.
+   - En `1d`, descarta antes de embedding cualquier ventana cuyo forward path no alcance al menos `TRADEO_DISCOVERY_DAILY_EVENT_MIN_GAIN_PCT` (`0.07` por defecto) en long o short.
+   - Para long usa `max(future_highs) / entry - 1`.
+   - Para short usa `1 - min(future_lows) / entry`.
    - Calcula forward returns a 5, 10 y 20 velas.
    - Calcula MFE/MAE y resultado en R para long y short con objetivo 4R y stop 1R.
    - Usa una hipótesis conservadora: si en una vela diaria se toca stop y target, cuenta primero el stop.
@@ -22,6 +25,7 @@ El laboratorio es pionero, pero está aislado del motor operativo. Su salida má
 3. **ClusterResearchEngine**
    - Agrupa ventanas similares por tamaño de ventana con `MiniBatchKMeans`.
    - Para cada cluster decide si la ventaja histórica fue long o short.
+   - En Daily, poda las muestras por lado: un patrón long sólo puede usar ventanas cuyo evento long alcanzó el umbral, y un patrón short sólo ventanas cuyo evento short alcanzó el umbral.
    - Calcula expectancy, profit factor, win rate, hit rate de 4R, MFE/MAE, estabilidad por símbolo, estabilidad por año y split out-of-sample.
 
 4. **ValidationGate**

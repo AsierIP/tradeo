@@ -59,6 +59,7 @@ class WindowSampler:
         session_filter: str | None = None,
         cost_filter: str | None = None,
         max_execution_cost_r: float | None = None,
+        daily_event_min_gain_pct: float | None = None,
         skip_window_keys: set[tuple[str, str, str, str, int]] | None = None,
     ) -> list[WindowSample]:
         vwap_spec = normalize_vwap_condition_spec(
@@ -80,9 +81,14 @@ class WindowSampler:
             "windows_vwap_rejected": 0,
             "windows_session_rejected": 0,
             "windows_cost_rejected": 0,
+            "windows_daily_event_rejected": 0,
             "windows_duplicate_skipped": 0,
             "windows_selected": 0,
         }
+        daily_event_min_gain_pct = max(0.0, float(daily_event_min_gain_pct or 0.0))
+        daily_event_filter_enabled = (
+            daily_event_min_gain_pct > 0.0 and self._is_daily_timeframe(timeframe)
+        )
         self.last_diagnostics = {
             "vwap_condition": vwap_spec.condition,
             "vwap_side_bias": vwap_spec.side_bias,
@@ -92,8 +98,11 @@ class WindowSampler:
             "windows_vwap_selected": 0,
             "windows_session_rejected": 0,
             "windows_cost_rejected": 0,
+            "windows_daily_event_rejected": 0,
             "windows_duplicate_skipped": 0,
             "windows_selected": 0,
+            "daily_event_filter_enabled": int(daily_event_filter_enabled),
+            "daily_event_min_gain_pct": daily_event_min_gain_pct,
             "context_filters": context_filters,
         }
         window_sizes = sorted({int(size) for size in window_sizes if int(size) >= 10})
@@ -266,6 +275,20 @@ class WindowSampler:
                     execution_cost_r=execution_cost_r,
                     execution_metrics=execution_metrics,
                 )
+                daily_event = self._daily_event_metrics(
+                    entry=entry,
+                    highs=high_values[future_start:future_stop],
+                    lows=low_values[future_start:future_stop],
+                    min_gain_pct=daily_event_min_gain_pct,
+                )
+                if daily_event_filter_enabled and not daily_event["passed"]:
+                    self.last_diagnostics["windows_daily_event_rejected"] = (
+                        int(self.last_diagnostics["windows_daily_event_rejected"]) + 1
+                    )
+                    context_filters["windows_daily_event_rejected"] = (
+                        int(context_filters["windows_daily_event_rejected"]) + 1
+                    )
+                    continue
                 vector, features, chart = self.embedding_engine.embed_arrays(
                     open_values=open_values[start_pos : end_pos + 1],
                     high_values=high_values[start_pos : end_pos + 1],
@@ -294,6 +317,17 @@ class WindowSampler:
                     ),
                 )
                 features.update(self._data_lineage_features_at(df, end_pos))
+                if daily_event_filter_enabled:
+                    features.update(
+                        {
+                            "daily_event_filter_enabled": True,
+                            "daily_event_min_gain_pct": daily_event_min_gain_pct,
+                            "daily_event_long_gain_pct": daily_event["long_gain_pct"],
+                            "daily_event_short_gain_pct": daily_event["short_gain_pct"],
+                            "daily_event_gain_pct": daily_event["gain_pct"],
+                            "daily_event_direction": daily_event["direction"],
+                        }
+                    )
                 if vwap_frame is not None:
                     features.update(vwap_features_at(vwap_frame, end_pos, vwap_spec))
                 features.update({f"execution_{k}": float(v) for k, v in execution_metrics.items()})
@@ -349,6 +383,43 @@ class WindowSampler:
         for index, window_size in enumerate(window_sizes):
             quotas[int(window_size)] = base + (1 if index < remainder else 0)
         return quotas
+
+    @staticmethod
+    def _is_daily_timeframe(timeframe: str) -> bool:
+        normalized = str(timeframe or "").strip().lower()
+        return normalized in {"1d", "1day", "1 day", "daily", "day"}
+
+    @staticmethod
+    def _daily_event_metrics(
+        *,
+        entry: float,
+        highs: np.ndarray,
+        lows: np.ndarray,
+        min_gain_pct: float,
+    ) -> dict[str, object]:
+        entry = max(float(entry), 1e-9)
+        highs = np.asarray(highs, dtype=float)
+        lows = np.asarray(lows, dtype=float)
+        if highs.size == 0 or lows.size == 0:
+            return {
+                "passed": False,
+                "long_gain_pct": 0.0,
+                "short_gain_pct": 0.0,
+                "gain_pct": 0.0,
+                "direction": "",
+            }
+        long_gain = max(0.0, float(np.max(highs)) / entry - 1.0)
+        min_low = max(float(np.min(lows)), 1e-9)
+        short_gain = max(0.0, 1.0 - min_low / entry)
+        direction = "long" if long_gain >= short_gain else "short"
+        gain = max(long_gain, short_gain)
+        return {
+            "passed": gain >= max(0.0, float(min_gain_pct)),
+            "long_gain_pct": round(float(long_gain), 6),
+            "short_gain_pct": round(float(short_gain), 6),
+            "gain_pct": round(float(gain), 6),
+            "direction": direction,
+        }
 
     @staticmethod
     def _normalize_with_lineage(df: pd.DataFrame) -> pd.DataFrame:

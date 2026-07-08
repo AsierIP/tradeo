@@ -411,11 +411,13 @@ class PatternDiscoveryLabAgent:
                             continue
                     phase_started = timer.mark()
                     try:
+                        sampler_source_kind = self._sampler_source_kind(params)
                         seen_window_keys = self._seen_window_keys(
                             db,
                             symbol=symbol,
                             timeframe=params["interval"],
                             universe_key=params["universe_key"],
+                            source_kind=sampler_source_kind,
                         )
                         timer.increment("windows_seen_ledger_loaded", len(seen_window_keys))
                         symbol_samples = sampler.sample(
@@ -434,6 +436,7 @@ class PatternDiscoveryLabAgent:
                             session_filter=params["session_filter"],
                             cost_filter=params["cost_filter"],
                             max_execution_cost_r=params["max_execution_cost_r"],
+                            daily_event_min_gain_pct=params["daily_event_min_gain_pct"],
                             skip_window_keys=seen_window_keys,
                         )
                     finally:
@@ -458,6 +461,10 @@ class PatternDiscoveryLabAgent:
                         int(diagnostics.get("windows_cost_rejected", 0)),
                     )
                     timer.increment(
+                        "windows_daily_event_rejected",
+                        int(diagnostics.get("windows_daily_event_rejected", 0)),
+                    )
+                    timer.increment(
                         "windows_duplicate_skipped",
                         int(diagnostics.get("windows_duplicate_skipped", 0)),
                     )
@@ -473,6 +480,7 @@ class PatternDiscoveryLabAgent:
                             selected_samples,
                             run_id=run.id,
                             params=params,
+                            source_kind=sampler_source_kind,
                         )
                         timer.increment("windows_seen_ledger_recorded", recorded)
                     samples.extend(selected_samples)
@@ -683,10 +691,15 @@ class PatternDiscoveryLabAgent:
                 "windows_vwap_rejected": timer.counts.get("windows_vwap_rejected", 0),
                 "windows_session_rejected": timer.counts.get("windows_session_rejected", 0),
                 "windows_cost_rejected": timer.counts.get("windows_cost_rejected", 0),
+                "windows_daily_event_rejected": timer.counts.get(
+                    "windows_daily_event_rejected", 0
+                ),
                 "windows_duplicate_skipped": timer.counts.get(
                     "windows_duplicate_skipped", 0
                 ),
                 "windows_selected": timer.counts.get("windows_selected", 0),
+                "daily_event_min_gain_pct": params["daily_event_min_gain_pct"],
+                "daily_event_filter_applied": params["daily_event_min_gain_pct"] > 0,
             }
             if clustering_diagnostics is not None:
                 summary["phase_diagnostics"] = {
@@ -837,6 +850,7 @@ class PatternDiscoveryLabAgent:
         symbol: str,
         timeframe: str,
         universe_key: str,
+        source_kind: str = "sampler",
     ) -> set[tuple[str, str, str, str, int]]:
         rows = (
             db.query(
@@ -849,12 +863,24 @@ class PatternDiscoveryLabAgent:
             .filter(ResearchAnalyzedWindow.symbol == symbol.upper())
             .filter(ResearchAnalyzedWindow.timeframe == timeframe)
             .filter(ResearchAnalyzedWindow.universe_key == universe_key)
+            .filter(ResearchAnalyzedWindow.source_kind == source_kind)
             .all()
         )
         return {
             (row.symbol, row.timeframe, row.window_start, row.window_end, int(row.window_size))
             for row in rows
         }
+
+    @staticmethod
+    def _sampler_source_kind(params: dict[str, Any]) -> str:
+        try:
+            min_gain_pct = float(params.get("daily_event_min_gain_pct", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            min_gain_pct = 0.0
+        if min_gain_pct <= 0.0:
+            return "sampler"
+        basis_points = int(round(min_gain_pct * 10_000))
+        return f"sampler_daily_event_{basis_points}bp"
 
     def _record_analyzed_windows(
         self,
@@ -1133,6 +1159,13 @@ class PatternDiscoveryLabAgent:
             "store_rejected": s.discovery_store_rejected
             if request.store_rejected is None
             else request.store_rejected,
+            "daily_event_min_gain_pct": 0.0
+            if is_intraday
+            else (
+                max(0.0, float(request.daily_event_min_gain_pct))
+                if request.daily_event_min_gain_pct is not None
+                else max(0.0, float(s.discovery_daily_event_min_gain_pct))
+            ),
             "vwap_condition": (request.vwap_condition or "none").strip().lower() or "none",
             "vwap_side_bias": (request.vwap_side_bias or "").strip().lower() or None,
             "vwap_expected_side": expected_side_from_vwap_condition(request.vwap_condition, request.vwap_side_bias),
@@ -1385,6 +1418,7 @@ class PatternDiscoveryLabAgent:
             "out_of_sample_metrics": metrics.get("out_of_sample_metrics", {}),
             "walk_forward_metrics": metrics.get("walk_forward_metrics", {}),
             "descriptive_metric_policy": metrics.get("descriptive_metric_policy", {}),
+            "daily_event_filter": metrics.get("daily_event_filter", {}),
             "descriptive_all_expectancy_r": metrics.get("descriptive_all_expectancy_r"),
             "descriptive_all_profit_factor": metrics.get("descriptive_all_profit_factor"),
             "descriptive_all_win_rate": metrics.get("descriptive_all_win_rate"),

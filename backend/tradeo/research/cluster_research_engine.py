@@ -252,43 +252,95 @@ class ClusterResearchEngine:
             if len(train_idxs) < max(10, self.min_cluster_size // 2):
                 continue
             all_idxs = np.flatnonzero(all_labels == cluster_id)
-            cluster_samples = [ordered_samples[int(i)] for i in all_idxs]
-            cluster_train_samples = [train_samples[int(i)] for i in train_idxs]
-            cluster_holdout_samples = [sample for sample in cluster_samples if id(sample) in holdout_ids]
-            cluster_vectors = matrix_all_scaled[all_idxs]
+            cluster_samples_all = [ordered_samples[int(i)] for i in all_idxs]
+            cluster_holdout_samples_all = [
+                sample for sample in cluster_samples_all if id(sample) in holdout_ids
+            ]
             centroid_scaled = fit.centroids[int(cluster_id)]
             rr_trial_count = len(self.rr_levels or [1.5, 2.0, 2.5, 3.0, 4.0, 5.0])
             tested_trials = len(cluster_ids) * 2 * rr_trial_count
+            long_all_idxs, long_cluster_samples = self._daily_event_side_filter(
+                all_idxs,
+                ordered_samples,
+                "long",
+            )
+            short_all_idxs, short_cluster_samples = self._daily_event_side_filter(
+                all_idxs,
+                ordered_samples,
+                "short",
+            )
+            _, long_cluster_train_samples = self._daily_event_side_filter(
+                train_idxs,
+                train_samples,
+                "long",
+            )
+            _, short_cluster_train_samples = self._daily_event_side_filter(
+                train_idxs,
+                train_samples,
+                "short",
+            )
+            long_holdout_ids = {id(sample) for sample in long_cluster_samples}
+            short_holdout_ids = {id(sample) for sample in short_cluster_samples}
+            long_cluster_holdout_samples = [
+                sample
+                for sample in cluster_holdout_samples_all
+                if id(sample) in long_holdout_ids
+            ]
+            short_cluster_holdout_samples = [
+                sample
+                for sample in cluster_holdout_samples_all
+                if id(sample) in short_holdout_ids
+            ]
             long_metrics = self._metrics_for_side(
-                cluster_train_samples,
-                cluster_samples,
-                cluster_holdout_samples,
+                long_cluster_train_samples,
+                long_cluster_samples,
+                long_cluster_holdout_samples,
                 train_samples,
                 "long",
                 multiple_testing_trials=tested_trials,
             )
             short_metrics = self._metrics_for_side(
-                cluster_train_samples,
-                cluster_samples,
-                cluster_holdout_samples,
+                short_cluster_train_samples,
+                short_cluster_samples,
+                short_cluster_holdout_samples,
                 train_samples,
                 "short",
                 multiple_testing_trials=tested_trials,
             )
             side: Side = "long" if self._side_score(long_metrics) >= self._side_score(short_metrics) else "short"
             metrics = long_metrics if side == "long" else short_metrics
+            if side == "long":
+                side_all_idxs = long_all_idxs
+                cluster_samples = long_cluster_samples
+                cluster_train_samples = long_cluster_train_samples
+                cluster_holdout_samples = long_cluster_holdout_samples
+            else:
+                side_all_idxs = short_all_idxs
+                cluster_samples = short_cluster_samples
+                cluster_train_samples = short_cluster_train_samples
+                cluster_holdout_samples = short_cluster_holdout_samples
+            if len(cluster_train_samples) < max(10, self.min_cluster_size // 2):
+                continue
+            cluster_vectors = matrix_all_scaled[side_all_idxs]
             metrics["opposite_side"] = short_metrics if side == "long" else long_metrics
-            metrics["cluster_density"] = round(float(len(all_idxs) / len(ordered_samples)), 5)
-            metrics["train_cluster_density"] = round(float(len(train_idxs) / len(train_samples)), 5)
+            metrics["cluster_density"] = round(float(len(side_all_idxs) / len(ordered_samples)), 5)
+            metrics["train_cluster_density"] = round(float(len(cluster_train_samples) / len(train_samples)), 5)
             metrics["window_size"] = window_size
             metrics["side"] = side
             metrics["target_r"] = self.target_r
+            metrics["daily_event_filter"] = self._daily_event_side_metrics(
+                cluster_samples_all,
+                cluster_samples,
+                side,
+            )
             metrics["clusterer_method"] = fit.method
             metrics["clusterer"] = {
                 **fit.metadata,
                 "cluster_id": int(cluster_id),
-                "cluster_sample_count": int(len(all_idxs)),
-                "train_cluster_sample_count": int(len(train_idxs)),
+                "cluster_sample_count": int(len(side_all_idxs)),
+                "train_cluster_sample_count": int(len(cluster_train_samples)),
+                "raw_cluster_sample_count": int(len(all_idxs)),
+                "raw_train_cluster_sample_count": int(len(train_idxs)),
             }
             metrics["density_noise"] = {
                 "method": fit.method,
@@ -2103,6 +2155,19 @@ class ClusterResearchEngine:
                     "sample_speed_label": sample.outcome.speed_label_for(side),
                     "sample_time_to_target": sample.outcome.time_to_target_for(side),
                     "sample_time_to_stop": sample.outcome.time_to_stop_for(side),
+                    "daily_event_side_gain_pct": round(
+                        float(sample.features.get(f"daily_event_{side}_gain_pct", 0.0) or 0.0),
+                        6,
+                    ),
+                    "daily_event_min_gain_pct": round(
+                        float(sample.features.get("daily_event_min_gain_pct", 0.0) or 0.0),
+                        6,
+                    ),
+                    "daily_event_passed": bool(
+                        self._daily_event_side_passes(sample, side)
+                        if sample.features.get("daily_event_min_gain_pct") is not None
+                        else False
+                    ),
                     "gap_adverse_r": round(
                         float(self._side_attr(sample, side, "gap_adverse_r")),
                         5,
@@ -2231,6 +2296,78 @@ class ClusterResearchEngine:
             reverse=True,
         )
         return dict(items)
+
+    @staticmethod
+    def _daily_event_side_filter(
+        idxs: np.ndarray,
+        samples: list[WindowSample],
+        side: Side,
+    ) -> tuple[np.ndarray, list[WindowSample]]:
+        kept_idxs: list[int] = []
+        kept_samples: list[WindowSample] = []
+        for idx in idxs:
+            sample = samples[int(idx)]
+            if ClusterResearchEngine._daily_event_side_passes(sample, side):
+                kept_idxs.append(int(idx))
+                kept_samples.append(sample)
+        return np.asarray(kept_idxs, dtype=int), kept_samples
+
+    @staticmethod
+    def _daily_event_side_passes(sample: WindowSample, side: Side) -> bool:
+        min_gain = sample.features.get("daily_event_min_gain_pct")
+        try:
+            min_gain_pct = float(min_gain)
+        except (TypeError, ValueError):
+            return True
+        if min_gain_pct <= 0.0:
+            return True
+        key = f"daily_event_{side}_gain_pct"
+        try:
+            side_gain = float(sample.features.get(key, 0.0))
+        except (TypeError, ValueError):
+            side_gain = 0.0
+        return side_gain >= min_gain_pct
+
+    @staticmethod
+    def _daily_event_side_metrics(
+        raw_samples: list[WindowSample],
+        side_samples: list[WindowSample],
+        side: Side,
+    ) -> dict[str, object]:
+        event_samples = [
+            sample
+            for sample in raw_samples
+            if sample.features.get("daily_event_min_gain_pct") is not None
+        ]
+        if not event_samples:
+            return {
+                "applied": False,
+                "side": side,
+                "raw_sample_count": len(raw_samples),
+                "eligible_sample_count": len(side_samples),
+                "side_rejected_count": 0,
+            }
+        gains: list[float] = []
+        for sample in side_samples:
+            try:
+                gains.append(float(sample.features.get(f"daily_event_{side}_gain_pct", 0.0)))
+            except (TypeError, ValueError):
+                gains.append(0.0)
+        min_gain_pct = max(
+            float(sample.features.get("daily_event_min_gain_pct", 0.0) or 0.0)
+            for sample in event_samples
+        )
+        return {
+            "applied": True,
+            "side": side,
+            "min_gain_pct": round(min_gain_pct, 6),
+            "gain_basis": "gross_forward_mfe_pct",
+            "raw_sample_count": len(raw_samples),
+            "eligible_sample_count": len(side_samples),
+            "side_rejected_count": max(0, len(raw_samples) - len(side_samples)),
+            "side_gain_min_pct": round(float(np.min(gains)), 6) if gains else 0.0,
+            "side_gain_median_pct": round(float(np.median(gains)), 6) if gains else 0.0,
+        }
 
     @staticmethod
     def _positive_group_fraction(group_metrics: dict[str, float]) -> float:
@@ -2722,6 +2859,14 @@ class ClusterResearchEngine:
                     "time_to_target": sample.outcome.time_to_target_for(side),
                     "time_to_stop": sample.outcome.time_to_stop_for(side),
                     "speed_label": sample.outcome.speed_label_for(side),
+                    "daily_event_side_gain_pct": round(
+                        float(sample.features.get(f"daily_event_{side}_gain_pct", 0.0) or 0.0),
+                        6,
+                    ),
+                    "daily_event_min_gain_pct": round(
+                        float(sample.features.get("daily_event_min_gain_pct", 0.0) or 0.0),
+                        6,
+                    ),
                     "gap_adverse_r": round(
                         float(self._side_attr(sample, side, "gap_adverse_r")),
                         5,

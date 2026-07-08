@@ -124,7 +124,7 @@ Research -> Lab -> Director review -> Producción -> Fox Hunter -> Live
 
 ### 1. Research descubre patrones
 
-`PatternDiscoveryLabAgent` trabaja con barras diarias (`1d`) de IBKR, ventanas OHLCV y clustering local. Para que un patrón salga de Research debe superar gates estadísticos de descubrimiento:
+`PatternDiscoveryLabAgent` trabaja con barras diarias (`1d`) de IBKR, ventanas OHLCV y clustering local. En Daily, la búsqueda es event-first: sólo estudia ventanas previas cuyo forward path haya ofrecido al menos un 7% bruto favorable en long o short. Para que un patrón salga de Research debe superar gates estadísticos de descubrimiento:
 
 - muestras históricas suficientes;
 - diversidad de símbolos y años;
@@ -295,7 +295,7 @@ El JSON/Markdown resultante queda en `reports/`. Pégalo en ChatGPT o envíalo a
 
 ## Research Lab
 
-Tradeo incluye una ampliación de descubrimiento de patrones no predefinidos. El `PatternDiscoveryLabAgent` extrae ventanas OHLCV, genera embeddings locales, agrupa formas similares con clustering y valida si esos grupos precedieron movimientos favorables con R:R mínimo 1:4.
+Tradeo incluye una ampliación de descubrimiento de patrones no predefinidos. En Daily, el `PatternDiscoveryLabAgent` empieza por eventos de al menos 7% favorable, extrae las ventanas previas, genera embeddings locales, agrupa formas similares con clustering y valida si esos grupos tienen evidencia suficiente para Lab.
 
 Este laboratorio no opera dinero real. Todo candidato queda en estados de laboratorio o revisión (`lab`, `lab_watchlist`, `lab_candidate`, `director_review`) hasta que Director lo promueva explícitamente a `production`.
 

@@ -91,7 +91,8 @@ def _research_vector_sample(
 
 def test_window_sampler_generates_forward_labeled_samples() -> None:
     df = fixture_ohlcv("LABX", bars=320)
-    samples = WindowSampler().sample(
+    sampler = WindowSampler()
+    samples = sampler.sample(
         symbol="LABX",
         df=df,
         timeframe="1d",
@@ -168,6 +169,87 @@ def test_window_sampler_skips_seen_windows_before_embedding() -> None:
 
     assert samples == []
     assert sampler.last_diagnostics["windows_duplicate_skipped"] == 1
+
+
+def test_window_sampler_daily_event_filter_requires_seven_percent_move() -> None:
+    index = pd.date_range("2026-01-01", periods=24, freq="D", tz="UTC")
+    close = np.full(len(index), 100.0)
+    df = pd.DataFrame(
+        {
+            "open": close,
+            "high": close + 2.0,
+            "low": close - 2.0,
+            "close": close,
+            "volume": np.full(len(index), 500_000),
+        },
+        index=index,
+    )
+
+    sampler = WindowSampler()
+    samples = sampler.sample(
+        symbol="LABX",
+        df=df,
+        timeframe="1d",
+        window_sizes=[10],
+        forward_bars=[3],
+        stride=99,
+        max_windows_per_symbol=1,
+        daily_event_min_gain_pct=0.07,
+    )
+
+    assert samples == []
+    assert sampler.last_diagnostics["daily_event_filter_enabled"] == 1
+    assert sampler.last_diagnostics["windows_daily_event_rejected"] == 1
+
+
+def test_window_sampler_daily_event_filter_keeps_large_forward_move() -> None:
+    index = pd.date_range("2026-01-01", periods=24, freq="D", tz="UTC")
+    close = np.full(len(index), 100.0)
+    high = close + 2.0
+    high[10] = 108.0
+    df = pd.DataFrame(
+        {
+            "open": close,
+            "high": high,
+            "low": close - 2.0,
+            "close": close,
+            "volume": np.full(len(index), 500_000),
+        },
+        index=index,
+    )
+
+    sampler = WindowSampler()
+    samples = sampler.sample(
+        symbol="LABX",
+        df=df,
+        timeframe="1d",
+        window_sizes=[10],
+        forward_bars=[3],
+        stride=99,
+        max_windows_per_symbol=1,
+        daily_event_min_gain_pct=0.07,
+    )
+
+    assert len(samples) == 1
+    assert samples[0].features["daily_event_filter_enabled"] is True
+    assert samples[0].features["daily_event_min_gain_pct"] == 0.07
+    assert samples[0].features["daily_event_long_gain_pct"] == 0.08
+    assert samples[0].features["daily_event_direction"] == "long"
+    assert sampler.last_diagnostics["windows_daily_event_rejected"] == 0
+
+
+def test_daily_event_side_filter_requires_matching_pattern_side() -> None:
+    sample = _research_vector_sample(1, vector=np.asarray([1.0, 0.0], dtype=np.float32))
+    sample.features.update(
+        {
+            "daily_event_min_gain_pct": 0.07,
+            "daily_event_long_gain_pct": 0.08,
+            "daily_event_short_gain_pct": 0.02,
+        }
+    )
+
+    assert ClusterResearchEngine._daily_event_side_passes(sample, "long") is True
+    assert ClusterResearchEngine._daily_event_side_passes(sample, "short") is False
 
 
 def test_lab_agent_records_and_loads_seen_research_windows(tmp_path: Path) -> None:
@@ -1605,11 +1687,17 @@ def test_lab_agent_routes_research_universe_by_timeframe(tmp_path: Path) -> None
     daily_request = DiscoveryRunRequest(limit=2, interval="1d")
     daily_params = agent._resolve_params(daily_request)
     assert daily_params["universe_scope"] == "daily_midcap"
+    assert daily_params["daily_event_min_gain_pct"] == 0.07
     assert agent._resolve_symbols(daily_request, daily_params) == ["MID1", "MID2"]
 
-    intraday_request = DiscoveryRunRequest(limit=2, interval="5m")
+    intraday_request = DiscoveryRunRequest(
+        limit=2,
+        interval="5m",
+        daily_event_min_gain_pct=0.20,
+    )
     intraday_params = agent._resolve_params(intraday_request)
     assert intraday_params["universe_scope"] == "intraday_smallcap"
+    assert intraday_params["daily_event_min_gain_pct"] == 0.0
     assert agent._resolve_symbols(intraday_request, intraday_params) == ["SML1", "SML2"]
 
 

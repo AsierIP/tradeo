@@ -277,6 +277,9 @@ class Settings(BaseSettings):
     discovery_min_expectancy_r: float = 0.25
     discovery_min_stability_score: float = 0.45
     discovery_max_adjusted_p_value: float = 0.25
+    # Daily discovery is event-first: only study pre-event windows when the
+    # forward path offered at least this gross favorable move in either direction.
+    discovery_daily_event_min_gain_pct: float = 0.07
     discovery_confirmation_min_samples: int = 50
     discovery_confirmation_min_profit_factor: float = 1.6
     discovery_confirmation_min_expectancy_r: float = 0.20
