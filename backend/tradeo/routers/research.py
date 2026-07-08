@@ -16,6 +16,7 @@ from tradeo.db.models import (
     DiscoveredPatternMetric,
     DiscoveredPatternStatus,
     DiscoveryRun,
+    ResearchDirectorArtifact,
 )
 from tradeo.db.session import get_db
 from tradeo.modules.resource_policy.market_session_resource_policy import JobType
@@ -298,11 +299,21 @@ def run_research_director(
 @router.get("/director/latest", response_model=ResearchDirectorResponse)
 def latest_research_director(
     _: str = Depends(require_admin),
+    db: Session = Depends(get_db),
 ) -> ResearchDirectorResponse:
     path = get_settings().reports_path / "research" / "director" / "latest_research_director.json"
-    if not path.exists():
-        raise HTTPException(404, "research director has not generated a report yet")
-    payload = json.loads(path.read_text(encoding="utf-8"))
+    if path.exists():
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    else:
+        artifact = (
+            db.query(ResearchDirectorArtifact)
+            .filter(ResearchDirectorArtifact.kind == "latest_research_director_json")
+            .order_by(ResearchDirectorArtifact.id.desc())
+            .first()
+        )
+        if artifact is None:
+            raise HTTPException(404, "research director has not generated a report yet")
+        payload = artifact.payload_json
     summary = payload.get("summary") if isinstance(payload, dict) else None
     if not isinstance(summary, dict):
         raise HTTPException(500, "research director latest report is malformed")

@@ -59,6 +59,7 @@ class WindowSampler:
         session_filter: str | None = None,
         cost_filter: str | None = None,
         max_execution_cost_r: float | None = None,
+        skip_window_keys: set[tuple[str, str, str, str, int]] | None = None,
     ) -> list[WindowSample]:
         vwap_spec = normalize_vwap_condition_spec(
             condition=vwap_condition,
@@ -79,6 +80,7 @@ class WindowSampler:
             "windows_vwap_rejected": 0,
             "windows_session_rejected": 0,
             "windows_cost_rejected": 0,
+            "windows_duplicate_skipped": 0,
             "windows_selected": 0,
         }
         self.last_diagnostics = {
@@ -90,10 +92,12 @@ class WindowSampler:
             "windows_vwap_selected": 0,
             "windows_session_rejected": 0,
             "windows_cost_rejected": 0,
+            "windows_duplicate_skipped": 0,
             "windows_selected": 0,
             "context_filters": context_filters,
         }
         window_sizes = sorted({int(size) for size in window_sizes if int(size) >= 10})
+        skip_window_keys = skip_window_keys or set()
         if not window_sizes:
             return []
         forward_bars = sorted({int(x) for x in forward_bars if int(x) > 0})
@@ -202,6 +206,22 @@ class WindowSampler:
                         int(self.last_diagnostics["windows_vwap_selected"]) + 1
                     )
                 start_pos = end_pos - window_size + 1
+                start_idx = index_values[start_pos]
+                window_key = (
+                    symbol.upper(),
+                    timeframe,
+                    self._date_str(start_idx),
+                    self._date_str(end_idx),
+                    int(window_size),
+                )
+                if window_key in skip_window_keys:
+                    self.last_diagnostics["windows_duplicate_skipped"] = (
+                        int(self.last_diagnostics["windows_duplicate_skipped"]) + 1
+                    )
+                    context_filters["windows_duplicate_skipped"] = (
+                        int(context_filters["windows_duplicate_skipped"]) + 1
+                    )
+                    continue
                 future_start = end_pos + 1
                 future_stop = min(len(df), future_start + max_forward)
                 if future_start >= future_stop:
@@ -284,7 +304,6 @@ class WindowSampler:
                 if timezone_assumption:
                     features["timestamp_timezone_assumption"] = timezone_assumption
                 features["sample_window_size_quota"] = int(window_quota)
-                start_idx = index_values[start_pos]
                 year = self._year(end_idx)
                 samples.append(
                     WindowSample(

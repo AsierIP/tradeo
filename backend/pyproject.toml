@@ -29,6 +29,8 @@ dependencies = [
 
 [project.scripts]
 tradeo-false-match-metrics = "tradeo.ops.false_match_metrics:main"
+tradeo-research-window-history = "tradeo.ops.research_window_history:main"
+tradeo-research-state-migration = "tradeo.ops.research_state_migration:main"
 
 [project.optional-dependencies]
 dev = ["pytest>=8.2.0", "ruff>=0.5.0", "mypy>=1.10.0"]

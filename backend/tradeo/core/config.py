@@ -193,6 +193,7 @@ class Settings(BaseSettings):
     intraday_research_stride: int = 1
     intraday_research_max_total_windows: int = 8000
     intraday_research_max_windows_per_symbol: int = 300
+    intraday_research_skip_completed_equivalent_runs: bool = False
     intraday_research_min_cluster_size: int = 40
     intraday_research_max_clusters_per_window: int = 8
     intraday_research_min_samples: int = 50

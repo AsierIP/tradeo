@@ -561,6 +561,161 @@ class DiscoveryRun(Base):
     patterns: Mapped[list["DiscoveredPattern"]] = relationship(back_populates="run")
 
 
+class ResearchAnalyzedWindow(Base):
+    __tablename__ = "research_analyzed_windows"
+    __table_args__ = (
+        Index(
+            "ix_research_analyzed_windows_universe_symbol_timeframe",
+            "universe_key",
+            "symbol",
+            "timeframe",
+        ),
+        Index("ix_research_analyzed_windows_window_end", "window_end"),
+        Index("ix_research_analyzed_windows_run_id", "run_id"),
+        Index("ix_research_analyzed_windows_universe_key", "universe_key"),
+        Index("ix_research_analyzed_windows_source_artifact", "source_artifact_path"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    fingerprint: Mapped[str] = mapped_column(String(80), unique=True, index=True)
+    run_id: Mapped[int | None] = mapped_column(ForeignKey("discovery_runs.id"), nullable=True)
+    cadence: Mapped[str] = mapped_column(String(24), default="", index=True)
+    universe_key: Mapped[str] = mapped_column(String(160), default="")
+    universe_scope: Mapped[str] = mapped_column(String(80), default="", index=True)
+    universe_file: Mapped[str] = mapped_column(String(500), default="")
+    universe_hash: Mapped[str] = mapped_column(String(80), default="")
+    symbol: Mapped[str] = mapped_column(String(24), default="")
+    timeframe: Mapped[str] = mapped_column(String(16), default="")
+    window_start: Mapped[str] = mapped_column(String(80), default="")
+    window_end: Mapped[str] = mapped_column(String(80), default="")
+    window_size: Mapped[int] = mapped_column(Integer, default=0)
+    forward_end: Mapped[str] = mapped_column(String(80), default="")
+    data_period: Mapped[str] = mapped_column(String(40), default="")
+    data_manifest_hash: Mapped[str] = mapped_column(String(80), default="")
+    data_artifact_path: Mapped[str] = mapped_column(String(500), default="")
+    data_artifact_sha256: Mapped[str] = mapped_column(String(80), default="")
+    data_rows: Mapped[int] = mapped_column(Integer, default=0)
+    source_kind: Mapped[str] = mapped_column(String(40), default="sampler", index=True)
+    source_artifact_path: Mapped[str] = mapped_column(String(500), default="")
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(json_type(), default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+
+
+class ResearchExperimentRegistryExperiment(Base):
+    __tablename__ = "research_experiment_registry_experiments"
+    __table_args__ = (
+        Index("ix_research_registry_experiments_family", "family_id"),
+        Index("ix_research_registry_experiments_pattern", "pattern_key"),
+        Index("ix_research_registry_experiments_latest_run", "latest_run_id"),
+        Index(
+            "ix_research_registry_experiments_side_timeframe",
+            "side",
+            "timeframe",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    experiment_id: Mapped[str] = mapped_column(String(500), unique=True)
+    family_id: Mapped[str] = mapped_column(String(160), default="")
+    pattern_key: Mapped[str] = mapped_column(String(160), default="")
+    variant_id: Mapped[str] = mapped_column(String(160), default="")
+    side: Mapped[str] = mapped_column(String(8), default="")
+    timeframe: Mapped[str] = mapped_column(String(16), default="")
+    window_size: Mapped[int] = mapped_column(Integer, default=0)
+    first_run_id: Mapped[str] = mapped_column(String(80), default="")
+    latest_run_id: Mapped[str] = mapped_column(String(80), default="")
+    replication_count: Mapped[int] = mapped_column(Integer, default=1)
+    candidate_trial_count: Mapped[int] = mapped_column(Integer, default=1)
+    global_trial_count_after: Mapped[int] = mapped_column(Integer, default=0)
+    edge_claim: Mapped[str] = mapped_column(String(40), default="NO_DEMOSTRADO")
+    payload_json: Mapped[dict[str, Any]] = mapped_column(json_type(), default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class ResearchExperimentRegistryRun(Base):
+    __tablename__ = "research_experiment_registry_runs"
+    __table_args__ = (
+        Index("ix_research_registry_runs_run_id", "run_id"),
+        Index("ix_research_registry_runs_registered_at", "registered_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    run_id: Mapped[str] = mapped_column(String(80), unique=True)
+    registered_at: Mapped[str] = mapped_column(String(80), default="")
+    candidate_count: Mapped[int] = mapped_column(Integer, default=0)
+    new_experiments: Mapped[int] = mapped_column(Integer, default=0)
+    repeated_experiments: Mapped[int] = mapped_column(Integer, default=0)
+    previous_registry_hash: Mapped[str] = mapped_column(String(80), default="")
+    run_manifest_hash: Mapped[str] = mapped_column(String(80), default="", index=True)
+    registry_hash: Mapped[str] = mapped_column(String(80), default="", index=True)
+    params_json: Mapped[dict[str, Any]] = mapped_column(json_type(), default=dict)
+    payload_json: Mapped[dict[str, Any]] = mapped_column(json_type(), default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class ResearchExperimentRegistrySnapshot(Base):
+    __tablename__ = "research_experiment_registry_snapshots"
+    __table_args__ = (
+        Index("ix_research_registry_snapshots_created_at", "created_at"),
+        Index("ix_research_registry_snapshots_run_manifest_hash", "run_manifest_hash"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    registry_hash: Mapped[str] = mapped_column(String(80), unique=True)
+    previous_registry_hash: Mapped[str] = mapped_column(String(80), default="")
+    run_manifest_hash: Mapped[str] = mapped_column(String(80), default="")
+    global_trial_count: Mapped[int] = mapped_column(Integer, default=0)
+    experiment_count: Mapped[int] = mapped_column(Integer, default=0)
+    run_count: Mapped[int] = mapped_column(Integer, default=0)
+    payload_json: Mapped[dict[str, Any]] = mapped_column(json_type(), default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ResearchArtifactRetention(Base):
+    __tablename__ = "research_artifact_retention"
+    __table_args__ = (
+        Index("ix_research_artifact_retention_kind", "kind"),
+        Index("ix_research_artifact_retention_params_hash", "params_hash"),
+        Index("ix_research_artifact_retention_path", "path"),
+        Index("ix_research_artifact_retention_mtime", "mtime"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    source_registry: Mapped[str] = mapped_column(String(500), default="")
+    path: Mapped[str] = mapped_column(String(500), default="")
+    content_hash: Mapped[str] = mapped_column(String(80), default="")
+    kind: Mapped[str] = mapped_column(String(80), default="")
+    bytes: Mapped[int] = mapped_column(Integer, default=0)
+    mtime: Mapped[str] = mapped_column(String(80), default="")
+    params_hash: Mapped[str] = mapped_column(String(80), default="")
+    parse_ok: Mapped[bool] = mapped_column(Boolean, default=True)
+    pattern_count: Mapped[int] = mapped_column(Integer, default=0)
+    params_json: Mapped[dict[str, Any]] = mapped_column(json_type(), default=dict)
+    patterns_json: Mapped[list[dict[str, Any]]] = mapped_column(json_type(), default=list)
+    payload_json: Mapped[dict[str, Any]] = mapped_column(json_type(), default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+
+
+class ResearchDirectorArtifact(Base):
+    __tablename__ = "research_director_artifacts"
+    __table_args__ = (
+        Index("ix_research_director_artifacts_run_id", "run_id"),
+        Index("ix_research_director_artifacts_kind", "kind"),
+        Index("ix_research_director_artifacts_path", "path"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    run_id: Mapped[str] = mapped_column(String(80), default="")
+    kind: Mapped[str] = mapped_column(String(80), default="")
+    path: Mapped[str] = mapped_column(String(500), default="")
+    content_hash: Mapped[str] = mapped_column(String(80), default="")
+    payload_json: Mapped[dict[str, Any]] = mapped_column(json_type(), default=dict)
+    content_text: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+
+
 class DiscoveredPattern(Base):
     __tablename__ = "discovered_patterns"
 

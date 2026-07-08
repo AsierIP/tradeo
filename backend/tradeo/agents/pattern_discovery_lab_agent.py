@@ -18,7 +18,7 @@ from loguru import logger
 from sqlalchemy.orm import Session
 
 from tradeo.core.config import Settings, get_settings
-from tradeo.db.models import AuditLog, DiscoveryRun
+from tradeo.db.models import AuditLog, DiscoveryRun, ResearchAnalyzedWindow
 from tradeo.research.cluster_research_engine import ClusterResearchEngine
 from tradeo.research.autonomous_research_director import (
     ResearchDirector as PersistentResearchDirector,
@@ -411,6 +411,13 @@ class PatternDiscoveryLabAgent:
                             continue
                     phase_started = timer.mark()
                     try:
+                        seen_window_keys = self._seen_window_keys(
+                            db,
+                            symbol=symbol,
+                            timeframe=params["interval"],
+                            universe_key=params["universe_key"],
+                        )
+                        timer.increment("windows_seen_ledger_loaded", len(seen_window_keys))
                         symbol_samples = sampler.sample(
                             symbol=symbol,
                             df=df,
@@ -427,6 +434,7 @@ class PatternDiscoveryLabAgent:
                             session_filter=params["session_filter"],
                             cost_filter=params["cost_filter"],
                             max_execution_cost_r=params["max_execution_cost_r"],
+                            skip_window_keys=seen_window_keys,
                         )
                     finally:
                         timer.add("sampling_embedding_s", phase_started)
@@ -450,11 +458,23 @@ class PatternDiscoveryLabAgent:
                         int(diagnostics.get("windows_cost_rejected", 0)),
                     )
                     timer.increment(
+                        "windows_duplicate_skipped",
+                        int(diagnostics.get("windows_duplicate_skipped", 0)),
+                    )
+                    timer.increment(
                         "windows_selected",
                         int(diagnostics.get("windows_selected", 0)),
                     )
                     remaining = params["max_total_windows"] - len(samples)
                     selected_samples = symbol_samples[:remaining]
+                    if selected_samples:
+                        recorded = self._record_analyzed_windows(
+                            db,
+                            selected_samples,
+                            run_id=run.id,
+                            params=params,
+                        )
+                        timer.increment("windows_seen_ledger_recorded", recorded)
                     samples.extend(selected_samples)
                     timer.increment("windows_sampled", len(selected_samples))
                 except Exception as exc:  # noqa: BLE001
@@ -512,6 +532,17 @@ class PatternDiscoveryLabAgent:
                 data_manifest = self._data_manifest(run.id, symbols, warnings, params=params)
             finally:
                 timer.add("data_manifest_s", phase_started)
+            phase_started = timer.mark()
+            try:
+                enriched_windows = self._enrich_analyzed_windows(
+                    db,
+                    run_id=run.id,
+                    params=params,
+                    data_manifest=data_manifest,
+                )
+                timer.increment("windows_seen_ledger_enriched", enriched_windows)
+            finally:
+                timer.add("window_history_enrich_s", phase_started)
             for candidate in raw_candidates:
                 candidate.metrics["data_manifest"] = {
                     "path": data_manifest.get("path"),
@@ -652,6 +683,9 @@ class PatternDiscoveryLabAgent:
                 "windows_vwap_rejected": timer.counts.get("windows_vwap_rejected", 0),
                 "windows_session_rejected": timer.counts.get("windows_session_rejected", 0),
                 "windows_cost_rejected": timer.counts.get("windows_cost_rejected", 0),
+                "windows_duplicate_skipped": timer.counts.get(
+                    "windows_duplicate_skipped", 0
+                ),
                 "windows_selected": timer.counts.get("windows_selected", 0),
             }
             if clustering_diagnostics is not None:
@@ -760,6 +794,185 @@ class PatternDiscoveryLabAgent:
             )
             db.commit()
             raise
+
+    @staticmethod
+    def _window_key(sample: Any) -> tuple[str, str, str, str, int]:
+        return (
+            str(getattr(sample, "symbol", "")).upper(),
+            str(getattr(sample, "timeframe", "")),
+            str(getattr(sample, "start", "")),
+            str(getattr(sample, "end", "")),
+            int(getattr(sample, "window_size", 0) or 0),
+        )
+
+    @staticmethod
+    def _window_fingerprint(
+        *,
+        universe_key: str,
+        symbol: str,
+        timeframe: str,
+        window_start: str,
+        window_end: str,
+        window_size: int,
+        source_kind: str = "sampler",
+    ) -> str:
+        payload = "|".join(
+            (
+                "research-window-v2",
+                universe_key,
+                symbol.upper(),
+                timeframe,
+                window_start,
+                window_end,
+                str(int(window_size)),
+                source_kind,
+            )
+        )
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+    def _seen_window_keys(
+        self,
+        db: Session,
+        *,
+        symbol: str,
+        timeframe: str,
+        universe_key: str,
+    ) -> set[tuple[str, str, str, str, int]]:
+        rows = (
+            db.query(
+                ResearchAnalyzedWindow.symbol,
+                ResearchAnalyzedWindow.timeframe,
+                ResearchAnalyzedWindow.window_start,
+                ResearchAnalyzedWindow.window_end,
+                ResearchAnalyzedWindow.window_size,
+            )
+            .filter(ResearchAnalyzedWindow.symbol == symbol.upper())
+            .filter(ResearchAnalyzedWindow.timeframe == timeframe)
+            .filter(ResearchAnalyzedWindow.universe_key == universe_key)
+            .all()
+        )
+        return {
+            (row.symbol, row.timeframe, row.window_start, row.window_end, int(row.window_size))
+            for row in rows
+        }
+
+    def _record_analyzed_windows(
+        self,
+        db: Session,
+        samples: list[Any],
+        *,
+        run_id: int,
+        params: dict[str, Any],
+        source_kind: str = "sampler",
+        source_artifact_path: str = "",
+    ) -> int:
+        records: list[ResearchAnalyzedWindow] = []
+        fingerprints: list[str] = []
+        universe_key = str(params.get("universe_key") or "")
+        for sample in samples:
+            symbol, timeframe, window_start, window_end, window_size = self._window_key(sample)
+            fingerprint = self._window_fingerprint(
+                universe_key=universe_key,
+                symbol=symbol,
+                timeframe=timeframe,
+                window_start=window_start,
+                window_end=window_end,
+                window_size=window_size,
+                source_kind=source_kind,
+            )
+            fingerprints.append(fingerprint)
+            records.append(
+                ResearchAnalyzedWindow(
+                    fingerprint=fingerprint,
+                    run_id=run_id,
+                    cadence=str(params.get("cadence") or ""),
+                    universe_key=universe_key,
+                    universe_scope=str(params.get("universe_scope") or ""),
+                    universe_file=str(params.get("universe_file") or ""),
+                    universe_hash=str(params.get("universe_hash") or ""),
+                    symbol=symbol,
+                    timeframe=timeframe,
+                    window_start=window_start,
+                    window_end=window_end,
+                    window_size=window_size,
+                    forward_end=str(getattr(getattr(sample, "outcome", None), "forward_end", "") or ""),
+                    data_period=str(params.get("period") or ""),
+                    source_kind=source_kind,
+                    source_artifact_path=source_artifact_path,
+                    metadata_json={
+                        "year": getattr(sample, "year", None),
+                        "features": self._window_history_feature_subset(
+                            getattr(sample, "features", {}) or {}
+                        ),
+                    },
+                )
+            )
+        if not records:
+            return 0
+        existing = {
+            row[0]
+            for row in db.query(ResearchAnalyzedWindow.fingerprint)
+            .filter(ResearchAnalyzedWindow.fingerprint.in_(fingerprints))
+            .all()
+        }
+        new_records = [record for record in records if record.fingerprint not in existing]
+        if not new_records:
+            return 0
+        db.add_all(new_records)
+        db.flush()
+        return len(new_records)
+
+    def _enrich_analyzed_windows(
+        self,
+        db: Session,
+        *,
+        run_id: int,
+        params: dict[str, Any],
+        data_manifest: dict[str, Any],
+    ) -> int:
+        entries = data_manifest.get("entries")
+        if not isinstance(entries, dict):
+            return 0
+        by_symbol = {
+            str(entry.get("symbol") or "").upper(): entry
+            for entry in entries.values()
+            if isinstance(entry, dict)
+        }
+        rows = (
+            db.query(ResearchAnalyzedWindow)
+            .filter(ResearchAnalyzedWindow.run_id == run_id)
+            .filter(ResearchAnalyzedWindow.data_manifest_hash == "")
+            .all()
+        )
+        updated = 0
+        manifest_hash = str(data_manifest.get("manifest_hash") or "")
+        for row in rows:
+            entry = by_symbol.get(row.symbol.upper())
+            row.data_manifest_hash = manifest_hash
+            row.data_period = str(params.get("period") or row.data_period or "")
+            if entry:
+                row.data_artifact_path = str(entry.get("path") or "")
+                row.data_artifact_sha256 = str(entry.get("sha256") or "")
+                row.data_rows = int(entry.get("rows") or 0)
+            updated += 1
+        if updated:
+            db.flush()
+        return updated
+
+    @staticmethod
+    def _window_history_feature_subset(features: dict[str, Any]) -> dict[str, Any]:
+        keys = (
+            "adjusted",
+            "what_to_show",
+            "bar_complete",
+            "session_bucket",
+            "liquidity_bucket",
+            "rvol_bucket",
+            "gap_bucket",
+            "regime_bucket",
+            "timestamp_timezone_assumption",
+        )
+        return {key: features[key] for key in keys if key in features}
 
     def _min_samples_for_params(self, params: dict[str, Any]) -> int:
         settings = self.settings
@@ -881,6 +1094,10 @@ class PatternDiscoveryLabAgent:
         assert s is not None
         max_total_windows = min(request.max_total_windows or s.discovery_max_total_windows, 80_000)
         universe_scope = universe_scope_for_interval(request.interval or s.discovery_interval)
+        universe_file = universe_file_for_interval(
+            s,
+            request.interval or s.discovery_interval,
+        )
         is_intraday = universe_scope != "daily_midcap"
         context_spec = normalize_context_filter_spec(
             session_filter=request.session_filter,
@@ -893,9 +1110,11 @@ class PatternDiscoveryLabAgent:
             "interval": request.interval or s.discovery_interval,
             "cadence": "intraday" if is_intraday else "daily",
             "universe_scope": universe_scope,
-            "universe_file": universe_file_for_interval(
-                s,
-                request.interval or s.discovery_interval,
+            "universe_file": universe_file,
+            "universe_hash": self._file_sha256(universe_file),
+            "universe_key": self._universe_key(
+                scope=universe_scope,
+                universe_file=universe_file,
             ),
             "symbols": [symbol.upper().strip() for symbol in request.symbols if symbol.strip()]
             if request.symbols
@@ -944,6 +1163,29 @@ class PatternDiscoveryLabAgent:
             else s.discovery_min_symbols,
             "min_years": s.intraday_research_min_years if is_intraday else s.discovery_min_years,
         }
+
+    @staticmethod
+    def _file_sha256(path: str | os.PathLike[str]) -> str:
+        try:
+            with open(path, "rb") as handle:
+                digest = hashlib.sha256()
+                for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                    digest.update(chunk)
+                return digest.hexdigest()
+        except OSError:
+            return ""
+
+    @classmethod
+    def _universe_key(cls, *, scope: str, universe_file: str) -> str:
+        payload = {
+            "scope": scope,
+            "file": str(universe_file),
+            "sha256": cls._file_sha256(universe_file),
+        }
+        digest = hashlib.sha256(
+            json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()[:24]
+        return f"{scope}:{digest}"
 
     def _resolve_symbols(self, request: DiscoveryRunRequest, params: dict[str, Any]) -> list[str]:
         if request.symbols:

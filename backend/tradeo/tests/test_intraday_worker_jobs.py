@@ -268,6 +268,70 @@ def test_intraday_worker_blocks_heavy_research_when_resource_policy_denies(monke
     assert statuses[-1]["job_id"] == "intraday_research"
 
 
+def test_intraday_research_skips_completed_equivalent_runs_when_configured(monkeypatch) -> None:
+    settings = Settings(
+        intraday_timeframes="15m",
+        intraday_research_skip_completed_equivalent_runs=True,
+        intraday_universe_file="/tmp/small.csv",
+    )
+    request = worker._intraday_research_request(settings, "15m", store_rejected=False)
+    expected = worker._intraday_research_expected_params(settings, request)
+    completed_run = SimpleNamespace(id=42, params_json=expected)
+
+    class FakeQuery:
+        def __init__(self, rows: list[object]) -> None:
+            self.rows = rows
+
+        def filter(self, *args, **kwargs):  # noqa: ANN001
+            return self
+
+        def order_by(self, *args, **kwargs):  # noqa: ANN001
+            return self
+
+        def all(self) -> list[object]:
+            return self.rows
+
+        def first(self) -> object | None:
+            return self.rows[0] if self.rows else None
+
+    class FakeDb:
+        def __init__(self) -> None:
+            self.calls = 0
+            self.rows_by_call = [
+                [],
+                [],
+                [completed_run],
+            ]
+
+        def query(self, _model):  # noqa: ANN001
+            rows = self.rows_by_call[self.calls]
+            self.calls += 1
+            return FakeQuery(rows)
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(worker, "SessionLocal", FakeDb)
+    monkeypatch.setattr(
+        worker,
+        "get_market_data_provider",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("provider should not be called")),
+    )
+
+    result = worker._run_intraday_research(settings, timeframes=["15m"], store_rejected=False)
+
+    assert result["reason"] == "intraday_research_waiting"
+    assert result["details"]["runs"] == []
+    assert result["details"]["skipped"] == [
+        {
+            "timeframe": "15m",
+            "reason": "completed_equivalent_run",
+            "run_id": 42,
+            "chunk": None,
+        }
+    ]
+
+
 def test_intraday_research_process_jobs_precompute_symbols_in_chunk_major_order(monkeypatch) -> None:
     settings = Settings(
         intraday_timeframes="15m,5m",

@@ -906,7 +906,6 @@ def _run_intraday_research(
             .order_by(DiscoveryRun.started_at.desc())
             .all()
         )
-
         for timeframe in timeframes:
             resolved_chunk_symbols = None
             if symbol_chunk is not None:
@@ -950,6 +949,22 @@ def _run_intraday_research(
                     {
                         "timeframe": timeframe,
                         "reason": "recent_equivalent_run",
+                        "chunk": _intraday_chunk_details(symbol_chunk, resolved_chunk_symbols),
+                    }
+                )
+                continue
+            completed_equivalent_run = (
+                None
+                if allow_recent_duplicates
+                or not settings.intraday_research_skip_completed_equivalent_runs
+                else _completed_equivalent_discovery_run(db, expected)
+            )
+            if completed_equivalent_run is not None:
+                skipped.append(
+                    {
+                        "timeframe": timeframe,
+                        "reason": "completed_equivalent_run",
+                        "run_id": completed_equivalent_run.id,
                         "chunk": _intraday_chunk_details(symbol_chunk, resolved_chunk_symbols),
                     }
                 )
@@ -1407,6 +1422,16 @@ def _intraday_research_expected_params(
 
 def _discovery_params_match(stored: dict[str, Any], expected: dict[str, Any]) -> bool:
     return all(stored.get(key) == value for key, value in expected.items())
+
+
+def _completed_equivalent_discovery_run(db, expected: dict[str, Any]) -> DiscoveryRun | None:  # noqa: ANN001
+    return (
+        db.query(DiscoveryRun)
+        .filter(DiscoveryRun.status == "completed")
+        .filter(DiscoveryRun.params_json.contains(expected))
+        .order_by(DiscoveryRun.started_at.desc())
+        .first()
+    )
 
 
 def _intraday_research_vwap_condition() -> str:

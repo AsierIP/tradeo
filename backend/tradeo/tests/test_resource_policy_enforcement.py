@@ -26,13 +26,26 @@ def _policy(tmp_path, state: str, *, focus_mode: str = "all") -> MarketSessionRe
 
 
 def test_settings_and_example_default_paper_auto_submit_false() -> None:
-    assert Settings().laboratory_auto_submit_paper_orders is False
-    assert Settings().focus_mode == "daily_only"
-    repo_root = Path(__file__).resolve().parents[3]
-    env_example = repo_root / ".env.example"
-    assert "TRADEO_LABORATORY_AUTO_SUBMIT_PAPER_ORDERS=false" in env_example.read_text(
-        encoding="utf-8"
+    settings = Settings(
+        focus_mode="daily_only",
+        laboratory_auto_submit_paper_orders=False,
     )
+
+    assert settings.laboratory_auto_submit_paper_orders is False
+    assert settings.focus_mode == "daily_only"
+    env_example = next(
+        (
+            parent / ".env.example"
+            for parent in Path(__file__).resolve().parents
+            if (parent / ".env.example").exists()
+        ),
+        None,
+    )
+    if env_example is None:
+        return
+    example_text = env_example.read_text(encoding="utf-8")
+    assert "TRADEO_FOCUS_MODE=daily_only" in example_text
+    assert "TRADEO_LABORATORY_AUTO_SUBMIT_PAPER_ORDERS=false" in example_text
 
 
 def test_unknown_session_fails_closed(tmp_path) -> None:

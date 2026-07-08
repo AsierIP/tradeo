@@ -12,6 +12,13 @@ from typing import Any
 
 import numpy as np
 
+from tradeo.core.config import get_settings
+from tradeo.db.models import (
+    ResearchExperimentRegistryExperiment,
+    ResearchExperimentRegistryRun,
+    ResearchExperimentRegistrySnapshot,
+)
+from tradeo.db.session import SessionLocal
 from tradeo.research.types import ClusterCandidate
 
 REGISTRY_HASH_ALGORITHM = "sha256_canonical_v1"
@@ -25,6 +32,10 @@ class GlobalExperimentRegistry:
     hash_algorithm: str = REGISTRY_HASH_ALGORITHM
 
     def load(self) -> dict[str, Any]:
+        if self._db_enabled():
+            db_payload = self._load_from_db()
+            if db_payload:
+                return db_payload
         if not self.path.exists():
             return self._empty()
         try:
@@ -50,7 +61,7 @@ class GlobalExperimentRegistry:
         payload = self.load()
         payload["schema_version"] = 2
         payload["hash_algorithm"] = self.hash_algorithm
-        previous_registry_hash = self._previous_registry_hash(payload) if self.path.exists() else ""
+        previous_registry_hash = self._previous_registry_hash(payload) if payload.get("registry_hash") else ""
         now = datetime.now(timezone.utc).isoformat()
         payload["updated_at"] = now
         experiments = payload.setdefault("experiments", [])
@@ -165,8 +176,13 @@ class GlobalExperimentRegistry:
         }
         payload["latest_run_manifest"] = run_manifest
         registry_hash, registry_bytes = self._finalize_payload(payload)
-        backup_path = self._backup_existing()
-        self._atomic_write(registry_bytes)
+        backup_path = None
+        db_snapshot_ref = ""
+        if self._db_enabled():
+            db_snapshot_ref = self._persist_to_db(payload)
+        else:
+            backup_path = self._backup_existing()
+            self._atomic_write(registry_bytes)
         for (
             candidate,
             experiment_id,
@@ -203,7 +219,7 @@ class GlobalExperimentRegistry:
             "previous_registry_hash": previous_registry_hash,
             "registry_hash": registry_hash,
             "run_manifest_hash": run_manifest["run_manifest_hash"],
-            "backup_path": str(backup_path) if backup_path is not None else "",
+            "backup_path": str(backup_path) if backup_path is not None else db_snapshot_ref,
         }
 
     def _merge_run(
@@ -326,6 +342,129 @@ class GlobalExperimentRegistry:
         finally:
             if temp_path.exists():
                 temp_path.unlink()
+
+    def _db_enabled(self) -> bool:
+        try:
+            settings = get_settings()
+            expected = settings.reports_path / "research" / "global_experiment_registry.json"
+            return self.path.resolve() == expected.resolve()
+        except Exception:  # noqa: BLE001 - file fallback preserves legacy tolerance.
+            return False
+
+    def _load_from_db(self) -> dict[str, Any]:
+        try:
+            db = SessionLocal()
+            try:
+                snapshot = (
+                    db.query(ResearchExperimentRegistrySnapshot)
+                    .order_by(
+                        ResearchExperimentRegistrySnapshot.global_trial_count.desc(),
+                        ResearchExperimentRegistrySnapshot.id.desc(),
+                    )
+                    .first()
+                )
+                if snapshot is None or not isinstance(snapshot.payload_json, dict):
+                    return {}
+                payload = dict(snapshot.payload_json)
+            finally:
+                db.close()
+        except Exception:  # noqa: BLE001 - keep load() non-throwing like the file backend.
+            return {}
+        payload.setdefault("schema_version", 2)
+        payload.setdefault("global_trial_count", 0)
+        payload.setdefault("runs", [])
+        payload.setdefault("experiments", [])
+        payload.setdefault("hash_algorithm", self.hash_algorithm)
+        return payload
+
+    def _persist_to_db(self, payload: dict[str, Any]) -> str:
+        clean = self._json_clean(payload)
+        if not isinstance(clean, dict):
+            raise TypeError("registry payload must serialize to a JSON object")
+        registry_hash = str(clean.get("registry_hash") or "")
+        latest_manifest = clean.get("latest_run_manifest") or {}
+        if not isinstance(latest_manifest, dict):
+            latest_manifest = {}
+        now = datetime.now(timezone.utc)
+        db = SessionLocal()
+        try:
+            for row in clean.get("experiments") or []:
+                if not isinstance(row, dict) or not row.get("experiment_id"):
+                    continue
+                experiment = (
+                    db.query(ResearchExperimentRegistryExperiment)
+                    .filter(ResearchExperimentRegistryExperiment.experiment_id == str(row["experiment_id"]))
+                    .first()
+                )
+                if experiment is None:
+                    experiment = ResearchExperimentRegistryExperiment(
+                        experiment_id=str(row["experiment_id"]),
+                        created_at=now,
+                    )
+                    db.add(experiment)
+                experiment.family_id = str(row.get("family_id") or "")
+                experiment.pattern_key = str(row.get("pattern_key") or "")
+                experiment.variant_id = str(row.get("variant_id") or "")
+                experiment.side = str(row.get("side") or "")
+                experiment.timeframe = str(row.get("timeframe") or "")
+                experiment.window_size = int(row.get("window_size") or 0)
+                experiment.first_run_id = str(row.get("first_run_id") or row.get("run_id") or "")
+                experiment.latest_run_id = str(row.get("latest_run_id") or row.get("run_id") or "")
+                experiment.replication_count = int(row.get("replication_count") or 1)
+                experiment.candidate_trial_count = int(row.get("candidate_trial_count") or 1)
+                experiment.global_trial_count_after = int(row.get("global_trial_count_after") or 0)
+                experiment.edge_claim = str(row.get("edge_claim") or "NO_DEMOSTRADO")
+                experiment.payload_json = row
+                experiment.updated_at = now
+
+            for row in clean.get("runs") or []:
+                if not isinstance(row, dict) or row.get("run_id") is None:
+                    continue
+                run_id = str(row.get("run_id"))
+                run = (
+                    db.query(ResearchExperimentRegistryRun)
+                    .filter(ResearchExperimentRegistryRun.run_id == run_id)
+                    .first()
+                )
+                if run is None:
+                    run = ResearchExperimentRegistryRun(run_id=run_id, created_at=now)
+                    db.add(run)
+                run.registered_at = str(row.get("registered_at") or "")
+                run.candidate_count = int(row.get("candidate_count") or 0)
+                run.new_experiments = int(row.get("new_experiments") or 0)
+                run.repeated_experiments = int(row.get("repeated_experiments") or 0)
+                run.previous_registry_hash = str(row.get("previous_registry_hash") or "")
+                run.run_manifest_hash = str(row.get("run_manifest_hash") or "")
+                run.registry_hash = registry_hash
+                run.params_json = row.get("params") if isinstance(row.get("params"), dict) else {}
+                run.payload_json = row
+                run.updated_at = now
+
+            snapshot = (
+                db.query(ResearchExperimentRegistrySnapshot)
+                .filter(ResearchExperimentRegistrySnapshot.registry_hash == registry_hash)
+                .first()
+            )
+            if snapshot is None:
+                snapshot = ResearchExperimentRegistrySnapshot(
+                    registry_hash=registry_hash,
+                    previous_registry_hash=str(latest_manifest.get("previous_registry_hash") or ""),
+                    run_manifest_hash=str(latest_manifest.get("run_manifest_hash") or ""),
+                    global_trial_count=int(clean.get("global_trial_count") or 0),
+                    experiment_count=len(clean.get("experiments") or []),
+                    run_count=len(clean.get("runs") or []),
+                    payload_json=clean,
+                    created_at=now,
+                )
+                db.add(snapshot)
+                db.flush()
+            db.commit()
+            return f"db_snapshot:{snapshot.id}"
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.close()
 
     def _finalize_payload(self, payload: dict[str, Any]) -> tuple[str, bytes]:
         clean = self._json_clean(payload)

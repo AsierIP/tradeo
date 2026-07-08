@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from tradeo.core.config import Settings
+from tradeo.core.config import Settings, get_settings
 from tradeo.core.security import require_admin
 from tradeo.modules.resource_policy.market_session_resource_policy import (
     DENY_INTRADAY_FROZEN_DAILY_FOCUS,
@@ -32,7 +32,7 @@ def _policy(
 
 
 def test_settings_default_focus_mode_is_daily_only() -> None:
-    settings = Settings()
+    settings = Settings(focus_mode="daily_only")
 
     assert settings.focus_mode == "daily_only"
     assert settings.daily_focus_only is True
@@ -59,6 +59,30 @@ def test_regular_market_blocks_research_heavy_and_prioritizes_lab(tmp_path) -> N
     assert decision.priority == "BLOCKED"
 
 
+def test_regular_market_allocates_maximum_capacity_to_lab(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr("tradeo.modules.resource_policy.market_session_resource_policy.os.cpu_count", lambda: 8)
+    policy = MarketSessionResourcePolicy(
+        settings=Settings(
+            artifacts_dir=str(tmp_path),
+            focus_mode="all",
+            discovery_limit_default=80,
+            laboratory_symbol_limit=0,
+            intraday_research_process_workers=10,
+        )
+    )
+
+    budget = policy.current_budget(datetime(2026, 7, 6, 10, 0, tzinfo=NY))
+
+    assert budget.session_state == SessionState.REGULAR_MARKET
+    assert budget.lab_priority == "HIGH"
+    assert budget.cpu_slots_lab == 8
+    assert budget.max_process_pool_workers_lab == 8
+    assert budget.max_symbols_lab_cycle == 250
+    assert budget.heavy_research_allowed is False
+    assert budget.cpu_slots_research == 0
+    assert budget.max_process_pool_workers_research == 0
+
+
 def test_market_closed_assigns_research_high(tmp_path) -> None:
     budget = _policy(tmp_path).current_budget(datetime(2026, 7, 6, 21, 0, tzinfo=NY))
 
@@ -66,6 +90,33 @@ def test_market_closed_assigns_research_high(tmp_path) -> None:
     assert budget.research_priority == "HIGH"
     assert budget.heavy_research_allowed is True
     assert budget.ibkr_write_allowed is False
+
+
+def test_market_closed_allocates_maximum_capacity_to_research(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr("tradeo.modules.resource_policy.market_session_resource_policy.os.cpu_count", lambda: 8)
+    policy = MarketSessionResourcePolicy(
+        settings=Settings(
+            artifacts_dir=str(tmp_path),
+            focus_mode="all",
+            discovery_limit_default=80,
+            intraday_research_limit_default=200,
+            intraday_research_process_workers=10,
+        )
+    )
+
+    budget = policy.current_budget(datetime(2026, 7, 6, 21, 0, tzinfo=NY))
+    lab = policy.decide_job(JobType.LAB_EXECUTION, datetime(2026, 7, 6, 21, 0, tzinfo=NY))
+
+    assert budget.session_state == SessionState.MARKET_CLOSED
+    assert budget.lab_priority == "BLOCKED"
+    assert budget.research_priority == "HIGH"
+    assert budget.cpu_slots_research == 8
+    assert budget.max_process_pool_workers_research == 10
+    assert budget.max_symbols_research_cycle == 250
+    assert budget.heavy_research_allowed is True
+    assert budget.cpu_slots_lab == 0
+    assert budget.max_process_pool_workers_lab == 0
+    assert lab.allowed is False
 
 
 def test_daily_focus_freezes_intraday_heavy_work_even_after_close(tmp_path) -> None:
@@ -147,6 +198,7 @@ def test_resource_policy_endpoint_read_only_without_secrets() -> None:
     app = FastAPI()
     app.include_router(resource_policy_router, prefix="/api")
     app.dependency_overrides[require_admin] = lambda: "test"
+    app.dependency_overrides[get_settings] = lambda: Settings(focus_mode="daily_only")
 
     response = TestClient(app).get("/api/resource-policy/status")
 

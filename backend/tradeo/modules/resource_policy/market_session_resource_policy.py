@@ -262,6 +262,10 @@ class MarketSessionResourcePolicy:
 
     def _budget_for_state(self, state: str, current: datetime) -> ResourceBudget:
         generated = current.astimezone(self.timezone).isoformat()
+        max_cpu_slots = self._max_cpu_slots()
+        max_research_workers = self._max_research_workers(max_cpu_slots)
+        max_lab_symbols = self._max_lab_symbols()
+        max_research_symbols = self._max_research_symbols()
         if state == SessionState.PRE_MARKET:
             return self._budget(
                 state,
@@ -270,18 +274,18 @@ class MarketSessionResourcePolicy:
                 research=PriorityLevel.LOW,
                 daily=PriorityLevel.MEDIUM,
                 lab_probe=PriorityLevel.HIGH,
-                cpu_lab=3,
-                cpu_research=1,
-                max_lab=120,
-                max_research=20,
-                workers_lab=2,
-                workers_research=1,
+                cpu_lab=max_cpu_slots,
+                cpu_research=0,
+                max_lab=max_lab_symbols,
+                max_research=0,
+                workers_lab=max_cpu_slots,
+                workers_research=0,
                 ibkr_write=False,
                 heavy=False,
                 lab_probe_allowed=True,
                 daily_allowed=True,
                 blocked=[JobType.RESEARCH_HEAVY, JobType.PAPER_SUBMIT, JobType.HEAVY_BACKTEST, JobType.LARGE_SCANNER, JobType.LIVE],
-                reason="pre-market prioritizes Lab readiness and paper-probe preparation; heavy Research is blocked",
+                reason="pre-market allocates maximum local capacity to Lab readiness; heavy Research is blocked",
             )
         if state == SessionState.REGULAR_MARKET:
             return self._budget(
@@ -291,12 +295,12 @@ class MarketSessionResourcePolicy:
                 research=PriorityLevel.LOW,
                 daily=PriorityLevel.MEDIUM,
                 lab_probe=PriorityLevel.HIGH,
-                cpu_lab=4,
-                cpu_research=1,
-                max_lab=160,
-                max_research=10,
-                workers_lab=3,
-                workers_research=1,
+                cpu_lab=max_cpu_slots,
+                cpu_research=0,
+                max_lab=max_lab_symbols,
+                max_research=0,
+                workers_lab=max_cpu_slots,
+                workers_research=0,
                 ibkr_write=True,
                 heavy=False,
                 lab_probe_allowed=True,
@@ -308,49 +312,61 @@ class MarketSessionResourcePolicy:
                     JobType.LARGE_SCANNER,
                     JobType.LIVE,
                 ],
-                reason="regular market gives Lab and Lab Paper Probe priority; Research heavy jobs are blocked",
+                reason="regular market allocates maximum local capacity to Lab and Lab Paper Probe; heavy Research is blocked",
             )
         if state == SessionState.POST_MARKET:
             return self._budget(
                 state,
                 generated,
                 lab=PriorityLevel.BLOCKED,
-                research=PriorityLevel.MEDIUM,
+                research=PriorityLevel.HIGH,
                 daily=PriorityLevel.HIGH,
                 lab_probe=PriorityLevel.BLOCKED,
-                cpu_lab=1,
-                cpu_research=3,
+                cpu_lab=0,
+                cpu_research=max_cpu_slots,
                 max_lab=20,
-                max_research=120,
-                workers_lab=1,
-                workers_research=2,
+                max_research=max_research_symbols,
+                workers_lab=0,
+                workers_research=max_research_workers,
                 ibkr_write=False,
                 heavy=True,
                 lab_probe_allowed=False,
                 daily_allowed=True,
-                blocked=[JobType.LAB_EXECUTION, JobType.PAPER_SUBMIT, JobType.LIVE],
-                reason="post-market prioritizes Daily reevaluation, nightly reports and medium Research batch work",
+                blocked=[
+                    JobType.LAB_EXECUTION,
+                    JobType.LAB_READINESS,
+                    JobType.LAB_PAPER_PROBE,
+                    JobType.PAPER_SUBMIT,
+                    JobType.LIVE,
+                ],
+                reason="post-market allocates maximum local capacity to heavy Research and Daily reevaluation",
             )
         if state == SessionState.MARKET_CLOSED:
             return self._budget(
                 state,
                 generated,
-                lab=PriorityLevel.LOW,
+                lab=PriorityLevel.BLOCKED,
                 research=PriorityLevel.HIGH,
                 daily=PriorityLevel.HIGH,
                 lab_probe=PriorityLevel.BLOCKED,
-                cpu_lab=1,
-                cpu_research=4,
+                cpu_lab=0,
+                cpu_research=max_cpu_slots,
                 max_lab=20,
-                max_research=200,
-                workers_lab=1,
-                workers_research=4,
+                max_research=max_research_symbols,
+                workers_lab=0,
+                workers_research=max_research_workers,
                 ibkr_write=False,
                 heavy=True,
                 lab_probe_allowed=False,
                 daily_allowed=True,
-                blocked=[JobType.PAPER_SUBMIT, JobType.LIVE],
-                reason="market closed allows heavy Research and Daily after-close reevaluation; paper/live submit blocked",
+                blocked=[
+                    JobType.LAB_EXECUTION,
+                    JobType.LAB_READINESS,
+                    JobType.LAB_PAPER_PROBE,
+                    JobType.PAPER_SUBMIT,
+                    JobType.LIVE,
+                ],
+                reason="market closed allocates maximum local capacity to heavy Research; paper/live submit blocked",
             )
         if state == SessionState.WEEKEND_OR_HOLIDAY:
             return self._budget(
@@ -361,17 +377,17 @@ class MarketSessionResourcePolicy:
                 daily=PriorityLevel.ALLOWED,
                 lab_probe=PriorityLevel.BLOCKED,
                 cpu_lab=0,
-                cpu_research=4,
+                cpu_research=max_cpu_slots,
                 max_lab=0,
-                max_research=200,
+                max_research=max_research_symbols,
                 workers_lab=0,
-                workers_research=4,
+                workers_research=max_research_workers,
                 ibkr_write=False,
                 heavy=True,
                 lab_probe_allowed=False,
                 daily_allowed=True,
                 blocked=[JobType.LAB_EXECUTION, JobType.LAB_PAPER_PROBE, JobType.PAPER_SUBMIT, JobType.LIVE],
-                reason="weekend or holiday allows Research batch and Daily maintenance; Lab execution and paper/live submit blocked",
+                reason="weekend or holiday allocates maximum local capacity to Research batch and Daily maintenance; Lab execution and paper/live submit blocked",
             )
         return self._budget(
             SessionState.UNKNOWN,
@@ -513,6 +529,27 @@ class MarketSessionResourcePolicy:
     @property
     def focus_mode(self) -> str:
         return _normalize_focus_mode(getattr(self._settings(), "focus_mode", FOCUS_MODE_DAILY_ONLY))
+
+    def _max_cpu_slots(self) -> int:
+        return max(1, int(os.cpu_count() or 1))
+
+    def _max_research_workers(self, cpu_slots: int) -> int:
+        configured = int(getattr(self._settings(), "intraday_research_process_workers", 1) or 1)
+        return max(1, configured, cpu_slots)
+
+    def _max_lab_symbols(self) -> int:
+        settings = self._settings()
+        lab_limit = int(getattr(settings, "laboratory_symbol_limit", 0) or 0)
+        discovery_limit = int(getattr(settings, "discovery_limit_default", 80) or 80)
+        if lab_limit > 0:
+            return max(lab_limit, discovery_limit)
+        return max(250, discovery_limit)
+
+    def _max_research_symbols(self) -> int:
+        settings = self._settings()
+        intraday_limit = int(getattr(settings, "intraday_research_limit_default", 25) or 25)
+        discovery_limit = int(getattr(settings, "discovery_limit_default", 80) or 80)
+        return max(250, intraday_limit, discovery_limit)
 
 
 def _normalize_focus_mode(value: object) -> str:

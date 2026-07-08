@@ -10,9 +10,13 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 
 from tradeo.agents.pattern_discovery_lab_agent import PatternDiscoveryLabAgent
 from tradeo.core.config import Settings
+from tradeo.db.models import DiscoveryRun, ResearchAnalyzedWindow
+from tradeo.db.session import Base
 from tradeo.research import cluster_research_engine as cluster_module
 from tradeo.research.cluster_research_engine import ClusterFitResult, ClusterResearchEngine
 from tradeo.research.global_experiment_registry import GlobalExperimentRegistry
@@ -121,6 +125,99 @@ def test_window_sampler_generates_forward_labeled_samples() -> None:
     assert "execution_fill_probability" in first.features
     assert "weekly_return" in first.features
     assert "relative_strength_spy" in first.features
+
+
+def test_window_sampler_skips_seen_windows_before_embedding() -> None:
+    class FailingEmbeddingEngine:
+        def embed_arrays(self, **_kwargs):  # noqa: ANN003, ANN202
+            raise AssertionError("duplicate windows must not be embedded")
+
+    index = pd.date_range("2026-01-01", periods=24, freq="D", tz="UTC")
+    close = np.linspace(100.0, 112.0, len(index))
+    df = pd.DataFrame(
+        {
+            "open": close - 0.2,
+            "high": close + 1.0,
+            "low": close - 1.0,
+            "close": close,
+            "volume": np.full(len(index), 500_000),
+        },
+        index=index,
+    )
+    skip_window_keys = {
+        (
+            "LABX",
+            "1d",
+            index[0].isoformat(),
+            index[9].isoformat(),
+            10,
+        )
+    }
+    sampler = WindowSampler(embedding_engine=FailingEmbeddingEngine())
+
+    samples = sampler.sample(
+        symbol="LABX",
+        df=df,
+        timeframe="1d",
+        window_sizes=[10],
+        forward_bars=[1],
+        stride=99,
+        max_windows_per_symbol=1,
+        skip_window_keys=skip_window_keys,
+    )
+
+    assert samples == []
+    assert sampler.last_diagnostics["windows_duplicate_skipped"] == 1
+
+
+def test_lab_agent_records_and_loads_seen_research_windows(tmp_path: Path) -> None:
+    engine = create_engine("sqlite:///:memory:", future=True)
+    Base.metadata.create_all(bind=engine)
+    Session = sessionmaker(bind=engine)
+    db = Session()
+    run = DiscoveryRun(status="running", params_json={})
+    db.add(run)
+    db.commit()
+    db.refresh(run)
+    sample = _research_sample(
+        1,
+        vector_value=0.1,
+        highs=[101.0],
+        lows=[99.0],
+        closes=[100.0],
+    )
+    agent = PatternDiscoveryLabAgent(
+        provider=object(), settings=Settings(reports_dir=str(tmp_path))
+    )
+
+    params = {
+        "cadence": "daily",
+        "period": "1y",
+        "universe_key": "daily_midcap:test-a",
+        "universe_scope": "daily_midcap",
+        "universe_file": "universes/daily.csv",
+        "universe_hash": "abc",
+    }
+    other_params = {
+        **params,
+        "universe_key": "intraday_smallcap:test-b",
+        "universe_scope": "intraday_smallcap",
+        "universe_hash": "def",
+    }
+
+    assert agent._record_analyzed_windows(db, [sample], run_id=run.id, params=params) == 1
+    assert agent._record_analyzed_windows(db, [sample], run_id=run.id, params=params) == 0
+    assert agent._record_analyzed_windows(db, [sample], run_id=run.id, params=other_params) == 1
+    seen = agent._seen_window_keys(
+        db,
+        symbol=sample.symbol,
+        timeframe=sample.timeframe,
+        universe_key=params["universe_key"],
+    )
+
+    assert agent._window_key(sample) in seen
+    assert db.query(ResearchAnalyzedWindow).count() == 2
+    db.close()
 
 
 def test_embedding_fast_benchmark_alignment_matches_pandas_ffill() -> None:
