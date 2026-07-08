@@ -1076,9 +1076,9 @@ function OperationsModule({
 }
 
 export default function Page() {
-  const [activeModule, setActiveModule] = useState<'research' | 'daily' | 'laboratory' | 'fox_hunter'>('research')
+  const [activeModule, setActiveModule] = useState<'research' | 'laboratory' | 'fox_hunter'>('research')
   const [activeResearchCadence, setActiveResearchCadence] = useState<'daily' | 'intraday'>('daily')
-  const [activeLabCadence, setActiveLabCadence] = useState<'daily' | 'intraday'>('intraday')
+  const [activeLabCadence, setActiveLabCadence] = useState<'daily' | 'intraday'>('daily')
   const [activeFoxCadence, setActiveFoxCadence] = useState<'daily' | 'intraday'>('daily')
   const [lastDiscovery, setLastDiscovery] = useState<DiscoveryRunResponse | null>(null)
   const [busyDiscovery, setBusyDiscovery] = useState(false)
@@ -1337,14 +1337,11 @@ export default function Page() {
           <button className={activeModule === 'research' ? 'active' : ''} onClick={() => setActiveModule('research')}>
             Research
           </button>
-          <button className={activeModule === 'daily' ? 'active' : ''} onClick={() => setActiveModule('daily')}>
-            Daily
-          </button>
           <button className={activeModule === 'laboratory' ? 'active' : ''} onClick={() => setActiveModule('laboratory')}>
             Laboratorio
           </button>
           <button className={activeModule === 'fox_hunter' ? 'active' : ''} onClick={() => setActiveModule('fox_hunter')}>
-            Fox Hunter
+            FoxHunter
           </button>
         </nav>
 
@@ -1555,11 +1552,11 @@ export default function Page() {
         {activeModule === 'laboratory' && (
           <section className="module-view full">
             <div className="sub-tabs" aria-label="Cadencia Laboratorio">
-              <button className={activeLabCadence === 'intraday' ? 'active' : ''} onClick={() => setActiveLabCadence('intraday')}>
-                Intradía
-              </button>
               <button className={activeLabCadence === 'daily' ? 'active' : ''} onClick={() => setActiveLabCadence('daily')}>
                 Daily
+              </button>
+              <button className={activeLabCadence === 'intraday' ? 'active' : ''} onClick={() => setActiveLabCadence('intraday')}>
+                Intradía
               </button>
             </div>
             {activeLabCadence === 'intraday' ? (
@@ -1594,24 +1591,14 @@ export default function Page() {
           </section>
         )}
 
-        {activeModule === 'daily' && (
-          <section className="module-view full">
-            <OperationsModule
-              title="Daily"
-              subtitle="Órdenes paper Daily activas, cerradas y P/L acumulado."
-              overview={dailyOverview}
-            />
-          </section>
-        )}
-
         {activeModule === 'fox_hunter' && (
           <section className="module-view full">
             <div className="sub-tabs" aria-label="Cadencia Fox Hunter">
-              <button className={activeFoxCadence === 'intraday' ? 'active' : ''} onClick={() => setActiveFoxCadence('intraday')}>
-                Intradía
-              </button>
               <button className={activeFoxCadence === 'daily' ? 'active' : ''} onClick={() => setActiveFoxCadence('daily')}>
                 Daily
+              </button>
+              <button className={activeFoxCadence === 'intraday' ? 'active' : ''} onClick={() => setActiveFoxCadence('intraday')}>
+                Intradía
               </button>
             </div>
             {activeFoxCadence === 'intraday' ? (
