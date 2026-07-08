@@ -1271,6 +1271,63 @@ def test_validation_gate_rejects_edge_below_4r() -> None:
     assert any("4" in reason for reason in evaluated.validation_reasons)
 
 
+def test_validation_gate_requires_daily_event_min_gain_evidence() -> None:
+    base_metrics = {
+        "train_sample_count": 140,
+        "best_rr": 4.0,
+        "best_expectancy_r": 0.45,
+        "best_profit_factor": 2.4,
+        "best_max_drawdown_r": 5.0,
+        "expectancy_r": 0.45,
+        "profit_factor": 2.4,
+        "stability_score": 0.62,
+        "out_of_sample_expectancy_r": 0.22,
+        "out_of_sample_profit_factor": 1.8,
+        "walk_forward_fold_count": 4,
+        "walk_forward_positive_fold_rate": 1.0,
+        "expectancy_ci_low": 0.05,
+        "overfit_score": 0.1,
+        "rr_metrics": {"4": {"expectancy_r": 0.45, "profit_factor": 2.4, "sample_count": 140}},
+    }
+    candidate = ClusterCandidate(
+        pattern_key="daily_missing_event_filter",
+        name="daily_missing_event_filter",
+        side="long",
+        timeframe="1d",
+        window_size=20,
+        cluster_id=1,
+        centroid=[],
+        sample_count=140,
+        symbol_count=12,
+        year_count=3,
+        score=0.0,
+        validation_passed=False,
+        validation_reasons=[],
+        metrics=dict(base_metrics),
+        feature_summary={},
+        examples=[],
+    )
+
+    evaluated = ValidationGate().evaluate(candidate)
+
+    assert not evaluated.validation_passed
+    assert any("filtro evento diario no demostrado" in reason for reason in evaluated.validation_reasons)
+
+    candidate.metrics = {
+        **base_metrics,
+        "daily_event_filter": {
+            "applied": True,
+            "min_gain_pct": 0.07,
+            "side_gain_min_pct": 0.07,
+        },
+    }
+
+    evaluated = ValidationGate().evaluate(candidate)
+
+    assert evaluated.validation_passed
+    assert not any("filtro evento diario" in reason for reason in evaluated.validation_reasons)
+
+
 def test_validation_gate_rejects_nonfinite_core_metrics_fail_closed() -> None:
     candidate = ClusterCandidate(
         pattern_key="x",
@@ -1672,11 +1729,14 @@ def test_lab_agent_requests_run_scoped_data_manifest(tmp_path: Path) -> None:
 
 
 def test_lab_agent_routes_research_universe_by_timeframe(tmp_path: Path) -> None:
+    megacaps = tmp_path / "megacaps.csv"
     midcaps = tmp_path / "midcaps.csv"
     smallcaps = tmp_path / "smallcaps.csv"
+    megacaps.write_text("symbol\nMEGA1\nMEGA2\n", encoding="utf-8")
     midcaps.write_text("symbol\nMID1\nMID2\n", encoding="utf-8")
     smallcaps.write_text("symbol\nSML1\nSML2\n", encoding="utf-8")
     settings = Settings(
+        daily_mega_universe_file=str(megacaps),
         daily_universe_file=str(midcaps),
         intraday_universe_file=str(smallcaps),
         reports_dir=str(tmp_path / "reports"),
@@ -1687,8 +1747,15 @@ def test_lab_agent_routes_research_universe_by_timeframe(tmp_path: Path) -> None
     daily_request = DiscoveryRunRequest(limit=2, interval="1d")
     daily_params = agent._resolve_params(daily_request)
     assert daily_params["universe_scope"] == "daily_midcap"
+    assert daily_params["daily_cap_segment"] == "mid"
     assert daily_params["daily_event_min_gain_pct"] == 0.07
     assert agent._resolve_symbols(daily_request, daily_params) == ["MID1", "MID2"]
+
+    mega_request = DiscoveryRunRequest(limit=2, interval="1d", daily_cap_segment="mega")
+    mega_params = agent._resolve_params(mega_request)
+    assert mega_params["universe_scope"] == "daily_megacap"
+    assert mega_params["daily_cap_segment"] == "mega"
+    assert agent._resolve_symbols(mega_request, mega_params) == ["MEGA1", "MEGA2"]
 
     intraday_request = DiscoveryRunRequest(
         limit=2,
@@ -1697,8 +1764,48 @@ def test_lab_agent_routes_research_universe_by_timeframe(tmp_path: Path) -> None
     )
     intraday_params = agent._resolve_params(intraday_request)
     assert intraday_params["universe_scope"] == "intraday_smallcap"
+    assert intraday_params["daily_cap_segment"] is None
     assert intraday_params["daily_event_min_gain_pct"] == 0.0
     assert agent._resolve_symbols(intraday_request, intraday_params) == ["SML1", "SML2"]
+
+
+def test_lab_agent_attaches_universe_metadata_to_candidates() -> None:
+    candidate = ClusterCandidate(
+        pattern_key="candidate-1",
+        name="Candidate",
+        side="long",
+        timeframe="1d",
+        window_size=20,
+        cluster_id=1,
+        centroid=[0.1, 0.2],
+        sample_count=25,
+        symbol_count=5,
+        year_count=2,
+        score=1.2,
+        validation_passed=True,
+        validation_reasons=[],
+        metrics={},
+        feature_summary={},
+        examples=[],
+    )
+
+    PatternDiscoveryLabAgent._attach_universe_metadata(
+        candidate,
+        {
+            "universe_scope": "daily_megacap",
+            "daily_cap_segment": "mega",
+            "universe_file": "/app/data/universe_daily_mega_caps.csv",
+            "universe_hash": "abc123",
+            "universe_key": "daily_megacap:abc123",
+        },
+    )
+
+    assert candidate.metrics["universe_scope"] == "daily_megacap"
+    assert candidate.metrics["daily_cap_segment"] == "mega"
+    assert candidate.metrics["cap_segment"] == "mega"
+    assert candidate.metrics["universe_file"].endswith("universe_daily_mega_caps.csv")
+    assert candidate.metrics["universe_hash"] == "abc123"
+    assert candidate.metrics["universe_key"] == "daily_megacap:abc123"
 
 
 def test_lab_agent_skips_rejected_global_registry_when_rejected_storage_disabled(

@@ -272,6 +272,14 @@ El supervisor API nunca sustituye los límites duros de riesgo. Solo añade revi
 
 `data/universe_us_mid_small.csv` es una lista inicial editable. No es una recomendación de inversión. Sustitúyela por un universo actualizado mediante IBKR Scanner, Polygon, Nasdaq Data Link u otro proveedor.
 
+Para Daily discovery hay tres seed universes separadas y pequenas:
+
+- `data/universe_daily_mega_caps.csv`
+- `data/universe_daily_large_caps.csv`
+- `data/universe_daily_mid_caps.csv`
+
+Son semillas de investigacion, no recomendaciones. El flujo nuevo es **separate discovery per universe**: ejecuta discovery por `daily_cap_segment` (`mega`, `large`, `mid`) o fija `TRADEO_DAILY_UNIVERSE_CAP_SEGMENT` a una sola seed, guarda el run con su `universe_file`/`universe_key`, y repite para la siguiente seed. Mantener **no cross-universe promotion** hasta una fase posterior de analisis/Director: un patron descubierto en mega caps no se promociona usando evidencia agregada de large/mid caps sin validacion separada. Las small caps quedan fuera de estas seeds Daily.
+
 ## Seguridad mínima
 
 - Despliegue pensado para `localhost` o VPN.

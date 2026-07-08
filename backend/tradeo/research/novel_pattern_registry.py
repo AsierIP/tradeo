@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from hashlib import blake2b
+import re
 from typing import Any
 
 import numpy as np
@@ -30,6 +31,18 @@ DISCOVERY_BLOCKED_PROMOTION_STATES = {
     "production",
     "production_candidate",
 }
+
+UNIVERSE_SCOPE_METRIC_KEYS = ("universe_scope",)
+CAP_SEGMENT_METRIC_KEYS = (
+    "cap_segment",
+    "market_cap_bucket",
+    "market_cap_segment",
+    "cap_bucket",
+    "universe_bucket",
+    "focus_universe_bucket",
+    "bucket",
+)
+ABSENT_UNIVERSE_TOKENS = {"", "all", "any", "n/a", "na", "none", "null", "unknown"}
 
 
 @dataclass(slots=True)
@@ -147,9 +160,10 @@ class NovelPatternRegistry:
         *,
         run_id: int | None,
         existing_by_key: dict[str, DiscoveredPattern],
-        patterns_by_scope: dict[tuple[str, str, int], list[DiscoveredPattern]],
+        patterns_by_scope: dict[tuple[str, str, int, str], list[DiscoveredPattern]],
     ) -> tuple[DiscoveredPattern, bool, dict[str, Any]]:
-        pattern = existing_by_key.get(candidate.pattern_key)
+        candidate_pattern_key = self._candidate_pattern_key(candidate)
+        pattern = existing_by_key.get(candidate_pattern_key)
         is_variant = False
         is_new_pattern = False
         if pattern is None:
@@ -162,16 +176,21 @@ class NovelPatternRegistry:
                 candidate.metrics["registry_deduped"] = True
                 candidate.metrics["registry_similarity"] = round(similarity, 6)
                 candidate.metrics["registry_canonical_pattern_key"] = pattern.pattern_key
-                candidate.metrics["registry_candidate_pattern_key"] = candidate.pattern_key
+                candidate.metrics["registry_candidate_pattern_key"] = candidate_pattern_key
             else:
-                pattern = DiscoveredPattern(pattern_key=candidate.pattern_key)
+                pattern = DiscoveredPattern(pattern_key=candidate_pattern_key)
                 is_new_pattern = True
                 candidate.metrics["registry_deduped"] = False
                 candidate.metrics["registry_similarity"] = 0.0
-                candidate.metrics["registry_canonical_pattern_key"] = candidate.pattern_key
-                candidate.metrics["registry_candidate_pattern_key"] = candidate.pattern_key
-                existing_by_key[candidate.pattern_key] = pattern
+                candidate.metrics["registry_canonical_pattern_key"] = candidate_pattern_key
+                candidate.metrics["registry_candidate_pattern_key"] = candidate_pattern_key
+                existing_by_key[candidate_pattern_key] = pattern
         metrics = candidate.metrics
+        universe_scope_key = self._universe_scope_key(metrics)
+        if universe_scope_key:
+            metrics["registry_universe_scope_key"] = universe_scope_key
+            if candidate_pattern_key != candidate.pattern_key:
+                metrics["registry_source_pattern_key"] = candidate.pattern_key
         drift = self._drift(pattern, candidate, is_variant=is_variant)
         registry_similarity = float(metrics.get("registry_similarity", 0.0))
         registry_novelty = max(0.0, min(1.0, 1.0 - registry_similarity))
@@ -214,7 +233,7 @@ class NovelPatternRegistry:
             pattern.pattern_family_key = self._family_key(candidate)
         if not pattern.canonical_pattern_key:
             pattern.canonical_pattern_key = pattern.pattern_key
-        pattern.variant_key = candidate.pattern_key
+        pattern.variant_key = candidate_pattern_key
         pattern.variant_count = max(1, int(pattern.variant_count or 1)) + (1 if is_variant else 0)
         pattern.drift_status = str(drift["status"])
         pattern.drift_score = float(drift["score"])
@@ -307,20 +326,31 @@ class NovelPatternRegistry:
             for example in candidate.examples[: self.max_examples_per_pattern]
         ]
 
-    @staticmethod
-    def _scope_key(candidate: ClusterCandidate) -> tuple[str, str, int]:
-        return (str(candidate.side), str(candidate.timeframe), int(candidate.window_size))
+    @classmethod
+    def _scope_key(cls, candidate: ClusterCandidate) -> tuple[str, str, int, str]:
+        return (
+            str(candidate.side),
+            str(candidate.timeframe),
+            int(candidate.window_size),
+            cls._universe_scope_key(candidate.metrics),
+        )
 
-    @staticmethod
-    def _pattern_scope_key(pattern: DiscoveredPattern) -> tuple[str, str, int]:
-        return (str(pattern.side), str(pattern.timeframe), int(pattern.window_size or 0))
+    @classmethod
+    def _pattern_scope_key(cls, pattern: DiscoveredPattern) -> tuple[str, str, int, str]:
+        metrics = pattern.metrics_json if isinstance(pattern.metrics_json, dict) else {}
+        return (
+            str(pattern.side),
+            str(pattern.timeframe),
+            int(pattern.window_size or 0),
+            cls._universe_scope_key(metrics),
+        )
 
     def _existing_patterns_by_key(
         self,
         db: Session,
         candidates: list[ClusterCandidate],
     ) -> dict[str, DiscoveredPattern]:
-        pattern_keys = list(dict.fromkeys(candidate.pattern_key for candidate in candidates))
+        pattern_keys = list(dict.fromkeys(self._candidate_pattern_key(candidate) for candidate in candidates))
         if not pattern_keys:
             return {}
         return {
@@ -334,15 +364,18 @@ class NovelPatternRegistry:
         self,
         db: Session,
         candidates: list[ClusterCandidate],
-    ) -> dict[tuple[str, str, int], list[DiscoveredPattern]]:
+    ) -> dict[tuple[str, str, int, str], list[DiscoveredPattern]]:
         scope_keys = list(dict.fromkeys(self._scope_key(candidate) for candidate in candidates))
         if not scope_keys:
             return {}
-        patterns_by_scope: dict[tuple[str, str, int], list[DiscoveredPattern]] = {
+        patterns_by_scope: dict[tuple[str, str, int, str], list[DiscoveredPattern]] = {
             scope_key: [] for scope_key in scope_keys
         }
-        for side, timeframe, window_size in scope_keys:
-            patterns_by_scope[(side, timeframe, window_size)] = (
+        base_scope_keys = list(
+            dict.fromkeys((side, timeframe, window_size) for side, timeframe, window_size, _ in scope_keys)
+        )
+        for side, timeframe, window_size in base_scope_keys:
+            patterns = (
                 db.query(DiscoveredPattern)
                 .filter(DiscoveredPattern.side == side)
                 .filter(DiscoveredPattern.timeframe == timeframe)
@@ -351,6 +384,10 @@ class NovelPatternRegistry:
                 .limit(250)
                 .all()
             )
+            for pattern in patterns:
+                pattern_scope_key = self._pattern_scope_key(pattern)
+                if pattern_scope_key in patterns_by_scope:
+                    patterns_by_scope[pattern_scope_key].append(pattern)
         return patterns_by_scope
 
     @staticmethod
@@ -368,10 +405,17 @@ class NovelPatternRegistry:
 
     def _family_key(self, candidate: ClusterCandidate) -> str:
         digest = blake2b(digest_size=8)
-        digest.update(f"{candidate.side}|{candidate.timeframe}|{candidate.window_size}|".encode())
+        universe_scope_key = self._universe_scope_key(candidate.metrics)
+        digest.update(
+            f"{candidate.side}|{candidate.timeframe}|{candidate.window_size}|{universe_scope_key}|".encode()
+        )
         centroid = np.asarray(candidate.centroid, dtype=np.float32)
         digest.update(np.round(centroid, 2).tobytes())
-        return f"family_{candidate.side}_{candidate.timeframe}_w{candidate.window_size}_{digest.hexdigest()}"
+        universe_family_segment = self._universe_family_segment(candidate.metrics)
+        prefix = f"family_{candidate.side}_{candidate.timeframe}_w{candidate.window_size}"
+        if universe_family_segment:
+            prefix = f"{prefix}_{universe_family_segment}"
+        return f"{prefix}_{digest.hexdigest()}"
 
     @staticmethod
     def _drift(pattern: DiscoveredPattern, candidate: ClusterCandidate, *, is_variant: bool) -> dict[str, float | str]:
@@ -403,6 +447,8 @@ class NovelPatternRegistry:
             .limit(250)
             .all()
         )
+        candidate_scope_key = self._scope_key(candidate)
+        patterns = [pattern for pattern in patterns if self._pattern_scope_key(pattern) == candidate_scope_key]
         return self._find_similar_pattern_from_scope(candidate, patterns)
 
     def _find_similar_pattern_from_scope(
@@ -432,6 +478,56 @@ class NovelPatternRegistry:
             return 0.0
         distance = float(np.linalg.norm(left_arr - right_arr) / max(1.0, np.sqrt(len(left_arr))))
         return float(1.0 / (1.0 + distance))
+
+    @classmethod
+    def _candidate_pattern_key(cls, candidate: ClusterCandidate) -> str:
+        universe_scope_key = cls._universe_scope_key(candidate.metrics)
+        if not universe_scope_key:
+            return candidate.pattern_key
+        digest = blake2b(digest_size=5)
+        digest.update(universe_scope_key.encode())
+        suffix = f"_u_{digest.hexdigest()}"
+        max_stem_length = max(1, 160 - len(suffix))
+        return f"{candidate.pattern_key[:max_stem_length]}{suffix}"
+
+    @classmethod
+    def _universe_scope_key(cls, metrics: dict[str, Any]) -> str:
+        parts = cls._universe_metric_parts(metrics)
+        return "|".join(f"{name}={value}" for name, value in parts)
+
+    @classmethod
+    def _universe_family_segment(cls, metrics: dict[str, Any]) -> str:
+        return "_".join(f"{name}_{value}" for name, value in cls._universe_metric_parts(metrics))
+
+    @classmethod
+    def _universe_metric_parts(cls, metrics: dict[str, Any]) -> list[tuple[str, str]]:
+        scope = cls._first_metric_token(metrics, UNIVERSE_SCOPE_METRIC_KEYS)
+        cap_segment = cls._first_metric_token(metrics, CAP_SEGMENT_METRIC_KEYS)
+        parts: list[tuple[str, str]] = []
+        if scope:
+            parts.append(("scope", scope))
+        if cap_segment:
+            parts.append(("cap", cap_segment))
+        return parts
+
+    @classmethod
+    def _first_metric_token(cls, metrics: dict[str, Any], keys: tuple[str, ...]) -> str:
+        for key in keys:
+            if key not in metrics:
+                continue
+            token = cls._metric_token(metrics.get(key))
+            if token:
+                return token
+        return ""
+
+    @staticmethod
+    def _metric_token(value: Any) -> str:
+        if value is None:
+            return ""
+        token = re.sub(r"[^a-z0-9]+", "_", str(value).strip().lower()).strip("_")
+        if token in ABSENT_UNIVERSE_TOKENS:
+            return ""
+        return token[:48]
 
     @classmethod
     def _new_pattern_audit_log(

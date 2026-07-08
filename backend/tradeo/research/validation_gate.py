@@ -53,6 +53,7 @@ class ValidationGate:
         if not isinstance(quant, dict):
             quant = {}
         effective_samples = metrics.get("effective_sample_count")
+        self._daily_event_gate(candidate, metrics, reasons)
         if candidate.sample_count < thresholds["min_samples"]:
             reasons.append(f"muestras insuficientes: {candidate.sample_count} < {thresholds['min_samples']}")
         if effective_samples is not None and float(effective_samples) < thresholds["min_effective_samples"]:
@@ -359,6 +360,41 @@ class ValidationGate:
 
     def evaluate_many(self, candidates: list[ClusterCandidate]) -> list[ClusterCandidate]:
         return [self.evaluate(candidate) for candidate in candidates]
+
+    def _daily_event_gate(
+        self,
+        candidate: ClusterCandidate,
+        metrics: dict[str, object],
+        reasons: list[str],
+    ) -> None:
+        s = self.settings
+        assert s is not None
+        timeframe = str(candidate.timeframe or "").strip().lower()
+        is_daily = timeframe in {"1d", "1day", "1 day", "daily"}
+        min_gain_pct = float(getattr(s, "discovery_daily_event_min_gain_pct", 0.0) or 0.0)
+        if not is_daily or min_gain_pct <= 0.0:
+            return
+        daily_event = metrics.get("daily_event_filter")
+        if not isinstance(daily_event, dict) or daily_event.get("applied") is not True:
+            reasons.append(
+                "filtro evento diario no demostrado: falta evidencia persistida "
+                f"de movimiento favorable >= {min_gain_pct:.2%}"
+            )
+            return
+        observed_min = self._finite_float_or_none(daily_event.get("min_gain_pct"))
+        side_min = self._finite_float_or_none(daily_event.get("side_gain_min_pct"))
+        if observed_min is None or observed_min + 1e-12 < min_gain_pct:
+            label = "no finito" if observed_min is None else f"{observed_min:.2%}"
+            reasons.append(
+                "filtro evento diario insuficiente: "
+                f"min_gain={label} < {min_gain_pct:.2%}"
+            )
+        if side_min is None or side_min + 1e-12 < min_gain_pct:
+            label = "no finito" if side_min is None else f"{side_min:.2%}"
+            reasons.append(
+                "filtro evento diario insuficiente en el lado del patrón: "
+                f"side_gain_min={label} < {min_gain_pct:.2%}"
+            )
 
     def _thresholds(self, candidate: ClusterCandidate) -> dict[str, float]:
         s = self.settings

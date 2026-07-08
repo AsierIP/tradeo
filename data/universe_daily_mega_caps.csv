@@ -1,0 +1,5 @@
+symbol,name,universe_key,cap_segment,note
+NVDA,NVIDIA Corporation,daily_mega_caps,mega_cap_seed,seed universe only; not a recommendation; refresh market cap/liquidity before use
+AMZN,Amazon.com Inc.,daily_mega_caps,mega_cap_seed,seed universe only; not a recommendation; refresh market cap/liquidity before use
+MSFT,Microsoft Corporation,daily_mega_caps,mega_cap_seed,seed universe only; not a recommendation; refresh market cap/liquidity before use
+AAPL,Apple Inc.,daily_mega_caps,mega_cap_seed,seed universe only; not a recommendation; refresh market cap/liquidity before use

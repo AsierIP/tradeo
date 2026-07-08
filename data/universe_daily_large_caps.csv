@@ -1,0 +1,5 @@
+symbol,name,universe_key,cap_segment,note
+JPM,JPMorgan Chase & Co.,daily_large_caps,large_cap_seed,seed universe only; not a recommendation; refresh market cap/liquidity before use
+V,Visa Inc.,daily_large_caps,large_cap_seed,seed universe only; not a recommendation; refresh market cap/liquidity before use
+COST,Costco Wholesale Corporation,daily_large_caps,large_cap_seed,seed universe only; not a recommendation; refresh market cap/liquidity before use
+HD,The Home Depot Inc.,daily_large_caps,large_cap_seed,seed universe only; not a recommendation; refresh market cap/liquidity before use

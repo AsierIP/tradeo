@@ -1,0 +1,5 @@
+symbol,name,universe_key,cap_segment,note
+NET,Cloudflare Inc.,daily_mid_caps,mid_cap_seed,seed universe only; not a recommendation; refresh market cap/liquidity before use
+ROKU,Roku Inc.,daily_mid_caps,mid_cap_seed,seed universe only; not a recommendation; refresh market cap/liquidity before use
+DDOG,Datadog Inc.,daily_mid_caps,mid_cap_seed,seed universe only; not a recommendation; refresh market cap/liquidity before use
+DOCU,DocuSign Inc.,daily_mid_caps,mid_cap_seed,seed universe only; not a recommendation; refresh market cap/liquidity before use

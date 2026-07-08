@@ -11,7 +11,11 @@ from typing import Any, Protocol
 
 import pandas as pd
 
-from tradeo.core.config import get_settings
+from tradeo.core.config import (
+    DAILY_CAP_SEGMENT_CHOICES,
+    get_settings,
+    normalize_daily_cap_segment_name,
+)
 from tradeo.services.technical_indicators import normalize_ohlcv
 
 
@@ -51,6 +55,17 @@ _INTRADAY_BAR_MINUTES = {
 UNIVERSE_POLICY_STOCK_ONLY = "stock_only"
 UNIVERSE_POLICY_ETF_MACRO = "etf_macro"
 UNIVERSE_POLICY_CHOICES = (UNIVERSE_POLICY_STOCK_ONLY, UNIVERSE_POLICY_ETF_MACRO)
+DEFAULT_DAILY_CAP_SEGMENT = "mid"
+DAILY_UNIVERSE_SCOPE_BY_CAP_SEGMENT = {
+    "mega": "daily_megacap",
+    "large": "daily_largecap",
+    "mid": "daily_midcap",
+}
+DAILY_UNIVERSE_FILE_ATTR_BY_CAP_SEGMENT = {
+    "mega": "daily_mega_universe_file",
+    "large": "daily_large_universe_file",
+    "mid": "daily_mid_universe_file",
+}
 _CACHE_PATH_LOCKS_GUARD = Lock()
 _CACHE_PATH_LOCKS: dict[Path, Lock] = {}
 _UPSTREAM_FETCH_SEMAPHORE_GUARD = Lock()
@@ -90,13 +105,60 @@ def normalize_universe_policy(value: str | None) -> str:
     policy = str(value or UNIVERSE_POLICY_STOCK_ONLY).strip().lower()
     if policy not in UNIVERSE_POLICY_CHOICES:
         raise ValueError(
-            f"unknown universe policy: {value!r}; expected one of {','.join(UNIVERSE_POLICY_CHOICES)}"
+            f"unknown universe policy: {value!r}; expected one of "
+            f"{','.join(UNIVERSE_POLICY_CHOICES)}"
         )
     return policy
 
 
-def universe_scope_for_interval(interval: str | None, universe_policy: str | None = None) -> str:
-    scope = "daily_midcap" if is_daily_interval(interval) else "intraday_smallcap"
+def normalize_daily_cap_segment(value: str | None) -> str:
+    key = normalize_daily_cap_segment_name(value, default=DEFAULT_DAILY_CAP_SEGMENT)
+    if key not in DAILY_CAP_SEGMENT_CHOICES:
+        raise ValueError(
+            f"unknown daily cap segment: {value!r}; expected one of "
+            f"{','.join(DAILY_CAP_SEGMENT_CHOICES)}"
+        )
+    return key
+
+
+def daily_universe_file_for_segment(settings: Any, daily_cap_segment: str | None = None) -> str:
+    segment = normalize_daily_cap_segment(
+        daily_cap_segment
+        if daily_cap_segment is not None
+        else getattr(settings, "daily_universe_cap_segment", DEFAULT_DAILY_CAP_SEGMENT)
+    )
+    segment_file = str(
+        getattr(settings, DAILY_UNIVERSE_FILE_ATTR_BY_CAP_SEGMENT[segment], "") or ""
+    ).strip()
+    if segment_file:
+        return segment_file
+    if segment == DEFAULT_DAILY_CAP_SEGMENT:
+        return str(getattr(settings, "daily_universe_file", settings.universe_file))
+    raise ValueError(
+        f"daily {segment} universe file is not configured; set "
+        f"TRADEO_{DAILY_UNIVERSE_FILE_ATTR_BY_CAP_SEGMENT[segment].upper()}"
+    )
+
+
+@dataclass(frozen=True)
+class UniverseSelection:
+    scope: str
+    universe_file: str
+    universe_policy: str
+    daily_cap_segment: str | None = None
+
+
+def universe_scope_for_interval(
+    interval: str | None,
+    universe_policy: str | None = None,
+    *,
+    daily_cap_segment: str | None = None,
+) -> str:
+    if is_daily_interval(interval):
+        segment = normalize_daily_cap_segment(daily_cap_segment)
+        scope = DAILY_UNIVERSE_SCOPE_BY_CAP_SEGMENT[segment]
+    else:
+        scope = "intraday_smallcap"
     policy = normalize_universe_policy(universe_policy)
     return scope if policy == UNIVERSE_POLICY_STOCK_ONLY else f"{scope}_{policy}"
 
@@ -105,14 +167,53 @@ def universe_file_for_interval(
     settings: Any,
     interval: str | None,
     universe_policy: str | None = None,
+    *,
+    daily_cap_segment: str | None = None,
 ) -> str:
     normalize_universe_policy(
         universe_policy
         or getattr(settings, "intraday_universe_policy", UNIVERSE_POLICY_STOCK_ONLY)
     )
     if is_daily_interval(interval):
-        return str(getattr(settings, "daily_universe_file", settings.universe_file))
+        return daily_universe_file_for_segment(settings, daily_cap_segment=daily_cap_segment)
     return str(getattr(settings, "intraday_universe_file", settings.universe_file))
+
+
+def resolve_universe_for_interval(
+    settings: Any,
+    interval: str | None,
+    universe_policy: str | None = None,
+    *,
+    daily_cap_segment: str | None = None,
+) -> UniverseSelection:
+    policy = normalize_universe_policy(
+        universe_policy
+        or getattr(settings, "intraday_universe_policy", UNIVERSE_POLICY_STOCK_ONLY)
+    )
+    is_daily = is_daily_interval(interval)
+    segment = (
+        normalize_daily_cap_segment(
+            daily_cap_segment
+            or getattr(settings, "daily_universe_cap_segment", DEFAULT_DAILY_CAP_SEGMENT)
+        )
+        if is_daily
+        else None
+    )
+    return UniverseSelection(
+        scope=universe_scope_for_interval(
+            interval,
+            universe_policy=policy,
+            daily_cap_segment=segment,
+        ),
+        universe_file=universe_file_for_interval(
+            settings,
+            interval,
+            universe_policy=policy,
+            daily_cap_segment=segment,
+        ),
+        universe_policy=policy,
+        daily_cap_segment=segment,
+    )
 
 
 def load_universe(path: str | None = None) -> pd.DataFrame:
@@ -147,6 +248,7 @@ def pick_symbols(
     interval: str | None = None,
     universe_file: str | None = None,
     universe_policy: str | None = None,
+    daily_cap_segment: str | None = None,
 ) -> list[str]:
     if force_symbols:
         return [s.upper().strip() for s in force_symbols if s.strip()]
@@ -159,6 +261,7 @@ def pick_symbols(
         settings,
         interval or settings.scan_interval,
         universe_policy=selected_policy,
+        daily_cap_segment=daily_cap_segment,
     )
     df = load_universe(selected_universe)
     if limit is not None and int(limit) <= 0:

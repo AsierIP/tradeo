@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from tradeo.research.intraday_context_filters import normalize_context_filter_spec
 from tradeo.research.intraday_vwap_conditions import normalize_vwap_condition_spec
+from tradeo.services.data_provider import normalize_daily_cap_segment
 
 
 class PatternFeatures(BaseModel):
@@ -209,6 +210,7 @@ class DiscoveryRunRequest(BaseModel):
     session_filter: str | None = None
     cost_filter: str | None = None
     max_execution_cost_r: float | None = None
+    daily_cap_segment: str | None = None
 
     @field_validator("vwap_condition")
     @classmethod
@@ -236,6 +238,13 @@ class DiscoveryRunRequest(BaseModel):
     def known_cost_filter(cls, value: str | None) -> str | None:
         normalize_context_filter_spec(cost_filter=value)
         return value
+
+    @field_validator("daily_cap_segment")
+    @classmethod
+    def known_daily_cap_segment(cls, value: str | None) -> str | None:
+        if value in (None, ""):
+            return None
+        return normalize_daily_cap_segment(value)
 
 
 class DiscoveryRunResponse(BaseModel):

@@ -89,6 +89,27 @@ make current-matches
 make research-runs
 ```
 
+## Daily Universe Seeds
+
+Daily discovery debe correr por universo separado, no como mezcla global. Las
+seeds versionadas son:
+
+- `data/universe_daily_mega_caps.csv`
+- `data/universe_daily_large_caps.csv`
+- `data/universe_daily_mid_caps.csv`
+
+Cada CSV es una seed editable y no una recomendacion de inversion. Para ejecutar
+la rotacion, lanza discovery por `daily_cap_segment` (`mega`, `large`, `mid`) o
+fija `TRADEO_DAILY_UNIVERSE_CAP_SEGMENT` a una sola seed, conserva el
+`universe_file`, `universe_hash` y `universe_key` del run, y repite con la
+siguiente seed.
+
+Regla de promocion: **separate discovery per universe** y **no cross-universe
+promotion** hasta una fase posterior de analisis/Director. La evidencia de
+`daily_mega_caps`, `daily_large_caps` y `daily_mid_caps` puede compararse despues,
+pero no se agrega para promocionar un patron durante discovery inicial. Las small
+caps quedan fuera de estas seeds Daily.
+
 Para una ejecución manual más grande:
 
 ```bash

@@ -42,8 +42,7 @@ from tradeo.services.data_provider import (
     MarketDataProvider,
     load_universe,
     pick_symbols,
-    universe_file_for_interval,
-    universe_scope_for_interval,
+    resolve_universe_for_interval,
 )
 from tradeo.services.data_quality import assess_ohlcv_quality_from_settings
 from tradeo.services.market_regime import MarketRegimeService
@@ -552,6 +551,7 @@ class PatternDiscoveryLabAgent:
             finally:
                 timer.add("window_history_enrich_s", phase_started)
             for candidate in raw_candidates:
+                self._attach_universe_metadata(candidate, params)
                 candidate.metrics["data_manifest"] = {
                     "path": data_manifest.get("path"),
                     "manifest_hash": data_manifest.get("manifest_hash"),
@@ -1115,16 +1115,37 @@ class PatternDiscoveryLabAgent:
             candidate.metrics["dsr_family_prior_registry_trials"] = prior_trials
             candidate.metrics["dsr_family_run_trials"] = run_trials
 
+    @staticmethod
+    def _attach_universe_metadata(candidate: Any, params: dict[str, Any]) -> None:
+        universe_scope = params.get("universe_scope")
+        daily_cap_segment = params.get("daily_cap_segment")
+        universe_file = params.get("universe_file")
+        universe_hash = params.get("universe_hash")
+        universe_key = params.get("universe_key")
+        if universe_scope:
+            candidate.metrics.setdefault("universe_scope", universe_scope)
+        if daily_cap_segment:
+            candidate.metrics.setdefault("daily_cap_segment", daily_cap_segment)
+            candidate.metrics.setdefault("cap_segment", daily_cap_segment)
+        if universe_file:
+            candidate.metrics.setdefault("universe_file", universe_file)
+        if universe_hash:
+            candidate.metrics.setdefault("universe_hash", universe_hash)
+        if universe_key:
+            candidate.metrics.setdefault("universe_key", universe_key)
+
     def _resolve_params(self, request: DiscoveryRunRequest) -> dict[str, Any]:
         s = self.settings
         assert s is not None
         max_total_windows = min(request.max_total_windows or s.discovery_max_total_windows, 80_000)
-        universe_scope = universe_scope_for_interval(request.interval or s.discovery_interval)
-        universe_file = universe_file_for_interval(
+        universe_selection = resolve_universe_for_interval(
             s,
             request.interval or s.discovery_interval,
+            daily_cap_segment=request.daily_cap_segment,
         )
-        is_intraday = universe_scope != "daily_midcap"
+        universe_scope = universe_selection.scope
+        universe_file = universe_selection.universe_file
+        is_intraday = universe_selection.daily_cap_segment is None
         context_spec = normalize_context_filter_spec(
             session_filter=request.session_filter,
             cost_filter=request.cost_filter,
@@ -1137,6 +1158,7 @@ class PatternDiscoveryLabAgent:
             "cadence": "intraday" if is_intraday else "daily",
             "universe_scope": universe_scope,
             "universe_file": universe_file,
+            "daily_cap_segment": universe_selection.daily_cap_segment,
             "universe_hash": self._file_sha256(universe_file),
             "universe_key": self._universe_key(
                 scope=universe_scope,

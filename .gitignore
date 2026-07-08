@@ -29,6 +29,11 @@ pnpm-debug.log*
 *.sqlite
 *.sqlite3
 data/
+!data/
+data/*
+!data/universe_daily_mega_caps.csv
+!data/universe_daily_large_caps.csv
+!data/universe_daily_mid_caps.csv
 datasets/
 market_data/
 cache/

@@ -9,6 +9,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 TradingMode = Literal["research", "paper", "live"]
 TradeoFocusMode = Literal["daily_only", "all"]
+DAILY_CAP_SEGMENT_CHOICES = ("mega", "large", "mid")
 
 SENSITIVE_ENV_KEY_PARTS = (
     "ACCOUNT",
@@ -29,6 +30,18 @@ def _env_key_for_field(field_name: str) -> str:
 def _is_sensitive_env_key(key: str) -> bool:
     upper = key.upper()
     return any(part in upper for part in SENSITIVE_ENV_KEY_PARTS)
+
+
+def normalize_daily_cap_segment_name(value: str | None, *, default: str = "mid") -> str:
+    raw = str(value or default).strip().lower()
+    key = raw.replace("-", "_").replace(" ", "_")
+    if key.startswith("daily_"):
+        key = key[len("daily_") :]
+    for suffix in ("_caps", "_cap", "caps", "cap"):
+        if key.endswith(suffix):
+            key = key[: -len(suffix)]
+            break
+    return key
 
 
 def _env_keys_from_file(path: Path) -> set[str]:
@@ -122,6 +135,11 @@ class Settings(BaseSettings):
     market_data_upstream_max_concurrency: int = 2
     universe_file: str = "/app/data/universe_us_mid_small.csv"
     daily_universe_file: str = "/app/data/universe_us_mid_small.csv"
+    daily_mega_universe_file: str = ""
+    daily_large_universe_file: str = ""
+    daily_mid_universe_file: str = ""
+    daily_universe_cap_segment: str = "mid"
+    daily_universe_cap_segments: str = "mid"
     intraday_universe_file: str = "/app/data/universe_us_small_caps.csv"
     intraday_universe_policy: str = "stock_only"
     universe_snapshot_monthly: bool = True
@@ -641,6 +659,32 @@ class Settings(BaseSettings):
             raise ValueError("intraday universe policy must be stock_only or etf_macro")
         return policy
 
+    @field_validator("daily_universe_cap_segment")
+    @classmethod
+    def known_daily_universe_cap_segment(cls, value: str) -> str:
+        segment = normalize_daily_cap_segment_name(value)
+        if segment not in DAILY_CAP_SEGMENT_CHOICES:
+            raise ValueError("daily universe cap segment must be mega, large or mid")
+        return segment
+
+    @field_validator("daily_universe_cap_segments")
+    @classmethod
+    def known_daily_universe_cap_segments(cls, value: str) -> str:
+        segments = [
+            normalize_daily_cap_segment_name(part, default="")
+            for part in str(value or "").split(",")
+        ]
+        segments = [segment for segment in segments if segment]
+        if not segments:
+            raise ValueError("daily universe cap segments must include mega, large or mid")
+        unknown = sorted(set(segments) - set(DAILY_CAP_SEGMENT_CHOICES))
+        if unknown:
+            raise ValueError(
+                "daily universe cap segments must exclude small caps and only use "
+                "mega, large or mid"
+            )
+        return ",".join(dict.fromkeys(segments))
+
     @model_validator(mode="after")
     def intraday_live_fails_closed(self) -> "Settings":
         blockers = self.intraday_live_config_blockers
@@ -821,6 +865,15 @@ class Settings(BaseSettings):
     def discovery_cost_stress_multiplier_list(self) -> list[float]:
         values = sorted({float(x.strip()) for x in self.discovery_cost_stress_multipliers.split(",") if x.strip()})
         return values or [1.0, 2.0, 3.0]
+
+    @property
+    def daily_universe_cap_segment_list(self) -> list[str]:
+        segments = [
+            segment.strip().lower()
+            for segment in self.daily_universe_cap_segments.split(",")
+            if segment.strip()
+        ]
+        return segments or ["mid"]
 
     @property
     def reports_path(self) -> Path:

@@ -8,13 +8,17 @@ from types import SimpleNamespace
 
 import pandas as pd
 import pytest
+from pydantic import ValidationError
 
 from tradeo.core.config import Settings, get_settings
+from tradeo.schemas import DiscoveryRunRequest
 import tradeo.services.data_provider as data_provider_module
 from tradeo.services.data_provider import (
     CachedMarketDataProvider,
     detect_unadjusted_splits,
+    normalize_daily_cap_segment,
     pick_symbols,
+    resolve_universe_for_interval,
     universe_file_for_interval,
     universe_scope_for_interval,
 )
@@ -88,6 +92,90 @@ def test_pick_symbols_routes_timeframes_to_cap_segment_universes(
         assert pick_symbols(limit=2, interval="5m") == ["SML1", "SML2"]
     finally:
         get_settings.cache_clear()
+
+
+def test_daily_cap_segment_universe_resolution_uses_explicit_segment_files(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    mega = tmp_path / "mega.csv"
+    large = tmp_path / "large.csv"
+    mid = tmp_path / "mid.csv"
+    intraday = tmp_path / "small.csv"
+    mega.write_text("symbol\nMEGA1\nMEGA2\n", encoding="utf-8")
+    large.write_text("symbol\nLARGE1\nLARGE2\n", encoding="utf-8")
+    mid.write_text("symbol\nMID1\nMID2\n", encoding="utf-8")
+    intraday.write_text("symbol\nSML1\nSML2\n", encoding="utf-8")
+    monkeypatch.setenv("TRADEO_DAILY_MEGA_UNIVERSE_FILE", str(mega))
+    monkeypatch.setenv("TRADEO_DAILY_LARGE_UNIVERSE_FILE", str(large))
+    monkeypatch.setenv("TRADEO_DAILY_MID_UNIVERSE_FILE", str(mid))
+    monkeypatch.setenv("TRADEO_DAILY_UNIVERSE_CAP_SEGMENT", "large")
+    monkeypatch.setenv("TRADEO_DAILY_UNIVERSE_CAP_SEGMENTS", "mega,large,mid")
+    monkeypatch.setenv("TRADEO_INTRADAY_UNIVERSE_FILE", str(intraday))
+    get_settings.cache_clear()
+
+    try:
+        settings = get_settings()
+
+        assert settings.daily_universe_cap_segment_list == ["mega", "large", "mid"]
+        assert universe_scope_for_interval("1d") == "daily_midcap"
+        assert universe_scope_for_interval("1d", daily_cap_segment="mega") == "daily_megacap"
+        assert universe_scope_for_interval("1d", daily_cap_segment="large") == "daily_largecap"
+        assert universe_scope_for_interval("1d", daily_cap_segment="mid") == "daily_midcap"
+        assert universe_file_for_interval(settings, "1d") == str(large)
+        assert universe_file_for_interval(settings, "1d", daily_cap_segment="mega") == str(mega)
+        assert universe_file_for_interval(settings, "1d", daily_cap_segment="large") == str(large)
+        assert universe_file_for_interval(settings, "1d", daily_cap_segment="mid") == str(mid)
+
+        default_selection = resolve_universe_for_interval(settings, "1d")
+        assert default_selection.scope == "daily_largecap"
+        assert default_selection.universe_file == str(large)
+        assert default_selection.daily_cap_segment == "large"
+
+        request = DiscoveryRunRequest(interval="1d", daily_cap_segment="mega_cap")
+        request_selection = resolve_universe_for_interval(
+            settings,
+            request.interval,
+            daily_cap_segment=request.daily_cap_segment,
+        )
+        assert request_selection.scope == "daily_megacap"
+        assert request_selection.universe_file == str(mega)
+
+        selection = resolve_universe_for_interval(settings, "1d", daily_cap_segment="mega")
+        assert selection.scope == "daily_megacap"
+        assert selection.universe_file == str(mega)
+        assert selection.daily_cap_segment == "mega"
+        assert pick_symbols(limit=2, interval="1d", daily_cap_segment="mega") == [
+            "MEGA1",
+            "MEGA2",
+        ]
+        assert pick_symbols(limit=2, interval="1d") == ["LARGE1", "LARGE2"]
+
+        intraday_selection = resolve_universe_for_interval(
+            settings,
+            "5m",
+            daily_cap_segment="small",
+        )
+        assert intraday_selection.scope == "intraday_smallcap"
+        assert intraday_selection.universe_file == str(intraday)
+        assert intraday_selection.daily_cap_segment is None
+    finally:
+        get_settings.cache_clear()
+
+
+def test_daily_cap_segment_validation_excludes_small_caps() -> None:
+    assert normalize_daily_cap_segment("largecap") == "large"
+    request = DiscoveryRunRequest(interval="1d", daily_cap_segment="Mega Cap")
+    assert request.daily_cap_segment == "mega"
+
+    with pytest.raises(ValueError, match="unknown daily cap segment"):
+        normalize_daily_cap_segment("small")
+    with pytest.raises(ValidationError, match="daily_cap_segment"):
+        DiscoveryRunRequest(interval="1d", daily_cap_segment="small")
+    with pytest.raises(ValidationError, match="daily universe cap segment"):
+        Settings(daily_universe_cap_segment="small")
+    with pytest.raises(ValidationError, match="exclude small caps"):
+        Settings(daily_universe_cap_segments="mega,small,mid")
 
 
 def _ohlcv_frame() -> pd.DataFrame:

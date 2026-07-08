@@ -81,6 +81,11 @@ def _example(symbol: str) -> dict[str, object]:
     }
 
 
+def _set_universe(candidate: ClusterCandidate, scope: str, cap_segment: str) -> ClusterCandidate:
+    candidate.metrics.update({"universe_scope": scope, "cap_segment": cap_segment})
+    return candidate
+
+
 def test_registry_dedupes_similar_centroids() -> None:
     db = session_factory()
     registry = NovelPatternRegistry(similarity_threshold=0.99)
@@ -104,6 +109,80 @@ def test_registry_dedupes_similar_centroids() -> None:
     assert second.metrics["registry_family_penalty"] > 0
     assert "registry_adjusted_score" in second.metrics
     assert db.query(DiscoveredPattern).count() == 1
+
+
+def test_registry_does_not_dedupe_similar_centroids_across_universe_segments() -> None:
+    db = session_factory()
+    registry = NovelPatternRegistry(similarity_threshold=0.99)
+    mega_cap = _set_universe(
+        _candidate("novel_long_w20_mega", [0.0, 0.0, 0.0]),
+        "daily_swing",
+        "mega_large_cap",
+    )
+    mid_cap = _set_universe(
+        _candidate("novel_long_w20_mid", [0.001, 0.0, 0.0], score=0.9),
+        "daily_swing",
+        "liquid_mid_cap",
+    )
+
+    stored_mega = registry.store_candidates(db, [mega_cap])[0]
+    stored_mid = registry.store_candidates(db, [mid_cap])[0]
+
+    assert stored_mega.id != stored_mid.id
+    assert stored_mega.pattern_family_key != stored_mid.pattern_family_key
+    assert "cap_mega_large_cap" in stored_mega.pattern_family_key
+    assert "cap_liquid_mid_cap" in stored_mid.pattern_family_key
+    assert mid_cap.metrics["registry_deduped"] is False
+    assert db.query(DiscoveredPattern).count() == 2
+
+
+def test_registry_dedupes_similar_centroids_within_same_universe_segment() -> None:
+    db = session_factory()
+    registry = NovelPatternRegistry(similarity_threshold=0.99)
+    first = _set_universe(
+        _candidate("novel_long_w20_scope_a", [0.0, 0.0, 0.0]),
+        "daily_swing",
+        "mega_large_cap",
+    )
+    second = _set_universe(
+        _candidate("novel_long_w20_scope_b", [0.001, 0.0, 0.0], score=0.9),
+        "daily_swing",
+        "mega_large_cap",
+    )
+
+    stored_first = registry.store_candidates(db, [first])[0]
+    stored_second = registry.store_candidates(db, [second])[0]
+
+    assert stored_first.id == stored_second.id
+    universe_suffix = stored_second.pattern_key.rsplit("_u_", 1)[1]
+    assert stored_second.variant_key.endswith(f"_u_{universe_suffix}")
+    assert second.metrics["registry_deduped"] is True
+    assert second.metrics["registry_universe_scope_key"] == "scope=daily_swing|cap=mega_large_cap"
+    assert second.metrics["registry_source_pattern_key"] == "novel_long_w20_scope_b"
+    assert db.query(DiscoveredPattern).count() == 1
+
+
+def test_registry_scopes_exact_pattern_key_collisions_by_universe_segment() -> None:
+    db = session_factory()
+    registry = NovelPatternRegistry(similarity_threshold=0.99)
+    mega_cap = _set_universe(
+        _candidate("novel_long_w20_same", [0.0, 0.0, 0.0]),
+        "daily_swing",
+        "mega_large_cap",
+    )
+    mid_cap = _set_universe(
+        _candidate("novel_long_w20_same", [0.0, 0.0, 0.0], score=0.9),
+        "daily_swing",
+        "liquid_mid_cap",
+    )
+
+    stored = registry.store_candidates(db, [mega_cap, mid_cap])
+
+    assert len({pattern.id for pattern in stored}) == 2
+    assert stored[0].pattern_key != stored[1].pattern_key
+    assert stored[0].pattern_key.startswith("novel_long_w20_same_u_")
+    assert stored[1].pattern_key.startswith("novel_long_w20_same_u_")
+    assert db.query(DiscoveredPattern).count() == 2
 
 
 def test_registry_batches_candidates_without_per_candidate_flushes() -> None:
