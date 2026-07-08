@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import math
+import multiprocessing
+import os
+import sys
 from typing import Any, Literal
 
 import numpy as np
@@ -41,6 +45,68 @@ from tradeo.modules.fox_hunter.production_manifest import (
 from tradeo.services.market_session import REGULAR_CLOSE, US_EQUITY_TZ
 from tradeo.services.state_policy import DAILY_RUNTIME_STATES, LAB_RUNTIME_STATES, PRODUCTION_RUNTIME_STATES
 from tradeo.services.technical_indicators import atr, normalize_ohlcv
+
+
+@dataclass(slots=True)
+class _MatcherPatternSpec:
+    id: int
+    name: str
+    pattern_key: str
+    pattern_family_key: str | None
+    canonical_pattern_key: str | None
+    status: DiscoveredPatternStatus
+    promotion_status: str | None
+    side: str
+    timeframe: str
+    window_size: int
+    best_rr: float | None
+    score: float
+    stability_score: float
+    expectancy_r: float | None
+    profit_factor: float | None
+    metrics_json: dict[str, Any]
+    centroid_json: list[float]
+
+
+def _matcher_process_initializer(native_threads: int) -> None:
+    threads = str(max(1, int(native_threads or 1)))
+    for key in (
+        "OMP_NUM_THREADS",
+        "OPENBLAS_NUM_THREADS",
+        "MKL_NUM_THREADS",
+        "NUMEXPR_NUM_THREADS",
+        "VECLIB_MAXIMUM_THREADS",
+    ):
+        os.environ[key] = threads
+
+
+def _match_prefetched_symbol_chunk_worker(task: dict[str, Any]) -> dict[str, Any]:
+    matcher = object.__new__(NovelPatternMatcher)
+    matcher.settings = task["settings"]
+    matcher.provider = None
+    aggregate: dict[str, Any] = {
+        "matches": [],
+        "regime_gate_blocked": 0,
+        "reward_risk_gate_blocked": 0,
+        "ambiguity_gate_blocked": 0,
+    }
+    for symbol, df in task["symbol_frames"]:
+        payload = matcher._match_prefetched_symbol(
+            symbol=symbol,
+            df=df,
+            timeframe=task["timeframe"],
+            patterns=task["patterns"],
+            benchmark_frames=task["benchmark_frames"],
+            threshold=task["threshold"],
+            benchmark_regime=task["benchmark_regime"],
+            feature_parity_contract=task["feature_parity_contract"],
+            module=task["module"],
+        )
+        aggregate["matches"].extend(payload["matches"])
+        aggregate["regime_gate_blocked"] += int(payload["regime_gate_blocked"])
+        aggregate["reward_risk_gate_blocked"] += int(payload["reward_risk_gate_blocked"])
+        aggregate["ambiguity_gate_blocked"] += int(payload["ambiguity_gate_blocked"])
+    return aggregate
 
 
 @dataclass(slots=True)
@@ -97,6 +163,7 @@ class NovelPatternMatcher:
             settings.discovery_match_similarity_threshold,
         )
         matches: list[dict[str, Any]] = []
+        execution_mode = "serial"
         regime_gate_blocked = 0
         reward_risk_gate_blocked = 0
         engine = PatternEmbeddingEngine()
@@ -140,6 +207,66 @@ class NovelPatternMatcher:
                 required_bars=required_bars,
                 cache=data_cache,
             )
+            if self._process_pool_enabled(module, len(timeframe_symbols)):
+                symbol_frames: list[tuple[str, pd.DataFrame]] = []
+                for symbol in timeframe_symbols:
+                    df = self._current_data(
+                        symbol,
+                        timeframe,
+                        required_bars=required_bars,
+                        cache=data_cache,
+                    )
+                    if df is not None:
+                        symbol_frames.append((symbol, df))
+                if self._process_pool_enabled(module, len(symbol_frames)) and symbol_frames:
+                    workers = min(
+                        max(1, int(settings.discovery_match_process_workers or 1)),
+                        max(1, len(symbol_frames)),
+                    )
+                    tasks = [
+                        {
+                            "settings": settings,
+                            "timeframe": timeframe,
+                            "patterns": [self._pattern_spec(pattern) for pattern in timeframe_patterns],
+                            "symbol_frames": chunk,
+                            "benchmark_frames": benchmark_cache[timeframe],
+                            "threshold": threshold,
+                            "benchmark_regime": benchmark_regime,
+                            "feature_parity_contract": feature_parity_contract,
+                            "module": module,
+                        }
+                        for chunk in self._symbol_frame_chunks(symbol_frames, workers)
+                    ]
+                    if tasks:
+                        pool_matches: list[dict[str, Any]] = []
+                        pool_regime_gate_blocked = 0
+                        pool_reward_risk_gate_blocked = 0
+                        pool_ambiguity_gate_blocked = 0
+                        try:
+                            with ProcessPoolExecutor(
+                                max_workers=workers,
+                                mp_context=self._process_pool_context(),
+                                initializer=_matcher_process_initializer,
+                                initargs=(settings.discovery_match_native_threads_per_process,),
+                            ) as executor:
+                                for payload in executor.map(_match_prefetched_symbol_chunk_worker, tasks):
+                                    pool_matches.extend(payload["matches"])
+                                    pool_regime_gate_blocked += int(payload["regime_gate_blocked"])
+                                    pool_reward_risk_gate_blocked += int(payload["reward_risk_gate_blocked"])
+                                    pool_ambiguity_gate_blocked += int(payload["ambiguity_gate_blocked"])
+                        except Exception as exc:  # noqa: BLE001
+                            logger.warning(
+                                "process-pool matcher failed for timeframe {}; falling back to serial: {}",
+                                timeframe,
+                                exc,
+                            )
+                        else:
+                            execution_mode = "process_pool"
+                            matches.extend(pool_matches)
+                            regime_gate_blocked += pool_regime_gate_blocked
+                            reward_risk_gate_blocked += pool_reward_risk_gate_blocked
+                            ambiguity_gate_blocked += pool_ambiguity_gate_blocked
+                            continue
             for symbol in timeframe_symbols:
                 df = self._current_data(
                     symbol,
@@ -382,6 +509,7 @@ class NovelPatternMatcher:
             "stored_matches": len(matches) if store else 0,
             "max_results": result_limit,
             "module": module,
+            "execution_mode": execution_mode,
             "similarity_threshold": threshold,
             "feature_parity_contract": feature_parity_contract,
             "benchmark_regime": benchmark_regime,
@@ -507,6 +635,293 @@ class NovelPatternMatcher:
             "Match de patrón de Laboratorio; requiere paper validation "
             "y auditoría de Director."
         )
+
+    def _process_pool_enabled(self, module: str, symbol_count: int) -> bool:
+        settings = self.settings
+        assert settings is not None
+        if module == "fox_hunter":
+            return False
+        return (
+            bool(settings.discovery_match_process_pool_enabled)
+            and int(settings.discovery_match_process_workers or 1) > 1
+            and symbol_count >= int(settings.discovery_match_process_min_symbols or 1)
+        )
+
+    def _process_pool_context(self) -> multiprocessing.context.BaseContext:
+        settings = self.settings
+        assert settings is not None
+        method = str(settings.discovery_match_process_start_method or "auto").strip().lower()
+        if method == "auto":
+            method = "fork" if sys.platform.startswith("linux") else multiprocessing.get_start_method()
+        return multiprocessing.get_context(method)
+
+    @staticmethod
+    def _symbol_frame_chunks(
+        symbol_frames: list[tuple[str, pd.DataFrame]],
+        workers: int,
+    ) -> list[list[tuple[str, pd.DataFrame]]]:
+        if not symbol_frames:
+            return []
+        workers = max(1, int(workers))
+        chunk_size = max(1, math.ceil(len(symbol_frames) / workers))
+        return [
+            symbol_frames[index : index + chunk_size]
+            for index in range(0, len(symbol_frames), chunk_size)
+        ]
+
+    @staticmethod
+    def _pattern_spec(pattern: DiscoveredPattern) -> _MatcherPatternSpec:
+        return _MatcherPatternSpec(
+            id=int(pattern.id),
+            name=pattern.name,
+            pattern_key=pattern.pattern_key,
+            pattern_family_key=pattern.pattern_family_key,
+            canonical_pattern_key=pattern.canonical_pattern_key,
+            status=pattern.status,
+            promotion_status=pattern.promotion_status,
+            side=pattern.side,
+            timeframe=pattern.timeframe,
+            window_size=int(pattern.window_size),
+            best_rr=pattern.best_rr,
+            score=float(pattern.score),
+            stability_score=float(pattern.stability_score),
+            expectancy_r=pattern.expectancy_r,
+            profit_factor=pattern.profit_factor,
+            metrics_json=dict(pattern.metrics_json or {}),
+            centroid_json=list(pattern.centroid_json or []),
+        )
+
+    def _match_prefetched_symbol(
+        self,
+        *,
+        symbol: str,
+        df: pd.DataFrame,
+        timeframe: str,
+        patterns: list[_MatcherPatternSpec],
+        benchmark_frames: dict[str, pd.DataFrame],
+        threshold: float,
+        benchmark_regime: dict[str, Any],
+        feature_parity_contract: dict[str, Any],
+        module: Literal["laboratory", "fox_hunter", "daily"],
+    ) -> dict[str, Any]:
+        settings = self.settings
+        assert settings is not None
+        engine = PatternEmbeddingEngine()
+        payload: dict[str, Any] = {
+            "matches": [],
+            "regime_gate_blocked": 0,
+            "reward_risk_gate_blocked": 0,
+            "ambiguity_gate_blocked": 0,
+        }
+        embedding_cache: dict[
+            tuple[str, str, int],
+            tuple[pd.DataFrame, np.ndarray, dict[str, float], dict[str, list[float]]] | None,
+        ] = {}
+        for window_size in sorted({pattern.window_size for pattern in patterns}):
+            cache_key = (symbol.upper(), timeframe, int(window_size))
+            if len(df) < int(window_size) + 20:
+                embedding_cache[cache_key] = None
+                continue
+            try:
+                window = df.iloc[-int(window_size) :]
+                embedding_cache[cache_key] = (
+                    df,
+                    *engine.embed(window, benchmark_frames=benchmark_frames),
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "current embedding failed for {} / {} / w{}: {}",
+                    symbol,
+                    timeframe,
+                    window_size,
+                    exc,
+                )
+                embedding_cache[cache_key] = None
+
+        similarity_diagnostics: dict[int, dict[str, Any]] = {}
+        competitors_by_window: dict[tuple[str, int], list[dict[str, Any]]] = defaultdict(list)
+        for pattern in patterns:
+            cached = embedding_cache.get((symbol.upper(), timeframe, int(pattern.window_size)))
+            diagnostic = self._similarity_diagnostic(
+                pattern,  # type: ignore[arg-type]
+                cached,
+                threshold,
+            )
+            if diagnostic is None:
+                continue
+            similarity_diagnostics[int(pattern.id)] = diagnostic
+            competitors_by_window[(pattern.timeframe, int(pattern.window_size))].append(
+                {
+                    "pattern_id": int(pattern.id),
+                    "pattern_name": pattern.name,
+                    "pattern_key": pattern.pattern_key,
+                    "similarity": diagnostic["similarity"],
+                }
+            )
+        ambiguity_by_pattern: dict[int, dict[str, Any]] = {}
+        for competitors in competitors_by_window.values():
+            ranked = sorted(competitors, key=lambda item: float(item["similarity"]), reverse=True)
+            for item in ranked:
+                peers = [peer for peer in ranked if int(peer["pattern_id"]) != int(item["pattern_id"])]
+                second = peers[0] if peers else None
+                ambiguity_by_pattern[int(item["pattern_id"])] = self._ambiguity_ratio(
+                    similarity=float(item["similarity"]),
+                    second=second,
+                )
+
+        for pattern in patterns:
+            try:
+                cached = embedding_cache.get((symbol.upper(), timeframe, int(pattern.window_size)))
+                if cached is None:
+                    continue
+                df_for_match, vector, features, chart = cached
+                diagnostic = similarity_diagnostics.get(int(pattern.id))
+                if not diagnostic or not diagnostic["passed_threshold"]:
+                    continue
+                similarity = float(diagnostic["similarity"])
+                effective_threshold = float(diagnostic["similarity_threshold_used"])
+                ambiguity = ambiguity_by_pattern.get(int(pattern.id)) or self._ambiguity_ratio(
+                    similarity=similarity,
+                    second=None,
+                )
+                features = dict(features)
+                features["avg_dollar_volume"] = float(
+                    (df_for_match["close"] * df_for_match["volume"]).tail(20).mean()
+                )
+                reward_risk_floor = self._runtime_reward_risk_floor(settings)
+                reward_risk = float(pattern.best_rr or settings.unvalidated_pattern_min_reward_risk)
+                if not math.isfinite(reward_risk) or reward_risk < reward_risk_floor:
+                    payload["reward_risk_gate_blocked"] += 1
+                    logger.info(
+                        "reward:risk hard gate blocked {} on {}: {:.2f} < {:.2f}",
+                        pattern.name,
+                        symbol,
+                        reward_risk,
+                        reward_risk_floor,
+                    )
+                    continue
+                base_score = round(
+                    similarity * 0.55 + pattern.score * 0.30 + pattern.stability_score * 0.15,
+                    6,
+                )
+                base_gate = self._entry_gate(pattern.side, df_for_match, score=base_score, settings=settings)
+                ambiguity_gate = self._ambiguity_gate(ambiguity, base_gate, settings)
+                if not ambiguity_gate["passed"]:
+                    payload["ambiguity_gate_blocked"] += 1
+                    logger.info(
+                        "ambiguity hard gate blocked {} on {}: {}",
+                        pattern.name,
+                        symbol,
+                        ambiguity_gate,
+                    )
+                    continue
+                regime = classify_regime(features, base_gate)
+                regime["benchmark_regime"] = dict(benchmark_regime)
+                regime_fit = self._pattern_regime_fit(pattern, regime, settings)  # type: ignore[arg-type]
+                if settings.market_regime_hard_gate_enabled and regime_fit.get("hard_gate_blocked"):
+                    payload["regime_gate_blocked"] += 1
+                    logger.info(
+                        "regime hard gate blocked {} on {} ({}): {}",
+                        pattern.name,
+                        symbol,
+                        regime_fit.get("label"),
+                        regime_fit.get("calibration"),
+                    )
+                    continue
+                entry_audit = build_entry_audit_context(df_for_match, pattern.timeframe)
+                variants = build_entry_variants(
+                    side=pattern.side,
+                    df=df_for_match,
+                    base_entry_gate=base_gate,
+                    score=base_score,
+                    reward_risk=reward_risk,
+                    settings=settings,
+                )
+                if not variants:
+                    continue
+                match_status = "daily_entry_candidate" if module == "daily" else "lab_entry_candidate"
+                for variant in variants:
+                    entry_gate = variant["entry_gate"]
+                    score = round(
+                        base_score * 0.78
+                        + float(entry_gate.get("entry_score", 0.0)) * 0.14
+                        + float(regime_fit["score"]) * 0.08,
+                        6,
+                    )
+                    match = {
+                        "module": module,
+                        "pattern_id": pattern.id,
+                        "pattern_name": pattern.name,
+                        "pattern_key": pattern.pattern_key,
+                        "pattern_family_key": pattern.pattern_family_key,
+                        "canonical_pattern_key": pattern.canonical_pattern_key,
+                        "pattern_status": pattern.status.value,
+                        "pattern_promotion_status": pattern.promotion_status,
+                        "production_manifest": None,
+                        "symbol": symbol,
+                        "timeframe": pattern.timeframe,
+                        "side": pattern.side,
+                        "similarity": round(similarity, 6),
+                        "similarity_threshold_used": round(effective_threshold, 6),
+                        "shape_verifier": diagnostic.get("shape_verifier"),
+                        "conformal_gate": diagnostic.get("conformal_gate"),
+                        "match_ambiguity": ambiguity,
+                        "ambiguity_ratio": ambiguity["ambiguity_ratio"],
+                        "ambiguity_gate": ambiguity_gate,
+                        "score": score,
+                        "entry_score": entry_gate["entry_score"],
+                        "entry_gate_passed": entry_gate["passed"],
+                        "entry_trigger": entry_gate["trigger"],
+                        "entry_variant_id": variant["entry_variant_id"],
+                        "entry_variant": variant["entry_variant"],
+                        "entry_price": variant["entry_price"],
+                        "stop_price": variant["stop_price"],
+                        "target_price": variant["target_price"],
+                        "reward_risk": reward_risk,
+                        "window_end": str(df_for_match.index[-1]),
+                        "status": match_status,
+                        "notes": self._notes_for_module(module),
+                        "chart": chart,
+                        "entry_audit": entry_audit,
+                        "regime": regime,
+                        "regime_fit": regime_fit,
+                        "metrics": {
+                            "entry_module": module,
+                            "entry_variant_id": variant["entry_variant_id"],
+                            "entry_variant": variant["entry_variant"],
+                            "pattern_status": pattern.status.value,
+                            "pattern_promotion_status": pattern.promotion_status,
+                            "pattern_score": pattern.score,
+                            "pattern_expectancy_r": pattern.expectancy_r,
+                            "pattern_profit_factor": pattern.profit_factor,
+                            "pattern_stability_score": pattern.stability_score,
+                            "pattern_regime_profile": (pattern.metrics_json or {}).get("regime_profile", {}),
+                            "feature_parity_contract": {
+                                **feature_parity_contract,
+                                "vector_length": int(len(vector)),
+                            },
+                            "shape_verifier": diagnostic.get("shape_verifier"),
+                            "match_ambiguity": ambiguity,
+                            "ambiguity_gate": ambiguity_gate,
+                            "conformal_gate": diagnostic.get("conformal_gate"),
+                            "features": features,
+                            "entry_gate": entry_gate,
+                            "base_entry_gate": base_gate,
+                            "entry_audit": entry_audit,
+                            "regime": regime,
+                            "regime_fit": regime_fit,
+                        },
+                    }
+                    payload["matches"].append(match)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "novel pattern match failed for {} / {}: {}",
+                    pattern.name,
+                    symbol,
+                    exc,
+                )
+                continue
+        return payload
 
     @staticmethod
     def _pattern_regime_fit(

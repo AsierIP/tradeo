@@ -295,6 +295,13 @@ class Settings(BaseSettings):
     discovery_match_symbol_limit: int = 80
     discovery_match_max_patterns: int = 25
     discovery_match_similarity_threshold: float = 0.45
+    # Optional process-pool acceleration for current-chart matching. The parent
+    # keeps DB/provider access and workers receive prefetched frames only.
+    discovery_match_process_pool_enabled: bool = False
+    discovery_match_process_workers: int = 1
+    discovery_match_process_min_symbols: int = 16
+    discovery_match_native_threads_per_process: int = 1
+    discovery_match_process_start_method: str = "auto"
     # Never match against a live (incomplete) daily bar: in-session bars carry
     # partial volume and provisional high/low, which breaks Research<->Lab
     # feature parity (P0-3). The matcher drops today's bar before the close.
