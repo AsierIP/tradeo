@@ -208,6 +208,8 @@ class DiscoveryRunRequest(BaseModel):
     session_filter: str | None = None
     cost_filter: str | None = None
     max_execution_cost_r: float | None = None
+    benchmark_regime_filter: str | None = None
+    benchmark_symbols: str | None = None
 
     @field_validator("vwap_condition")
     @classmethod
@@ -234,6 +236,12 @@ class DiscoveryRunRequest(BaseModel):
     @classmethod
     def known_cost_filter(cls, value: str | None) -> str | None:
         normalize_context_filter_spec(cost_filter=value)
+        return value
+
+    @field_validator("benchmark_regime_filter")
+    @classmethod
+    def known_benchmark_regime_filter(cls, value: str | None) -> str | None:
+        normalize_context_filter_spec(benchmark_regime_filter=value)
         return value
 
 

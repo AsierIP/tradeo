@@ -233,6 +233,35 @@ def test_execution_contract_flags_material_context_filter_mismatch() -> None:
     assert {"session_filter", "max_execution_cost_r"} <= fields
 
 
+def test_execution_contract_flags_material_benchmark_regime_filter_mismatch() -> None:
+    run = DiscoveryRun(
+        id=1,
+        status="completed",
+        windows_sampled=100,
+        params_json={
+            "interval": "1h",
+            "window_sizes": [100],
+            "forward_bars": [2, 4, 6],
+            "benchmark_regime_filter": "none",
+            "benchmark_symbols": ["SPY", "QQQ"],
+        },
+    )
+
+    integrity = execution_contract_integrity_report(
+        requested_execution_spec={
+            "timeframes": ["1h"],
+            "window_sizes": [100],
+            "forward_bars": [2, 4, 6],
+            "benchmark_regime_filter": "spy_qqq_positive",
+            "benchmark_symbols": ["SPY", "QQQ"],
+        },
+        runs=[run],
+    )
+
+    assert integrity["passed"] is False
+    assert integrity["material_mismatches"][0]["field"] == "benchmark_regime_filter"
+
+
 def test_forensics_marks_long_candidate_as_side_mismatch_for_vwap_reject_short() -> None:
     db = _db()
     run = DiscoveryRun(
@@ -302,4 +331,6 @@ def test_forensics_exposes_context_filtering_from_run_params() -> None:
         "session_filter": "mid",
         "cost_filter": "low_cost",
         "max_execution_cost_r": 0.15,
+        "benchmark_regime_filter": "none",
+        "benchmark_symbols": ["SPY", "QQQ"],
     }

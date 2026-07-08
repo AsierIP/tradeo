@@ -6,6 +6,10 @@ import json
 from pathlib import Path
 
 from tradeo.core.config import get_settings
+from tradeo.research.intraday_context_filters import (
+    BENCHMARK_REGIME_FILTER_CHOICES,
+    normalize_context_filter_spec,
+)
 from tradeo.services.intraday_research_readiness import (
     IntradayResearchReadinessGate,
     IntradayResearchWaveSpec,
@@ -22,6 +26,12 @@ def main() -> int:
     parser.add_argument("--forward-bars", default=None)
     parser.add_argument("--max-total-windows", type=int, default=None)
     parser.add_argument("--max-windows-per-symbol", type=int, default=None)
+    parser.add_argument(
+        "--benchmark-regime-filter",
+        choices=sorted(BENCHMARK_REGIME_FILTER_CHOICES),
+        default=None,
+    )
+    parser.add_argument("--benchmark-symbols", default=None)
     parser.add_argument("--min-cache-coverage", type=float, default=0.90)
     parser.add_argument("--min-rows-per-symbol", type=int, default=1)
     parser.add_argument("--manifest-path", default=None)
@@ -29,6 +39,10 @@ def main() -> int:
     args = parser.parse_args()
 
     settings = get_settings()
+    benchmark_spec = normalize_context_filter_spec(
+        benchmark_regime_filter=args.benchmark_regime_filter,
+        benchmark_symbols=args.benchmark_symbols,
+    )
     spec = IntradayResearchWaveSpec.from_settings(
         settings,
         universe_file=args.universe_file,
@@ -41,6 +55,8 @@ def main() -> int:
         max_windows_per_symbol=args.max_windows_per_symbol,
         min_cache_coverage=args.min_cache_coverage,
         min_rows_per_symbol=args.min_rows_per_symbol,
+        benchmark_regime_filter=benchmark_spec.benchmark_regime_filter,
+        benchmark_symbols=benchmark_spec.benchmark_symbols,
     )
     gate = IntradayResearchReadinessGate(settings=settings)
     result = gate.evaluate(spec)

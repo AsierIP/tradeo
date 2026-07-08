@@ -14,6 +14,16 @@ INTERVAL_SECONDS="${TRADEO_SHADOW_INTERVAL_SECONDS:-60}"
 MAX_ITERATIONS="${TRADEO_SHADOW_MAX_ITERATIONS:-1}"
 TODAY="$(TZ=America/New_York date +%Y%m%d)"
 
+if [[ "${TRADEO_SHADOW_REQUIRE_NY_SESSION:-false}" =~ ^(1|true|yes|on)$ ]]; then
+  ny_iso="$(TZ=America/New_York date --iso-8601=seconds)"
+  ny_dow="$(TZ=America/New_York date +%u)"
+  ny_hm="$(TZ=America/New_York date +%H%M)"
+  if (( ny_dow > 5 || 10#$ny_hm < 930 || 10#$ny_hm >= 1600 )); then
+    echo "skipped_outside_ny_session now=${ny_iso} window=Mon-Fri_09:30-16:00_America/New_York"
+    exit 0
+  fi
+fi
+
 python3 - "$ENV_FILE" <<'PY'
 from pathlib import Path
 import sys

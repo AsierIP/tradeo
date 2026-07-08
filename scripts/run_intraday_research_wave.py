@@ -19,6 +19,7 @@ if str(BACKEND_ROOT) not in sys.path:
 
 from tradeo.core.config import get_settings  # noqa: E402
 from tradeo.research.intraday_context_filters import (  # noqa: E402
+    BENCHMARK_REGIME_FILTER_CHOICES,
     COST_FILTER_CHOICES,
     SESSION_FILTER_CHOICES,
     normalize_context_filter_spec,
@@ -73,6 +74,12 @@ def main() -> int:
     parser.add_argument("--session-filter", choices=sorted(SESSION_FILTER_CHOICES), default=None)
     parser.add_argument("--cost-filter", choices=sorted(COST_FILTER_CHOICES), default=None)
     parser.add_argument("--max-execution-cost-r", type=float, default=None)
+    parser.add_argument(
+        "--benchmark-regime-filter",
+        choices=sorted(BENCHMARK_REGIME_FILTER_CHOICES),
+        default=None,
+    )
+    parser.add_argument("--benchmark-symbols", default=None)
     parser.add_argument("--min-cache-coverage", type=float, default=0.90)
     parser.add_argument("--min-rows-per-symbol", type=int, default=1)
     parser.add_argument("--manifest-path", default=None)
@@ -261,6 +268,12 @@ def _apply_settings_env_overrides(args: argparse.Namespace) -> None:
     if getattr(args, "max_execution_cost_r", None) is not None:
         os.environ["TRADEO_INTRADAY_RESEARCH_MAX_EXECUTION_COST_R"] = str(args.max_execution_cost_r)
         changed = True
+    if getattr(args, "benchmark_regime_filter", None) is not None:
+        os.environ["TRADEO_INTRADAY_RESEARCH_BENCHMARK_REGIME_FILTER"] = str(args.benchmark_regime_filter)
+        changed = True
+    if getattr(args, "benchmark_symbols", None) is not None:
+        os.environ["TRADEO_INTRADAY_RESEARCH_BENCHMARK_SYMBOLS"] = str(args.benchmark_symbols)
+        changed = True
     if changed:
         _clear_settings_cache()
 
@@ -332,6 +345,8 @@ def _normalize_execution_spec(spec: dict[str, Any]) -> dict[str, Any]:
         "session_filter": str(spec.get("session_filter") or "none").strip().lower() or "none",
         "cost_filter": str(spec.get("cost_filter") or "none").strip().lower() or "none",
         "max_execution_cost_r": _optional_float(spec.get("max_execution_cost_r")),
+        "benchmark_regime_filter": str(spec.get("benchmark_regime_filter") or "none").strip().lower() or "none",
+        "benchmark_symbols": _string_list(spec.get("benchmark_symbols") or ["SPY", "QQQ"]),
         "store_rejected": bool(spec["store_rejected"]),
     }
 
@@ -350,11 +365,15 @@ def _context_filter_execution_spec_from_env() -> dict[str, Any]:
         session_filter=os.environ.get("TRADEO_INTRADAY_RESEARCH_SESSION_FILTER"),
         cost_filter=os.environ.get("TRADEO_INTRADAY_RESEARCH_COST_FILTER"),
         max_execution_cost_r=os.environ.get("TRADEO_INTRADAY_RESEARCH_MAX_EXECUTION_COST_R"),
+        benchmark_regime_filter=os.environ.get("TRADEO_INTRADAY_RESEARCH_BENCHMARK_REGIME_FILTER"),
+        benchmark_symbols=os.environ.get("TRADEO_INTRADAY_RESEARCH_BENCHMARK_SYMBOLS"),
     )
     return {
         "session_filter": spec.session_filter,
         "cost_filter": spec.cost_filter,
         "max_execution_cost_r": spec.max_execution_cost_r,
+        "benchmark_regime_filter": spec.benchmark_regime_filter,
+        "benchmark_symbols": list(spec.benchmark_symbols),
     }
 
 
@@ -369,6 +388,16 @@ def _optional_float(value: Any) -> float | None:
     if value is None or str(value).strip() == "":
         return None
     return float(value)
+
+
+def _string_list(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        raw = value.split(",")
+    else:
+        raw = list(value)
+    return [str(item).strip().upper() for item in raw if str(item).strip()]
 
 
 def _stable_spec_hash(spec: dict[str, Any]) -> str:

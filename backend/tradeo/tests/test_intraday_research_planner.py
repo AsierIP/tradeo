@@ -199,6 +199,39 @@ def test_planner_signature_includes_session_and_cost_filters() -> None:
     )
 
 
+def test_planner_signature_includes_benchmark_regime_filter() -> None:
+    payload = _vwap_summary()
+    payload["recommended_next_waves"] = [
+        {
+            "name": "1h_W100_vwap_above_rising_spy_qqq_positive",
+            "timeframe": "1h",
+            "window_size": 100,
+            "forward_bars": [2, 4, 6],
+            "research_vwap_condition": "vwap_above_rising",
+            "benchmark_regime_filter": "spy_qqq_positive",
+            "benchmark_symbols": ["SPY", "QQQ"],
+        }
+    ]
+
+    result = IntradayResearchPlanner().plan(
+        PlannerInput(
+            selected_count=117,
+            blockers={"oos_unstable": 1},
+            vwap_summary=payload,
+        )
+    )
+
+    assert result.allowed_waves[0].signatures == (
+        "1h W100 2,4,6 vwap_above_rising benchmark_spy_qqq_positive",
+    )
+    assert result.allowed_waves[0].env(
+        universe_file="/app/universe.csv",
+        product_policy="stock_only",
+        period="60d",
+        store_rejected=True,
+    )["TRADEO_INTRADAY_RESEARCH_BENCHMARK_REGIME_FILTER"] == "spy_qqq_positive"
+
+
 def test_planner_exposes_context_filtering_in_output_and_markdown() -> None:
     planner_input = planner_input_from_payload(
         {
@@ -208,13 +241,17 @@ def test_planner_exposes_context_filtering_in_output_and_markdown() -> None:
                 "session_filter": "mid",
                 "cost_filter": "low_cost",
                 "max_execution_cost_r": 0.15,
+                "benchmark_regime_filter": "spy_qqq_positive",
+                "benchmark_symbols": ["SPY", "QQQ"],
             },
         }
     )
     result = IntradayResearchPlanner().plan(planner_input)
 
     assert result.to_dict()["context_filtering"]["session_filter"] == "mid"
+    assert result.to_dict()["context_filtering"]["benchmark_regime_filter"] == "spy_qqq_positive"
     assert "session_filter: `mid`" in render_markdown(result)
+    assert "benchmark_regime_filter: `spy_qqq_positive`" in render_markdown(result)
 
 
 def test_planner_keeps_previous_behavior_without_vwap_summary_json() -> None:

@@ -52,6 +52,8 @@ class ResearchWaveSpec:
     session_filter: str = "none"
     cost_filter: str = "none"
     max_execution_cost_r: float | None = None
+    benchmark_regime_filter: str = "none"
+    benchmark_symbols: tuple[str, ...] = ("SPY", "QQQ")
     legacy_overlap: bool = False
 
     def env(self, *, universe_file: str, product_policy: str, period: str, store_rejected: bool) -> dict[str, str]:
@@ -75,6 +77,10 @@ class ResearchWaveSpec:
             env["TRADEO_INTRADAY_RESEARCH_COST_FILTER"] = self.cost_filter
         if self.max_execution_cost_r is not None:
             env["TRADEO_INTRADAY_RESEARCH_MAX_EXECUTION_COST_R"] = str(self.max_execution_cost_r)
+        if self.benchmark_regime_filter != "none":
+            env["TRADEO_INTRADAY_RESEARCH_BENCHMARK_REGIME_FILTER"] = self.benchmark_regime_filter
+        if self.benchmark_symbols != ("SPY", "QQQ"):
+            env["TRADEO_INTRADAY_RESEARCH_BENCHMARK_SYMBOLS"] = _csv(self.benchmark_symbols)
         return env
 
     @property
@@ -89,6 +95,8 @@ class ResearchWaveSpec:
             if self.max_execution_cost_r is not None:
                 cost_suffix = f"{cost_suffix}_{self.max_execution_cost_r:g}"
             suffix_parts.append(cost_suffix)
+        if self.benchmark_regime_filter != "none":
+            suffix_parts.append(f"benchmark_{self.benchmark_regime_filter}")
         suffix = f" {' '.join(suffix_parts)}" if suffix_parts else ""
         return tuple(
             f"{self.timeframe} W{window_size} {_csv(self.forward_bars)}{suffix}"
@@ -628,7 +636,13 @@ def render_markdown(plan: PlannerOutput) -> str:
         lines.append("")
     if plan.context_filtering:
         lines.append("## Context filtering")
-        for key in ("session_filter", "cost_filter", "max_execution_cost_r"):
+        for key in (
+            "session_filter",
+            "cost_filter",
+            "max_execution_cost_r",
+            "benchmark_regime_filter",
+            "benchmark_symbols",
+        ):
             lines.append(f"- {key}: `{plan.context_filtering.get(key)}`")
         lines.append("")
     lines.append("## Actions")
@@ -860,6 +874,8 @@ def _waves_from_vwap_summary(summary: dict[str, Any] | None) -> list[ResearchWav
                 session_filter=str(row.get("session_filter") or "none"),
                 cost_filter=str(row.get("cost_filter") or "none"),
                 max_execution_cost_r=_optional_float(row.get("max_execution_cost_r")),
+                benchmark_regime_filter=str(row.get("benchmark_regime_filter") or "none"),
+                benchmark_symbols=tuple(_string_list(row.get("benchmark_symbols") or ["SPY", "QQQ"])),
                 legacy_overlap=bool(row.get("legacy_overlap")),
             )
         )
@@ -897,6 +913,8 @@ def _context_filtering(payload: dict[str, Any] | None) -> dict[str, Any]:
         "session_filter": str(payload.get("session_filter") or "none").strip().lower() or "none",
         "cost_filter": str(payload.get("cost_filter") or "none").strip().lower() or "none",
         "max_execution_cost_r": _optional_float(payload.get("max_execution_cost_r")),
+        "benchmark_regime_filter": str(payload.get("benchmark_regime_filter") or "none").strip().lower() or "none",
+        "benchmark_symbols": _string_list(payload.get("benchmark_symbols") or ["SPY", "QQQ"]),
     }
 
 
@@ -929,8 +947,18 @@ def _optional_float(value: Any) -> float | None:
         return None
 
 
-def _csv(values: Iterable[int]) -> str:
+def _csv(values: Iterable[Any]) -> str:
     return ",".join(str(value) for value in values)
+
+
+def _string_list(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        raw = value.split(",")
+    else:
+        raw = list(value)
+    return [str(item).strip().upper() for item in raw if str(item).strip()]
 
 
 def _diagnostic_selected_count(payload: dict[str, Any]) -> int | None:
@@ -990,10 +1018,20 @@ def _has_any(values: dict[str, int], *needles: str) -> bool:
 
 
 def _dedupe_waves(waves: list[ResearchWaveSpec]) -> list[ResearchWaveSpec]:
-    seen: set[tuple[str, tuple[int, ...], tuple[int, ...]]] = set()
+    seen: set[tuple[Any, ...]] = set()
     out: list[ResearchWaveSpec] = []
     for wave in sorted(waves, key=lambda item: item.priority):
-        key = (wave.timeframe, wave.window_sizes, wave.forward_bars)
+        key = (
+            wave.timeframe,
+            wave.window_sizes,
+            wave.forward_bars,
+            wave.vwap_condition,
+            wave.session_filter,
+            wave.cost_filter,
+            wave.max_execution_cost_r,
+            wave.benchmark_regime_filter,
+            wave.benchmark_symbols,
+        )
         if key in seen:
             continue
         seen.add(key)

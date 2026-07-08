@@ -26,12 +26,21 @@ _OVERRIDE_ENV_KEYS = [
     "TRADEO_INTRADAY_RESEARCH_SESSION_FILTER",
     "TRADEO_INTRADAY_RESEARCH_COST_FILTER",
     "TRADEO_INTRADAY_RESEARCH_MAX_EXECUTION_COST_R",
+    "TRADEO_INTRADAY_RESEARCH_BENCHMARK_REGIME_FILTER",
+    "TRADEO_INTRADAY_RESEARCH_BENCHMARK_SYMBOLS",
 ]
 
 
 def _load_runner_module():
-    repo_root = Path(__file__).resolve().parents[3]
-    script_path = repo_root / "scripts" / "run_intraday_research_wave.py"
+    script_path = next(
+        (
+            parent / "scripts" / "run_intraday_research_wave.py"
+            for parent in Path(__file__).resolve().parents
+            if (parent / "scripts" / "run_intraday_research_wave.py").exists()
+        ),
+        None,
+    )
+    assert script_path is not None
     spec = importlib.util.spec_from_file_location("run_intraday_research_wave", script_path)
     assert spec is not None
     assert spec.loader is not None
@@ -55,6 +64,8 @@ class _FakeSettings:
         forward_bars: str = "8,13,21",
         max_total_windows: int = 120000,
         max_windows_per_symbol: int = 1200,
+        benchmark_regime_filter: str = "none",
+        benchmark_symbols: str = "SPY,QQQ",
     ) -> None:
         self.artifacts_path = artifacts_path
         self.intraday_universe_file = universe_file
@@ -66,6 +77,8 @@ class _FakeSettings:
         self.intraday_research_forward_bars = forward_bars
         self.intraday_research_max_total_windows = max_total_windows
         self.intraday_research_max_windows_per_symbol = max_windows_per_symbol
+        self.intraday_research_benchmark_regime_filter = benchmark_regime_filter
+        self.intraday_research_benchmark_symbols = benchmark_symbols
 
     @property
     def intraday_timeframe_list(self) -> list[str]:
@@ -108,6 +121,8 @@ def runner_asdict(spec) -> dict:
         "max_windows_per_symbol": spec.max_windows_per_symbol,
         "min_cache_coverage": spec.min_cache_coverage,
         "min_rows_per_symbol": spec.min_rows_per_symbol,
+        "benchmark_regime_filter": spec.benchmark_regime_filter,
+        "benchmark_symbols": list(spec.benchmark_symbols),
     }
 
 
@@ -147,6 +162,8 @@ def test_cli_arguments_apply_exact_env_before_settings_and_worker(monkeypatch, t
         assert os.environ["TRADEO_INTRADAY_RESEARCH_SESSION_FILTER"] == "mid"
         assert os.environ["TRADEO_INTRADAY_RESEARCH_COST_FILTER"] == "low_cost"
         assert os.environ["TRADEO_INTRADAY_RESEARCH_MAX_EXECUTION_COST_R"] == "0.15"
+        assert os.environ["TRADEO_INTRADAY_RESEARCH_BENCHMARK_REGIME_FILTER"] == "spy_qqq_positive"
+        assert os.environ["TRADEO_INTRADAY_RESEARCH_BENCHMARK_SYMBOLS"] == "SPY,QQQ"
         return _FakeSettings(artifacts_path=tmp_path / "artifacts")
 
     worker_calls: list[dict] = []
@@ -203,6 +220,10 @@ def test_cli_arguments_apply_exact_env_before_settings_and_worker(monkeypatch, t
                 "low_cost",
                 "--max-execution-cost-r",
                 "0.15",
+                "--benchmark-regime-filter",
+                "spy_qqq_positive",
+                "--benchmark-symbols",
+                "SPY,QQQ",
                 "--manifest-path",
                 str(tmp_path / "manifest.json"),
                 "--json-only",
@@ -272,6 +293,8 @@ def test_summary_and_manifest_include_execution_spec_and_matching_hashes(
     assert summary["execution_spec"]["session_filter"] == "none"
     assert summary["execution_spec"]["cost_filter"] == "none"
     assert summary["execution_spec"]["max_execution_cost_r"] is None
+    assert summary["execution_spec"]["benchmark_regime_filter"] == "none"
+    assert summary["execution_spec"]["benchmark_symbols"] == ["SPY", "QQQ"]
     assert manifest["execution_spec"] == summary["execution_spec"]
 
 
@@ -309,6 +332,10 @@ def test_context_filters_are_included_in_execution_spec(monkeypatch, tmp_path: P
             "low_cost",
             "--max-execution-cost-r",
             "0.15",
+            "--benchmark-regime-filter",
+            "spy_qqq_positive",
+            "--benchmark-symbols",
+            "SPY,QQQ",
             "--manifest-path",
             str(manifest_path),
             "--json-only",
@@ -322,6 +349,8 @@ def test_context_filters_are_included_in_execution_spec(monkeypatch, tmp_path: P
     assert summary["execution_spec"]["session_filter"] == "mid"
     assert summary["execution_spec"]["cost_filter"] == "low_cost"
     assert summary["execution_spec"]["max_execution_cost_r"] == 0.15
+    assert summary["execution_spec"]["benchmark_regime_filter"] == "spy_qqq_positive"
+    assert summary["execution_spec"]["benchmark_symbols"] == ["SPY", "QQQ"]
 
 
 def test_spec_hash_changes_when_session_filter_or_cost_threshold_changes() -> None:
@@ -343,6 +372,8 @@ def test_spec_hash_changes_when_session_filter_or_cost_threshold_changes() -> No
         "session_filter": "none",
         "cost_filter": "low_cost",
         "max_execution_cost_r": 0.15,
+        "benchmark_regime_filter": "none",
+        "benchmark_symbols": ["SPY", "QQQ"],
         "store_rejected": True,
     }
 
@@ -353,9 +384,13 @@ def test_spec_hash_changes_when_session_filter_or_cost_threshold_changes() -> No
     threshold_hash = runner._stable_spec_hash(
         runner._normalize_execution_spec({**base, "max_execution_cost_r": 0.12})
     )
+    benchmark_hash = runner._stable_spec_hash(
+        runner._normalize_execution_spec({**base, "benchmark_regime_filter": "spy_qqq_positive"})
+    )
 
     assert session_hash != base_hash
     assert threshold_hash != base_hash
+    assert benchmark_hash != base_hash
 
 
 def test_execute_blocks_mismatch_and_does_not_call_worker(monkeypatch, tmp_path: Path) -> None:
@@ -385,6 +420,11 @@ def test_execute_blocks_mismatch_and_does_not_call_worker(monkeypatch, tmp_path:
             "vwap_side_bias": None,
             "vwap_max_distance_bps": None,
             "vwap_min_slope_bps": None,
+            "session_filter": "none",
+            "cost_filter": "none",
+            "max_execution_cost_r": None,
+            "benchmark_regime_filter": "none",
+            "benchmark_symbols": ["SPY", "QQQ"],
             "store_rejected": store_rejected,
         },
     )
@@ -458,6 +498,11 @@ def test_execute_blocks_vwap_spec_mismatch_and_does_not_call_worker(monkeypatch,
             "vwap_side_bias": "short",
             "vwap_max_distance_bps": 150.0,
             "vwap_min_slope_bps": 0.0,
+            "session_filter": "none",
+            "cost_filter": "none",
+            "max_execution_cost_r": None,
+            "benchmark_regime_filter": "none",
+            "benchmark_symbols": ["SPY", "QQQ"],
             "store_rejected": store_rejected,
         },
     )
@@ -528,6 +573,8 @@ def test_spec_hash_changes_when_vwap_condition_changes() -> None:
         "vwap_side_bias": None,
         "vwap_max_distance_bps": None,
         "vwap_min_slope_bps": None,
+        "benchmark_regime_filter": "none",
+        "benchmark_symbols": ["SPY", "QQQ"],
         "store_rejected": True,
     }
     conditioned = base | {"vwap_condition": "vwap_reclaim_long", "vwap_side_bias": "long"}
@@ -604,6 +651,11 @@ def test_env_overrides_do_not_enable_live_paper_orders_or_gates(monkeypatch) -> 
         vwap_side_bias="long",
         vwap_max_distance_bps=150.0,
         vwap_min_slope_bps=0.0,
+        session_filter=None,
+        cost_filter=None,
+        max_execution_cost_r=None,
+        benchmark_regime_filter=None,
+        benchmark_symbols=None,
     )
 
     try:

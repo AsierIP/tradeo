@@ -427,6 +427,8 @@ class PatternDiscoveryLabAgent:
                             session_filter=params["session_filter"],
                             cost_filter=params["cost_filter"],
                             max_execution_cost_r=params["max_execution_cost_r"],
+                            benchmark_regime_filter=params["benchmark_regime_filter"],
+                            benchmark_symbols=params["benchmark_symbols"],
                         )
                     finally:
                         timer.add("sampling_embedding_s", phase_started)
@@ -448,6 +450,14 @@ class PatternDiscoveryLabAgent:
                     timer.increment(
                         "windows_cost_rejected",
                         int(diagnostics.get("windows_cost_rejected", 0)),
+                    )
+                    timer.increment(
+                        "windows_benchmark_regime_rejected",
+                        int(diagnostics.get("windows_benchmark_regime_rejected", 0)),
+                    )
+                    timer.increment(
+                        "windows_benchmark_regime_missing",
+                        int(diagnostics.get("windows_benchmark_regime_missing", 0)),
                     )
                     timer.increment(
                         "windows_selected",
@@ -649,9 +659,13 @@ class PatternDiscoveryLabAgent:
                 "session_filter": params["session_filter"],
                 "cost_filter": params["cost_filter"],
                 "max_execution_cost_r": params["max_execution_cost_r"],
+                "benchmark_regime_filter": params["benchmark_regime_filter"],
+                "benchmark_symbols": params["benchmark_symbols"],
                 "windows_vwap_rejected": timer.counts.get("windows_vwap_rejected", 0),
                 "windows_session_rejected": timer.counts.get("windows_session_rejected", 0),
                 "windows_cost_rejected": timer.counts.get("windows_cost_rejected", 0),
+                "windows_benchmark_regime_rejected": timer.counts.get("windows_benchmark_regime_rejected", 0),
+                "windows_benchmark_regime_missing": timer.counts.get("windows_benchmark_regime_missing", 0),
                 "windows_selected": timer.counts.get("windows_selected", 0),
             }
             if clustering_diagnostics is not None:
@@ -886,6 +900,8 @@ class PatternDiscoveryLabAgent:
             session_filter=request.session_filter,
             cost_filter=request.cost_filter,
             max_execution_cost_r=request.max_execution_cost_r,
+            benchmark_regime_filter=request.benchmark_regime_filter,
+            benchmark_symbols=request.benchmark_symbols,
         )
         return {
             "limit": request.limit or s.discovery_limit_default,
@@ -922,6 +938,8 @@ class PatternDiscoveryLabAgent:
             "session_filter": context_spec.session_filter,
             "cost_filter": context_spec.cost_filter,
             "max_execution_cost_r": context_spec.max_execution_cost_r,
+            "benchmark_regime_filter": context_spec.benchmark_regime_filter,
+            "benchmark_symbols": list(context_spec.benchmark_symbols),
             "rr_levels": s.discovery_rr_level_list,
             "min_reward_risk": s.discovery_min_reward_risk,
             "candidate_reward_risk": s.discovery_candidate_reward_risk,

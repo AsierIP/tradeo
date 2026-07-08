@@ -15,6 +15,9 @@ from tradeo.research.intraday_vwap_conditions import (
     vwap_features_at,
 )
 from tradeo.research.intraday_context_filters import (
+    benchmark_context_filter_payload,
+    benchmark_regime_filter_passes,
+    build_benchmark_regime_frames,
     context_filter_payload,
     cost_filter_passes,
     normalize_context_filter_spec,
@@ -59,6 +62,8 @@ class WindowSampler:
         session_filter: str | None = None,
         cost_filter: str | None = None,
         max_execution_cost_r: float | None = None,
+        benchmark_regime_filter: str | None = None,
+        benchmark_symbols: str | list[str] | tuple[str, ...] | None = None,
     ) -> list[WindowSample]:
         vwap_spec = normalize_vwap_condition_spec(
             condition=vwap_condition,
@@ -70,15 +75,21 @@ class WindowSampler:
             session_filter=session_filter,
             cost_filter=cost_filter,
             max_execution_cost_r=max_execution_cost_r,
+            benchmark_regime_filter=benchmark_regime_filter,
+            benchmark_symbols=benchmark_symbols,
         )
         context_filters: dict[str, Any] = {
             "vwap_condition": vwap_spec.condition,
             "session_filter": context_spec.session_filter,
             "cost_filter": context_spec.cost_filter,
             "max_execution_cost_r": context_spec.max_execution_cost_r,
+            "benchmark_regime_filter": context_spec.benchmark_regime_filter,
+            "benchmark_symbols": list(context_spec.benchmark_symbols),
             "windows_vwap_rejected": 0,
             "windows_session_rejected": 0,
             "windows_cost_rejected": 0,
+            "windows_benchmark_regime_rejected": 0,
+            "windows_benchmark_regime_missing": 0,
             "windows_selected": 0,
         }
         self.last_diagnostics = {
@@ -90,6 +101,8 @@ class WindowSampler:
             "windows_vwap_selected": 0,
             "windows_session_rejected": 0,
             "windows_cost_rejected": 0,
+            "windows_benchmark_regime_rejected": 0,
+            "windows_benchmark_regime_missing": 0,
             "windows_selected": 0,
             "context_filters": context_filters,
         }
@@ -136,6 +149,7 @@ class WindowSampler:
             index_values,
             embedding_benchmark_frames,
         )
+        benchmark_regime_frames = build_benchmark_regime_frames(benchmark_frames, context_spec)
         embedding_week_codes = self._week_codes_for_embedding(index_values)
         use_embedding_placeholder_index = (
             embedding_week_codes is not None or not isinstance(index_values, pd.DatetimeIndex)
@@ -196,6 +210,26 @@ class WindowSampler:
                     context_filters["windows_session_rejected"] = (
                         int(context_filters["windows_session_rejected"]) + 1
                     )
+                    continue
+                benchmark_passed, benchmark_missing, benchmark_features = benchmark_regime_filter_passes(
+                    end_idx,
+                    context_spec,
+                    benchmark_regime_frames,
+                )
+                if not benchmark_passed:
+                    self.last_diagnostics["windows_benchmark_regime_rejected"] = (
+                        int(self.last_diagnostics["windows_benchmark_regime_rejected"]) + 1
+                    )
+                    context_filters["windows_benchmark_regime_rejected"] = (
+                        int(context_filters["windows_benchmark_regime_rejected"]) + 1
+                    )
+                    if benchmark_missing:
+                        self.last_diagnostics["windows_benchmark_regime_missing"] = (
+                            int(self.last_diagnostics["windows_benchmark_regime_missing"]) + 1
+                        )
+                        context_filters["windows_benchmark_regime_missing"] = (
+                            int(context_filters["windows_benchmark_regime_missing"]) + 1
+                        )
                     continue
                 if vwap_frame is not None:
                     self.last_diagnostics["windows_vwap_selected"] = (
@@ -278,9 +312,12 @@ class WindowSampler:
                     features.update(vwap_features_at(vwap_frame, end_pos, vwap_spec))
                 features.update({f"execution_{k}": float(v) for k, v in execution_metrics.items()})
                 features.update(context_filter_payload(context_spec))
+                features.update(benchmark_context_filter_payload(context_spec))
+                features.update(benchmark_features)
                 features["session_bucket"] = session_bucket(end_idx)
                 features["session_filter_passed"] = True
                 features["cost_filter_passed"] = True
+                features["benchmark_regime_filter_passed"] = True
                 if timezone_assumption:
                     features["timestamp_timezone_assumption"] = timezone_assumption
                 features["sample_window_size_quota"] = int(window_quota)

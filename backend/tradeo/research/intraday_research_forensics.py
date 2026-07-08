@@ -557,7 +557,13 @@ def render_markdown(report: dict[str, Any]) -> str:
     context_filtering = report.get("context_filtering") or {}
     if context_filtering:
         lines.extend(["", "## Context Filtering"])
-        for key in ("session_filter", "cost_filter", "max_execution_cost_r"):
+        for key in (
+            "session_filter",
+            "cost_filter",
+            "max_execution_cost_r",
+            "benchmark_regime_filter",
+            "benchmark_symbols",
+        ):
             lines.append(f"- {key}: `{context_filtering.get(key)}`")
     contract = report.get("execution_contract_integrity") or {}
     if contract:
@@ -730,6 +736,12 @@ def _context_filtering_from_metadata_or_runs(
             if manifest_metadata.get("max_execution_cost_r") is not None
             else _first_param(runs, "max_execution_cost_r")
         ),
+        "benchmark_regime_filter": _normalize_optional(
+            manifest_metadata.get("benchmark_regime_filter") or _first_param(runs, "benchmark_regime_filter")
+        ) or "none",
+        "benchmark_symbols": _string_list(
+            manifest_metadata.get("benchmark_symbols") or _first_param(runs, "benchmark_symbols") or ["SPY", "QQQ"]
+        ),
     }
 
 
@@ -760,7 +772,13 @@ def _manifest_metadata(paths: Sequence[str]) -> dict[str, Any]:
             value = execution_spec.get(key) or spec.get(key)
             if value and not out.get(key):
                 out[key] = str(value).strip().lower()
-        for key in ("session_filter", "cost_filter", "max_execution_cost_r"):
+        for key in (
+            "session_filter",
+            "cost_filter",
+            "max_execution_cost_r",
+            "benchmark_regime_filter",
+            "benchmark_symbols",
+        ):
             value = execution_spec.get(key) if key in execution_spec else spec.get(key)
             if value is not None and not out.get(key):
                 out[key] = value
@@ -817,6 +835,16 @@ def _execution_contract_run_report(
     compare("session_filter", requested_execution_spec.get("session_filter"), _normalize_optional(actual.get("session_filter")) or "none", material_key=True)
     compare("cost_filter", requested_execution_spec.get("cost_filter"), _normalize_optional(actual.get("cost_filter")) or "none", material_key=True)
     compare("max_execution_cost_r", requested_execution_spec.get("max_execution_cost_r"), _optional_float(actual.get("max_execution_cost_r")), material_key=True)
+    requested_benchmark_filter = requested_execution_spec.get("benchmark_regime_filter")
+    actual_benchmark_filter = _normalize_optional(actual.get("benchmark_regime_filter")) or "none"
+    compare("benchmark_regime_filter", requested_benchmark_filter, actual_benchmark_filter, material_key=True)
+    if requested_benchmark_filter != "none" or actual_benchmark_filter != "none":
+        compare(
+            "benchmark_symbols",
+            requested_execution_spec.get("benchmark_symbols"),
+            _string_list(actual.get("benchmark_symbols")),
+            material_key=True,
+        )
     compare("universe_file", requested_execution_spec.get("universe_file"), actual.get("universe_file"), material_key=True)
     compare("limit", requested_execution_spec.get("limit"), _optional_int(actual.get("limit")), material_key=False)
     compare("max_total_windows", requested_execution_spec.get("max_total_windows"), _optional_int(actual.get("max_total_windows")), material_key=False)
@@ -859,6 +887,8 @@ def _normalize_requested_execution_spec(spec: dict[str, Any]) -> dict[str, Any]:
         "session_filter": _normalize_optional(spec.get("session_filter")) or "none",
         "cost_filter": _normalize_optional(spec.get("cost_filter")) or "none",
         "max_execution_cost_r": _optional_float(spec.get("max_execution_cost_r")),
+        "benchmark_regime_filter": _normalize_optional(spec.get("benchmark_regime_filter")) or "none",
+        "benchmark_symbols": _string_list(spec.get("benchmark_symbols") or ["SPY", "QQQ"]),
         "store_rejected": spec.get("store_rejected"),
     }
 
@@ -874,6 +904,18 @@ def _int_list(value: Any) -> list[int]:
         if parsed is not None:
             out.append(parsed)
     return out
+
+
+def _string_list(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        values = value.split(",")
+    elif isinstance(value, list | tuple):
+        values = value
+    else:
+        values = [value]
+    return _dedupe_strings(str(item).strip().upper() for item in values if str(item).strip())
 
 
 def _normalize_optional(value: Any) -> str | None:

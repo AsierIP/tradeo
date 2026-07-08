@@ -26,6 +26,8 @@ class IntradayResearchWaveSpec:
     min_cache_coverage: float = 0.90
     min_rows_per_symbol: int = 1
     universe_policy: str = "stock_only"
+    benchmark_regime_filter: str = "none"
+    benchmark_symbols: tuple[str, ...] = ("SPY", "QQQ")
 
     @classmethod
     def from_settings(
@@ -43,6 +45,8 @@ class IntradayResearchWaveSpec:
         max_windows_per_symbol: int | None = None,
         min_cache_coverage: float = 0.90,
         min_rows_per_symbol: int = 1,
+        benchmark_regime_filter: str | None = None,
+        benchmark_symbols: tuple[str, ...] | None = None,
     ) -> "IntradayResearchWaveSpec":
         s = settings or get_settings()
         return cls(
@@ -61,6 +65,20 @@ class IntradayResearchWaveSpec:
             ),
             min_cache_coverage=float(min_cache_coverage),
             min_rows_per_symbol=int(min_rows_per_symbol),
+            benchmark_regime_filter=str(
+                benchmark_regime_filter
+                or getattr(s, "intraday_research_benchmark_regime_filter", "none")
+                or "none"
+            ).strip().lower(),
+            benchmark_symbols=tuple(
+                benchmark_symbols
+                or tuple(
+                    item.strip().upper()
+                    for item in str(getattr(s, "intraday_research_benchmark_symbols", "SPY,QQQ")).split(",")
+                    if item.strip()
+                )
+                or ("SPY", "QQQ")
+            ),
         )
 
 
@@ -124,6 +142,7 @@ class IntradayResearchReadinessGate:
         coverage = ok / max(total, 1)
         ready = total > 0 and coverage >= spec.min_cache_coverage
         status: ReadinessStatus = "DATA_READY" if ready else "DATA_MISSING"
+        spec_payload = json.loads(json.dumps(asdict(spec)))
         manifest = {
             "schema_version": 1,
             "generated_at": datetime.now(UTC).isoformat(),
@@ -134,7 +153,7 @@ class IntradayResearchReadinessGate:
             "total": total,
             "missing_or_bad": total - ok,
             "cache_dir": str(self.settings.market_data_cache_path),
-            "spec": asdict(spec),
+            "spec": spec_payload,
             "symbols_by_timeframe": symbols_by_timeframe,
             "missing_preview": [asdict(check) for check in checks if not check.ok][:50],
             "checks": [asdict(check) for check in checks],

@@ -88,6 +88,37 @@ def test_readiness_passes_when_cache_coverage_is_high_enough(tmp_path: Path) -> 
     assert result.manifest["manifest_hash"] == result.manifest_hash
 
 
+def test_readiness_manifest_hash_changes_with_benchmark_regime_filter(tmp_path: Path) -> None:
+    universe = tmp_path / "universe.csv"
+    _write_universe(universe, ["AAA"])
+    settings = _settings(tmp_path, universe)
+    _write_cache(settings.market_data_cache_path, "AAA", "1h", "60d")
+
+    base = IntradayResearchReadinessGate(settings).evaluate(
+        IntradayResearchWaveSpec.from_settings(
+            settings,
+            period="60d",
+            timeframes=("1h",),
+            limit=1,
+            benchmark_regime_filter="none",
+        )
+    )
+    filtered = IntradayResearchReadinessGate(settings).evaluate(
+        IntradayResearchWaveSpec.from_settings(
+            settings,
+            period="60d",
+            timeframes=("1h",),
+            limit=1,
+            benchmark_regime_filter="spy_qqq_positive",
+            benchmark_symbols=("SPY", "QQQ"),
+        )
+    )
+
+    assert base.manifest_hash != filtered.manifest_hash
+    assert filtered.manifest["spec"]["benchmark_regime_filter"] == "spy_qqq_positive"
+    assert filtered.manifest["spec"]["benchmark_symbols"] == ["SPY", "QQQ"]
+
+
 def test_readiness_detects_metadata_period_mismatch(tmp_path: Path) -> None:
     universe = tmp_path / "universe.csv"
     _write_universe(universe, ["AAA"])

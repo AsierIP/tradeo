@@ -1058,6 +1058,8 @@ def _intraday_research_common_expected_params(settings: Settings) -> dict[str, A
         "session_filter": context_spec.session_filter,
         "cost_filter": context_spec.cost_filter,
         "max_execution_cost_r": context_spec.max_execution_cost_r,
+        "benchmark_regime_filter": context_spec.benchmark_regime_filter,
+        "benchmark_symbols": list(context_spec.benchmark_symbols),
         "min_samples": settings.intraday_research_min_samples,
         "min_effective_samples": settings.intraday_research_min_effective_samples,
         "min_symbols": settings.intraday_research_min_symbols,
@@ -1222,6 +1224,8 @@ def _intraday_research_request(
         session_filter=context_spec.session_filter,
         cost_filter=context_spec.cost_filter,
         max_execution_cost_r=context_spec.max_execution_cost_r,
+        benchmark_regime_filter=context_spec.benchmark_regime_filter,
+        benchmark_symbols=",".join(context_spec.benchmark_symbols),
     )
 
 
@@ -1248,6 +1252,8 @@ def _intraday_research_expected_params(
         "session_filter": request.session_filter or "none",
         "cost_filter": request.cost_filter or "none",
         "max_execution_cost_r": request.max_execution_cost_r,
+        "benchmark_regime_filter": request.benchmark_regime_filter or "none",
+        "benchmark_symbols": _benchmark_symbols_list(request.benchmark_symbols),
         "min_samples": settings.intraday_research_min_samples,
         "min_effective_samples": settings.intraday_research_min_effective_samples,
         "min_symbols": settings.intraday_research_min_symbols,
@@ -1270,7 +1276,14 @@ def _intraday_research_context_filter_spec():
         session_filter=os.environ.get("TRADEO_INTRADAY_RESEARCH_SESSION_FILTER"),
         cost_filter=os.environ.get("TRADEO_INTRADAY_RESEARCH_COST_FILTER"),
         max_execution_cost_r=os.environ.get("TRADEO_INTRADAY_RESEARCH_MAX_EXECUTION_COST_R"),
+        benchmark_regime_filter=os.environ.get("TRADEO_INTRADAY_RESEARCH_BENCHMARK_REGIME_FILTER"),
+        benchmark_symbols=os.environ.get("TRADEO_INTRADAY_RESEARCH_BENCHMARK_SYMBOLS"),
     )
+
+
+def _benchmark_symbols_list(value: str | None) -> list[str]:
+    spec = normalize_context_filter_spec(benchmark_symbols=value)
+    return list(spec.benchmark_symbols)
 
 
 def _optional_env(key: str) -> str | None:

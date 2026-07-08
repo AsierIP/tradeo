@@ -188,6 +188,8 @@ class Settings(BaseSettings):
     intraday_research_limit_default: int = 25
     intraday_research_window_sizes: str = "20,50,100"
     intraday_research_forward_bars: str = "3,6,12"
+    intraday_research_benchmark_regime_filter: str = "none"
+    intraday_research_benchmark_symbols: str = "SPY,QQQ"
     intraday_research_stride: int = 1
     intraday_research_max_total_windows: int = 8000
     intraday_research_max_windows_per_symbol: int = 300

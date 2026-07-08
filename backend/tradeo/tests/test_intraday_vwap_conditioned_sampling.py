@@ -50,6 +50,59 @@ def test_context_filter_none_preserves_sample_count() -> None:
     assert len(explicit_none) == len(baseline)
 
 
+def test_benchmark_regime_filter_accepts_only_matching_windows() -> None:
+    sampler = WindowSampler()
+
+    accepted = sampler.sample(
+        "AAA",
+        _bars(),
+        "30m",
+        [10],
+        [1],
+        stride=1,
+        max_windows_per_symbol=20,
+        benchmark_frames={"SPY": _benchmark_bars(up=True), "QQQ": _benchmark_bars(up=True)},
+        benchmark_regime_filter="spy_qqq_positive",
+    )
+    rejected_sampler = WindowSampler()
+    rejected = rejected_sampler.sample(
+        "AAA",
+        _bars(),
+        "30m",
+        [10],
+        [1],
+        stride=1,
+        max_windows_per_symbol=20,
+        benchmark_frames={"SPY": _benchmark_bars(up=False), "QQQ": _benchmark_bars(up=True)},
+        benchmark_regime_filter="spy_qqq_positive",
+    )
+
+    assert accepted
+    assert all(sample.features["benchmark_regime_filter"] == "spy_qqq_positive" for sample in accepted)
+    assert all(sample.features["benchmark_regime_states"] == {"SPY": "positive", "QQQ": "positive"} for sample in accepted)
+    assert rejected == []
+    assert rejected_sampler.last_diagnostics["windows_benchmark_regime_rejected"] > 0
+
+
+def test_benchmark_regime_filter_missing_benchmark_fails_closed() -> None:
+    sampler = WindowSampler()
+
+    samples = sampler.sample(
+        "AAA",
+        _bars(),
+        "30m",
+        [10],
+        [1],
+        stride=1,
+        max_windows_per_symbol=20,
+        benchmark_frames={"SPY": _benchmark_bars(up=True)},
+        benchmark_regime_filter="spy_qqq_positive",
+    )
+
+    assert samples == []
+    assert sampler.last_diagnostics["windows_benchmark_regime_missing"] > 0
+
+
 def test_vwap_reclaim_long_filters_to_compatible_events() -> None:
     samples = WindowSampler().sample(
         "AAA",
@@ -265,11 +318,15 @@ def test_discovery_run_request_accepts_context_filter_fields() -> None:
         session_filter="mid",
         cost_filter="low_cost",
         max_execution_cost_r=0.15,
+        benchmark_regime_filter="spy_qqq_positive",
+        benchmark_symbols="QQQ,SPY",
     )
 
     assert request.session_filter == "mid"
     assert request.cost_filter == "low_cost"
     assert request.max_execution_cost_r == 0.15
+    assert request.benchmark_regime_filter == "spy_qqq_positive"
+    assert request.benchmark_symbols == "QQQ,SPY"
 
 
 def test_agent_resolved_params_include_vwap_contract() -> None:
@@ -304,6 +361,19 @@ def test_agent_resolved_params_include_context_filter_contract() -> None:
     assert params["max_execution_cost_r"] == 0.15
 
 
+def test_agent_resolved_params_include_benchmark_regime_filter_contract() -> None:
+    agent = PatternDiscoveryLabAgent(provider=object(), settings=Settings())
+    request = DiscoveryRunRequest(
+        benchmark_regime_filter="spy_qqq_positive",
+        benchmark_symbols="QQQ,SPY",
+    )
+
+    params = agent._resolve_params(request)
+
+    assert params["benchmark_regime_filter"] == "spy_qqq_positive"
+    assert params["benchmark_symbols"] == ["QQQ", "SPY"]
+
+
 def test_worker_expected_params_include_vwap_contract() -> None:
     settings = Settings()
     request = DiscoveryRunRequest(
@@ -334,6 +404,19 @@ def test_worker_expected_params_include_context_filter_contract() -> None:
     assert expected["session_filter"] == "mid"
     assert expected["cost_filter"] == "low_cost"
     assert expected["max_execution_cost_r"] == 0.15
+
+
+def test_worker_expected_params_include_benchmark_regime_filter_contract() -> None:
+    settings = Settings()
+    request = DiscoveryRunRequest(
+        benchmark_regime_filter="spy_qqq_positive",
+        benchmark_symbols="SPY,QQQ",
+    )
+
+    expected = worker._intraday_research_expected_params(settings, request)
+
+    assert expected["benchmark_regime_filter"] == "spy_qqq_positive"
+    assert expected["benchmark_symbols"] == ["SPY", "QQQ"]
 
 
 def test_vwap_signature_is_distinct_but_tracks_legacy_overlap() -> None:
@@ -381,6 +464,29 @@ def test_context_filter_signature_distinguishes_from_unfiltered_repeat() -> None
     assert allowed[0].legacy_overlap is False
 
 
+def test_benchmark_filter_signature_distinguishes_from_vwap_repeat() -> None:
+    wave = ResearchWaveSpec(
+        name="1h_W100_spy_qqq_positive",
+        timeframe="1h",
+        window_sizes=(100,),
+        forward_bars=(2, 4, 6),
+        max_total_windows=80000,
+        max_windows_per_symbol=800,
+        hypothesis="VWAP above rising only when SPY/QQQ regime is positive",
+        priority=1,
+        vwap_condition="vwap_above_rising",
+        benchmark_regime_filter="spy_qqq_positive",
+    )
+
+    allowed, blocked = filter_prohibited_waves((wave,), ("1h W100 2,4,6 vwap_above_rising",))
+
+    assert blocked == ()
+    assert allowed[0].signatures == (
+        "1h W100 2,4,6 vwap_above_rising benchmark_spy_qqq_positive",
+    )
+    assert allowed[0].legacy_overlap is False
+
+
 def _bars() -> pd.DataFrame:
     index = pd.date_range("2026-07-01 09:30", periods=18, freq="30min", tz="America/New_York")
     closes = [10, 9, 9, 9, 9, 9, 9, 9, 9, 12, 9, 9, 8.8, 9.2, 11, 8.5, 12, 11]
@@ -395,4 +501,20 @@ def _bars() -> pd.DataFrame:
                 "volume": 1000.0,
             }
         )
+    return pd.DataFrame(rows, index=index)
+
+
+def _benchmark_bars(*, up: bool) -> pd.DataFrame:
+    index = pd.date_range("2026-07-01 09:30", periods=18, freq="30min", tz="America/New_York")
+    closes = list(range(100, 118)) if up else list(range(118, 100, -1))
+    rows = [
+        {
+            "open": float(close),
+            "high": float(close) + 0.5,
+            "low": float(close) - 0.5,
+            "close": float(close),
+            "volume": 1000.0,
+        }
+        for close in closes
+    ]
     return pd.DataFrame(rows, index=index)
