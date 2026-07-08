@@ -1,6 +1,13 @@
 from __future__ import annotations
 
-from tradeo.research.intraday_research_forensics import classify_failure, next_hypotheses
+import pytest
+
+from tradeo.research.intraday_research_forensics import (
+    classify_failure,
+    ensure_forensics_scope_integrity,
+    forensics_scope_integrity,
+    next_hypotheses,
+)
 from collections import Counter
 
 
@@ -81,3 +88,18 @@ def test_exact_scope_contract_is_modelled_in_report_shape() -> None:
 
     assert scope["exact_scope"] is True
     assert scope["run_ids"] == [1, 2]
+
+
+def test_forensics_scope_integrity_fails_with_out_of_scope_candidate() -> None:
+    report = {
+        "scope": {"exact_scope": True, "run_ids": [10, 11]},
+        "candidate_forensics": [{"run_id": 10}, {"run_id": 12}],
+        "near_misses": [],
+    }
+
+    integrity = forensics_scope_integrity(report)
+
+    assert integrity["passed"] is False
+    assert integrity["out_of_scope_run_ids"] == [12]
+    with pytest.raises(ValueError):
+        ensure_forensics_scope_integrity(report)

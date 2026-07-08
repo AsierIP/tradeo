@@ -12,6 +12,7 @@ sys.path.insert(0, str(ROOT / "backend"))
 from tradeo.db.session import SessionLocal  # noqa: E402
 from tradeo.research.intraday_research_evidence import (  # noqa: E402
     build_evidence_report,
+    ensure_evidence_scope_integrity,
     render_markdown,
     resolve_run_ids,
 )
@@ -31,6 +32,7 @@ def main() -> int:
     parser.add_argument("--json-out", default="artifacts/runtime/research_evidence/_summary.json")
     parser.add_argument("--md-out", default="artifacts/runtime/research_evidence/_summary.md")
     parser.add_argument("--json-only", action="store_true")
+    parser.add_argument("--allow-scope-violation", action="store_true")
     args = parser.parse_args()
 
     run_ids = resolve_run_ids(wave_manifests=args.wave_manifest, run_ids=args.run_ids)
@@ -48,6 +50,8 @@ def main() -> int:
         )
     finally:
         db.close()
+    if not args.allow_scope_violation:
+        ensure_evidence_scope_integrity(report)
 
     summary_payload = {key: value for key, value in report.items() if key != "samples_by_candidate"}
     markdown = render_markdown(summary_payload)

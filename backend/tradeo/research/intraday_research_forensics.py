@@ -165,6 +165,7 @@ def build_forensics_report(
         "exact_rejection_reasons": dict(exact_reasons.most_common(20)),
     }
     report = {
+        "status": "ok",
         "schema_version": "tradeo.intraday_research_forensics.v1",
         "generated_at": datetime.now(UTC).isoformat(),
         "scope": scope,
@@ -201,11 +202,46 @@ def build_forensics_report(
             "read_only": True,
         },
     }
+    report["scope_integrity"] = forensics_scope_integrity(report)
+    if not report["scope_integrity"]["passed"]:
+        report["status"] = "scope_violation"
     report["determinism"] = {
         "algo": CONTENT_HASH_ALGO,
         "content_hash": content_hash(report),
     }
     return report
+
+
+def forensics_scope_integrity(report: dict[str, Any]) -> dict[str, Any]:
+    scope = report.get("scope") if isinstance(report.get("scope"), dict) else {}
+    exact_scope = bool(scope.get("exact_scope"))
+    scope_run_ids = _dedupe_ints(_iter_ints(scope.get("run_ids") or scope.get("requested_run_ids") or []))
+    observed: list[int] = []
+    for key in ("candidate_forensics", "near_misses"):
+        for row in report.get(key) or []:
+            if isinstance(row, dict):
+                run_id = _optional_int(row.get("run_id"))
+                if run_id is not None:
+                    observed.append(run_id)
+    observed_run_ids = _dedupe_ints(observed)
+    out_of_scope = sorted(set(observed_run_ids) - set(scope_run_ids)) if exact_scope else []
+    return {
+        "exact_scope": exact_scope,
+        "scope_run_ids": scope_run_ids,
+        "observed_run_ids": observed_run_ids,
+        "out_of_scope_run_ids": out_of_scope,
+        "passed": not out_of_scope,
+    }
+
+
+def ensure_forensics_scope_integrity(report: dict[str, Any]) -> None:
+    integrity = report.get("scope_integrity")
+    if not isinstance(integrity, dict):
+        integrity = forensics_scope_integrity(report)
+        report["scope_integrity"] = integrity
+    if not integrity.get("passed", False):
+        report["status"] = "scope_violation"
+        raise ValueError(f"forensics scope violation: out_of_scope_run_ids={integrity.get('out_of_scope_run_ids')}")
 
 
 def candidate_forensics(
@@ -600,6 +636,15 @@ def _dedupe_ints(values: Iterable[int]) -> list[int]:
     for value in values:
         if value not in output:
             output.append(value)
+    return output
+
+
+def _iter_ints(values: Iterable[Any]) -> list[int]:
+    output: list[int] = []
+    for value in values:
+        parsed = _optional_int(value)
+        if parsed is not None:
+            output.append(parsed)
     return output
 
 

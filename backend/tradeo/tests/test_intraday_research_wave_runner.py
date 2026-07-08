@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import sys
+import time
 from types import SimpleNamespace
 
 
@@ -519,3 +520,107 @@ def test_env_overrides_do_not_enable_live_paper_orders_or_gates(monkeypatch) -> 
                 os.environ[key] = value
 
     assert {key: os.environ.get(key) for key in protected_keys} == before
+
+
+def test_wave_runner_blocks_execute_when_lock_active(monkeypatch, tmp_path: Path) -> None:
+    runner = _load_runner_module()
+    settings = _FakeSettings(artifacts_path=tmp_path / "artifacts")
+    lock = settings.artifacts_path / "runtime" / "locks" / "intraday_research_wave.lock"
+    lock.parent.mkdir(parents=True)
+    lock.write_text("{}", encoding="utf-8")
+    worker_calls: list[bool] = []
+    monkeypatch.setattr(runner, "get_settings", lambda: settings)
+    monkeypatch.setattr(runner, "IntradayResearchReadinessGate", _FakeReadinessGate)
+    monkeypatch.setattr(runner.worker, "_run_intraday_research_process_pool", lambda *a, **k: worker_calls.append(True))
+
+    manifest_path = tmp_path / "blocked.json"
+    code = _run_main(
+        monkeypatch,
+        runner,
+        ["--execute", "--manifest-path", str(manifest_path), "--json-only"],
+    )
+
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert code == 4
+    assert manifest["decision"] == "blocked_concurrent_wave"
+    assert worker_calls == []
+
+
+def test_wave_runner_dry_run_does_not_block_on_lock(monkeypatch, tmp_path: Path) -> None:
+    runner = _load_runner_module()
+    settings = _FakeSettings(artifacts_path=tmp_path / "artifacts")
+    lock = settings.artifacts_path / "runtime" / "locks" / "intraday_research_wave.lock"
+    lock.parent.mkdir(parents=True)
+    lock.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(runner, "get_settings", lambda: settings)
+    monkeypatch.setattr(runner, "IntradayResearchReadinessGate", _FakeReadinessGate)
+
+    manifest_path = tmp_path / "dry.json"
+    code = _run_main(monkeypatch, runner, ["--manifest-path", str(manifest_path), "--json-only"])
+
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert code == 0
+    assert manifest["decision"] == "ready_dry_run"
+    assert lock.exists()
+
+
+def test_wave_runner_releases_lock_after_success(monkeypatch, tmp_path: Path) -> None:
+    runner = _load_runner_module()
+    settings = _FakeSettings(artifacts_path=tmp_path / "artifacts")
+    lock = settings.artifacts_path / "runtime" / "locks" / "intraday_research_wave.lock"
+    monkeypatch.setattr(runner, "get_settings", lambda: settings)
+    monkeypatch.setattr(runner, "IntradayResearchReadinessGate", _FakeReadinessGate)
+    monkeypatch.setattr(runner.worker, "_run_intraday_research_process_pool", lambda *a, **k: {"status": "ok"})
+
+    manifest_path = tmp_path / "ok.json"
+    code = _run_main(monkeypatch, runner, ["--execute", "--manifest-path", str(manifest_path), "--json-only"])
+
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert code == 0
+    assert manifest["decision"] == "executed"
+    assert not lock.exists()
+
+
+def test_wave_runner_preserves_lock_when_worker_exception(monkeypatch, tmp_path: Path) -> None:
+    runner = _load_runner_module()
+    settings = _FakeSettings(artifacts_path=tmp_path / "artifacts")
+    lock = settings.artifacts_path / "runtime" / "locks" / "intraday_research_wave.lock"
+    monkeypatch.setattr(runner, "get_settings", lambda: settings)
+    monkeypatch.setattr(runner, "IntradayResearchReadinessGate", _FakeReadinessGate)
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("worker failed")
+
+    monkeypatch.setattr(runner.worker, "_run_intraday_research_process_pool", boom)
+    manifest_path = tmp_path / "failed.json"
+    code = _run_main(monkeypatch, runner, ["--execute", "--manifest-path", str(manifest_path), "--json-only"])
+
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert code == 1
+    assert manifest["decision"] == "execution_failed"
+    assert lock.exists()
+
+
+def test_stale_lock_only_ignored_with_explicit_threshold(monkeypatch, tmp_path: Path) -> None:
+    runner = _load_runner_module()
+    settings = _FakeSettings(artifacts_path=tmp_path / "artifacts")
+    lock = settings.artifacts_path / "runtime" / "locks" / "intraday_research_wave.lock"
+    lock.parent.mkdir(parents=True)
+    lock.write_text("{}", encoding="utf-8")
+    old = time.time() - 3600
+    os.utime(lock, (old, old))
+    monkeypatch.setattr(runner, "get_settings", lambda: settings)
+    monkeypatch.setattr(runner, "IntradayResearchReadinessGate", _FakeReadinessGate)
+    monkeypatch.setattr(runner.worker, "_run_intraday_research_process_pool", lambda *a, **k: {"status": "ok"})
+
+    blocked_manifest = tmp_path / "stale_blocked.json"
+    blocked = _run_main(monkeypatch, runner, ["--execute", "--manifest-path", str(blocked_manifest), "--json-only"])
+    assert blocked == 4
+
+    ok_manifest = tmp_path / "stale_ok.json"
+    ok = _run_main(
+        monkeypatch,
+        runner,
+        ["--execute", "--stale-lock-minutes", "1", "--manifest-path", str(ok_manifest), "--json-only"],
+    )
+    assert ok == 0

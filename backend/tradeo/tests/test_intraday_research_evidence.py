@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -12,6 +13,8 @@ from tradeo.research.intraday_research_evidence import (
     ALLOWED_TERMINAL_RECOMMENDATIONS,
     build_evidence_report,
     derive_time_features,
+    ensure_evidence_scope_integrity,
+    evidence_scope_integrity,
     resolve_run_ids,
     safe_candidate_key,
     session_bucket,
@@ -217,3 +220,19 @@ def test_safety_flags_are_false_for_execution_surfaces() -> None:
     assert safety["orders_allowed"] is False
     assert safety["broker_allowed"] is False
     assert safety["read_only"] is True
+
+
+def test_evidence_scope_integrity_fails_with_out_of_scope_sample() -> None:
+    report = {
+        "scope": {"exact_scope": True, "run_ids": [20, 21]},
+        "candidate_manifests": [{"run_id": 20}],
+        "samples_by_candidate": {"candidate": [{"run_id": 22}]},
+        "summary": {"runs_included": [20]},
+    }
+
+    integrity = evidence_scope_integrity(report)
+
+    assert integrity["passed"] is False
+    assert integrity["out_of_scope_run_ids"] == [22]
+    with pytest.raises(ValueError):
+        ensure_evidence_scope_integrity(report)
