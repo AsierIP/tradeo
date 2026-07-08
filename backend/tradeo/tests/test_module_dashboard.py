@@ -837,7 +837,70 @@ def test_shadow_closed_trade_is_separated_from_execution_pnl() -> None:
     assert lab["stats"]["shadow_only"] is True
     assert lab["stats"]["total_pnl_usd"] == 0.0
     assert lab["stats"]["total_r"] == 0
-    assert lab["trades"][0]["counts_as_execution_fill"] is False
+    assert lab["trades"] == []
     assert lab["pattern_outcomes"][0]["near_miss_closed"] == 1
     assert lab["pattern_outcomes"][0]["shadow_closed"] == 0
     assert lab["pattern_outcomes"][0]["total_pnl_usd"] == 0.0
+
+
+def test_duplicate_closed_fill_is_visible_once_and_matches_pnl_chart() -> None:
+    db = session_factory()
+    signal = Signal(
+        symbol="DUPL",
+        pattern="research_match_duplicate",
+        side="long",
+        entry=10.0,
+        stop=9.0,
+        target=14.0,
+        reward_risk=4.0,
+        confidence=0.55,
+        composite_score=0.55,
+        risk_usd=30.0,
+        suggested_qty=10,
+        strategy_version="laboratory_pattern_duplicate",
+        status=SignalStatus.EXECUTED,
+        human_approved=True,
+        metadata_json={"entry_module": "laboratory"},
+    )
+    db.add(signal)
+    db.flush()
+    fill_metadata = {
+        "execution_mode": "ibkr",
+        "ibkr_mode": "paper",
+        "evidence_type": EvidenceType.IBKR_PAPER_FILL.value,
+        "evidence_quality": EvidenceQuality.NORMAL.value,
+        "fill_provenance": FillProvenance.BROKER_EXECUTION.value,
+        "broker_fill_id": "duplicate-fill-1",
+        "broker_execution_time": "2026-07-07T18:00:00+00:00",
+        "commission_usd": 1.0,
+    }
+    for index in range(2):
+        db.add(
+            Trade(
+                signal_id=signal.id,
+                symbol="DUPL",
+                pattern="research_match_duplicate",
+                side="long",
+                qty=10,
+                entry=10.0,
+                stop=9.0,
+                target=14.0,
+                status=TradeStatus.CLOSED,
+                exit_price=11.5,
+                pnl_usd=15.0,
+                r_multiple=0.5,
+                closed_at=datetime(2026, 7, 7, 18, index, tzinfo=UTC),
+                metadata_json=fill_metadata,
+            )
+        )
+    db.commit()
+
+    lab = module_overview(db, "laboratory")
+
+    assert lab["stats"]["all_closed_trades"] == 2
+    assert lab["stats"]["closed_trades"] == 1
+    assert lab["stats"]["total_pnl_usd"] == 15.0
+    assert len(lab["trades"]) == 1
+    assert lab["trades"][0]["symbol"] == "DUPL"
+    assert lab["trades"][0]["counts_as_execution_fill"] is True
+    assert lab["pnl_points"][-1]["total_pnl_usd"] == 15.0

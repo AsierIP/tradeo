@@ -8,11 +8,14 @@ from sqlalchemy.orm import Session, joinedload
 from tradeo.db.models import Signal, Trade
 from tradeo.services.evidence import (
     COMMISSION_KEYS,
+    EVIDENCE_NESTED_METADATA_KEYS,
     EvidenceQuality,
+    FILL_ID_KEYS,
     SHADOW_EVIDENCE_TYPES,
     evidence_metadata_with_stored_columns,
     evidence_quality_from_metadata,
     evidence_type_from_metadata,
+    is_paper_order_or_fill_evidence,
     is_strong_fill_evidence,
 )
 from tradeo.services.implementation_shortfall import execution_adjusted_r_summary, trade_slippage_r
@@ -59,16 +62,23 @@ def module_overview(
         )
     ][:limit]
     signal_trade_statuses = _signal_trade_statuses(all_trades)
-    trades = _dashboard_trades(
+    dashboard_trades = _dashboard_trades(
         [trade for trade in all_trades if _status_value(trade.status) != "cancelled"]
     )
-    execution_trades = [trade for trade in trades if _is_normal_fill_evidence(trade)]
-    pnl_points = _pnl_points(list(reversed(execution_trades)))
+    trades = _operational_dashboard_trades(dashboard_trades)
+    execution_closed_trades = [
+        trade for trade in trades
+        if _status_value(trade.status) == "closed" and _is_normal_fill_evidence(trade)
+    ]
+    pnl_points = _pnl_points(list(reversed(execution_closed_trades)))
     total_pnl = pnl_points[-1]["total_pnl_usd"] if pnl_points else 0.0
-    all_closed_trades = [trade for trade in trades if _status_value(trade.status) == "closed"]
+    all_closed_trades = [
+        trade for trade in dashboard_trades if _status_value(trade.status) == "closed"
+    ]
     execution_closed_trades = [
         trade for trade in all_closed_trades if _is_normal_fill_evidence(trade)
     ]
+    execution_closed_trades = _dedupe_closed_execution_trades(execution_closed_trades)
     execution_diagnostics = execution_adjusted_r_summary(execution_closed_trades)
     execution_diagnostics_summary = _execution_diagnostics_summary(execution_diagnostics)
     execution_diagnostics_by_trade = {
@@ -80,7 +90,11 @@ def module_overview(
     trade_payloads = [
         _trade_to_dict(trade, execution_diagnostics_by_trade.get(trade.id)) for trade in trades
     ]
-    evidence_summary = _evidence_summary(trades)
+    diagnostic_trade_payloads = [
+        _trade_to_dict(trade, execution_diagnostics_by_trade.get(trade.id))
+        for trade in dashboard_trades
+    ]
+    evidence_summary = _evidence_summary(dashboard_trades)
     return {
         "module": module,
         "cadence": cadence,
@@ -94,10 +108,10 @@ def module_overview(
         ),
         "signals": signal_payloads,
         "trades": trade_payloads,
-        "pattern_outcomes": _pattern_outcomes(signal_payloads, trade_payloads),
+        "pattern_outcomes": _pattern_outcomes(signal_payloads, diagnostic_trade_payloads),
         "pnl_points": pnl_points,
         "shadow_pnl_points": _pnl_points(
-            list(reversed([trade for trade in trades if _is_shadow_evidence(trade)]))
+            list(reversed([trade for trade in dashboard_trades if _is_shadow_evidence(trade)]))
         ),
         "evidence_summary": evidence_summary,
         "execution_diagnostics": execution_diagnostics_summary,
@@ -261,6 +275,84 @@ def _dashboard_trades(trades: list[Trade]) -> list[Trade]:
             continue
         visible.append(trade)
     return visible
+
+
+def _operational_dashboard_trades(trades: list[Trade]) -> list[Trade]:
+    open_trades = [
+        trade
+        for trade in trades
+        if _status_value(trade.status) == "open" and _is_operational_open_order(trade)
+    ]
+    closed_trades = _dedupe_closed_execution_trades(
+        [
+            trade
+            for trade in trades
+            if _status_value(trade.status) == "closed" and _is_normal_fill_evidence(trade)
+        ]
+    )
+    return open_trades + closed_trades
+
+
+def _is_operational_open_order(trade: Trade) -> bool:
+    metadata = _trade_evidence_metadata(trade)
+    if is_paper_order_or_fill_evidence(
+        metadata,
+        trade_status=_status_value(trade.status),
+        signal_metadata=(trade.signal.metadata_json if trade.signal is not None else {}) or {},
+        broker_order_id=trade.broker_order_id,
+    ):
+        return True
+    if _is_shadow_evidence(trade):
+        return False
+    if evidence_quality_from_metadata(metadata) == EvidenceQuality.DEGRADED.value:
+        return False
+    execution_mode = str(metadata.get("execution_mode") or "")
+    if execution_mode in {"ibkr", "ibkr_daily_paper", "paper"}:
+        return True
+    evidence_type = _trade_evidence_type(trade)
+    if evidence_type != "live_order":
+        return False
+    return True
+
+
+def _dedupe_closed_execution_trades(trades: list[Trade]) -> list[Trade]:
+    visible: list[Trade] = []
+    seen: set[tuple[str, str]] = set()
+    for trade in trades:
+        key = _closed_execution_key(trade)
+        if key in seen:
+            continue
+        seen.add(key)
+        visible.append(trade)
+    return visible
+
+
+def _closed_execution_key(trade: Trade) -> tuple[str, str]:
+    fill_id = _first_metadata_text(_trade_evidence_metadata(trade), FILL_ID_KEYS)
+    if fill_id:
+        return (_trade_evidence_type(trade) or "fill", fill_id)
+    return ("trade_id", str(trade.id))
+
+
+def _first_metadata_text(metadata: dict[str, Any], keys: tuple[str, ...]) -> str | None:
+    for source in _metadata_sources_for_dashboard(metadata):
+        for key in keys:
+            value = source.get(key)
+            if value is not None and str(value).strip():
+                return str(value).strip()
+    return None
+
+
+def _metadata_sources_for_dashboard(metadata: dict[str, Any]) -> list[dict[str, Any]]:
+    sources: list[dict[str, Any]] = [metadata]
+    for key in EVIDENCE_NESTED_METADATA_KEYS:
+        value = metadata.get(key)
+        if isinstance(value, dict):
+            sources.append(value)
+    ibkr_fills = metadata.get("ibkr_fills")
+    if isinstance(ibkr_fills, list):
+        sources.extend(value for value in ibkr_fills if isinstance(value, dict))
+    return sources
 
 
 def _active_exposure_key(trade: Trade) -> tuple[str, str, str]:
