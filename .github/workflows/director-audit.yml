@@ -5,6 +5,7 @@ on:
     paths:
       - "research/audit_bridge/**"
       - "ops/scripts/director_audit_ci.py"
+      - "ops/scripts/director_audit_chain_guard.py"
       - "docker-compose*.yml"
       - ".github/workflows/director-audit.yml"
       - "docs/deployment.md"
@@ -27,6 +28,16 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
+      - name: Verify complete and current Director audit chain
+        env:
+          TRADEO_AUDIT_PACKAGE: ${{ github.event.inputs.audit_package || 'latest' }}
+        run: |
+          args=(--package "$TRADEO_AUDIT_PACKAGE" --tracked-only)
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            args+=(--max-age-hours 36 --require-head-commit --require-discovery-status)
+          fi
+          python ops/scripts/director_audit_chain_guard.py "${args[@]}"
 
       - name: Run Director audit package readiness
         env:
