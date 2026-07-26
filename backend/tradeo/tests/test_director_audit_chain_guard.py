@@ -122,6 +122,24 @@ def test_guard_rejects_partial_discovery(tmp_path: Path) -> None:
     assert "source discovery status is not completed" in result.stdout
 
 
+def test_guard_rejects_completed_discovery_without_run_ids(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path)
+    package = _write_package(
+        repo,
+        created_at=datetime.now(timezone.utc),
+        repo_commit="placeholder",
+        discovery_status="completed",
+        discovery_run_ids=[],
+    )
+    head = _git(repo, "rev-parse", "HEAD")
+    _rewrite_manifest(package, repo_commit=head)
+
+    result = _run_guard(repo, package, "--require-discovery-status")
+
+    assert result.returncode == 1
+    assert "source discovery run IDs are required" in result.stdout
+
+
 def test_guard_accepts_complete_blocked_chain_and_normalizes_review(tmp_path: Path) -> None:
     repo = _init_repo(tmp_path)
     package = _write_package(
@@ -174,6 +192,7 @@ def _write_package(
     created_at: datetime,
     repo_commit: str,
     discovery_status: str,
+    discovery_run_ids: list[int] | None = None,
     gate_status: str = "blocked",
 ) -> Path:
     package = repo / "research" / "audit_bridge" / "requests" / "AUDIT-TEST"
@@ -183,6 +202,7 @@ def _write_package(
         "created_at": created_at.isoformat(),
         "repo_commit": repo_commit,
         "source_discovery_status": discovery_status,
+        "source_discovery_run_ids": [101] if discovery_run_ids is None else discovery_run_ids,
     }
     (package / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
     (package / "director_gate_result.json").write_text(
@@ -207,6 +227,8 @@ def _write_package(
     (package / "internal_auditor_agent_review.md").write_text("# Review\n", encoding="utf-8")
     run = {
         "audit_id": package.name,
+        "source_discovery_status": discovery_status,
+        "source_discovery_run_ids": [101] if discovery_run_ids is None else discovery_run_ids,
         "director_gate_status": gate_status,
         "commands": [
             {"name": "validate", "exit_code": 0},
