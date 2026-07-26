@@ -122,6 +122,8 @@ def main() -> int:
         chain_errors.append(
             f"source discovery status is not completed: {source_discovery_status}"
         )
+    if not source_discovery_run_ids:
+        chain_errors.append("source discovery run IDs are required")
     review = guard.normalize_review(
         raw_review,
         audit_id=audit_id,
