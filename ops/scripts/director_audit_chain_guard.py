@@ -58,7 +58,10 @@ def main() -> int:
     parser.add_argument(
         "--require-discovery-status",
         action="store_true",
-        help="Require a completed source discovery status and reject partial/failed/skipped runs.",
+        help=(
+            "Require completed source discovery status and at least one source run ID; "
+            "reject partial, failed, skipped, or unidentified runs."
+        ),
     )
     parser.add_argument(
         "--normalize-review",
@@ -126,11 +129,14 @@ def main() -> int:
         errors.append(f"promotion gate has no fail-closed terminal status: {gate_status}")
 
     discovery_status = derive_discovery_status(manifest, run)
+    discovery_run_ids = derive_discovery_run_ids(manifest, run)
     if args.require_discovery_status:
         if not discovery_status:
             errors.append("source discovery status is required")
         elif discovery_status != "completed":
             errors.append(f"source discovery status is not completed: {discovery_status}")
+        if not discovery_run_ids:
+            errors.append("source discovery run IDs are required")
     elif discovery_status in PARTIAL_OR_FAILED_DISCOVERY_STATUSES:
         errors.append(f"partial/failed source discovery cannot support promotion: {discovery_status}")
 
@@ -153,6 +159,7 @@ def main() -> int:
         "schema_validation_status": schema_status,
         "promotion_gate_status": gate_status,
         "source_discovery_status": discovery_status or "not_recorded",
+        "source_discovery_run_ids": discovery_run_ids,
         "promotion_decision": normalized_review.get("promotion_decision"),
         "audit_chain_complete": not errors,
     }
@@ -307,17 +314,30 @@ def derive_gate_status(gate: dict[str, Any], run: dict[str, Any]) -> str:
 
 
 def derive_discovery_status(manifest: dict[str, Any], run: dict[str, Any]) -> str:
-    keys = (
-        "source_discovery_status",
-        "aggregate_discovery_status",
-        "discovery_status",
-    )
+    keys = ("source_discovery_status", "aggregate_discovery_status", "discovery_status")
     for source in (manifest, run):
         for key in keys:
             value = str(source.get(key, "")).strip().lower()
             if value:
                 return value
     return ""
+
+
+def derive_discovery_run_ids(manifest: dict[str, Any], run: dict[str, Any]) -> list[str]:
+    for source in (manifest, run):
+        value = source.get("source_discovery_run_ids")
+        if value is None:
+            continue
+        if isinstance(value, str):
+            raw_values: Iterable[Any] = value.split(",")
+        elif isinstance(value, (list, tuple, set)):
+            raw_values = value
+        else:
+            raw_values = [value]
+        normalized = [str(item).strip() for item in raw_values if str(item).strip()]
+        if normalized:
+            return list(dict.fromkeys(normalized))
+    return []
 
 
 def normalize_review(
@@ -353,7 +373,11 @@ def normalize_review(
             "status": gate_status if passed_chain else "invalid",
             "schema_validation_status": schema_status,
             "promotion_gate_status": gate_status,
-            "priority": "P0" if not passed_chain or gate_status in BLOCKED_GATE_STATUSES else normalized.get("priority", "P2"),
+            "priority": (
+                "P0"
+                if not passed_chain or gate_status in BLOCKED_GATE_STATUSES
+                else normalized.get("priority", "P2")
+            ),
             "blocker_count": len(top_blockers),
             "top_blockers": top_blockers,
             "promotion_decision": promotion_decision,
@@ -371,7 +395,11 @@ def write_json(path: Path, payload: dict[str, Any]) -> None:
 
 def write_review_markdown(path: Path, review: dict[str, Any]) -> None:
     blockers = review.get("top_blockers") if isinstance(review.get("top_blockers"), list) else []
-    actions = review.get("required_next_actions") if isinstance(review.get("required_next_actions"), list) else []
+    actions = (
+        review.get("required_next_actions")
+        if isinstance(review.get("required_next_actions"), list)
+        else []
+    )
     lines = [
         "# Internal Auditor Agent Review",
         "",
